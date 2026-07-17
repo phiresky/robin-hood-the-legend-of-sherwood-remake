@@ -89,7 +89,7 @@ use crate::profiles::MissionType;
 use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
 use simulation_gate::SimulationGateState;
-use state::{FeedbackRuntime, PlayerRuntime, SimulationControl};
+use state::{AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl};
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -157,12 +157,14 @@ pub struct EngineInner {
     #[state_hash(skip)]
     sim_config: std::cell::Cell<Option<SimConfig>>,
 
-    // ── Mission ──────────────────────────────────────────────────
-    /// Win/loss tracking and mission metadata. [Serialized]
-    pub(crate) mission: MissionState,
+    /// Deterministic mission outcome, campaign, objective, and stats state.
+    pub(crate) mission_domain: MissionDomain,
 
     /// Deterministic time, RNG, and global suspension/rate controls.
     pub(crate) control: SimulationControl,
+
+    /// Deterministic global AI state and mission-configured vision defaults.
+    pub(crate) ai: AiRuntime,
 
     // ── Weather ──────────────────────────────────────────────────
     /// Weather and environmental state. [Serialized — affects AI]
@@ -176,15 +178,6 @@ pub struct EngineInner {
     /// Script global variables array. [Serialized]
     pub(crate) script_globals: Vec<i32>,
 
-    // ── Cheat tracking ───────────────────────────────────────────
-    /// Bitmask of which cheats have been used. [Serialized]
-    pub(crate) cheat_used_flags: u32,
-
-    // ── Standard view radius ─────────────────────────────────────
-    /// Default radius for NPC view polygons. Set by script
-    /// `SetStandardViewPolygonRadius`; affects AI vision. [Serialized]
-    pub(crate) standard_view_polygon_radius: u16,
-
     /// Monotonically increasing tag handed out for AI animation /
     /// movement / jump / unlock orders. Each `actor.active_ai_anim` /
     /// `active_movement.sequence_id` carries one of these so completion
@@ -192,9 +185,6 @@ pub struct EngineInner {
     /// of process-wide `static AtomicU32` counters which broke rollback
     /// determinism — now sits inside the engine snapshot.
     pub(crate) next_order_id: u32,
-
-    // ── Force victory check ──────────────────────────────────────
-    pub(crate) force_check: bool,
 
     // ── Ported subsystems (real Rust types) ─────────────────────
     /// Message/event queue. [Serialized]  Host-side callers use the
@@ -206,12 +196,6 @@ pub struct EngineInner {
     pub(crate) fast_grid: FastFindGrid,
     /// A* waypoint pathfinder. [Serialized]
     pub(crate) pathfinder: PathFinder,
-    /// Short mission briefing entries. [Serialized]
-    pub(crate) short_briefings: ShortBriefings,
-    /// Per-mission debriefing statistics. [Serialized]  End-of-mission
-    /// recruitment lives inside [`EngineInner::apply_quit_mission_updates`];
-    /// script natives update counters through existing engine methods.
-    pub(crate) mission_stat: MissionStat,
     // ── Entity storage ────────────────────────────────────────────
     /// All entities indexed by EntityId.
     pub(crate) entities: Entities,
@@ -247,13 +231,6 @@ pub struct EngineInner {
     /// Drained each tick by
     /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
     pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
-
-    // ── AI ────────────────────────────────────────────────────────
-    /// Global / shared AI state (alert levels, seek points, etc.). [Serialized]
-    pub(crate) ai_global: AiGlobalState,
-
-    /// PC whose death should trigger immediate mission failure.
-    pub(crate) dead_pc: Option<EntityId>,
 
     /// Anonymous countdown timers (tick each frame, removed at 0).
     pub(crate) timer_elements: Vec<TimerEntry>,
@@ -346,11 +323,6 @@ pub struct EngineInner {
     /// assets) because it's mutable per-tick state that participates
     /// in rollback hashing.
     pub(crate) static_sight_obstacle_active: Vec<bool>,
-
-    // ── Campaign ─────────────────────────────────────────────────
-    /// Campaign state — owned here during gameplay, swapped into
-    /// GameHost for script execution.  `None` when not in a mission.
-    pub(crate) campaign: Option<crate::campaign::Campaign>,
     // (Deferred bg-blits live on `pending_side_effects.bg_blits` now;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
@@ -385,11 +357,12 @@ impl RequiredCampaignGuard {
 
 impl Drop for RequiredCampaignGuard {
     fn drop(&mut self) {
-        // SAFETY: `owner` points to the `EngineInner::campaign` field that
-        // created this guard. The guard never dereferences it while the
-        // closure's `&mut EngineInner` is live; Drop runs only after that call
-        // has returned or started unwinding, and the borrowed EngineInner
-        // cannot move during the call.
+        // SAFETY: `owner` points to the
+        // `EngineInner::mission_domain.campaign` field that created this
+        // guard. The guard never dereferences it while the closure's
+        // `&mut EngineInner` is live; Drop runs only after that call has
+        // returned or started unwinding, and the borrowed EngineInner cannot
+        // move during the call.
         let owner = unsafe { &mut *self.owner };
         assert!(
             owner.is_none(),
@@ -501,7 +474,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
         let idx = usize::from(pc_data.list_index);
-        let campaign = self.campaign.as_ref()?;
+        let campaign = self.mission_domain.campaign.as_ref()?;
         let Some(desc) = campaign.characters.get(idx) else {
             tracing::warn!(
                 "PC status index {} out of range for profile {}",
@@ -527,7 +500,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<&crate::campaign::PcDescription> {
         let idx = self.pc_description_index_for_pc_data(pc_data)?;
-        self.campaign.as_ref()?.characters.get(idx)
+        self.mission_domain.campaign.as_ref()?.characters.get(idx)
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
@@ -572,12 +545,13 @@ impl EngineInner {
         //
         Self {
             sim_config: std::cell::Cell::new(None),
-            mission: MissionState::default(),
+            mission_domain: MissionDomain::new(),
             // Original: the `__TEST` path in
             // `original-code/launcher.cpp:762-766` calls `srand(0)`.
             // `Engine::new` replaces this bare-engine test seed with the
             // replay/match seed before level setup draws.
             control: SimulationControl::new(0),
+            ai: AiRuntime::new(),
 
             weather: WeatherState::new(),
 
@@ -585,18 +559,11 @@ impl EngineInner {
 
             script_globals: Vec::new(),
 
-            cheat_used_flags: 0,
-
-            standard_view_polygon_radius: 0,
             next_order_id: 1,
-
-            force_check: false,
 
             messenger: Messenger::new(),
             fast_grid: FastFindGrid::default(),
             pathfinder: PathFinder::default(),
-            short_briefings: ShortBriefings::default(),
-            mission_stat: MissionStat::default(),
             pending_move_requests: Vec::new(),
             pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
@@ -605,9 +572,6 @@ impl EngineInner {
             pc_ids: Vec::new(),
             players: PlayerRuntime::new(),
             feedback: FeedbackRuntime::new(),
-            ai_global: AiGlobalState::default(),
-
-            dead_pc: None,
             timer_elements: Vec::new(),
 
             sequence_manager: SequenceManager::new(),
@@ -623,8 +587,6 @@ impl EngineInner {
             script_zone_data: Vec::new(),
             dynamic_sight_obstacles: Vec::new(),
             static_sight_obstacle_active: Vec::new(),
-
-            campaign: None,
         }
     }
 
@@ -782,7 +744,7 @@ impl EngineInner {
 
     /// Get the current mission's type from the campaign, if available.
     pub fn mission_type(&self, profiles: &crate::profiles::ProfileManager) -> Option<MissionType> {
-        let campaign = self.campaign.as_ref()?;
+        let campaign = self.mission_domain.campaign.as_ref()?;
         let idx = campaign.current_mission_idx?;
         Some(campaign.missions.get(idx)?.profile(profiles).mission_type)
     }
@@ -799,8 +761,8 @@ impl EngineInner {
     /// widgets are flipped via
     /// [`SideEffects::pending_silent_win_widget_swap`].
     pub(crate) fn win(&mut self, show_window: bool) {
-        self.mission.mission_won_first_time = show_window;
-        self.mission.mission_won = true;
+        self.mission_domain.state.mission_won_first_time = show_window;
+        self.mission_domain.state.mission_won = true;
 
         if !show_window {
             self.feedback
@@ -822,7 +784,7 @@ impl EngineInner {
     /// signals mission end, before the debriefing is shown.
     ///
     /// The campaign is passed separately because the host has `take()`n
-    /// it out of `self.campaign` to avoid aliasing `&mut EngineInner`.
+    /// it out of `self.mission_domain.campaign` to avoid aliasing `&mut EngineInner`.
     pub(crate) fn apply_quit_mission_updates_inner(
         &mut self,
         assets: &LevelAssets,
@@ -866,13 +828,13 @@ impl EngineInner {
                 campaign.recruit_post_mission_peasants(living, dead, difficulty, profiles);
             // Assign the recruited-peasant count once, after the recruit
             // loop, replacing any prior accumulation on the field.
-            self.mission_stat.new_peasant_count = recruited;
+            self.mission_domain.mission_stat.new_peasant_count = recruited;
             tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
 
             campaign.consume_blazons_post_mission(profiles);
         } else {
             // Explicitly zero on the lost path.
-            self.mission_stat.new_peasant_count = 0;
+            self.mission_domain.mission_stat.new_peasant_count = 0;
         }
     }
 
@@ -920,7 +882,7 @@ impl EngineInner {
         context: &str,
         f: impl FnOnce(&mut Self, &mut crate::campaign::Campaign) -> R,
     ) -> R {
-        let mut campaign = RequiredCampaignGuard::new(&mut self.campaign, context);
+        let mut campaign = RequiredCampaignGuard::new(&mut self.mission_domain.campaign, context);
         f(self, campaign.campaign_mut())
     }
 
@@ -965,11 +927,13 @@ impl EngineInner {
         // rather than overwriting.  Match the additive semantics so any
         // earlier writer's contribution survives.  `total_soldier_count`
         // is kept in lockstep.
-        self.mission_stat.living_soldier_count = self
+        self.mission_domain.mission_stat.living_soldier_count = self
+            .mission_domain
             .mission_stat
             .living_soldier_count
             .saturating_add(living);
-        self.mission_stat.total_soldier_count = self
+        self.mission_domain.mission_stat.total_soldier_count = self
+            .mission_domain
             .mission_stat
             .total_soldier_count
             .saturating_add(living + dead);
@@ -2755,7 +2719,7 @@ impl EngineInner {
 
     /// Global AI state (alert levels, seek points, …). Read-only.
     pub fn ai_global(&self) -> &AiGlobalState {
-        &self.ai_global
+        &self.ai.global
     }
 
     /// Read-only access to the per-PC quick-action macro store.  Host
@@ -2823,13 +2787,13 @@ impl EngineInner {
     /// Enable or disable the `--goldeneye` cheat (NPCs can't see the player).
     /// Set once at startup from CLI args.
     pub(crate) fn set_golden_eye_mode(&mut self, on: bool) {
-        self.ai_global.golden_eye_mode = on;
+        self.ai.global.golden_eye_mode = on;
     }
 
     /// Whether the `--goldeneye` cheat is active.  Used by the PC
     /// refresh path to render every PC sprite at 50% alpha.
     pub fn get_golden_eye_mode(&self) -> bool {
-        self.ai_global.golden_eye_mode
+        self.ai.global.golden_eye_mode
     }
 
     /// Weather / ambiance state (night colour, rain, fog, …).
@@ -2924,14 +2888,14 @@ impl EngineInner {
 
     /// Short mission briefing entries (read-only, drained by host UI).
     pub fn short_briefings(&self) -> &ShortBriefings {
-        &self.short_briefings
+        &self.mission_domain.short_briefings
     }
 
     /// Read the accumulated mission statistics (money, score, kills,
     /// recruitment, …).  Written by script natives during the tick and
     /// rolled up at mission end by [`EngineInner::apply_quit_mission_updates`].
     pub fn mission_stat(&self) -> &MissionStat {
-        &self.mission_stat
+        &self.mission_domain.mission_stat
     }
 
     /// Whether the camera is locked to follow an entity.
@@ -3049,7 +3013,8 @@ impl EngineInner {
 
     /// `true` when the current mission is the Sherwood (HQ) hideout.
     pub fn is_sherwood(&self, profiles: &crate::profiles::ProfileManager) -> bool {
-        self.campaign
+        self.mission_domain
+            .campaign
             .as_ref()
             .is_some_and(|c| self.is_sherwood_mission(c, profiles))
     }
@@ -3378,7 +3343,7 @@ impl EngineInner {
         &mut self,
         profiles: &crate::profiles::ProfileManager,
     ) {
-        let Some(campaign) = self.campaign.as_ref() else {
+        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
             tracing::warn!("convert_selected_peasants_to_blazons: no campaign");
             return;
         };
@@ -3435,7 +3400,11 @@ impl EngineInner {
                 crate::sim_rng::RngSite::PeasantReservistSurvival,
                 0..LIFEPOINTS_PC_X2,
             ) as i32;
-            let campaign = self.campaign.as_mut().expect("campaign vanished mid-loop");
+            let campaign = self
+                .mission_domain
+                .campaign
+                .as_mut()
+                .expect("campaign vanished mid-loop");
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
             } else {
@@ -3448,7 +3417,7 @@ impl EngineInner {
         }
 
         // Reset the mission team.
-        if let Some(campaign) = self.campaign.as_mut() {
+        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
             campaign.reset_mission_team();
             // Credit `floor(number_to_convert / quotation)` blazons.
             if quotation != 0 {
@@ -3463,13 +3432,13 @@ impl EngineInner {
     /// Win/loss tracking and mission metadata.  Host UI reads these
     /// flags to render the HUD / debrief / quit buttons.
     pub fn mission(&self) -> &MissionState {
-        &self.mission
+        &self.mission_domain.state
     }
 
     /// Current mission's background map name (without extension), as
     /// set by the mission profile at level-load.
     pub fn mission_map_name(&self) -> &str {
-        &self.mission.map_name
+        &self.mission_domain.state.map_name
     }
 
     /// Monotonically increasing frame counter (one per processed tick).
@@ -3579,18 +3548,18 @@ impl EngineInner {
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.entities,
-            &mut self.ai_global,
+            &mut self.ai.global,
             &mut self.fast_grid,
-            &mut self.campaign,
-            &mut self.mission_stat,
+            &mut self.mission_domain.campaign,
+            &mut self.mission_domain.mission_stat,
         );
         let result = script.post_initialize();
         script.swap_engine_state(
             &mut self.entities,
-            &mut self.ai_global,
+            &mut self.ai.global,
             &mut self.fast_grid,
-            &mut self.campaign,
-            &mut self.mission_stat,
+            &mut self.mission_domain.campaign,
+            &mut self.mission_domain.mission_stat,
         );
         self.sync_game_host_post_script(assets);
 
@@ -3606,12 +3575,12 @@ impl EngineInner {
     /// to the per-mission added-score counter.  Other campaign values
     /// have no extra side effects.
     pub fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
-        if self.campaign.is_none() {
+        if self.mission_domain.campaign.is_none() {
             return;
         }
-        self.campaign.as_mut().unwrap().values[name] += amount;
+        self.mission_domain.campaign.as_mut().unwrap().values[name] += amount;
         Self::apply_value_add_side_effects(
-            &mut self.mission_stat,
+            &mut self.mission_domain.mission_stat,
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
             name,
@@ -3624,11 +3593,11 @@ impl EngineInner {
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
     pub fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
-        if self.campaign.is_none() {
+        if self.mission_domain.campaign.is_none() {
             return;
         }
-        let old = self.campaign.as_ref().unwrap().values[name];
-        self.campaign.as_mut().unwrap().values[name] = value;
+        let old = self.mission_domain.campaign.as_ref().unwrap().values[name];
+        self.mission_domain.campaign.as_mut().unwrap().values[name] = value;
         Self::apply_value_set_side_effects(
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
@@ -3640,7 +3609,7 @@ impl EngineInner {
 
     /// `add_campaign_value` variant for callers that hold the campaign
     /// separately (e.g. `apply_quit_mission_updates_inner`, which has
-    /// `take()`'d it out of `self.campaign` to avoid aliasing).
+    /// `take()`'d it out of `self.mission_domain.campaign` to avoid aliasing).
     pub fn add_campaign_value_to(
         &mut self,
         campaign: &mut crate::campaign::Campaign,
@@ -3649,7 +3618,7 @@ impl EngineInner {
     ) {
         campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
-            &mut self.mission_stat,
+            &mut self.mission_domain.mission_stat,
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
             name,
@@ -3699,13 +3668,14 @@ impl EngineInner {
 
     /// Currently-owned campaign.  `None` outside of a mission.
     pub fn campaign(&self) -> Option<&crate::campaign::Campaign> {
-        self.campaign.as_ref()
+        self.mission_domain.campaign.as_ref()
     }
 
     /// Has the given peasant display name already been registered on
     /// the campaign's no-duplicates list?  Read-only.
     pub fn is_peasant_name_registered(&self, name: &str) -> bool {
-        self.campaign
+        self.mission_domain
+            .campaign
             .as_ref()
             .is_some_and(|c| c.is_peasant_name_registered(name))
     }
@@ -3714,7 +3684,7 @@ impl EngineInner {
     /// Called once per peasant at level-load, before the mission
     /// begins ticking.
     pub(crate) fn register_peasant_name(&mut self, name: String) {
-        if let Some(campaign) = self.campaign.as_mut() {
+        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
             campaign.register_peasant_name(name);
         }
     }
@@ -3725,10 +3695,10 @@ impl EngineInner {
     /// followed by assignment.
     pub fn install_campaign(&mut self, campaign: crate::campaign::Campaign) {
         assert!(
-            self.campaign.is_none(),
+            self.mission_domain.campaign.is_none(),
             "cannot replace an installed campaign"
         );
-        self.campaign = Some(campaign);
+        self.mission_domain.campaign = Some(campaign);
     }
 
     /// Remove the campaign at mission-end (or shutdown) and return it
@@ -3744,7 +3714,8 @@ impl EngineInner {
     where
         T: From<crate::campaign::Campaign>,
     {
-        self.campaign
+        self.mission_domain
+            .campaign
             .take()
             .expect("active engine campaign is missing")
             .into()
@@ -3765,7 +3736,7 @@ impl EngineInner {
         // reset in `Host::post_load_reset` too.
 
         // Per-frame / per-tick scratch flags.
-        self.force_check = false;
+        self.mission_domain.force_check = false;
         self.control.chorus_timer = 0;
         self.control.fast_forward = false;
         self.pending_move_requests.clear();
@@ -3859,9 +3830,9 @@ impl EngineInner {
     /// Test helper: set `mission_won` / `quit_won` / `quit_lost` flags.
     #[doc(hidden)]
     pub fn test_set_mission_flags(&mut self, quit_won: bool, quit_lost: bool, mission_won: bool) {
-        self.mission.quit_won = quit_won;
-        self.mission.quit_lost = quit_lost;
-        self.mission.mission_won = mission_won;
+        self.mission_domain.state.quit_won = quit_won;
+        self.mission_domain.state.quit_lost = quit_lost;
+        self.mission_domain.state.mission_won = mission_won;
     }
 
     /// Test helper: seed `frame_counter` (save-round-trip tests).
@@ -3882,7 +3853,7 @@ impl EngineInner {
         freeze_all: bool,
         script_globals: Vec<i32>,
     ) {
-        self.cheat_used_flags = cheat_used_flags;
+        self.mission_domain.cheat_used_flags = cheat_used_flags;
         self.control.speed = speed;
         self.control.speed_int = speed_int;
         self.set_engine_locked(lock_engine);
@@ -3893,7 +3864,7 @@ impl EngineInner {
     /// Test helper: seed the mission stat without running a mission.
     #[doc(hidden)]
     pub fn test_set_mission_stat(&mut self, stat: MissionStat) {
-        self.mission_stat = stat;
+        self.mission_domain.mission_stat = stat;
     }
 
     /// Current RNG seed.  Used by the replay recorder to stamp the

@@ -2827,8 +2827,11 @@ impl EngineInner {
                 continue;
             }
 
-            let ctx =
-                concussion_ctx_full(entity, self.weather.is_forest_level, self.campaign.as_ref());
+            let ctx = concussion_ctx_full(
+                entity,
+                self.weather.is_forest_level,
+                self.mission_domain.campaign.as_ref(),
+            );
 
             // Determine healing speed: per-profile `wake_up` for PCs
             // and soldiers, civilian default otherwise.

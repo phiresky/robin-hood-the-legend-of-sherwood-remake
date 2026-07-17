@@ -756,7 +756,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
             entity,
             building_sector.is_some(),
             building_sector,
-            engine.campaign.as_ref(),
+            engine.mission_domain.campaign.as_ref(),
         );
 
         // Door-rail snap: while a human actor is passing a door, AI
@@ -1080,7 +1080,7 @@ impl EngineInner {
                 }
             }
 
-            for &(attacker, target) in &self.ai_global.same_frame_target_claims {
+            for &(attacker, target) in &self.ai.global.same_frame_target_claims {
                 if attacker == me_handle || target == 0 {
                     continue;
                 }
@@ -1792,11 +1792,11 @@ impl EngineInner {
     pub(crate) fn init_ai(&mut self, assets: &mut LevelAssets) {
         // Reset global AI state
         // think-method recursion depth = 0
-        self.ai_global.there_are_royalist_soldiers = false;
-        self.ai_global.there_are_lacklandist_soldiers = false;
-        self.ai_global.overall_alert_status = crate::ai::AlertLevel::Green;
-        self.ai_global.overall_villain_alert_status = crate::ai::AlertLevel::Green;
-        self.ai_global.init_green_yellow_red_alert_soldiers();
+        self.ai.global.there_are_royalist_soldiers = false;
+        self.ai.global.there_are_lacklandist_soldiers = false;
+        self.ai.global.overall_alert_status = crate::ai::AlertLevel::Green;
+        self.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Green;
+        self.ai.global.init_green_yellow_red_alert_soldiers();
 
         // golden_eye_mode is set from CliArgs after initialize() returns
 
@@ -1816,7 +1816,7 @@ impl EngineInner {
             let paths = std::sync::Arc::make_mut(&mut assets.hiking_paths);
             for path in paths.iter_mut() {
                 for wp in path.waypoints.iter_mut() {
-                    for door in &self.ai_global.door_seek_infos {
+                    for door in &self.ai.global.door_seek_infos {
                         if door.door_type != crate::gate::DoorType::Building {
                             continue;
                         }
@@ -1840,7 +1840,7 @@ impl EngineInner {
         // the door's inside position — same rule as the waypoint
         // beaming above.  Already implemented as
         // `AiGlobalState::teleport_seek_points_inside_doors`.
-        self.ai_global.teleport_seek_points_inside_doors();
+        self.ai.global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
         let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
@@ -1852,7 +1852,7 @@ impl EngineInner {
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
         // AiContext can resolve script-baked friend IDs.
-        self.ai_global.all_soldier_handles = std::sync::Arc::new(
+        self.ai.global.all_soldier_handles = std::sync::Arc::new(
             assets
                 .all_soldier_entity_ids
                 .iter()
@@ -1861,7 +1861,7 @@ impl EngineInner {
         );
         let entity_views = scratch.ai_entity_views.clone();
         let sight_obstacles = scratch.ai_sight_obstacles.clone();
-        let all_soldier_handles = self.ai_global.all_soldier_handles.clone();
+        let all_soldier_handles = self.ai.global.all_soldier_handles.clone();
         let ambiance = self.weather.ambiance;
 
         // Snapshot of every live human in the engine; every per-NPC
@@ -1869,7 +1869,7 @@ impl EngineInner {
         // array.  Equivalent to iterating the engine's element list
         // inside each per-NPC init.
         let potential_detectables = build_potential_detectables(self);
-        let ambush_points_count = self.ai_global.ambush_points.len();
+        let ambush_points_count = self.ai.global.ambush_points.len();
 
         let all_soldier_entity_ids = assets.all_soldier_entity_ids.clone();
         let soldier_subordinate_ids = assets.soldier_subordinate_ids.clone();
@@ -1895,7 +1895,7 @@ impl EngineInner {
         // The 3D anchor feeds the sight-polygon query that decides
         // whether an NPC on the ambush point can be seen; the ID is
         // how AI scripts reference the point.
-        for (idx, ap) in self.ai_global.ambush_points.iter_mut().enumerate() {
+        for (idx, ap) in self.ai.global.ambush_points.iter_mut().enumerate() {
             ap.position_3d = crate::coordinates::WorldPoint3D {
                 x: ap.position.x,
                 y: ap.position.y,
@@ -2019,8 +2019,8 @@ impl EngineInner {
 
         // -- Phase 4: Re-read entity (post-fix) and mutate all the
         //    per-NPC state fields in one shot. --
-        let standard_view_radius = if self.standard_view_polygon_radius > 0 {
-            self.standard_view_polygon_radius
+        let standard_view_radius = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
@@ -2113,8 +2113,8 @@ impl EngineInner {
             // applied at spawn time in `level_loading::spawn_soldier`.
             if is_enemy {
                 match self_camp {
-                    Camp::Royalists => self.ai_global.there_are_royalist_soldiers = true,
-                    Camp::Lacklandists => self.ai_global.there_are_lacklandist_soldiers = true,
+                    Camp::Royalists => self.ai.global.there_are_royalist_soldiers = true,
+                    Camp::Lacklandists => self.ai.global.there_are_lacklandist_soldiers = true,
                     _ => {}
                 }
             }
@@ -2364,8 +2364,8 @@ impl EngineInner {
     pub(super) fn initialize_buildings(&mut self) {
         use crate::ai::{AI_DOOR_RALLY_POINT_DISTANCE, DoorRallyPoint, House, Position};
 
-        self.ai_global.houses.clear();
-        self.ai_global.door_rally_points.clear();
+        self.ai.global.houses.clear();
+        self.ai.global.door_rally_points.clear();
 
         // Index doors by their `sector_in` (building interior side).
         // We read from the live door table on the game host.
@@ -2482,7 +2482,7 @@ impl EngineInner {
                 })
                 .unwrap_or(false);
 
-            self.ai_global.houses.push(House {
+            self.ai.global.houses.push(House {
                 sector_index: u32::from(u16::from(sector_in)),
                 building_index,
                 door_indices,
@@ -2491,11 +2491,11 @@ impl EngineInner {
             });
         }
 
-        self.ai_global.door_rally_points = rally_points;
+        self.ai.global.door_rally_points = rally_points;
 
         tracing::info!(
-            houses = self.ai_global.houses.len(),
-            rally_points = self.ai_global.door_rally_points.len(),
+            houses = self.ai.global.houses.len(),
+            rally_points = self.ai.global.door_rally_points.len(),
             "Initialized AI building data"
         );
     }
@@ -2537,26 +2537,32 @@ impl EngineInner {
                 ai.pending_instant_music_change = false;
             }
         }
-        self.ai_global.green_alert_soldiers = green;
-        self.ai_global.yellow_alert_soldiers = yellow;
-        self.ai_global.red_alert_soldiers = red;
+        self.ai.global.green_alert_soldiers = green;
+        self.ai.global.yellow_alert_soldiers = yellow;
+        self.ai.global.red_alert_soldiers = red;
 
-        let new_overall = self.ai_global.overall_villain_alert();
-        if new_overall == self.ai_global.overall_villain_alert_status {
+        let new_overall = self.ai.global.overall_villain_alert();
+        if new_overall == self.ai.global.overall_villain_alert_status {
             return;
         }
-        let prev = self.ai_global.overall_villain_alert_status;
-        self.ai_global.overall_villain_alert_status = new_overall;
-        self.ai_global.overall_alert_status = new_overall;
+        let prev = self.ai.global.overall_villain_alert_status;
+        self.ai.global.overall_villain_alert_status = new_overall;
+        self.ai.global.overall_alert_status = new_overall;
 
         // Only call `set_music_mode` when not in Sherwood.  Sherwood
         // has its own ambient track and shouldn't hear combat/alert
         // cues even if a soldier briefly goes yellow.
         let is_sherwood = self
+            .mission_domain
             .campaign
             .as_ref()
             .and_then(|c| c.current_mission_idx)
-            .and_then(|idx| self.campaign.as_ref().and_then(|c| c.missions.get(idx)))
+            .and_then(|idx| {
+                self.mission_domain
+                    .campaign
+                    .as_ref()
+                    .and_then(|c| c.missions.get(idx))
+            })
             .is_some_and(|m| {
                 m.profile(profiles).location == crate::profiles::MissionLocation::Sherwood
             });
@@ -2604,8 +2610,8 @@ impl EngineInner {
     /// `view_radius` from `standard_view_polygon_radius`.  Called at
     /// init and when the script changes the radius at runtime.
     pub(super) fn propagate_view_radius(&mut self) {
-        let r = if self.standard_view_polygon_radius > 0 {
-            self.standard_view_polygon_radius
+        let r = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
@@ -2729,12 +2735,12 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
@@ -2778,12 +2784,12 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 )
             };
 
@@ -3387,7 +3393,8 @@ impl EngineInner {
         let current_frame = self.control.frame_counter;
 
         // ── Phase 0: evict expired forbidden remarks ────────────
-        self.ai_global
+        self.ai
+            .global
             .forbidden_remarks
             .retain(|fr| fr.forbidden_till_frame >= current_frame);
 
@@ -3540,7 +3547,7 @@ impl EngineInner {
             // Recently-said check (unless SPEECH_ALWAYS).
             // `is_remark_forbidden` with full scope checking.
             if !flags.contains(SpeechFlags::ALWAYS) {
-                let is_forbidden = self.ai_global.forbidden_remarks.iter().any(|fr| {
+                let is_forbidden = self.ai.global.forbidden_remarks.iter().any(|fr| {
                     if fr.remark != snap.remark {
                         return false;
                     }
@@ -3674,9 +3681,9 @@ impl EngineInner {
             // don't play the same sample twice.  The counter is shared
             // across all NPCs, stored on `AiGlobalState`.
             let variant = if flags.contains(SpeechFlags::CYCLE_3_VARIANTS) {
-                self.ai_global.current_speech_variant =
-                    (self.ai_global.current_speech_variant + 1) % 3;
-                self.ai_global.current_speech_variant as i32
+                self.ai.global.current_speech_variant =
+                    (self.ai.global.current_speech_variant + 1) % 3;
+                self.ai.global.current_speech_variant as i32
             } else {
                 -1
             };
@@ -3741,7 +3748,7 @@ impl EngineInner {
             // `forbid_remark`: auto-forbid based on remark type.
             // EntityId serves the same role as `creation_order`.
             Self::auto_forbid_remark(
-                &mut self.ai_global.forbidden_remarks,
+                &mut self.ai.global.forbidden_remarks,
                 snap.remark,
                 snap.speech_id,
                 snap.entity_id.index() as u16,
@@ -3751,7 +3758,7 @@ impl EngineInner {
 
             // Add to screen remarks (HUD subtitle display) with a
             // 100-frame timer.
-            self.ai_global.screen_remarks.push(crate::ai::ScreenRemark {
+            self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {
                 timer: 100,
                 prefix: snap.profile_name.clone(),
                 remark: snap.remark,
@@ -3857,7 +3864,7 @@ impl EngineInner {
     /// lifetime of the mission (one entry per accepted remark).  The
     /// rendering half lives in `hud_text::render_screen_remarks`.
     pub(super) fn tick_screen_remarks(&mut self) {
-        self.ai_global.screen_remarks.retain_mut(|r| {
+        self.ai.global.screen_remarks.retain_mut(|r| {
             r.timer = r.timer.saturating_sub(1);
             r.timer > 0
         });
@@ -3981,11 +3988,11 @@ impl EngineInner {
     }
 
     pub(super) fn tick_enemy_ai(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
-        self.ai_global.same_frame_target_claims.clear();
+        self.ai.global.same_frame_target_claims.clear();
 
         // Rebuild the per-tick handle → entity view map *before* the
         // detection pass starts firing stimuli into NPC Think() calls.
@@ -4031,7 +4038,7 @@ impl EngineInner {
 
         // ── 6d. Drain pending stimuli ────────────────────────────
         self.tick_enemy_ai_drain_pending_stimuli(assets, &scratch);
-        self.ai_global.same_frame_target_claims.clear();
+        self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
         // Keep this AI pass to target selection, pursuit, and swordfight
@@ -4351,7 +4358,7 @@ impl EngineInner {
         // `ViewconeGrow` branch of `refresh_view` then ramps the cone
         // back open at 8 units/frame.
         if slowly_open_eyes {
-            let standard = self.standard_view_polygon_radius;
+            let standard = self.ai.standard_view_polygon_radius;
             if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
                 s.npc.view_transition = true;
                 s.npc.view_radius = 5;
@@ -4522,13 +4529,13 @@ impl EngineInner {
                 (None, None)
             };
             if let (_, Some((sec_idx, pt_idx))) = release
-                && let Some(sector) = self.ai_global.archery_sectors.get_mut(sec_idx as usize)
+                && let Some(sector) = self.ai.global.archery_sectors.get_mut(sec_idx as usize)
                 && let Some(pt) = sector.points.get_mut(pt_idx as usize)
             {
                 pt.owner = None;
             }
             if let (Some(idx), _) = release
-                && let Some(sector) = self.ai_global.archery_sectors.get_mut(idx as usize)
+                && let Some(sector) = self.ai.global.archery_sectors.get_mut(idx as usize)
             {
                 sector.decrement_owner_counter();
             }
@@ -4590,8 +4597,8 @@ impl EngineInner {
                     sector: None,
                     level: 0,
                 };
-                let vr = if self.standard_view_polygon_radius > 0 {
-                    self.standard_view_polygon_radius as f32
+                let vr = if self.ai.standard_view_polygon_radius > 0 {
+                    self.ai.standard_view_polygon_radius as f32
                 } else {
                     ai_vision::DEFAULT_VIEW_RADIUS as f32
                 };
@@ -4677,12 +4684,12 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.weather.ambiance,
-                            self.standard_view_polygon_radius,
+                            self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
-                            &self.ai_global.all_soldier_handles,
+                            &self.ai.global.all_soldier_handles,
                         )
                     };
                     let tick_data = self.build_npc_tick_data(other_id, &scratch, assets);
@@ -5091,12 +5098,12 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             )
         };
         self.process_pending_begin_panic_for(npc_id, &ctx_for_panic);
@@ -5263,7 +5270,8 @@ impl EngineInner {
 
         // Look up the matching House to get the occupant list.
         let Some(house) = self
-            .ai_global
+            .ai
+            .global
             .houses
             .iter()
             .find(|h| h.sector_index == building_sector_num)
@@ -5362,12 +5370,12 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             )
         };
 
@@ -5398,8 +5406,8 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
     pub(crate) fn nearby_civilians_panic(&mut self, assets: &LevelAssets, source: EntityId) {
         let scratch = self.build_sim_scratch(assets);
-        let view_radius = if self.standard_view_polygon_radius > 0 {
-            self.standard_view_polygon_radius as f32
+        let view_radius = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius as f32
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS as f32
         };
@@ -5443,7 +5451,7 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         // Clone the Arc-shared snapshot so the per-civilian filter can
         // call `los_clear` without holding an immutable borrow on
-        // `self.ai_global` across the later `process_pending_*` mutable
+        // `self.ai.global` across the later `process_pending_*` mutable
         // borrows.
         let obstacles_owned = scratch.ai_sight_obstacles.clone();
         for npc_id in npc_ids {
@@ -5518,12 +5526,12 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 )
             };
 
@@ -5617,12 +5625,12 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             )
         };
 
@@ -5688,7 +5696,8 @@ impl EngineInner {
         // (which is re-borrowed mutably after door selection).
         let dangerous_house_sectors: std::collections::HashSet<u32> =
             if ctx.camp == crate::element::Camp::Lacklandists {
-                self.ai_global
+                self.ai
+                    .global
                     .houses
                     .iter()
                     .filter(|h| {
@@ -5708,7 +5717,7 @@ impl EngineInner {
         // an undirected lookup (clearing `directed_panic`).
         let pick_door = |directed: bool| -> Option<(crate::ai::Position, u32)> {
             let mut best: Option<(crate::ai::Position, u32)> = None;
-            for door in &self.ai_global.door_seek_infos {
+            for door in &self.ai.global.door_seek_infos {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
                 }
@@ -5854,7 +5863,7 @@ impl EngineInner {
         ai.pending_panic_seek_fallback = false;
 
         let anchor = ai.nearest_seek_point_to_flee(
-            &self.ai_global.seek_points,
+            &self.ai.global.seek_points,
             ctx.position,
             ctx.position.sector,
         );
@@ -5868,7 +5877,7 @@ impl EngineInner {
 
         match anchor {
             Some(idx) => {
-                let dest = self.ai_global.seek_points[idx].position;
+                let dest = self.ai.global.seek_points[idx].position;
                 let Some(entity) = self.entities.get_mut(npc_id) else {
                     return;
                 };
@@ -5992,7 +6001,7 @@ impl EngineInner {
             request.radius,
             crate::ai_enemy::SeekFlags::empty(),
             crate::ai_enemy::UNDEFINED_DIRECTION,
-            &mut self.ai_global,
+            &mut self.ai.global,
             ctx,
             tick,
         );
@@ -6019,7 +6028,7 @@ impl EngineInner {
     pub(super) fn tick_patrol_coordination(&mut self, assets: &LevelAssets) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -6067,12 +6076,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
             if let Some(ai) = entity.ai_controller_mut() {
                 ai.set_instructed_patrol_direction(direction, &ctx);
@@ -6458,12 +6467,12 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
 
                 // Instruct facing direction (in-scope mut borrow).
@@ -6714,12 +6723,12 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.weather.ambiance,
-                            self.standard_view_polygon_radius,
+                            self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
-                            &self.ai_global.all_soldier_handles,
+                            &self.ai.global.all_soldier_handles,
                         );
                         let Entity::Soldier(s) = entity else {
                             unreachable!()
@@ -6753,12 +6762,12 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.weather.ambiance,
-                            self.standard_view_polygon_radius,
+                            self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
-                            &self.ai_global.all_soldier_handles,
+                            &self.ai.global.all_soldier_handles,
                         );
                         let Entity::Soldier(s) = entity else {
                             unreachable!()
@@ -6804,12 +6813,12 @@ impl EngineInner {
                                         None,
                                         self.weather.is_forest_level,
                                         self.weather.ambiance,
-                                        self.standard_view_polygon_radius,
+                                        self.ai.standard_view_polygon_radius,
                                         &scratch.ai_entity_views,
                                         &scratch.ai_sight_obstacles,
                                         &self.fast_grid,
                                         &assets.hiking_paths,
-                                        &self.ai_global.all_soldier_handles,
+                                        &self.ai.global.all_soldier_handles,
                                     );
                                     let fallback_tick =
                                         self.build_npc_tick_data(sender_id, &scratch, assets);
@@ -6830,12 +6839,12 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.weather.ambiance,
-                            self.standard_view_polygon_radius,
+                            self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
-                            &self.ai_global.all_soldier_handles,
+                            &self.ai.global.all_soldier_handles,
                         )
                     };
                     // SendStimulus → enemy soldier target: the
@@ -6859,12 +6868,12 @@ impl EngineInner {
                                 None,
                                 self.weather.is_forest_level,
                                 self.weather.ambiance,
-                                self.standard_view_polygon_radius,
+                                self.ai.standard_view_polygon_radius,
                                 &scratch.ai_entity_views,
                                 &scratch.ai_sight_obstacles,
                                 &self.fast_grid,
                                 &assets.hiking_paths,
-                                &self.ai_global.all_soldier_handles,
+                                &self.ai.global.all_soldier_handles,
                             )
                         };
                         let fallback_tick = self.build_npc_tick_data(sender_id, &scratch, assets);
@@ -7224,12 +7233,12 @@ impl EngineInner {
                     officer_building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 )
             };
             let officer_tick = self.build_npc_tick_data(officer_id, &scratch, assets);
@@ -7262,12 +7271,12 @@ impl EngineInner {
                     charly_building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 )
             };
             let charly_tick = self.build_npc_tick_data(charly_id, &scratch, assets);
@@ -7351,12 +7360,12 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
@@ -7428,10 +7437,10 @@ impl EngineInner {
         if let Some(ref mut script) = self.mission_script {
             script.swap_engine_state(
                 &mut self.entities,
-                &mut self.ai_global,
+                &mut self.ai.global,
                 &mut self.fast_grid,
-                &mut self.campaign,
-                &mut self.mission_stat,
+                &mut self.mission_domain.campaign,
+                &mut self.mission_domain.mission_stat,
             );
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
@@ -7454,10 +7463,10 @@ impl EngineInner {
             }
             script.swap_engine_state(
                 &mut self.entities,
-                &mut self.ai_global,
+                &mut self.ai.global,
                 &mut self.fast_grid,
-                &mut self.campaign,
-                &mut self.mission_stat,
+                &mut self.mission_domain.campaign,
+                &mut self.mission_domain.mission_stat,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -7476,7 +7485,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let ambiance = self.weather.ambiance;
-        let standard_view_polygon_radius = self.standard_view_polygon_radius;
+        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         for (npc_id, _, _) in requests {
             let ctx = {
                 let Some(entity) = self.entities.get(npc_id) else {
@@ -7501,7 +7510,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 )
             };
             let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
@@ -7519,7 +7528,7 @@ impl EngineInner {
     // the same frame.
 
     pub(super) fn tick_periodic_ai(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7583,12 +7592,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
 
             match entity {
@@ -7597,7 +7606,7 @@ impl EngineInner {
                         enemy_ai.the_16th_frame(
                             frame_phase,
                             &ctx,
-                            &self.ai_global,
+                            &self.ai.global,
                             &tick_data,
                             Some(&self.fast_grid),
                             is_idle,
@@ -7609,7 +7618,7 @@ impl EngineInner {
                     if let Some(friendly_ai) = c.npc.ai_brain.friendly_mut() {
                         friendly_ai.the_16th_frame(
                             frame_phase,
-                            &mut self.ai_global,
+                            &mut self.ai.global,
                             is_idle,
                             sequence_null_about_to_launch,
                         );
@@ -7650,12 +7659,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
             if let Some(friendly_ai) = entity.friendly_ai_mut() {
                 friendly_ai.random_speech(0, &ctx);
@@ -7672,10 +7681,10 @@ impl EngineInner {
     // `check_ambush_point`.
 
     pub(super) fn tick_refresh_ambush_points(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
-        if self.ai_global.ambush_points.is_empty() {
+        if self.ai.global.ambush_points.is_empty() {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7683,7 +7692,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let ambiance = self.weather.ambiance;
-        let standard_view_polygon_radius = self.standard_view_polygon_radius;
+        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
@@ -7713,7 +7722,7 @@ impl EngineInner {
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
                 (ctx, eyes)
             };
@@ -7726,7 +7735,7 @@ impl EngineInner {
                 dynamic_obstacles: &self.dynamic_sight_obstacles,
                 static_active: &self.static_sight_obstacle_active,
             };
-            let ambush_points = self.ai_global.ambush_points.as_slice();
+            let ambush_points = self.ai.global.ambush_points.as_slice();
 
             let Some(entity) = self.entities.get_mut(npc_id) else {
                 continue;
@@ -7749,7 +7758,7 @@ impl EngineInner {
     // the common macro opcodes too (REVERSE_PATH, WAIT, GOTO_POINT,
     // FACE_TO, ...).
     pub(super) fn tick_ai_macro_timers(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7802,12 +7811,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
 
             // Stop the timer and resume the macro VM.  `execute_next_
@@ -7946,12 +7955,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             match entity {

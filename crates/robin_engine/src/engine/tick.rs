@@ -678,8 +678,8 @@ impl EngineInner {
         // being guarded (guarded PCs can't lead everyone out yet).
         // We signal both via `SideEffects.pending_mission_state_notice`;
         // the host flips the widget-enable flag and shows the popup.
-        if self.mission.mission_won_first_time && !pc_guarded {
-            self.mission.mission_won_first_time = false;
+        if self.mission_domain.state.mission_won_first_time && !pc_guarded {
+            self.mission_domain.state.mission_won_first_time = false;
             self.feedback
                 .pending_side_effects
                 .pending_mission_state_notice = true;
@@ -687,17 +687,17 @@ impl EngineInner {
 
         // ── Check quit conditions ────────────────────────────────
         // Each of the three quit branches displays the full minimap.
-        if self.mission.quit_won {
+        if self.mission_domain.state.quit_won {
             display.minimap.display_map(false, true);
             self.finalize_mission_script(false);
             return Some(GameCode::LevelSucceeded);
         }
-        if self.mission.quit_lost {
+        if self.mission_domain.state.quit_lost {
             display.minimap.display_map(false, true);
             self.quit_mission();
             return Some(GameCode::LevelFailed);
         }
-        if self.mission.quit_interrupted {
+        if self.mission_domain.state.quit_interrupted {
             display.minimap.display_map(false, true);
             self.finalize_mission_script(true);
             return Some(GameCode::LevelInterrupted);
@@ -727,20 +727,20 @@ impl EngineInner {
                 }
                 script.swap_engine_state(
                     &mut self.entities,
-                    &mut self.ai_global,
+                    &mut self.ai.global,
                     &mut self.fast_grid,
-                    &mut self.campaign,
-                    &mut self.mission_stat,
+                    &mut self.mission_domain.campaign,
+                    &mut self.mission_domain.mission_stat,
                 );
                 if let Err(e) = script.hourglass(game_seconds) {
                     tracing::warn!("Script Hourglass error: {e}");
                 }
                 script.swap_engine_state(
                     &mut self.entities,
-                    &mut self.ai_global,
+                    &mut self.ai.global,
                     &mut self.fast_grid,
-                    &mut self.campaign,
-                    &mut self.mission_stat,
+                    &mut self.mission_domain.campaign,
+                    &mut self.mission_domain.mission_stat,
                 );
             }
 
@@ -749,8 +749,10 @@ impl EngineInner {
 
             // Check victory/defeat conditions every 3 game-seconds
             // (or immediately if force_check was set by a native call).
-            if game_seconds.is_multiple_of(VICTORY_CHECK_INTERVAL) || self.force_check {
-                self.force_check = false;
+            if game_seconds.is_multiple_of(VICTORY_CHECK_INTERVAL)
+                || self.mission_domain.force_check
+            {
+                self.mission_domain.force_check = false;
 
                 // Take the script out to avoid borrow conflicts with `self`.
                 if let Some(mut script) = self.mission_script.take() {
@@ -759,18 +761,18 @@ impl EngineInner {
                     }
                     script.swap_engine_state(
                         &mut self.entities,
-                        &mut self.ai_global,
+                        &mut self.ai.global,
                         &mut self.fast_grid,
-                        &mut self.campaign,
-                        &mut self.mission_stat,
+                        &mut self.mission_domain.campaign,
+                        &mut self.mission_domain.mission_stat,
                     );
                     let victory_result = script.check_victory_condition(game_seconds);
                     script.swap_engine_state(
                         &mut self.entities,
-                        &mut self.ai_global,
+                        &mut self.ai.global,
                         &mut self.fast_grid,
-                        &mut self.campaign,
-                        &mut self.mission_stat,
+                        &mut self.mission_domain.campaign,
+                        &mut self.mission_domain.mission_stat,
                     );
 
                     // Put the script back before syncing side-effects.
@@ -780,7 +782,7 @@ impl EngineInner {
                     match victory_result {
                         Ok(1) => {
                             // Mission won!
-                            if !self.mission.mission_won {
+                            if !self.mission_domain.state.mission_won {
                                 // Don't show the "leave mission" message for
                                 // ambush or tactical missions (they end immediately).
                                 let show_window = !matches!(
@@ -846,7 +848,7 @@ impl EngineInner {
             }
 
             // Check if a dead PC was flagged for mission failure
-            if let Some(dead_id) = self.dead_pc.take() {
+            if let Some(dead_id) = self.mission_domain.dead_pc.take() {
                 if let Some(entity) = self.get_entity(dead_id) {
                     let pos = entity.element_data().position_map();
                     self.center_on_point(0, pos);
@@ -1384,7 +1386,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         self.tick_apple_smell();
         self.tick_soldier_track_primary_target();
-        if !self.actors_frozen() && !self.ai_global.freeze {
+        if !self.actors_frozen() && !self.ai.global.freeze {
             let scratch = self.build_sim_scratch(assets);
             self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
         }
@@ -3859,7 +3861,8 @@ impl EngineInner {
                                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                                 continue;
                             };
-                            let dropped = if let Some(campaign) = self.campaign.as_mut()
+                            let dropped = if let Some(campaign) =
+                                self.mission_domain.campaign.as_mut()
                                 && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
@@ -3878,6 +3881,7 @@ impl EngineInner {
                             // available amount so "now empty" is
                             // detectable by re-reading.
                             let now_empty = self
+                                .mission_domain
                                 .campaign
                                 .as_ref()
                                 .and_then(|c| c.characters.get(status_idx))
@@ -4085,7 +4089,8 @@ impl EngineInner {
                                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                                 continue;
                             };
-                            let dropped = if let Some(campaign) = self.campaign.as_mut()
+                            let dropped = if let Some(campaign) =
+                                self.mission_domain.campaign.as_mut()
                                 && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
@@ -4101,6 +4106,7 @@ impl EngineInner {
                             }
                             // Auto-disable when empty.
                             let now_empty = self
+                                .mission_domain
                                 .campaign
                                 .as_ref()
                                 .and_then(|c| c.characters.get(status_idx))
@@ -5942,7 +5948,7 @@ impl EngineInner {
         // BeingDropped) synchronized with the carrier.  Needs the
         // campaign profile manager to look up LittleJohnCarry contextual
         // actions on the carrier.
-        if self.campaign.is_some() {
+        if self.mission_domain.campaign.is_some() {
             abilities::sync_carried_positions(&mut self.entities, &assets.profile_manager);
         }
 
@@ -6158,7 +6164,7 @@ impl EngineInner {
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
                 return;
             };
-            self.campaign.as_ref().unwrap_or_else(|| {
+            self.mission_domain.campaign.as_ref().unwrap_or_else(|| {
                 panic!("dispatch_stealth_command: campaign missing for entity {owner:?}")
             });
             let profile = assets
@@ -7638,7 +7644,7 @@ impl EngineInner {
                     }
                 };
                 if let Some(dest) = dest {
-                    self.cheat_used_flags |= 0x0000_0001; // CHEAT_TELEPORT
+                    self.mission_domain.cheat_used_flags |= 0x0000_0001; // CHEAT_TELEPORT
 
                     // `stop_owner` cleans up any in-flight
                     // movement / active element before the teleport
@@ -8335,7 +8341,7 @@ impl EngineInner {
     fn advance_mission_clock(&mut self) {
         self.control.frame_counter += 1;
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND)
-            && let Some(campaign) = self.campaign.as_mut()
+            && let Some(campaign) = self.mission_domain.campaign.as_mut()
         {
             campaign.add_value(crate::campaign::CampaignValue::MissionLength, 1);
         }
@@ -8892,7 +8898,7 @@ mod drop_ammo_merge_tests {
         };
         desc.status.set_ammo(Action::Bow, bow_ammo);
         campaign.characters.push(desc);
-        engine.campaign = Some(campaign);
+        engine.mission_domain.campaign = Some(campaign);
 
         let mut element = ElementData {
             kind: ElementKind::ActorPc,

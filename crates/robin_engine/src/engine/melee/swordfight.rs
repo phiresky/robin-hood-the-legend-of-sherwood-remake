@@ -546,12 +546,12 @@ impl EngineInner {
                         None,
                         self.weather.is_forest_level,
                         self.weather.ambiance,
-                        self.standard_view_polygon_radius,
+                        self.ai.standard_view_polygon_radius,
                         &scratch.ai_entity_views,
                         &scratch.ai_sight_obstacles,
                         &self.fast_grid,
                         &assets.hiking_paths,
-                        &self.ai_global.all_soldier_handles,
+                        &self.ai.global.all_soldier_handles,
                     )
                 };
                 let stimulus = crate::ai::Stimulus::with_human(
@@ -1356,7 +1356,7 @@ impl EngineInner {
                 _ => None,
             })
             .unwrap_or_default();
-        if let Some(ref mut campaign) = self.campaign {
+        if let Some(ref mut campaign) = self.mission_domain.campaign {
             // The PC experience-add awards a campaign-score bonus
             // whenever the call crosses a 100-XP boundary.
             campaign.add_pc_experience(
@@ -1413,6 +1413,7 @@ impl EngineInner {
 
         // Check if already in coma
         let in_coma = self
+            .mission_domain
             .campaign
             .as_ref()
             .and_then(|c| c.characters.get(status_idx))
@@ -1425,6 +1426,7 @@ impl EngineInner {
         // Check amulets
         let has_amulets = is_vip
             && self
+                .mission_domain
                 .campaign
                 .as_ref()
                 .map(|c| c.values[crate::campaign::CampaignValue::Amulets] >= 1)
@@ -1443,7 +1445,7 @@ impl EngineInner {
             pc.human.unconscious = true;
             pc.element.set_posture(Posture::Lying);
         }
-        if let Some(ref mut campaign) = self.campaign {
+        if let Some(ref mut campaign) = self.mission_domain.campaign {
             if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;
             }

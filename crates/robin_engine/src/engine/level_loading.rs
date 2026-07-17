@@ -421,7 +421,7 @@ impl EngineInner {
         &mut self,
         assets: &mut crate::engine::LevelAssets,
     ) {
-        let Some(campaign) = self.campaign.as_ref() else {
+        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
             return;
         };
         let bank_signature = assets.bank_signature;
@@ -478,10 +478,11 @@ impl EngineInner {
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
         self.script_globals.clear();
-        self.mission_stat.reset();
-        self.short_briefings.clear();
+        self.mission_domain.mission_stat.reset();
+        self.mission_domain.short_briefings.clear();
 
-        self.campaign
+        self.mission_domain
+            .campaign
             .as_ref()
             .expect("Campaign must be set before initialize_from_mission");
         let profiles = assets.profile_manager.clone();
@@ -606,8 +607,8 @@ impl EngineInner {
         // vision path, detecting PCs from further away than in the
         // original game.  Script opcodes (engine/script.rs
         // `SetViewRadius`) can still overwrite this.
-        self.standard_view_polygon_radius = self.weather.ambiance.default_view_polygon_radius();
-        self.mission.map_name = loaded.mission.header.map_filename.clone();
+        self.ai.standard_view_polygon_radius = self.weather.ambiance.default_view_polygon_radius();
+        self.mission_domain.state.map_name = loaded.mission.header.map_filename.clone();
         assets.script_hiking_path_count = loaded.mission.hiking_paths.len();
 
         // Set building count for script handle validation.
@@ -782,8 +783,8 @@ impl EngineInner {
         // per-sub-chunk installers.  Reinforcement doors are handled
         // further below, after `populate_game_host_from_level` has created
         // the proto-level doors those entries share a table with.
-        self.ai_global.reset_seek_points();
-        self.ai_global.reset_ambush_points();
+        self.ai.global.reset_seek_points();
+        self.ai.global.reset_ambush_points();
         if let Some(ref tactic) = loaded.mission.tactic_data {
             for raw in &tactic.seek_points {
                 let dir = crate::ai::SeekPointDirection {
@@ -795,19 +796,19 @@ impl EngineInner {
                     },
                     direction: raw.direction,
                 };
-                self.ai_global.add_seek_point_direction(&dir);
+                self.ai.global.add_seek_point_direction(&dir);
             }
             tracing::debug!(
                 "Loaded {} raw seek-point directions → {} unified seek points",
                 tactic.seek_points.len(),
-                self.ai_global.seek_points.len(),
+                self.ai.global.seek_points.len(),
             );
 
             // Install ambush points.
             // `position_3d` and `id` get fixed up later by the AI-init
             // loop at `engine/ai.rs`.
             for raw in &tactic.ambush_points {
-                self.ai_global.ambush_points.push(crate::ai::AmbushPoint {
+                self.ai.global.ambush_points.push(crate::ai::AmbushPoint {
                     position: crate::ai::Position {
                         x: raw.x as f32,
                         y: raw.y as f32,
@@ -828,7 +829,7 @@ impl EngineInner {
 
             // Wire archery sectors into AiGlobalState.
             // Archery sectors are populated during InitAI from tactic data.
-            self.ai_global.reset_archery_sectors();
+            self.ai.global.reset_archery_sectors();
             for raw in &tactic.archery_sectors {
                 // Resolve the referenced sector through `sector_number_map`
                 // so we can read its layer.
@@ -914,7 +915,8 @@ impl EngineInner {
                     .iter()
                     .map(|&(x, y)| (x as f32, y as f32))
                     .collect();
-                self.ai_global
+                self.ai
+                    .global
                     .archery_sectors
                     .push(crate::ai::SectorArchery {
                         points,
@@ -1647,7 +1649,7 @@ impl EngineInner {
             // Civilians contribute to the same level-money pool the
             // debriefing screen surfaces, even though the pool is named
             // "soldier_money".
-            self.mission_stat.soldier_money += raw.money;
+            self.mission_domain.mission_stat.soldier_money += raw.money;
         }
 
         // PRIS sub-chunk: PCs to rescue.
@@ -1815,6 +1817,7 @@ impl EngineInner {
                 let profile = char_profile
                     .unwrap_or_else(|| panic!("rescue PC profile {} not found", raw.profile_index));
                 let campaign = self
+                    .mission_domain
                     .campaign
                     .as_mut()
                     .expect("Campaign must be set before spawning rescue PCs");
@@ -2101,9 +2104,9 @@ impl EngineInner {
             // the "Level money" and "enemies encountered" rows on the
             // debriefing screen stay at 0 — and the `money` console cheat
             // miscomputes the delta.
-            self.mission_stat.soldier_money += raw.money;
+            self.mission_domain.mission_stat.soldier_money += raw.money;
             if cached_camp == crate::element::Camp::Lacklandists {
-                self.mission_stat.total_soldier_count += 1;
+                self.mission_domain.mission_stat.total_soldier_count += 1;
             }
         }
 
@@ -2422,7 +2425,7 @@ impl EngineInner {
             // the "Level money" debriefing row and the `money` console
             // cheat always see 0 for bonus money.
             if matches!(bonus_kind, crate::element::BonusItemType::Ransom) {
-                self.mission_stat.bonus_money += stored_quantity as u32;
+                self.mission_domain.mission_stat.bonus_money += stored_quantity as u32;
             }
         }
 
@@ -2547,7 +2550,7 @@ impl EngineInner {
 
         // ── Spawn PCs at beam-me points ─────────────────────────────
         // We split this into two phases to satisfy the borrow checker:
-        // Phase A computes assignments from campaign data (borrows self.campaign),
+        // Phase A computes assignments from campaign data (borrows self.mission_domain.campaign),
         // Phase B creates entities (borrows assets.sprite_scriptor, self.entities).
         // (char_idx, profile_idx, beam_me_idx, pre-shuffle Sherwood placement roll)
         let pc_spawn_plan: Vec<(
@@ -2559,6 +2562,7 @@ impl EngineInner {
         let is_sherwood;
         {
             let campaign = self
+                .mission_domain
                 .campaign
                 .as_mut()
                 .expect("Campaign must be set before spawning PCs");
@@ -2919,7 +2923,7 @@ impl EngineInner {
                 .collect();
         }
 
-        // Phase B: Create entities (no longer borrowing self.campaign).
+        // Phase B: Create entities (no longer borrowing self.mission_domain.campaign).
         // Add one script entry per beam-me: the PC if assigned, or None
         // to keep script entity indices aligned.
         let mut pc_count = 0u32;
@@ -2949,7 +2953,7 @@ impl EngineInner {
                             let new_profile_idx =
                                 crate::profiles::CharacterProfileIdx(new_idx as u32);
                             profile_idx = new_profile_idx;
-                            if let Some(campaign) = self.campaign.as_mut()
+                            if let Some(campaign) = self.mission_domain.campaign.as_mut()
                                 && let Some(desc) = campaign.characters.get_mut(char_idx)
                             {
                                 desc.character_profile_idx = Some(new_profile_idx);
@@ -3142,11 +3146,13 @@ impl EngineInner {
                 // instead of waiting for the first runtime ammo update.
                 let disabled_actions: Vec<bool> = {
                     let pc_status_opt = self
+                        .mission_domain
                         .campaign
                         .as_ref()
                         .and_then(|c| c.characters.get(char_idx))
                         .map(|d| &d.status);
                     let ransom = self
+                        .mission_domain
                         .campaign
                         .as_ref()
                         .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
@@ -3216,7 +3222,7 @@ impl EngineInner {
                 // Phase B because this is the only point we have both
                 // the post-shuffle beam-me and the char_idx in scope
                 // with a live mut-borrow path to `campaign.characters`.
-                if let Some(campaign) = self.campaign.as_mut()
+                if let Some(campaign) = self.mission_domain.campaign.as_mut()
                     && let Some(desc) = campaign.characters.get_mut(char_idx)
                 {
                     desc.status.beam_me_index_in_sherwood = if is_sherwood {
@@ -3243,7 +3249,7 @@ impl EngineInner {
         // that read `mission_team_indices` while the player is back in
         // Sherwood don't see the team from whichever mission we just
         // finished.
-        if is_sherwood && let Some(campaign) = self.campaign.as_mut() {
+        if is_sherwood && let Some(campaign) = self.mission_domain.campaign.as_mut() {
             campaign.reset_mission_team();
         }
 
@@ -3532,14 +3538,14 @@ impl EngineInner {
                     .collect()
             })
             .unwrap_or_default();
-        self.ai_global.door_seek_infos = door_infos;
+        self.ai.global.door_seek_infos = door_infos;
         tracing::debug!(
             "Cached {} door seek infos for FindDoorEnemyCouldBeBehind",
-            self.ai_global.door_seek_infos.len(),
+            self.ai.global.door_seek_infos.len(),
         );
 
         // Populate reinforcement door info for MerryManForestCassos.
-        self.ai_global.reinforcement_doors = self
+        self.ai.global.reinforcement_doors = self
             .mission_script
             .as_mut()
             .and_then(|s| s.game_host_mut())
@@ -3572,7 +3578,7 @@ impl EngineInner {
             .unwrap_or_default();
         tracing::debug!(
             "Cached {} reinforcement doors for MerryManForestCassos",
-            self.ai_global.reinforcement_doors.len(),
+            self.ai.global.reinforcement_doors.len(),
         );
 
         // Sort portrait order by character priority (descending — highest
@@ -5573,7 +5579,7 @@ impl EngineInner {
                 let profile_idx = pc.pc.profile_index;
 
                 if train_bow_filter {
-                    let Some(_campaign) = self.campaign.as_ref() else {
+                    let Some(_campaign) = self.mission_domain.campaign.as_ref() else {
                         continue;
                     };
                     let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
@@ -5587,7 +5593,7 @@ impl EngineInner {
                 }
 
                 // Find the PcDescription index (position in campaign.characters).
-                let Some(campaign) = self.campaign.as_ref() else {
+                let Some(campaign) = self.mission_domain.campaign.as_ref() else {
                     continue;
                 };
                 let Some(pc_description_idx) = campaign
@@ -5617,7 +5623,7 @@ impl EngineInner {
         // Now that engine reads are done, write into the campaign sectors:
         // amount harvest (from entities) + occupants (from zones above).
         let entities_snapshot = &self.entities;
-        let Some(campaign) = self.campaign.as_mut() else {
+        let Some(campaign) = self.mission_domain.campaign.as_mut() else {
             return;
         };
         for sector in &mut campaign.production_sectors {
@@ -5667,7 +5673,7 @@ impl EngineInner {
 
         // Resolve last-mission info — drives UpdateAmount/Experience/LifePoints.
         let (last_won, last_length) = {
-            let Some(campaign) = self.campaign.as_ref() else {
+            let Some(campaign) = self.mission_domain.campaign.as_ref() else {
                 return;
             };
             match campaign.last_mission_idx {
@@ -5725,7 +5731,7 @@ impl EngineInner {
 
         // Finalize amounts + gather plan data.
         {
-            let Some(campaign) = self.campaign.as_mut() else {
+            let Some(campaign) = self.mission_domain.campaign.as_mut() else {
                 return;
             };
             // snapshot specialist resolution before mutating occupants — it
@@ -5846,6 +5852,7 @@ impl EngineInner {
 
         // Snapshot collected relics for the RELIC branch.
         let collected_relics: Vec<u32> = self
+            .mission_domain
             .campaign
             .as_ref()
             .map(|c| c.collected_relics.clone())
@@ -5983,7 +5990,7 @@ impl EngineInner {
             for occupant in &plan.occupants {
                 // Resolve the PC description → profile_index → find live entity.
                 let profile_idx = {
-                    let Some(campaign) = self.campaign.as_ref() else {
+                    let Some(campaign) = self.mission_domain.campaign.as_ref() else {
                         continue;
                     };
                     let Some(desc) = campaign.characters.get(occupant.pc_description_idx) else {
@@ -6067,7 +6074,7 @@ impl EngineInner {
                     // `add_pc_experience` would over-credit Sherwood
                     // training by 100 Score per skill-capacity threshold
                     // crossed.
-                    if let Some(campaign) = self.campaign.as_mut()
+                    if let Some(campaign) = self.mission_domain.campaign.as_mut()
                         && let Some(desc) = campaign.characters.get_mut(occupant.pc_description_idx)
                     {
                         desc.status
@@ -6080,7 +6087,7 @@ impl EngineInner {
                     if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }
-                    if let Some(campaign) = self.campaign.as_mut()
+                    if let Some(campaign) = self.mission_domain.campaign.as_mut()
                         && let Some(desc) = campaign.characters.get_mut(occupant.pc_description_idx)
                     {
                         crate::pc_status::heal(&mut desc.status.life_points, amount, false);

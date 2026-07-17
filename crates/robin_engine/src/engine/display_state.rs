@@ -320,7 +320,7 @@ impl EngineInner {
     /// Returns `true` if the cheat fired (caller should NOT set its
     /// host-side `selected_view_element`).
     pub fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
-        if !self.ai_global.ezekiel_2517 {
+        if !self.ai.global.ezekiel_2517 {
             return false;
         }
         let Some(entity) = self.get_entity(id) else {
@@ -469,8 +469,8 @@ impl EngineInner {
         // For PCs, fall back to the engine's standard radius.
         let radius = if let Some(npc) = entity.npc_data() {
             npc.view_radius as f32
-        } else if self.standard_view_polygon_radius > 0 {
-            self.standard_view_polygon_radius as f32
+        } else if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius as f32
         } else {
             crate::shadow_polygon::RADIUS_DAY
         };
@@ -512,7 +512,7 @@ impl EngineInner {
                 ai.view_alert_status,
                 npc.map(|n| n.eye_status).unwrap_or(EyeStatus::LookForward),
                 radius,
-                self.standard_view_polygon_radius.max(1) as f32,
+                self.ai.standard_view_polygon_radius.max(1) as f32,
                 max_suspect,
                 ai.sorrow_level,
             )
@@ -572,7 +572,7 @@ impl EngineInner {
                     ai.view_alert_status,
                     npc.eye_status,
                     radius,
-                    self.standard_view_polygon_radius.max(1) as f32,
+                    self.ai.standard_view_polygon_radius.max(1) as f32,
                     max_suspect,
                     ai.sorrow_level,
                 )
@@ -592,7 +592,7 @@ impl EngineInner {
     /// `RUST_LOG=robin_engine[{ai_log}]=trace`) to surface the overlay
     /// output in the terminal.
     pub fn display_ai_log_for_selected(&self, selected_view_element: Option<EntityId>) {
-        if !self.ai_global.attribute_display {
+        if !self.ai.global.attribute_display {
             return;
         }
         let Some(id) = selected_view_element else {

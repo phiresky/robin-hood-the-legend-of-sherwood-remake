@@ -463,9 +463,11 @@ impl EngineInner {
     pub(crate) fn concussion_ctx_for<I: Into<EntityId>>(&self, id: I) -> ConcussionContext {
         let id = id.into();
         match self.get_entity(id) {
-            Some(entity) => {
-                concussion_ctx_full(entity, self.weather.is_forest_level, self.campaign.as_ref())
-            }
+            Some(entity) => concussion_ctx_full(
+                entity,
+                self.weather.is_forest_level,
+                self.mission_domain.campaign.as_ref(),
+            ),
             None => ConcussionContext::default(),
         }
     }
@@ -703,7 +705,7 @@ impl EngineInner {
         };
         let waker_is_pc = waker.is_pc();
         let waker_is_soldier = matches!(waker, Entity::Soldier(_));
-        if !(waker_is_pc || (waker_is_soldier && self.ai_global.npcs_can_be_enemies())) {
+        if !(waker_is_pc || (waker_is_soldier && self.ai.global.npcs_can_be_enemies())) {
             return;
         }
         let waker_camp = waker.camp();

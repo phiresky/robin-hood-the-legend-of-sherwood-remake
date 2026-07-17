@@ -256,7 +256,11 @@ impl EngineInner {
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .cloned();
 
-        let ctx = concussion_ctx_full(victim, self.weather.is_forest_level, self.campaign.as_ref());
+        let ctx = concussion_ctx_full(
+            victim,
+            self.weather.is_forest_level,
+            self.mission_domain.campaign.as_ref(),
+        );
 
         // Build params and apply damage
         let attacker_ctx = SwordAttackerContext {
@@ -797,7 +801,11 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
-        let ctx = concussion_ctx_full(victim, self.weather.is_forest_level, self.campaign.as_ref());
+        let ctx = concussion_ctx_full(
+            victim,
+            self.weather.is_forest_level,
+            self.mission_domain.campaign.as_ref(),
+        );
         let max_lp = get_max_life_points(victim);
 
         let victim = match self.entities.get_mut(victim_id) {
@@ -915,7 +923,11 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
-        let ctx = concussion_ctx_full(victim, self.weather.is_forest_level, self.campaign.as_ref());
+        let ctx = concussion_ctx_full(
+            victim,
+            self.weather.is_forest_level,
+            self.mission_domain.campaign.as_ref(),
+        );
         let max_lp = get_max_life_points(victim);
 
         let victim = match self.entities.get_mut(victim_id) {
@@ -1051,7 +1063,11 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
-        let ctx = concussion_ctx_full(victim, self.weather.is_forest_level, self.campaign.as_ref());
+        let ctx = concussion_ctx_full(
+            victim,
+            self.weather.is_forest_level,
+            self.mission_domain.campaign.as_ref(),
+        );
         let life_points = get_life_points(victim);
         let is_lacklandist = victim.is_soldier()
             && victim.soldier_data().map(|s| s.cached_camp)
@@ -1628,17 +1644,20 @@ impl EngineInner {
             return;
         };
         let (is_vip, profile_name) = self
+            .mission_domain
             .campaign
             .as_ref()
             .and(assets.profile_manager.get_character(profile_idx))
             .map(|cp| (cp.vip, cp.profile_name.clone()))
             .unwrap_or((false, String::new()));
         let amulets = self
+            .mission_domain
             .campaign
             .as_ref()
             .map(|c| c.values[crate::campaign::CampaignValue::Amulets])
             .unwrap_or(0);
         let char_idx = self
+            .mission_domain
             .campaign
             .as_ref()
             .and_then(|c| c.get_character_by_profile(profile_idx));
@@ -1648,17 +1667,18 @@ impl EngineInner {
         // victim is a VIP — net effect: `dead_pc = victim` iff
         // `is_vip && amulets == 0`.
         if !is_vip || amulets == 0 {
-            if let (Some(idx), Some(c)) = (char_idx, self.campaign.as_mut()) {
+            if let (Some(idx), Some(c)) = (char_idx, self.mission_domain.campaign.as_mut()) {
                 c.remove_from_gang(idx);
             }
             if is_vip {
-                self.dead_pc = Some(victim_id);
+                self.mission_domain.dead_pc = Some(victim_id);
             }
         }
 
         // Peasant trumpet + killed-peasant stat.
         if !is_vip {
             let has_replacement = self
+                .mission_domain
                 .campaign
                 .as_ref()
                 .and_then(|c| {
@@ -1671,12 +1691,14 @@ impl EngineInner {
             {
                 pc.trumpet_enabled = true;
             }
-            self.mission_stat.add_killed_peasant();
+            self.mission_domain.mission_stat.add_killed_peasant();
         }
 
         // Unconditional new-PC mission-stat decrement.
         if !profile_name.is_empty() {
-            self.mission_stat.remove_new_pc(&profile_name);
+            self.mission_domain
+                .mission_stat
+                .remove_new_pc(&profile_name);
         }
 
         // Burn the three macro slots belonging to the dead PC.  We
@@ -1903,7 +1925,7 @@ impl EngineInner {
             .map(|e| e.is_soldier() && e.camp() == Camp::Royalists)
             .unwrap_or(false);
         if bump_killed_allied {
-            self.mission_stat.add_killed_allied();
+            self.mission_domain.mission_stat.add_killed_allied();
         }
 
         // Campaign score bump for Lacklandist soldier deaths during
@@ -1929,7 +1951,7 @@ impl EngineInner {
             .unwrap_or(false);
         if bump_lacklandist_score
             && !projectile_death
-            && let Some(campaign) = self.campaign.as_mut()
+            && let Some(campaign) = self.mission_domain.campaign.as_mut()
         {
             campaign.add_value(
                 crate::campaign::CampaignValue::Score,

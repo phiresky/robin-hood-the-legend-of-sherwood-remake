@@ -406,7 +406,7 @@ impl EngineInner {
         // picked.
         let blipped = entity.element_data().blipped;
         let blue_pixels_are_in = if focus == Focus::View && !entity.is_pc() {
-            self.ai_global.ezekiel_2517
+            self.ai.global.ezekiel_2517
         } else {
             blipped
         };
@@ -1263,6 +1263,7 @@ impl EngineInner {
                 .is_some_and(|e| self.is_entity_vip(assets, e));
             if selector_is_vip {
                 let ransom = self
+                    .mission_domain
                     .campaign
                     .as_ref()
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))

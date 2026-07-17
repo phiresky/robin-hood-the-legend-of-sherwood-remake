@@ -275,12 +275,12 @@ impl EngineInner {
                     building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 let tick_data =
@@ -315,8 +315,8 @@ impl EngineInner {
         // Standard view radius — set at level load from the day/night
         // settings.  Falls back to the default only when the level
         // didn't populate one.
-        let svr = if self.standard_view_polygon_radius > 0 {
-            self.standard_view_polygon_radius as f32
+        let svr = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius as f32
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS as f32
         };
@@ -681,10 +681,10 @@ impl EngineInner {
             if let Some(ref mut script) = self.mission_script {
                 script.swap_engine_state(
                     &mut self.entities,
-                    &mut self.ai_global,
+                    &mut self.ai.global,
                     &mut self.fast_grid,
-                    &mut self.campaign,
-                    &mut self.mission_stat,
+                    &mut self.mission_domain.campaign,
+                    &mut self.mission_domain.mission_stat,
                 );
                 for (target_handle, pc_handle) in listenable_calls {
                     if let Err(e) = script.call_target_function(
@@ -697,10 +697,10 @@ impl EngineInner {
                 }
                 script.swap_engine_state(
                     &mut self.entities,
-                    &mut self.ai_global,
+                    &mut self.ai.global,
                     &mut self.fast_grid,
-                    &mut self.campaign,
-                    &mut self.mission_stat,
+                    &mut self.mission_domain.campaign,
+                    &mut self.mission_domain.mission_stat,
                 );
             }
             self.sync_game_host_post_script(assets);
@@ -985,12 +985,12 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
@@ -1030,7 +1030,7 @@ impl EngineInner {
         let mut out_of_view_dispatches: Vec<(EntityId, u32)> = Vec::new();
 
         let universal_frame = self.control.frame_counter;
-        let golden_eye = self.ai_global.golden_eye_mode;
+        let golden_eye = self.ai.global.golden_eye_mode;
         // Forest-level flag — selects between forest and city
         // detection-speed parameters when scaling a PC's visual
         // detection speed in the per-target visibility pass below.
@@ -1263,7 +1263,7 @@ impl EngineInner {
             // outer `ai_global` split-borrow is only read by a
             // nested scope below; the now-deferred stimulus pushes
             // at this level don't need it.
-            let _ai_global = &mut self.ai_global;
+            let _ai_global = &mut self.ai.global;
             let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
                 return None;
             };
@@ -1954,7 +1954,7 @@ impl EngineInner {
                         .primary_target_multiplicity
                         .push((eid.index(), mult));
                 }
-                for &(attacker, target) in &self.ai_global.same_frame_target_claims {
+                for &(attacker, target) in &self.ai.global.same_frame_target_claims {
                     if attacker == enemy_ai.base.me || target == 0 {
                         continue;
                     }
@@ -2626,7 +2626,7 @@ impl EngineInner {
         world: &AiWorldView,
     ) {
         let universal_frame = self.control.frame_counter;
-        let golden_eye = self.ai_global.golden_eye_mode;
+        let golden_eye = self.ai.global.golden_eye_mode;
         let is_forest_level = self.weather.is_forest_level;
 
         // Build target list from alive Lacklandist soldiers.
@@ -2818,7 +2818,7 @@ impl EngineInner {
             // royalist detection below still compiles —
             // the now-deferred EVENT_VIEW push doesn't
             // need it).
-            let _ai_global = &mut self.ai_global;
+            let _ai_global = &mut self.ai.global;
             let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
                 return;
             };
@@ -3207,7 +3207,7 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let _ai_global = &mut self.ai_global;
+        let _ai_global = &mut self.ai.global;
         let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
             return;
         };
