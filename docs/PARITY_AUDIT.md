@@ -1,0 +1,136 @@
+# Gameplay Parity Audit
+
+This document is the review queue for gameplay behavior in the Rust port. The
+goal is not line-for-line translation. The goal is that every gameplay effect
+can be traced to the original game or is explicitly approved as a post-port
+feature.
+
+The automated inventory is deliberately broader than this ledger:
+
+```sh
+python3 scripts/audit_gameplay_parity.py
+python3 scripts/audit_gameplay_parity.py --section markers
+python3 scripts/audit_gameplay_parity.py --section provenance
+python3 scripts/audit_gameplay_parity.py --section phases
+python3 scripts/audit_gameplay_parity.py --self-check
+```
+
+Do not enable `--fail-on high` in CI until the current findings have been
+triaged into this ledger. The scanner finds review candidates; it cannot prove
+that behavior matches the original.
+
+## Evidence Rules
+
+Use one of these statuses:
+
+- `mismatch`: Rust and original behavior were compared and differ.
+- `incomplete`: the Rust code explicitly implements only part of the original.
+- `unverified`: suspicious or structurally different, but no behavioral
+  difference has been proved yet.
+- `verified`: compared with exact original source and covered by a focused test
+  or deterministic replay where practical.
+- `intentional`: no original equivalent and approved in `docs/NEW_FEATURES.md`.
+- `host-only`: tooling, rendering backend, networking, replay, or platform work
+  that cannot affect authoritative gameplay state.
+
+A source comment is not evidence by itself. A reviewed item must name the
+original file and function. If an intentional difference affects gameplay, add
+it to `docs/NEW_FEATURES.md`; do not describe it only as a safeguard, fallback,
+or simplification.
+
+## Fixed Findings
+
+| ID | Rust behavior | Original evidence | Resolution |
+| --- | --- | --- | --- |
+| PA-001 | PCs automatically collected nearby bonuses every tick. | `RHElementObject::BuildTakeSequence`, `RHelementobject.cpp`; `RHElementActorPC::Execute` Taking completion, `RHelementactorpc.cpp`. | Removed in commit `682dc1f49`; collection now requires the Take sequence. |
+| PA-002 | Unmapped AI stimuli skipped `FilterAIEvent`; comments incorrectly called original stimuli such as `EVENT_ENEMY_NEAR` Rust-only. | `RHArtificialIntelligence::StartThink`, `RHartificialintelligence.cpp`, assigns event code `-2` and still calls the script filter; enum in `RHartificialintelligence.h`. | Rust now calls `FilterAIEvent(source, -2)` through the normal filtered dispatch path and has a regression test. |
+| PA-003 | Default mission loss treated any living, conscious PC as playable and ignored `PcData::playable`. | `RHEngine::PerformHourglass`, `RHengine.cpp`; `RHElementActorPC::IsPlayable`, `RHelementactorpc.h`. | The check now uses the explicit playable flag plus guard state, with a focused test. |
+| PA-010 | EnemyNear scanned every PC unconditionally and ran generic trouble/battle decisions. | `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest` and `EVENT_ENEMY_NEAR`, `RHartificialmalignity.cpp`. | `15e5ffd6f` restores the trainer/substate/time gates, ordered `mlistThem` scan, exact box/postures, stimulus target assignment, and `BeginSwordfight`. |
+| PA-011 | `reinitialize_them_list` retained an unseen saved primary target. | `RHArtificialMalignity::ReinitializeThemList`, `RHartificialmalignity.cpp`. | `4350e5092` rebuilds the list solely from visible, living enemies. |
+| PA-012 | FadeToBlack frozen frames advanced the mission clock. | `RHScript::FadeToBlack`, `RHScript.cpp`. | `e3fb1efb0` makes the fade render-only while simulation, RNG, script, display, and sound timers remain frozen. |
+| PA-020 | Arrow-watching AI treated `EVENT_DONE` as a return-to-duty signal. | Arrow-watching substate cases in `RHartificialmalignity.cpp`. | `a8dcaaf01` removes the invented fallback and adds a focused regression. |
+
+## Open Findings
+
+Priority reflects likely gameplay impact, not implementation effort.
+
+| ID | Priority | Status | Finding and evidence |
+| --- | --- | --- | --- |
+| PA-013 | High | unverified | Rust globally regroups per-entity Hourglass work into movement, animation, script, detection, combat, and ability passes. Original `RHEngine::PerformHourglass` calls each virtual `Element::Hourglass` in entity order before `RHSequenceManager::Hourglass` (`RHengine.cpp`). Cross-entity and same-frame callback ordering needs scenario tests. |
+| PA-014 | High | mismatch | Rust drains pending path/move work synchronously in one tick. Original `RHEngine::ProcessPathRequests` calls the pathfinder once and resolves at most one queued request per frame (`RHengine.cpp`). Decide whether the timing difference is an approved feature or restore the rate limit. |
+| PA-015 | High | incomplete | Missing sound/exclamation sample durations fabricate 75-frame completions. Exclamation completion drives `EVENT_MYTALK_*`, so missing asset metadata changes AI behavior. Original completion is tied to actual audio playback. Missing gameplay-critical duration data must warn and fail or use verified metadata, not a silent constant. |
+| PA-016 | High | mismatch | NPC tick phase order differs materially from `RHElementActorNPC::Hourglass`: Rust runs busy/ladder/macro timer before detection and patrol after periodic AI. Original order is patrol, base human hourglass, broadcasts/view/detection/ambush, busy/ladder, lock gate, 16th-frame work, normal timer, macro timer, queued stimuli (`RHelementactornpc.cpp`). `24c43efde` corrects combat-target direction tracking before view refresh, but the broader ordering mismatch remains. |
+| PA-021 | Medium | incomplete | Script native `Sees` omits ambiance-adjusted view radius and the forest Royalist 180-degree rule. Original `RHScript::Sees` delegates to `RHElementActorNPC::IsDetecting` (`RHScript.cpp`, `RHelementactornpc.cpp`). |
+| PA-022 | Medium | incomplete | Cached door authorization checks only building type, active state, and villain lock. Original `FindDoorEnemyCouldBeBehind` calls `RHGate::IsActorAutorized`, which also checks building capacity and riders (`RHartificialmalignity.cpp`, `RHGate.cpp`). |
+| PA-023 | Medium | mismatch | `SetExperiences` writes the campaign description and persists into later missions. Original `RHScript::SetExperiences` changes only the live PC capacities (`RHScript.cpp`). |
+| PA-024 | Medium | incomplete | `SetPersistentProperty` drops live PC ammo writes when no campaign exists. Original `RHScript::SetPersistentProperty` updates the live actor for arrows and PC ammo properties (`RHScript.cpp`). This path must not silently return a fabricated failure. |
+| PA-025 | Medium | mismatch | Charly-to-officer logic substitutes 360-degree detection. Original calls normal `IsDetecting(mpAntagonist)` and therefore respects the view cone (`RHartificialmalignity.cpp`). |
+| PA-026 | Medium | mismatch | Shoulder-ceiling checks run for every `CarryingOnShoulders` posture. Original performs the check only while executing `WALKING_CARRYING_ON_SHOULDERS` (`RHelementactorpc.cpp`). |
+| PA-027 | Medium | unverified | Messenger processing, condolations, and self-stimuli are deferred to global tick phases. Original `ForwardMessage` and `SendCondolationCard` paths are synchronous and re-entrant (`RHMessenger.cpp`, `RHsequenceelement.cpp`). Add ordering tests before changing the architecture. |
+| PA-028 | Medium | unverified | Rust dispatches script `SendMessage` after the script call instead of launching the original `RHCOMMAND_SEND_MESSAGE` sequence element. Compare arbitration and same-frame callback order (`RHScript.cpp`, `RHsequenceelement.cpp`). |
+| PA-029 | Medium | unverified | Rust runs mission `PostInitialize` at the end of the first engine tick before render/sound. Original host loop calls it after refresh and sound (`RHgame.cpp`). This may be an intentional rollback adaptation but is not yet approved or tested. |
+| PA-030 | Low | unverified | Collinear movement-line intersection fabricates impact parameter `t = 0.5`. Find and port the original earliest-overlap behavior or add geometry evidence and focused collision tests. |
+| PA-031 | Low | mismatch | Push handling falls back to radial movement for unexpected thrust kinds. Original push dispatch handles the three supported kinds and asserts otherwise (`RHelementactorhuman.cpp`). |
+
+## Tick Provenance
+
+This is the top-level audit spine. A row marked verified means the phase has a
+clear upstream owner; extracted helper internals and same-frame ordering still
+need their own review.
+
+| Rust phase | Original owner | Status / next check |
+| --- | --- | --- |
+| Mission notices, quit branches, script Hourglass and victory | `RHEngine::PerformHourglass`, `RHengine.cpp` | verified structurally |
+| Frame increment, lock gate, default loss | `RHEngine::PerformHourglass` | playable mismatch fixed; retain regression |
+| Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
+| Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | PA-014 |
+| Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; test entity-order observations |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | PA-016 |
+| Arrows, purse/coins, wasps, nets, melee, abilities | per-type virtual Hourglass/Execute methods | verify spawn-frame inclusion and ordering per type |
+| Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
+| Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | PA-027 |
+| PostInitialize | mission loop in `RHgame.cpp` | PA-029 |
+| RNG, rollback side effects, minimap/marks/camera | no single original phase | intentional architecture only where documented; audit gameplay state individually |
+
+## Coverage Matrix
+
+`queued` means the scanner has produced candidates but no systematic
+source-to-source pass is complete.
+
+| Subsystem | State | Required evidence |
+| --- | --- | --- |
+| Main tick and mission state | in progress | Resolve PA-013 through PA-016 and add ordering tests. |
+| Item interaction / pickup | verified for explicit Take | Keep the no-proximity-pickup regression. Audit other interaction shortcuts. |
+| Enemy detection and state machine | in progress, high risk | Resolve PA-016 and PA-025; continue state-by-state comparison. |
+| Melee and damage | queued, high risk | Review every remaining simplification against actor-human combat code. |
+| Movement, paths, doors, lifts | in progress, high risk | Resolve PA-014, PA-022, PA-030. |
+| Script natives and callbacks | in progress, high risk | Resolve PA-021, PA-023, PA-024, PA-028. |
+| Sequence manager and messages | queued, high risk | Same-frame and arbitration replay tests for PA-027/PA-028. |
+| Projectiles and abilities | queued | Per-type Hourglass and spawn-frame comparison. |
+| Audio-driven AI state | queued, high risk | Resolve PA-015 without fake duration data. |
+| Save/campaign persistence | queued | Compare every persistent native and mission transition. |
+| Rendering, UI, HTTP, replay, multiplayer | exception review | Gameplay state changes require `NEW_FEATURES.md`; pure host behavior is host-only. |
+
+## Audit Workflow
+
+1. Run the scanner and select one gameplay finding, starting with high-priority
+   state mutation, AI, scripts, movement, and combat.
+2. Locate the exact original caller and callee. Record file, function, gates,
+   ordering, and failure behavior.
+3. Classify the ledger item before editing. Do not convert uncertainty into a
+   permissive fallback.
+4. Reproduce observable behavior with the smallest unit/integration test or a
+   recorded replay. For timing issues, assert the exact frame and sequence
+   state, not only the eventual result.
+5. Make one behavioral correction per commit where practical. Update the
+   ledger status and add an `Original:` comment at non-obvious ports.
+6. If the difference is desired, document it in `docs/NEW_FEATURES.md` and add
+   a test that makes the intentional behavior explicit.
+
+Stale comments must be corrected as part of review. In particular,
+`reconsider_enemy_approach` and `tick_enemy_sword_attacks` are no longer the
+small simplified implementations their headings describe, while the
+`is_detecting_360_degrees` distance check mirrors an original method whose own
+name is approximate. Keyword matches for those comments are not evidence of a
+current behavior mismatch.
