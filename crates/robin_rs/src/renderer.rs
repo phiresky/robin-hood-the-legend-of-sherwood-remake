@@ -511,7 +511,7 @@ fn build_mask_overlay_pipeline(
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
+            buffers: &[Some(vertex_buffers[0].clone())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -582,7 +582,7 @@ fn build_quad_pipelines(
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: Some("vs_main"),
-                buffers: &vertex_buffers,
+                buffers: &[Some(vertex_buffers[0].clone())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -663,7 +663,7 @@ fn build_colorize_pipeline(
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
+            buffers: &[Some(vertex_buffers[0].clone())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -728,7 +728,7 @@ fn build_bg_alpha_pipeline(
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
+            buffers: &[Some(vertex_buffers[0].clone())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -793,7 +793,7 @@ fn build_view_cone_pipeline(
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
+            buffers: &[Some(vertex_buffers[0].clone())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -2161,7 +2161,7 @@ impl Renderer {
         }
 
         self.gpu.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.gpu.queue.present(frame);
 
         // Frame stats captured before the per-frame clears below.
         let draws_this_frame = self.queued.len();
@@ -3543,7 +3543,17 @@ impl Renderer {
             self.gpu_phase_active = false;
             return None;
         }
-        let mapped = slice.get_mapped_range();
+        let mapped = match slice.get_mapped_range() {
+            Ok(mapped) => mapped,
+            Err(error) => {
+                tracing::warn!(%error, "capture_frame_rgba: failed to access mapped buffer");
+                buffer.unmap();
+                self.queued.clear();
+                self.frame_texture_bgs.clear();
+                self.gpu_phase_active = false;
+                return None;
+            }
+        };
         let mut rgba = Vec::with_capacity((w * h * bytes_per_pixel) as usize);
         for row in 0..h {
             let start = (row * padded_bpr) as usize;

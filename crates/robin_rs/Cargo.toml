@@ -64,7 +64,7 @@ arboard = { version = "3", optional = true }
 # GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
 # browsers that don't yet expose WebGPU (most non-Chrome desktops as
 # of 2026).  Adds a few KiB to native; harmless to keep on.
-wgpu = { version = "29", features = ["webgl", "glsl"] }
+wgpu = { version = "30", features = ["webgl", "glsl"] }
 pollster = "0.4"
 
 # Audio

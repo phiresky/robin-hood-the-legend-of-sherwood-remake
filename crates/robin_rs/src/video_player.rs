@@ -595,7 +595,7 @@ impl VideoBlit {
             pass.draw(0..6, 0..1);
         }
         window.gpu.queue.submit(Some(encoder.finish()));
-        frame.present();
+        window.gpu.queue.present(frame);
         // Silence "unused" warnings — these fields exist to keep the
         // bind-group layout / sampler alive for the pipeline's life.
         let _ = (&self.bgl, &self.sampler);
