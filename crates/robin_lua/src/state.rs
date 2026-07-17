@@ -14,8 +14,8 @@
 //! It does not own engine state — engine pointers are passed in per
 //! call via [`MissionLuaState::with_host`]. The Lua state lives on
 //! the host side (not in `Engine`) because `mlua::Lua` is not
-//! serializable or rollback-friendly: see `docs/lua.md` for the
-//! single-player-only determinism story.
+//! serializable or rollback-friendly. See `docs/PARITY_AUDIT.md` for the
+//! deterministic-mode restriction and required snapshot work.
 //!
 //! ## Why Luau, not Lua 5.4
 //!
@@ -88,7 +88,8 @@ impl MissionLuaState {
 
         // `SequenceCallbacks` is the closure stash for
         // `SequenceCall(fn)` — see `SequenceCall` semantics in
-        // `docs/lua.md`. We keep it in the registry rather than
+        // the Spellforge sequence-callback contract. We keep it in the
+        // registry rather than
         // `_G` so the sandbox's "globals are frozen" rule doesn't
         // block `SequenceCall` from inserting new ids. Scripts
         // never reach into the table directly (it's a private
@@ -257,9 +258,11 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
     }
 
     // Reroute `math.random` through the engine's `sim_rng`. Every
-    // peer runs the same seeded `fastrand::Rng` installed on
-    // `Engine::new`, so identical script calls produce identical
-    // rolls. Three calling conventions match stock Lua:
+    // peer must use the same Engine-owned `fastrand::Rng`, so identical
+    // script calls produce identical rolls.
+    // PARITY TODO: Lua Initialize currently runs outside the tick's installed
+    // RNG scope; thread an explicit Engine RNG context through every event.
+    // Three calling conventions match stock Lua:
     //
     //   math.random()    -> float in [0, 1)
     //   math.random(n)   -> int in [1, n]

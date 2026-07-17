@@ -3687,6 +3687,10 @@ impl EngineInner {
     /// Remove the campaign at mission-end (or shutdown) and return it
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
+    /// PARITY TODO: mission teardown must require `Some` and return a typed
+    /// error (or panic with context). Callers must never replace `None` with a
+    /// default campaign; the Original mission runtime always has the required
+    /// `RHCampaign::GetCampaign()` object.
     pub fn take_campaign(&mut self) -> Option<crate::campaign::Campaign> {
         self.campaign.take()
     }

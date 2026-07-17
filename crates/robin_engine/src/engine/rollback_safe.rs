@@ -687,6 +687,9 @@ impl Engine {
 
         // Validate `FastFindGrid` runtime fields that are sized from
         // level geometry.
+        // PARITY TODO: return a typed restore error on a mismatch. Marking
+        // every entry active invents gameplay state and hides an incompatible
+        // or corrupt snapshot.
         let n_lines = inner.fast_grid.level.lines.len();
         let n_sectors = inner.fast_grid.level.sectors.len();
         let n_masks = inner.fast_grid.level.masks.len();

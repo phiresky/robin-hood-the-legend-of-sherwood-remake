@@ -152,8 +152,12 @@ impl LuaSession {
     /// ones are perfectly valid.
     ///
     /// Returns the integer result of the Lua call, defaulting to 0
-    /// when the script returns nothing or a non-integer (matching
-    /// the original DLL's `luaRun` template).
+    /// when the script returns nothing or a non-integer.
+    ///
+    /// PARITY TODO(Spellforge): cite the exact upstream `luaRun` version for
+    /// return coercion. Spellforge Lua is not present in `original-code/`.
+    /// Interpreter errors must become a typed mission error rather than the
+    /// same zero used for an optional callback/no return.
     pub fn run_event(&self, host: &mut GameHost, event_name: &str, args: &[i32]) -> i32 {
         let result = self.state.with_host(host, |lua| {
             let globals = lua.globals();

@@ -64,6 +64,14 @@ A list of which additional features we have added, which ones we might still wan
   client reconnect are implemented. The current design is predictive rollback
   netcode rather than strict "wait for every peer before ticking" lockstep.
 
+- **Partial Spellforge Lua mission support**. Custom-mission launch can extract
+  and sandbox a Lua companion, register native shims, and call its
+  `Initialize` / `PostInitialize` hooks. This is a post-original extension, not
+  Original-game scripting parity. Timer, victory, finalize, and per-entity
+  dispatch are not wired at this revision, and Lua state is not saveable or
+  rollback-safe; see `PARITY_AUDIT.md` before enabling it in deterministic
+  modes.
+
 ## Todo
 
 - **Android touch polish**

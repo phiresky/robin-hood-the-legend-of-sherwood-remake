@@ -5382,10 +5382,11 @@ impl EngineInner {
         self.tick_ai_macro_timers(assets);
 
         // ── Per-frame enemy AI tick ─────────────────────────────
-        // Vision → alert → pursue.  Stand-in for the full
-        // detection / `Think(stimulus)` pipeline until the state
-        // machine is ported.  Without this, enemies stand around
-        // doing nothing.
+        // Original: RHElementActorNPC::Hourglass calls RefreshView,
+        // RefreshDetection, RefreshAmbushPoints, timers, and queued Think
+        // stimuli per NPC (`original-code/RHelementactornpc.cpp:3495-3659`).
+        // PARITY TODO: the Rust global snapshot/drain phases need ordered
+        // trace tests proving the same per-entity and re-entrant visibility.
         self.tick_enemy_ai(assets);
 
         // ── Per-frame ambush-point peek scan ────────────────────
@@ -5548,12 +5549,10 @@ impl EngineInner {
         }
 
         // ── Ground mark animation ────────────────────────────────
-        // Deliberately NOT advanced here: ground marks only
-        // increment their current sprite frame inside the per-mark
-        // on-screen guard, so off-screen marks freeze and never
-        // retire.  Matching that means the advancement + retirement
-        // belongs in the renderer (`render_ground_marks`), which
-        // knows the current view box.
+        // Advanced after `perform_hourglass_inner` by `ground_mark.tick`,
+        // using the deterministic director view. That helper preserves the
+        // original on-screen guard, so off-screen marks freeze. The renderer
+        // remains read-only; see the wrapper at the start of this file.
 
         // Selection ring animation lives host-side now —
         // `Game::run_engine_tick` advances `host.selection_mark`

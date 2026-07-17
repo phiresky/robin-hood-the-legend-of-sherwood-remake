@@ -1227,6 +1227,9 @@ pub(super) fn load_level_and_sprite_bank(
     // header seed (so the recording's recorded actions reproduce its
     // recorded state) > the multiplayer-negotiated `mp_mission_seed`
     // > the hardcoded single-player default of 0.
+    // PARITY TODO: a requested replay whose header cannot be decoded must
+    // abort before Engine construction. Falling back after that error invents
+    // a seed and can silently replay a different timeline.
     let rng_seed = if let Some(data) = args.replay_data.as_ref() {
         data.header.rng_seed
     } else if let Some(spec) = args.replay.as_deref() {
