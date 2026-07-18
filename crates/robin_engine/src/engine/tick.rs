@@ -157,6 +157,153 @@ enum OwnerActionBarrier {
     Skip,
 }
 
+/// Synchronous position assertion against entity state and its owning
+/// sequence element.
+///
+/// Original provenance: `RHelementactor.cpp:3006-3035` performs this check
+/// directly from `Translate`: a sector-less assertion compares max-norm
+/// distance against `tolerance + 5`, while a sector assertion compares only
+/// the sector. Both paths interrupt on mismatch and terminate on success.
+struct PositionAssertionContext<'a> {
+    entities: &'a crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+}
+
+impl PositionAssertionContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let movement = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement {
+                    destination,
+                    sector,
+                    tolerance,
+                    ..
+                } => Some((*destination, *sector, *tolerance)),
+                _ => None,
+            });
+
+        let matches = movement.is_none_or(|(destination, expected_sector, tolerance)| {
+            let entity = self.entities.get(owner);
+            if let Some(expected_sector) = expected_sector {
+                entity.and_then(|entity| entity.element_data().sector()) == Some(expected_sector)
+            } else {
+                let position = entity
+                    .map(|entity| entity.element_data().position_map())
+                    .unwrap_or_default();
+                let delta_x = position.x - destination.x;
+                let delta_y = position.y - destination.y;
+                delta_x.abs().max(delta_y.abs()) < tolerance + 5.0
+            }
+        });
+
+        if matches {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_interrupted(
+                seq_id,
+                elem_idx,
+                crate::sequence::CascadeFlags::NEXT_LEVEL,
+            );
+        }
+        OwnerActionBarrier::Reach
+    }
+}
+
+/// Lift-entry arbitration owns only door metadata, the mutable spatial lift
+/// runtime, entity occupancy bookkeeping, and sequence state.
+///
+/// TODO(parity): the original actor translators group `WAIT_FREE_LIFT` with
+/// `WAIT` (`RHelementactor.cpp:3340`, `RHelementactorpc.cpp:2580`, and
+/// `RHelementactorsoldier.cpp:395`). The Rust movement planner instead uses
+/// this command as an explicit lift occupancy gate. Keep that policy local to
+/// this context until the planner/translator difference is reconciled.
+struct LiftWaitCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+    doors: &'a [crate::gate::Door],
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+}
+
+impl LiftWaitCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let gate_id = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
+                _ => None,
+            });
+        let gate_info = gate_id.and_then(|door_idx| {
+            self.doors.get(usize::from(door_idx)).map(|door| {
+                (
+                    door.sector_in,
+                    matches!(
+                        door.door_type,
+                        crate::gate::DoorType::LiftHigh | crate::gate::DoorType::LiftHighCrenel
+                    ),
+                )
+            })
+        });
+        let grid_idx = gate_info.and_then(|(sector_number, _)| {
+            self.fast_grid
+                .level
+                .sector_number_map
+                .get(&sector_number)
+                .copied()
+        });
+        let is_high = gate_info.is_some_and(|(_, is_high)| is_high);
+
+        // Authorization decrements the cooldown while blocked. Once free,
+        // occupancy is recorded before the element terminates so another
+        // actor dispatched in the same frame observes the reservation.
+        let authorized = grid_idx.is_none_or(|idx| {
+            let lift = self.fast_grid.lift_state_mut(idx as u32);
+            if is_high {
+                lift.is_authorized_downwards()
+            } else {
+                lift.is_authorized_upwards()
+            }
+        });
+
+        if authorized {
+            if let (Some((sector_number, _)), Some(idx)) = (gate_info, grid_idx) {
+                let lift = self.fast_grid.lift_state_mut(idx as u32);
+                if is_high {
+                    lift.set_occupied_downwards(true);
+                } else {
+                    lift.set_occupied_upwards(true);
+                }
+                if let Some(actor) = self
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                {
+                    actor.active_lift = Some(crate::element::ActiveLiftClimb {
+                        sector_number: u16::from(sector_number),
+                        upwards: !is_high,
+                    });
+                }
+            }
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+}
+
 /// Bow-transition command translation with only the owners it actually uses.
 ///
 /// The original command bodies read actor posture/action state, append
@@ -3646,58 +3793,11 @@ impl EngineInner {
                         // ── ASSERT_POSITION ────────────────────────
                         // Check actor is at expected position/sector.
                         Command::AssertPosition => {
-                            if let crate::sequence::SequenceElementData::Movement {
-                                destination,
-                                sector,
-                                tolerance,
-                                ..
-                            } = &elem.data
-                            {
-                                let dest = *destination;
-                                let tgt_sector = *sector;
-                                let tol = *tolerance + 5.0;
-
-                                if tgt_sector.is_none() {
-                                    // Position check
-                                    let pos = self
-                                        .get_entity(owner)
-                                        .map(|e| e.element_data().position_map())
-                                        .unwrap_or_default();
-                                    let dx = pos.x - dest.x;
-                                    let dy = pos.y - dest.y;
-                                    if dx.abs().max(dy.abs()) >= tol {
-                                        self.orders.sequence_manager.element_interrupted(
-                                            seq_id,
-                                            elem_idx,
-                                            crate::sequence::CascadeFlags::NEXT_LEVEL,
-                                        );
-                                    } else {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_terminated(seq_id, elem_idx);
-                                    }
-                                } else {
-                                    // Sector check
-                                    let actor_sector = self
-                                        .get_entity(owner)
-                                        .and_then(|e| e.element_data().sector());
-                                    if actor_sector != tgt_sector {
-                                        self.orders.sequence_manager.element_interrupted(
-                                            seq_id,
-                                            elem_idx,
-                                            crate::sequence::CascadeFlags::NEXT_LEVEL,
-                                        );
-                                    } else {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_terminated(seq_id, elem_idx);
-                                    }
-                                }
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            PositionAssertionContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
                             }
+                            .dispatch(owner, seq_id, elem_idx);
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
                         // Wait until the lift sector is authorized to
@@ -3711,106 +3811,16 @@ impl EngineInner {
                         // allows a second actor to ride the lift in
                         // the same direction as the first.
                         Command::WaitFreeLift => {
-                            // Resolve the gate → destination sector
-                            // (the door's `sector_in` is the lift
-                            // shaft).
-                            let gate_info =
-                                if let crate::sequence::SequenceElementData::Movement {
-                                    gate_id: Some(di),
-                                    ..
-                                } = &elem.data
-                                {
-                                    self.scripts
-                                        .mission
-                                        .as_mut()
-                                        .and_then(|s| s.game_host_mut())
-                                        .and_then(|_| {
-                                            self.script_domains
-                                                .interactables
-                                                .doors
-                                                .get(usize::from(*di))
-                                        })
-                                        .map(|d| {
-                                            (
-                                                d.sector_in,
-                                                matches!(
-                                                    d.door_type,
-                                                    crate::gate::DoorType::LiftHigh
-                                                        | crate::gate::DoorType::LiftHighCrenel
-                                                ),
-                                            )
-                                        })
-                                } else {
-                                    None
-                                };
-                            let grid_idx = gate_info.and_then(|(sn, _)| {
-                                self.world
-                                    .fast_grid
-                                    .level
-                                    .sector_number_map
-                                    .get(&sn)
-                                    .copied()
-                            });
-                            let is_high = gate_info.map(|(_, h)| h).unwrap_or(false);
-                            // `is_authorized_downwards` /
-                            // `is_authorized_upwards` decrement
-                            // `wait_time` as a side effect when the
-                            // lift is on cooldown.
-                            let authorised = match grid_idx {
-                                Some(idx) => {
-                                    let lift = self.world.fast_grid.lift_state_mut(idx as u32);
-                                    if is_high {
-                                        lift.is_authorized_downwards()
-                                    } else {
-                                        lift.is_authorized_upwards()
-                                    }
-                                }
-                                None => true,
-                            };
-
-                            if authorised {
-                                // Lift is free in the entering direction —
-                                // mark occupancy and proceed.
-                                // `set_occupied_*` increments
-                                // occupants, flips the direction flag,
-                                // and sets the wait_time cooldown
-                                // (100 for downwards, 80 for upwards).
-                                if let Some((sn, _)) = gate_info {
-                                    if let Some(idx) = grid_idx {
-                                        let lift = self.world.fast_grid.lift_state_mut(idx as u32);
-                                        if is_high {
-                                            lift.set_occupied_downwards(true);
-                                        } else {
-                                            lift.set_occupied_upwards(true);
-                                        }
-                                    }
-                                    // Record the climb on the actor so
-                                    // translate_ladder_wall_fall can free the
-                                    // lift if the climber is shoved off before
-                                    // reaching the other door.  `is_high` means
-                                    // the actor entered at the top and is
-                                    // climbing downwards, so `upwards = !is_high`.
-                                    if let Some(entity) = self.get_entity_mut(owner)
-                                        && let Some(actor) = entity.actor_data_mut()
-                                    {
-                                        actor.active_lift = Some(crate::element::ActiveLiftClimb {
-                                            sector_number: u16::from(sn),
-                                            upwards: !is_high,
-                                        });
-                                    }
-                                }
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                            } else {
-                                // Still occupied or cooldown active —
-                                // keep waiting; the authorization
-                                // check already decremented
-                                // `wait_time` above.
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
+                            LiftWaitCommandContext {
+                                entities: &mut self.world.entities,
+                                fast_grid: &mut self.world.fast_grid,
+                                // Runtime door state is authoritative; the
+                                // legacy mission GameHost was only used as a
+                                // presence guard around this same collection.
+                                doors: self.script_domains.interactables.doors.as_slice(),
+                                sequence_manager: &mut self.orders.sequence_manager,
                             }
+                            .dispatch(owner, seq_id, elem_idx);
                         }
                         // ── Sword strike commands ────────────────
                         Command::SwordstrikeThrustA
@@ -9569,6 +9579,162 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::Impossible
         );
+    }
+
+    #[test]
+    fn position_assertion_context_interrupts_at_tolerance_boundary() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let mut assertion = SequenceElement::new_movement(
+            1,
+            Command::AssertPosition,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            destination,
+            tolerance,
+            ..
+        } = &mut assertion.data
+        {
+            *destination = crate::coordinates::MapPoint::new(5.0, 0.0);
+            *tolerance = 0.0;
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(assertion);
+
+        let barrier = PositionAssertionContext {
+            entities: &engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "RHelementactor.cpp uses >= tolerance + 5 for the max-norm mismatch"
+        );
+    }
+
+    #[test]
+    fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
+            .sector_number_map
+            .insert(sector_number, 0);
+        engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHigh,
+            sector_in: sector_number,
+            ..crate::gate::Door::default()
+        };
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        let barrier = LiftWaitCommandContext {
+            entities: &mut engine.world.entities,
+            fast_grid: &mut engine.world.fast_grid,
+            doors: std::slice::from_ref(&door),
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::InProgress
+        );
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 1);
+        assert!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_lift
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn lift_wait_context_reserves_direction_before_terminating() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
+            .sector_number_map
+            .insert(sector_number, 0);
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHigh,
+            sector_in: sector_number,
+            ..crate::gate::Door::default()
+        };
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        let barrier = LiftWaitCommandContext {
+            entities: &mut engine.world.entities,
+            fast_grid: &mut engine.world.fast_grid,
+            doors: std::slice::from_ref(&door),
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Terminated
+        );
+        let lift = engine.world.fast_grid.lift_state_mut(0);
+        assert_eq!(lift.occupants, 1);
+        assert!(lift.occupied_downwards);
+        assert_eq!(lift.wait_time, 100);
+        let active_lift = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_lift
+            .expect("authorized actor records its active lift");
+        assert_eq!(active_lift.sector_number, 42);
+        assert!(!active_lift.upwards);
     }
 }
 
