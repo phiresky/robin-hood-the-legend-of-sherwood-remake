@@ -601,7 +601,6 @@ impl EngineInner {
             .scripts
             .mission
             .as_ref()
-            .and_then(|s| s.game_host())
             .map(|_| self.script_domains.interactables.doors.as_slice())
             .unwrap_or(&[]);
         let mut forecasts = std::collections::HashMap::with_capacity(self.world.pc_ids.len());
@@ -861,7 +860,6 @@ impl EngineInner {
                     .scripts
                     .mission
                     .as_ref()
-                    .and_then(|ms| ms.game_host())
                     .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
