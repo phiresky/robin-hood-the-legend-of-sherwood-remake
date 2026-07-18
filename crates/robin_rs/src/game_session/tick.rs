@@ -5,13 +5,13 @@
 use super::modal_state::ActiveModal;
 use crate::Host;
 use crate::ai::AlertLevel;
+use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
 use crate::game_render::clear_status_bar_flags;
 use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::replay::ReplayPlayer;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
-use crate::sdl_audio::SdlMixerBackend;
 use crate::sound::AlertStatus;
 use crate::sound_cache::SampleLoader;
 use robin_engine::coordinates::MapBBox;
@@ -29,7 +29,7 @@ use robin_engine::engine_manager as engine_manager_api;
 pub(super) fn tick_audio(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    backend: &mut SdlMixerBackend,
+    backend: &mut KiraAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
 ) {

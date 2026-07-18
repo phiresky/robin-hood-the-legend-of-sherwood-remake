@@ -21,7 +21,7 @@ use crate::sound_source::*;
 
 const MUSIC_MODE_WEIGHT: u32 = 128;
 const DIALOGUE_ATTENUATION: f32 = 0.3;
-/// Default number of mixing channels (matches SDL_mixer setup).
+/// Default number of concurrent sound-effect channels.
 pub const NUM_CHANNELS: u32 = 8;
 const EXCLAMATION_VARIANT_NONE: i32 = -1;
 
@@ -166,7 +166,7 @@ struct CacheEntryInfo {
 
 /// Abstracts audio hardware operations.
 ///
-/// In production this wraps SDL\_mixer; in tests, a mock that records calls.
+/// Production uses Kira; tests use a mock that records calls.
 /// The backend owns loaded audio resources and manages its own sample cache.
 pub trait AudioBackend {
     /// Play a sample identified by file name. Returns channel index.
@@ -1498,8 +1498,8 @@ impl SoundManager {
             }
         }
 
-        // Handle finished sounds.  Channel cleanup stays host-side
-        // (pure SDL state, not in the rollback hash); the kind-specific
+        // Handle finished sounds. Channel cleanup stays host-side
+        // (audio-backend state, not in the rollback hash); the kind-specific
         // sim transition for finished `Source`-type sounds (Single
         // `active = false`, Volatile `sources.delete`) now fires from
         // the sim-side drain in `Engine::perform_hourglass` using

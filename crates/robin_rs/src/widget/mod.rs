@@ -81,9 +81,9 @@ impl CaptureSlot {
 /// Unlike the serializable `ui::UiInput`, this carries references
 /// for use within a single frame's input processing pass.
 ///
-/// `text_input` carries UTF-8 characters produced by the SDL3
-/// `SDL_EVENT_TEXT_INPUT` stream (via [`crate::gfx_types::GameEvent::TextInput`])
-/// since the previous frame. SDL delivers only the committed text from
+/// `text_input` carries UTF-8 characters produced by winit IME commit events
+/// (via [`crate::gfx_types::GameEvent::TextInput`]) since the previous frame.
+/// It contains only committed text from
 /// the platform IME — dead-key composition, non-Latin layouts, and IME
 /// candidate selection all resolve before the characters reach us, so
 /// editable widgets can insert them directly at the caret without

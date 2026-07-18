@@ -193,7 +193,7 @@ pub fn make_label(id: WidgetId, text: &str, x: i32, y: i32, w: i32, h: i32) -> W
 
 /// Accumulated mouse state for driving widgets each frame.
 ///
-/// Call [`update_from_event`](Self::update_from_event) for each SDL
+/// Call [`update_from_event`](Self::update_from_event) for each window
 /// event, then call [`as_widget_input`](Self::as_widget_input) once per
 /// frame to get the [`WidgetInput`].
 pub struct ModalInputState {
@@ -211,19 +211,18 @@ pub struct ModalInputState {
     /// at construction; `elapsed_ms` feeds it to `UiKeyboard::refresh`
     /// for double-press and typewriter-repeat timing.
     start_time: web_time::Instant,
-    /// Accumulated UTF-8 text from `SDL_EVENT_TEXT_INPUT` since the last
-    /// [`as_widget_input`](Self::as_widget_input) call. SDL emits only
-    /// committed IME text here — composition preview (SDL_EVENT_TEXT_EDITING)
-    /// isn't surfaced, matching the save/load dialog's text path.
+    /// Accumulated UTF-8 text from winit IME commit events since the last
+    /// [`as_widget_input`](Self::as_widget_input) call. Composition previews
+    /// are not surfaced, matching the save/load dialog's text path.
     text_input: String,
     /// Mouse-capture slot passed through to widgets so push/drag
     /// interactions can request capture.  See [`CaptureSlot`].
     capture: CaptureSlot,
-    /// Pending SDL `clicks` count from the most recent `MouseButtonDown`
+    /// Pending click count from the most recent `MouseButtonDown`
     /// (per button), consumed on the matching `MouseButtonUp` to decide
     /// whether to flag the released click as a double-click.  Promotion
-    /// happens on the release edge using SDL3's native double-click
-    /// counter (250 ms window, set by the OS) rather than a
+    /// happens on the release edge using the window layer's double-click
+    /// counter rather than a
     /// frame-based counter.
     pending_double_click_left: bool,
     pending_double_click_right: bool,
@@ -314,7 +313,7 @@ impl ModalInputState {
         Self::default()
     }
 
-    /// Update from an SDL event.  Returns the event unchanged so the
+    /// Update from a window event. Returns the event unchanged so the
     /// caller can also process keyboard shortcuts, quit, etc.
     pub fn update_from_event<'e>(
         &mut self,
@@ -422,10 +421,10 @@ impl ModalInputState {
         self.text_input.clear();
     }
 
-    /// Seed `virt_x`/`virt_y` from the live SDL mouse state so the modal
+    /// Seed `virt_x`/`virt_y` from the live window mouse state so the modal
     /// cursor renders at the correct location on the first frame, before
     /// any `MouseMove` event has been delivered.
-    pub fn seed_mouse_from_sdl(
+    pub fn seed_mouse_from_window(
         &mut self,
         event_pump: &crate::window::GameWindow,
         transform: super::layout::MenuTransform,

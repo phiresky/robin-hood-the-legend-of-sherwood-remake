@@ -195,12 +195,11 @@ pub struct CliArgs {
     pub fast_forward: bool,
 
     /// Skip the per-frame render pass entirely: no `pre_render` GPU
-    /// drains, no scene draw, no cursor update, no `present()`.  The
-    /// SDL window is still created (set `SDL_VIDEODRIVER=dummy` for a
-    /// truly displayless host) so input / events still flow, but no
-    /// pixels are produced.  Implies no pacing sleep — the loop runs
-    /// at full CPU speed, just like `--fast-forward`.  Useful for
-    /// replay scrubbing, automated tests, and CI runs without a GPU.
+    /// drains, no scene draw, no cursor update, no `present()`. The winit
+    /// window and wgpu context are still created so input/events continue to
+    /// flow, but no pixels are produced. Implies no pacing sleep — the loop
+    /// runs at full CPU speed, just like `--fast-forward`. Useful for replay
+    /// scrubbing, automated tests, and profiling simulation throughput.
     #[arg(long)]
     pub headless: bool,
 
@@ -1778,11 +1777,8 @@ pub async fn run_rust_game(
     // every signature.
     crate::http_server::start_global(args.http_server)?;
 
-    // `--headless` previously routed SDL through its dummy video/audio
-    // driver via env vars set before `sdl3::init`.  With the wgpu/winit
-    // port the SDL boot path is gone; the headless code in
-    // `game_session` already short-circuits the per-frame render block,
-    // so this is now a no-op flag.
+    // The headless code in `game_session` short-circuits the per-frame render
+    // block. Window and GPU initialization still happen before this point.
     if args.headless {
         tracing::info!("--headless: rendering disabled in game_session");
     }
@@ -1802,7 +1798,7 @@ pub async fn run_rust_game(
     // ── `--wait-for-command`: idle until a replay arrives via RPC ──
     // Data is fully loaded at this point (`rust_init` ran before
     // `run_rust_game`), so we just spin on the pending-replay slot
-    // while pumping SDL events.  When a replay lands, its header
+    // while pumping window events. When a replay lands, its header
     // picks the mission, then we move the decoded replay into
     // `CliArgs::replay_data` before `run_mission` so engine
     // construction can use the recording's RNG seed. Skips every
@@ -2334,14 +2330,14 @@ pub async fn run_rust_game_headless(
 /// returning the mission-id stamped in that replay's header.
 ///
 /// Paints a dark blue canvas (so the user sees *something* other
-/// than the browser's default white) and pumps SDL events on a 20 Hz
+/// than the browser's default white) and pumps window events on a 20 Hz
 /// poll.  The pending-replay slot is peeked, not consumed — the
 /// caller hands control to `run_mission`, which drains the slot
 /// inside `init_replay_and_rollback`.
 async fn wait_for_replay_command(window: &mut GameWindow) -> String {
     loop {
         // Pump events — winit needs the app to drain its queue every
-        // frame to stay responsive (mirrors the SDL3 emscripten note).
+        // frame to stay responsive.
         let _ = window.poll_events();
 
         // Drain RPCs — the `load-replay` endpoint is how this loop

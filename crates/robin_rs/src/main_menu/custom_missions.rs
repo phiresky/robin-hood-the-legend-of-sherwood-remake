@@ -100,7 +100,7 @@ pub(crate) async fn show_custom_missions(
     let mut scroll_offset: usize = 0;
 
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     // FrameWnd holds widget state (Focused/Pushed/Activated) across
     // frames — menu buttons take multiple ticks to traverse the state

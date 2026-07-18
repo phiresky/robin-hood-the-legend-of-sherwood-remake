@@ -1,6 +1,4 @@
-//! GPU renderer (wgpu backend).
-//!
-//! Built on top of wgpu after the SDL3 backend was ripped out.
+//! GPU renderer built on wgpu.
 //!
 //! The level background is a persistent GPU texture. Sprites, UI elements,
 //! patch-effect background decals, and overlays render on top via a
@@ -10,9 +8,7 @@
 //! `(bank_id, variant, shadow_color)` so that unchanged frames skip
 //! decompression entirely on subsequent renders.
 //!
-//! Compared to the old SDL backend:
-//! - No more `SDL_Surface` / `SDL_Texture` / `SDL_Renderer` / `Canvas`.
-//! - Legacy surface ids point at uploaded GPU textures plus hit masks;
+//! Legacy surface ids point at uploaded GPU textures plus hit masks;
 //!   runtime drawing is queued as GPU quads and submitted in `present()`.
 //! - Upscale shaders run as native WGSL pipelines (see [`crate::gpu_upscale`]).
 
@@ -34,7 +30,7 @@ use crate::window::{GpuContext, SharedSurface};
 use crate::zoom_hud::ZoomTooltipTracker;
 
 // ---------------------------------------------------------------------
-// Constants — preserved from the SDL backend.
+// Constants
 // ---------------------------------------------------------------------
 
 pub const BLIT_SOURCE_TRANSPARENT: u32 = 0x01;
@@ -381,9 +377,8 @@ pub struct Renderer {
     /// entry so the menu can dim/tint and overlay widgets on top of
     /// the previous gameplay frame. `Some` while a modal is active;
     /// `None` once the gameplay path resumes via `clear_frozen_scene`.
-    /// Replaces the SDL-era `flush_base_layer` snapshot, which only
-    /// captured the software background layer and missed every GPU
-    /// sprite (portraits, HUD, characters).
+    /// Unlike `flush_base_layer`, this captures the complete rendered scene,
+    /// including GPU sprites such as portraits, HUD elements, and characters.
     frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
@@ -1544,9 +1539,8 @@ impl Renderer {
     /// every frame they're up. `clear_frozen_scene` drops the snapshot
     /// when the gameplay path resumes.
     ///
-    /// Replaces the SDL-era `flush_base_layer` snapshot used by
-    /// `enter_modal_gpu_phase`, which only captured the software
-    /// background layer and missed every GPU sprite drawn over it.
+    /// Unlike the old `flush_base_layer` snapshot, this captures every GPU
+    /// sprite drawn over the software background layer.
     pub fn freeze_scene_for_modal(&mut self) {
         if self.frozen_scene.is_some() {
             return;
@@ -2191,9 +2185,8 @@ impl Renderer {
         }
     }
 
-    /// SDL-era `flip`: cross the old flush boundary and present in
-    /// one shot. Loading/menu screens now queue their own GPU draws
-    /// before calling this.
+    /// Cross the flush boundary and present in one shot. Loading/menu screens
+    /// queue their own GPU draws before calling this.
     pub fn flip(&mut self) {
         self.flush_base_layer();
         self.present();
@@ -2252,8 +2245,8 @@ impl Renderer {
         self.frozen_scene = None;
     }
 
-    /// Outline a rect on the GPU overlay layer. Color is RGB565 to
-    /// match the SDL-era signature.
+    /// Outline a rect on the GPU overlay layer. Color is RGB565 to match the
+    /// rest of the legacy rendering API.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_rect_outline_screen(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u16) {
         let (r, g, b) = rgb565_to_rgb8(color);
@@ -2523,9 +2516,8 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn render_gpu_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, r: u8, g: u8, b: u8) {
         let tint = Color::rgb(r, g, b).to_f32_srgb();
-        // Axis-aligned single-pixel strips stay on the rect path so
-        // their pixel coverage is exactly the SDL `RenderDrawLine`
-        // behaviour (no half-pixel rounding from the perp offset).
+        // Axis-aligned single-pixel strips stay on the rect path to avoid
+        // half-pixel rounding from the perpendicular offset.
         if y1 == y2 {
             let lx = x1.min(x2);
             let rx = x1.max(x2);
@@ -3572,9 +3564,8 @@ impl Renderer {
         Some((w, h, rgba))
     }
 
-    /// SDL-era no-op preserved so call sites compile. wgpu has no
-    /// target stack — `capture_frame_rgba` already clears the queue
-    /// and the next `present()` re-clears the render target.
+    /// No-op because wgpu has no target stack: `capture_frame_rgba` already
+    /// clears the queue and the next `present()` re-clears the render target.
     pub fn reset_render_target(&mut self) {}
 }
 

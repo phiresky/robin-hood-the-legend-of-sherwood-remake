@@ -2567,10 +2567,10 @@ pub struct InputState {
     /// frame.  Updated from the key-state snapshot at the top of the
     /// event loop; consumed by mouse-way append gating, view-cone
     /// overlay, and any other subsystem that doesn't otherwise have
-    /// the SDL modifier mask.
+    /// the platform modifier state.
     pub is_alt: bool,
 
-    /// Set when left MouseDown has clicks >= 2 (SDL double-click).
+    /// Set when left MouseDown has clicks >= 2 (platform double-click).
     /// Consumed on the corresponding MouseUp to dispatch a double-click.
     pub left_double_click_pending: bool,
 
@@ -2710,11 +2710,11 @@ impl InputState {
     ///
     /// - `click` → suppresses the next LMB-up.
     /// - `drag` → suppresses the next LMB drag motion.
-    /// - `next_left_double_is_simple` → demotes the next SDL double-
+    /// - `next_left_double_is_simple` → demotes the next platform double-
     ///   click to a single click; the event loop consumes this at
     ///   MouseDown to clear `left_double_click_pending`.
     ///
-    /// The SDL double-click demotion is done directly against
+    /// The double-click demotion is done directly against
     /// `left_double_click_pending` in `handle_mouse_input`.
     pub fn ignore_mouse_event(
         &mut self,

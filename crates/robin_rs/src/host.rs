@@ -585,7 +585,7 @@ pub struct Host {
 
     /// Gamepad / joystick state. Carries edge-detection, the QA macro
     /// timer, and the in-progress swordfight-gesture buffer across
-    /// frames.  Updated from SDL3 controller events each frame.
+    /// frames.  Updated from gilrs controller events each frame.
     pub gamepad: crate::gamepad::GamePadState,
 
     // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ─────────
@@ -618,7 +618,7 @@ pub struct Host {
 
     /// Actor ids whose current/queued exclamation should be stopped
     /// before the sound hourglass starts new pending speech. Drained by
-    /// game_session where the SDL backend is available.
+    /// game session where the host audio backend is available.
     pub pending_stop_exclamations: Vec<u32>,
 
     /// Actor ids whose currently playing exclamation channel should be

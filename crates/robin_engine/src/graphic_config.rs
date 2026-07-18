@@ -37,11 +37,10 @@ pub struct GraphicConfig {
 
 /// Serializable texture scaling mode.
 ///
-/// `Linear` is the default — SDL3's built-in default for textures, and
-/// the option most people expect when the window is upscaled beyond the
-/// game's native resolution. `PixelArt` (SDL_SCALEMODE_PIXELART, added
-/// in SDL 3.4) keeps pixels crisp while avoiding the wobbly artifacts
-/// plain nearest-neighbor produces at non-integer scales.
+/// `Linear` is the default and the option most people expect when the window
+/// is upscaled beyond the game's native resolution. `PixelArt` keeps pixels
+/// crisp while avoiding the wobbly artifacts plain nearest-neighbor produces
+/// at non-integer scales.
 #[derive(
     Debug,
     Clone,
@@ -56,11 +55,11 @@ pub struct GraphicConfig {
 )]
 #[serde(rename_all = "lowercase")]
 pub enum TextureScaleMode {
-    /// Plain SDL_SCALEMODE_NEAREST — sharpest but shows scaling
-    /// artifacts at non-integer ratios.
+    /// Nearest-neighbor sampling — sharpest but shows scaling artifacts at
+    /// non-integer ratios.
     Nearest,
-    /// SDL_SCALEMODE_PIXELART — nearest with improved sampling for pixel
-    /// art; avoids the "wobble" plain nearest has at fractional scales.
+    /// Nearest with improved sampling for pixel art; avoids the "wobble"
+    /// plain nearest has at fractional scales.
     /// `pixel_art` + the legacy `"nearest"` profile key both alias here
     /// so pre-existing profiles migrate cleanly.
     PixelArt,
@@ -69,7 +68,7 @@ pub enum TextureScaleMode {
     /// remainder — crisp axis-aligned edges, no wobble at fractional
     /// scales, no interior blur.
     SharpBilinear,
-    /// SDL_SCALEMODE_LINEAR — bilinear filter.  SDL's texture default.
+    /// Bilinear filtering.
     #[default]
     Linear,
     /// GPU-shader bicubic (Mitchell–Netravali).
@@ -81,10 +80,9 @@ pub enum TextureScaleMode {
     /// barycentric blend inside the triangle the subpixel falls in.
     Cut3,
     /// GPU-shader Scale2x (Andrea Mazzoleni).  **Broken on RADV
-    /// (Mesa ≤26.0)** — causes a GPU reset inside canvas.present()
-    /// under SDL_GPURenderState.  Hidden from the UI until either we
-    /// work out the SDL_GPU render-target-as-sampler layout issue or
-    /// Mesa ships a fix.
+    /// (Mesa ≤26.0)** — caused a GPU reset in the previous rendering
+    /// backend. Hidden from the UI until it is validated with wgpu or Mesa
+    /// ships a fix.
     Scale2x,
     /// GPU-shader Scale3x. Same RADV crash as Scale2x.
     Scale3x,
@@ -95,9 +93,8 @@ pub enum TextureScaleMode {
 }
 
 impl TextureScaleMode {
-    /// Whether this mode needs a custom SDL_GPU fragment shader at the
-    /// final target→backbuffer blit.  Non-shader modes map 1:1 onto an
-    /// `SDL_ScaleMode` and are applied with `SDL_SetTextureScaleMode`.
+    /// Whether this mode needs a custom fragment shader for the final
+    /// target→backbuffer blit. Non-shader modes use a wgpu sampler directly.
     pub fn needs_shader(self) -> bool {
         matches!(
             self,

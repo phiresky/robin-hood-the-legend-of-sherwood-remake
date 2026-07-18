@@ -111,7 +111,7 @@ pub async fn show_options(
 
         let mut done = false;
         let mut re_display = false;
-        input_state.seed_mouse_from_sdl(event_pump, transform);
+        input_state.seed_mouse_from_window(event_pump, transform);
 
         while !done {
             for event in event_pump.poll_events() {

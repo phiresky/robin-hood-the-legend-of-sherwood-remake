@@ -145,8 +145,8 @@ impl PauseMenu {
     /// `LEFT_DOWN` from synthesising a phantom drag.
     ///
     /// Callers should follow this with
-    /// [`ModalInputState::seed_mouse_from_sdl`] via
-    /// [`Self::seed_mouse_from_sdl`] so the cursor reads the current
+    /// [`ModalInputState::seed_mouse_from_window`] via
+    /// [`Self::seed_mouse_from_window`] so the cursor reads the current
     /// mouse position immediately instead of waiting for the next
     /// `MouseMove` event.
     pub fn reset_after_side_menu(&mut self) {
@@ -158,18 +158,19 @@ impl PauseMenu {
         }
     }
 
-    /// Re-seed the pause-menu cursor from the live SDL mouse state.
+    /// Re-seed the pause-menu cursor from the live window mouse state.
     /// Used after a blocking side-menu returns so the cursor renders
     /// at the real position instead of wherever it was when the side
     /// menu was launched.
-    pub fn seed_mouse_from_sdl(
+    pub fn seed_mouse_from_window(
         &mut self,
         event_pump: &crate::window::GameWindow,
         screen_w: i32,
         screen_h: i32,
     ) {
         let transform = MenuTransform::centered(screen_w, screen_h);
-        self.input_state.seed_mouse_from_sdl(event_pump, transform);
+        self.input_state
+            .seed_mouse_from_window(event_pump, transform);
     }
 
     /// Feed a single event to the menu and return the updated outcome.

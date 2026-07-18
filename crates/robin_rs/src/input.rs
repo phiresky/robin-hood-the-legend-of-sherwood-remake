@@ -2,9 +2,9 @@
 //!
 //! Captures winit keyboard/mouse events into a persistent keyboard state,
 //! absolute mouse position, and per-frame wheel accumulator that the
-//! game loop reads.  SDL polling is driven by `GameWindow` in `sdl.rs`
-//! rather than a blocking polling thread; per-device input-manager
-//! bookkeeping is unused and has been removed.
+//! game loop reads. `GameWindow` polls winit rather than using a blocking
+//! polling thread; unused per-device input-manager bookkeeping has been
+//! removed.
 //!
 //! Related concerns live in other modules:
 //! - Software-cursor rendering, shadow / jerky / pulsating / sniper
@@ -51,7 +51,7 @@ impl KeyboardState {
 
 /// Per-frame input state sink.
 ///
-/// Populated from SDL events via [`feed_sdl_events`](Self::feed_sdl_events):
+/// Populated from window events via [`feed_events`](Self::feed_events):
 /// persistent keyboard state, absolute mouse position clipped to a
 /// window rect, per-frame wheel accumulator, and a quit flag.  Also
 /// hosts [`reach_position`](Self::reach_position) for the gamepad's
@@ -64,7 +64,7 @@ pub struct ThreadedInput {
     has_position: bool,
     clipping: ScreenBBox,
     ended: bool,
-    /// When `false`, [`feed_sdl_events`](Self::feed_sdl_events) drops
+    /// When `false`, [`feed_events`](Self::feed_events) drops
     /// mouse-motion / button events so cinematics, mission briefings,
     /// and movie playback don't leak input through to the game.
     /// Defaults to `true`.
@@ -229,25 +229,25 @@ impl ThreadedInput {
     /// Drain synthetic events queued by in-process input producers.
     ///
     /// Mirrors the original queued-input handoff for generated mouse
-    /// motion/buttons and keyboard presses; hardware SDL events still
-    /// enter through the direct per-frame `GameEvent` pipeline.
+    /// motion/buttons and keyboard presses; platform events still enter
+    /// through the direct per-frame `GameEvent` pipeline.
     pub fn drain_synthetic_events(&mut self) -> Vec<GameEvent> {
         std::mem::take(&mut self.synthetic_events)
     }
 
-    // ── SDL event bridge ──
+    // ── Window event bridge ──
 
-    /// Feed SDL events into the input system.
+    /// Feed window events into the input system.
     ///
     /// Updates the persistent keyboard state array, mouse position
-    /// (absolute, from SDL — the game loop reads absolute window
-    /// coordinates via [`position`](Self::position) for edge-scroll and
+    /// (absolute window coordinates read via [`position`](Self::position)
+    /// for edge-scroll and
     /// UI hit tests), and per-frame wheel accumulator.  Quit flips
     /// [`ended`](Self::is_ended).
     ///
     /// Call once per frame with the output of
     /// [`GameWindow::poll_events`](crate::window::GameWindow::poll_events).
-    pub fn feed_sdl_events(&mut self, events: &[GameEvent]) {
+    pub fn feed_events(&mut self, events: &[GameEvent]) {
         if self.ended {
             return;
         }
@@ -310,7 +310,7 @@ impl ThreadedInput {
                     }
                     // Accumulate per-frame so `translate_mouse` sees the
                     // net delta when several wheel events arrive in one
-                    // tick (each SDL event carries a ±1 step).
+                    // tick (each event carries a ±1 step).
                     self.wheel_delta += *y as i16;
                 }
                 GameEvent::Quit => {
@@ -384,15 +384,15 @@ mod tests {
     }
 
     #[test]
-    fn feed_sdl_key_updates_persistent_state() {
+    fn feed_key_updates_persistent_state() {
         let mut ti = ThreadedInput::new();
-        ti.feed_sdl_events(&[GameEvent::KeyDown {
+        ti.feed_events(&[GameEvent::KeyDown {
             keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
         assert!(ti.keyboard_state().is_pressed(KeyCode::KeyA));
 
-        ti.feed_sdl_events(&[GameEvent::KeyUp {
+        ti.feed_events(&[GameEvent::KeyUp {
             keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
@@ -400,11 +400,11 @@ mod tests {
     }
 
     #[test]
-    fn feed_sdl_mouse_move_updates_position() {
+    fn feed_mouse_move_updates_position() {
         let mut ti = ThreadedInput::new();
         ti.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
 
-        ti.feed_sdl_events(&[GameEvent::MouseMove {
+        ti.feed_events(&[GameEvent::MouseMove {
             x: 400,
             y: 300,
             xrel: 10,
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(ti.position().y, 300.0);
 
         // Out-of-clip coordinates clamp to (max - 1).
-        ti.feed_sdl_events(&[GameEvent::MouseMove {
+        ti.feed_events(&[GameEvent::MouseMove {
             x: 1000,
             y: 700,
             xrel: 0,
@@ -425,24 +425,24 @@ mod tests {
     }
 
     #[test]
-    fn feed_sdl_wheel_accumulates_per_frame_and_resets() {
+    fn feed_wheel_accumulates_per_frame_and_resets() {
         let mut ti = ThreadedInput::new();
-        ti.feed_sdl_events(&[GameEvent::MouseWheel(2), GameEvent::MouseWheel(-1)]);
+        ti.feed_events(&[GameEvent::MouseWheel(2), GameEvent::MouseWheel(-1)]);
         assert_eq!(ti.wheel_delta(), 1);
 
         // A fresh frame resets the accumulator even when no wheel arrives.
-        ti.feed_sdl_events(&[]);
+        ti.feed_events(&[]);
         assert_eq!(ti.wheel_delta(), 0);
     }
 
     #[test]
-    fn feed_sdl_quit_sets_ended_and_stops_further_processing() {
+    fn feed_quit_sets_ended_and_stops_further_processing() {
         let mut ti = ThreadedInput::new();
-        ti.feed_sdl_events(&[GameEvent::Quit]);
+        ti.feed_events(&[GameEvent::Quit]);
         assert!(ti.is_ended());
 
         // After Quit, subsequent events are ignored.
-        ti.feed_sdl_events(&[GameEvent::KeyDown {
+        ti.feed_events(&[GameEvent::KeyDown {
             keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
@@ -479,7 +479,7 @@ mod tests {
     fn mouse_events_dropped_when_disabled() {
         let mut ti = ThreadedInput::new();
         ti.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
-        ti.feed_sdl_events(&[GameEvent::MouseMove {
+        ti.feed_events(&[GameEvent::MouseMove {
             x: 100,
             y: 100,
             xrel: 0,
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(ti.position().x, 100.0);
 
         ti.set_enabled(false);
-        ti.feed_sdl_events(&[GameEvent::MouseMove {
+        ti.feed_events(&[GameEvent::MouseMove {
             x: 200,
             y: 200,
             xrel: 0,
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn synthetic_mouse_buttons_drain_as_game_events_at_current_position() {
         let mut ti = ThreadedInput::new();
-        ti.feed_sdl_events(&[GameEvent::MouseMove {
+        ti.feed_events(&[GameEvent::MouseMove {
             x: 123,
             y: 45,
             xrel: 0,

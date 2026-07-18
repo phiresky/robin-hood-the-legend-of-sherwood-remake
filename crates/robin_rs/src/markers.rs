@@ -2,7 +2,7 @@
 //!
 //! The sim state (`GroundMark`, `SelectionMark`) lives in
 //! `robin_engine::markers`; this module re-exports those types and adds the
-//! GPU/SDL renderer for the selection circle sprite.
+//! GPU renderer for the selection circle sprite.
 
 use robin_assets::picture::Picture;
 pub use robin_engine::markers::{

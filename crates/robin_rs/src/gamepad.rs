@@ -163,7 +163,7 @@ pub enum ButtonEdge {
 pub struct GamePadState {
     current: JoystickState,
     previous: JoystickState,
-    /// In-flight state accumulated from SDL3 events during the current
+    /// In-flight state accumulated from gilrs events during the current
     /// frame. Promoted to `current` at the start of each
     /// [`process_gamepad_input`] call via `self.update(pending.clone())`.
     pending: JoystickState,
@@ -256,13 +256,13 @@ impl GamePadState {
         &self.current
     }
 
-    // ── SDL3 event folding ─────────────────────────────────────
+    // ── Gamepad event folding ─────────────────────────────────────
 
     /// Apply an axis-motion event to the in-flight joystick state.
     ///
-    /// `which_axis` follows the SDL3 `SDL_GamepadAxis` enum
+    /// `which_axis` follows the standard layout emitted by the gilrs adapter
     /// (`LeftX`=0, `LeftY`=1, `RightX`=2, `RightY`=3, `TriggerLeft`=4,
-    /// `TriggerRight`=5). `value` is SDL3's signed i16 (centered at 0);
+    /// `TriggerRight`=5). `value` is a signed i16 centered at zero;
     /// the `Slider` / `Rz` fields follow the DirectInput unsigned
     /// convention (centered at `AXIS_CENTER = 0x7FFF`) so we translate
     /// here to keep the rest of the dispatcher (and the existing sword
@@ -280,7 +280,7 @@ impl GamePadState {
     /// Apply a button press/release event to the in-flight state.
     ///
     /// `which_button` is the index into `JoystickState.buttons`. The
-    /// caller is responsible for mapping SDL3 `Button` values to the
+    /// caller is responsible for mapping standard button values to the
     /// original DirectInput button indices that [`GamePadButton`]
     /// expects.
     pub fn apply_button_event(&mut self, which_button: u8, pressed: bool) {
@@ -291,7 +291,7 @@ impl GamePadState {
     }
 
     /// Set the POV based on the current D-pad button pressed state
-    /// (SDL3 reports D-pad as four individual buttons, not a POV hat).
+    /// (gilrs reports the D-pad as four individual buttons, not a POV hat).
     pub fn apply_dpad_state(&mut self, up: bool, right: bool, down: bool, left: bool) {
         self.pending.povs[0] = dpad_to_pov(up, right, down, left);
     }
@@ -306,7 +306,7 @@ impl GamePadState {
     /// `threaded_input`. Non-sim state mutations (cursor position, QA
     /// macro timer) happen in place.
     ///
-    /// `now_ms` is the monotonic tick count in milliseconds (SDL ticks);
+    /// `now_ms` is the monotonic tick count in milliseconds;
     /// the dispatcher uses it only for the QA single- vs double-click
     /// timing (`QA_TIMER_LIMIT`).
     pub fn process_gamepad_input(
@@ -764,12 +764,12 @@ pub enum QaEvent {
     LaunchMacroForSelected,
 }
 
-// ── SDL3 button → game button mapping ───────────────────────────────
+// ── Standard button → game button mapping ───────────────────────────────
 
-/// Map an SDL3 `SDL_GamepadButton` ordinal to the DirectInput button
+/// Map a standard-layout gamepad button ordinal to the DirectInput button
 /// index that the game's `GamePadButton` enum addresses.
 ///
-/// SDL3 ordinals (from `SDL_GamepadButton`):
+/// Standard ordinals produced by `window::gilrs_button_to_index`:
 ///   0=South, 1=East, 2=West, 3=North, 4=Back, 5=Guide, 6=Start,
 ///   7=LeftStick, 8=RightStick, 9=LeftShoulder, 10=RightShoulder,
 ///   11=DPadUp, 12=DPadDown, 13=DPadLeft, 14=DPadRight.
@@ -777,8 +777,8 @@ pub enum QaEvent {
 /// Returns `None` for buttons that are routed as POV-hat state
 /// (D-pad) or that the game doesn't bind. D-pad buttons must be
 /// tracked separately by the caller and fed into [`GamePadState::apply_dpad_state`].
-pub fn sdl_button_to_gamepad_index(sdl_button: u8) -> Option<u8> {
-    Some(match sdl_button {
+pub fn standard_button_to_gamepad_index(standard_button: u8) -> Option<u8> {
+    Some(match standard_button {
         0 => GamePadButton::ActionB as u8,      // South → B (ActionB=0)
         1 => GamePadButton::ActionA as u8,      // East  → A (ActionA=1)
         2 => GamePadButton::ActionC as u8,      // West  → X (ActionC=2)
@@ -793,11 +793,11 @@ pub fn sdl_button_to_gamepad_index(sdl_button: u8) -> Option<u8> {
     })
 }
 
-/// Whether `sdl_button` is a D-pad button (its state feeds the POV hat,
-/// not a `GamePadButton`).  SDL3 constants: `DPadUp=11`, `DPadDown=12`,
-/// `DPadLeft=13`, `DPadRight=14`.
-pub fn is_dpad_button(sdl_button: u8) -> bool {
-    matches!(sdl_button, 11..=14)
+/// Whether `standard_button` is a D-pad button (its state feeds the POV hat,
+/// not a `GamePadButton`). Standard ordinals: `Up=11`, `Down=12`,
+/// `Left=13`, `Right=14`.
+pub fn is_dpad_button(standard_button: u8) -> bool {
+    matches!(standard_button, 11..=14)
 }
 
 // ── POV hat helper ──────────────────────────────────────────────────
@@ -1452,21 +1452,21 @@ mod tests {
     }
 
     #[test]
-    fn sdl_button_to_gamepad_index_mapping() {
+    fn standard_button_to_gamepad_index_mapping() {
         assert_eq!(
-            sdl_button_to_gamepad_index(0),
+            standard_button_to_gamepad_index(0),
             Some(GamePadButton::ActionB as u8)
         );
         assert_eq!(
-            sdl_button_to_gamepad_index(1),
+            standard_button_to_gamepad_index(1),
             Some(GamePadButton::ActionA as u8)
         );
         assert_eq!(
-            sdl_button_to_gamepad_index(3),
+            standard_button_to_gamepad_index(3),
             Some(GamePadButton::CancelParade as u8)
         );
         // D-pad buttons are routed elsewhere.
-        assert_eq!(sdl_button_to_gamepad_index(11), None);
+        assert_eq!(standard_button_to_gamepad_index(11), None);
     }
 
     #[test]
@@ -1491,10 +1491,10 @@ mod tests {
     #[test]
     fn apply_axis_event_translates_rz_to_directinput_center() {
         let mut pad = GamePadState::new();
-        // SDL3 axis 2 = RightX, value 0 (center) → rz = AXIS_CENTER.
+        // Standard axis 2 = RightX, value 0 (center) → rz = AXIS_CENTER.
         pad.apply_axis_event(2, 0);
         assert_eq!(pad.pending.rz, AXIS_CENTER);
-        // SDL3 axis 2, value 1638 → rz ≈ AXIS_CENTER + 1638 → dx ≈ 1.0
+        // Standard axis 2, value 1638 → rz ≈ AXIS_CENTER + 1638 → dx ≈ 1.0
         pad.apply_axis_event(2, 1638);
         assert_eq!(pad.pending.rz, AXIS_CENTER + 1638);
     }

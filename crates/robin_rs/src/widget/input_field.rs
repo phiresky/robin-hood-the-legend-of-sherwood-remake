@@ -240,7 +240,7 @@ impl WidgetInputField {
         // Toggle caret blink.
         self.caret_visible = !self.caret_visible;
 
-        // Insert any text that arrived this frame via SDL text input.
+        // Insert any committed text that arrived this frame from the IME.
         // Limit to chars allowed by `max_length` (0 = unlimited). The
         // length comparison includes a leading dummy slot, so the max
         // actual char count is `max_length - 1` (callers passing
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn text_input_inserts_tab_and_newline() {
         // `insert_character` rejects only `\0`; TAB and NEWLINE go
-        // through. SDL_EVENT_TEXT_INPUT excludes them in practice,
+        // through. Winit's committed IME input excludes them in practice,
         // but the filter is literal.
         let mut f = make_editable_field();
         let kb = UiKeyboard::default();

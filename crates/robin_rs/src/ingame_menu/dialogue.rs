@@ -284,7 +284,7 @@ pub async fn show_dialogue(
     start_sentence(sound, &mut audio_slot, sound_enabled, &sentences[0]);
 
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     let mut remote_result = None;
     'outer: loop {
@@ -572,7 +572,7 @@ impl DialogueModalState {
         }
 
         let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_sdl(event_pump, transform);
+        input_state.seed_mouse_from_window(event_pump, transform);
         let portrait_fade = PortraitFade::new(sentences[0].resolved_portrait_id());
 
         Self {
