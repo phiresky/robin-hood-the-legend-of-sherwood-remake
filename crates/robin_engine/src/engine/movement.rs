@@ -302,8 +302,9 @@ pub(crate) struct FailedPathRequest {
 /// Snapshot of one legacy `RHpathRequest` waiting for A*.
 ///
 /// Direct / straight moves never enter this queue. Requests that do need A*
-/// snapshot their dispatch inputs here, then [`EngineInner`] resolves at most
-/// one request at the original `RHEngine::ProcessPathRequests` point per frame.
+/// snapshot their dispatch inputs here, then [`MovementContext`] resolves at
+/// most one request at the original `RHEngine::ProcessPathRequests` point per
+/// frame.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -398,6 +399,148 @@ impl PendingPathRequestQueue {
     pub(super) fn clear(&mut self) {
         self.waiting.clear();
         self.in_flight = None;
+    }
+}
+
+/// Disjoint owner borrows for the once-per-frame path scheduling barrier.
+///
+/// This context deliberately cannot reach scripts, campaign, player state, or
+/// feedback. It only advances the pathfinder queue and classifies expired
+/// failures; the root tick performs the cross-owner consequences (path order
+/// installation and hero speech) immediately after each returned item.
+pub(super) struct MovementContext<'a> {
+    frame_counter: u32,
+    world: &'a mut WorldState,
+    orders: &'a mut OrderRuntime,
+}
+
+pub(super) enum CompletedPathWork {
+    Ready {
+        request: PendingPathRequest,
+        waypoints: Vec<MapPoint>,
+    },
+    Failed(PendingPathRequest),
+}
+
+pub(super) struct ExpiredPathWork {
+    pub(super) request: FailedPathRequest,
+    pub(super) owner_is_pc: bool,
+    pub(super) age: u32,
+}
+
+impl<'a> MovementContext<'a> {
+    pub(super) fn new(
+        frame_counter: u32,
+        world: &'a mut WorldState,
+        orders: &'a mut OrderRuntime,
+    ) -> Self {
+        Self {
+            frame_counter,
+            world,
+            orders,
+        }
+    }
+
+    /// Take the one result made ready by the previous scheduling call.
+    /// Stale results are discarded exactly where the old root helper discarded
+    /// them; no later request is completed at this barrier.
+    pub(super) fn take_completed(&mut self) -> Option<CompletedPathWork> {
+        let processed = self.orders.pending_path_requests.take_completed()?;
+        let request = processed.request;
+        let still_live = self
+            .orders
+            .sequence_manager
+            .get_element(request.seq_id, request.elem_idx)
+            .is_some_and(|elem| {
+                elem.owner == Some(request.owner)
+                    && elem.state == crate::sequence::SequenceState::InProgress
+                    && elem.command == crate::element::Command::MoveWaiting
+            });
+        if !still_live {
+            return None;
+        }
+
+        Some(match processed.waypoints {
+            Some(waypoints) => CompletedPathWork::Ready { request, waypoints },
+            None => CompletedPathWork::Failed(request),
+        })
+    }
+
+    /// Start at most one queued request after the previous result has been
+    /// applied by the root coordinator. Rust computes A* synchronously, but the
+    /// result remains parked until the next frame's scheduling barrier.
+    pub(super) fn start_next(&mut self, assets: &LevelAssets) {
+        let Some(request) = self.orders.pending_path_requests.pop_to_start() else {
+            return;
+        };
+        let still_live = self
+            .orders
+            .sequence_manager
+            .get_element(request.seq_id, request.elem_idx)
+            .is_some_and(|elem| {
+                elem.owner == Some(request.owner)
+                    && elem.state == crate::sequence::SequenceState::InProgress
+                    && elem.command == crate::element::Command::MoveWaiting
+            });
+        if !still_live {
+            return;
+        }
+
+        let waypoints = self.world.pathfinder.find_path(
+            assets.pathfinder_graph.as_ref(),
+            &self.world.fast_grid,
+            request.layer,
+            request.sector,
+            request.half_diagonal_idx,
+            request.source,
+            request.dest,
+            request.use_first_point,
+        );
+        self.orders
+            .pending_path_requests
+            .set_in_flight(request, waypoints);
+    }
+
+    /// Remove stale failures and return expired live entries in their stored
+    /// order. Cross-owner effects are intentionally left to the tick
+    /// coordinator so hero speech still precedes `element_impossible` for each
+    /// request.
+    pub(super) fn take_expired_failures(&mut self) -> Vec<ExpiredPathWork> {
+        let mut still_waiting = Vec::new();
+        let mut expired = Vec::new();
+        for request in std::mem::take(&mut self.orders.failed_path_requests) {
+            let still_live = self
+                .orders
+                .sequence_manager
+                .get_element(request.seq_id, request.elem_idx)
+                .is_some_and(|element| {
+                    element.owner == Some(request.owner)
+                        && element.state == crate::sequence::SequenceState::InProgress
+                        && element.command == crate::element::Command::MoveWaiting
+                });
+            if !still_live {
+                continue;
+            }
+
+            let age = self.frame_counter.saturating_sub(request.first_fail_frame);
+            if age <= 100 {
+                still_waiting.push(request);
+                continue;
+            }
+
+            let owner_is_pc = self
+                .world
+                .entities
+                .get(request.owner)
+                .is_some_and(Entity::is_pc);
+            expired.push(ExpiredPathWork {
+                request,
+                owner_is_pc,
+                age,
+            });
+        }
+        self.orders.failed_path_requests = still_waiting;
+        expired
     }
 }
 
@@ -5672,7 +5815,7 @@ impl EngineInner {
                     // `TransitionWaitingUprightBoredWaitingUpright` at
                     // `EventSeesShadow` (yellow `?`) time so the
                     // guard is already in Waiting by EventView.
-                    let order = intent.stamp(self.alloc_order_id());
+                    let order = intent.stamp(self.orders.allocate_order_id());
                     self.launch_single_order_sequence_stamped_ex(
                         entity_id,
                         crate::element::Command::Turn,
@@ -5683,7 +5826,7 @@ impl EngineInner {
                 _ => {
                     // Other order types go on their own single-order
                     // sequence for the animation driver to pick up.
-                    let order = intent.stamp(self.alloc_order_id());
+                    let order = intent.stamp(self.orders.allocate_order_id());
                     self.launch_single_order_sequence_stamped(
                         entity_id,
                         crate::element::Command::Generic,
@@ -6815,90 +6958,7 @@ impl EngineInner {
         self.finish_move_path(request, vec![source, dest])
     }
 
-    /// Run the original once-per-frame path-request scheduling point.
-    ///
-    /// READY delivers at most one result computed by an earlier call, then
-    /// starts at most one successor. WAITING starts one request and returns no
-    /// result. This preserves both the per-frame cap and the original
-    /// one-call latency despite Rust's synchronous A* implementation.
-    pub(super) fn process_next_path_request(&mut self, assets: &LevelAssets) {
-        if let Some(processed) = self.orders.pending_path_requests.take_completed() {
-            let request = processed.request;
-            let still_live = self
-                .orders
-                .sequence_manager
-                .get_element(request.seq_id, request.elem_idx)
-                .is_some_and(|elem| {
-                    elem.owner == Some(request.owner)
-                        && elem.state == crate::sequence::SequenceState::InProgress
-                        && elem.command == crate::element::Command::MoveWaiting
-                });
-            if still_live {
-                match processed.waypoints {
-                    Some(waypoints) => {
-                        if let Some(elem) = self
-                            .orders
-                            .sequence_manager
-                            .get_element_mut(request.seq_id, request.elem_idx)
-                        {
-                            elem.command = crate::element::Command::MoveOk;
-                        }
-                        let _ = self.finish_move_path(request, waypoints);
-                    }
-                    None => {
-                        tracing::warn!(
-                            actor = ?request.owner,
-                            seq_id = ?request.seq_id,
-                            elem_idx = request.elem_idx,
-                            src_x = request.source.x,
-                            src_y = request.source.y,
-                            dst_x = request.dest.x,
-                            dst_y = request.dest.y,
-                            layer = request.layer,
-                            sector = request.sector,
-                            "process_next_path_request: pathfind FAILED",
-                        );
-                        self.orders.failed_path_requests.push(FailedPathRequest {
-                            owner: request.owner,
-                            seq_id: request.seq_id,
-                            elem_idx: request.elem_idx,
-                            first_fail_frame: self.control.frame_counter,
-                        });
-                    }
-                }
-            }
-        }
-
-        if let Some(request) = self.orders.pending_path_requests.pop_to_start() {
-            let still_live = self
-                .orders
-                .sequence_manager
-                .get_element(request.seq_id, request.elem_idx)
-                .is_some_and(|elem| {
-                    elem.owner == Some(request.owner)
-                        && elem.state == crate::sequence::SequenceState::InProgress
-                        && elem.command == crate::element::Command::MoveWaiting
-                });
-            if !still_live {
-                return;
-            }
-            let waypoints = self.world.pathfinder.find_path(
-                assets.pathfinder_graph.as_ref(),
-                &self.world.fast_grid,
-                request.layer,
-                request.sector,
-                request.half_diagonal_idx,
-                request.source,
-                request.dest,
-                request.use_first_point,
-            );
-            self.orders
-                .pending_path_requests
-                .set_in_flight(request, waypoints);
-        }
-    }
-
-    fn finish_move_path(
+    pub(super) fn finish_move_path(
         &mut self,
         request: PendingPathRequest,
         mut waypoints: Vec<MapPoint>,
@@ -7147,81 +7207,6 @@ impl EngineInner {
 
         MovePathOutcome::Success
     }
-
-    /// Age out [`FailedPathRequest`] entries.  Runs once per hourglass.
-    ///
-    /// When `first_fail_frame + 100 < frame_counter`, mark the
-    /// element Impossible (and, for PCs, fire the
-    /// `HERO_UNABLE_TO_DO_SOMETHING` speech line).
-    ///
-    /// No re-dispatch — failed requests are not re-submitted during
-    /// the 100-frame window.  The element sits waiting and the
-    /// pathfinder's queue is free to process unrelated requests.
-    /// Any external state change that would unblock the actor is
-    /// handled by the calling code (e.g. cancelling on halt /
-    /// postpone, new Move element replacing this one).
-    ///
-    /// Entries whose owning element is no longer live (cancelled,
-    /// cascaded to terminal state, index reused) are silently dropped.
-    pub(super) fn process_failed_path_timeouts(&mut self, assets: &LevelAssets) {
-        let now = self.control.frame_counter;
-        let mut still_waiting = Vec::new();
-        for req in std::mem::take(&mut self.orders.failed_path_requests) {
-            // Element cancelled / finished / reused — drop silently.
-            let still_live = self
-                .orders
-                .sequence_manager
-                .get_element(req.seq_id, req.elem_idx)
-                .map(|e| {
-                    e.owner == Some(req.owner)
-                        && matches!(e.state, crate::sequence::SequenceState::InProgress)
-                        && e.command == crate::element::Command::MoveWaiting
-                })
-                .unwrap_or(false);
-            if !still_live {
-                continue;
-            }
-
-            // Guard: strictly greater than 100 elapsed frames.
-            if now.saturating_sub(req.first_fail_frame) <= 100 {
-                still_waiting.push(req);
-                continue;
-            }
-
-            let is_pc = self
-                .world
-                .entities
-                .get(req.owner)
-                .map(|e| e.is_pc())
-                .unwrap_or(false);
-            if is_pc {
-                self.hero_speaking(
-                    assets,
-                    req.owner,
-                    crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                );
-            }
-
-            if let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(req.seq_id, req.elem_idx)
-            {
-                elem.command = crate::element::Command::MoveOk;
-            }
-            self.orders
-                .sequence_manager
-                .element_impossible(req.seq_id, req.elem_idx);
-            tracing::debug!(
-                actor = ?req.owner,
-                seq_id = ?req.seq_id,
-                elem_idx = req.elem_idx,
-                age = now.saturating_sub(req.first_fail_frame),
-                "failed_path: 100-frame timeout expired — marking Impossible",
-            );
-        }
-        self.orders.failed_path_requests = still_waiting;
-    }
 }
 
 #[cfg(test)]
@@ -7308,6 +7293,48 @@ mod path_request_timing_tests {
             vec![(2, pc_1), (3, npc_1), (4, pc_2), (5, npc_2)]
         );
         assert_eq!(advance_fake_frame(&mut queue), None, "frame 6 is empty");
+    }
+
+    #[test]
+    fn movement_context_expires_live_failure_only_after_100_frames() {
+        let owner = EntityId::Pc(PcId(7));
+        let mut world = WorldState::new();
+        let mut orders = OrderRuntime::new();
+        let mut element = crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::MoveWaiting,
+            Some(owner),
+        );
+        element.priority = crate::sequence::SequencePriority::Normal;
+        let sequence_id = orders.sequence_manager.launch_element(element);
+        let element = orders
+            .sequence_manager
+            .get_element_mut(sequence_id, 0)
+            .expect("launched movement element");
+        element.state = crate::sequence::SequenceState::InProgress;
+        element.command = crate::element::Command::MoveWaiting;
+        orders.failed_path_requests.push(FailedPathRequest {
+            owner,
+            seq_id: sequence_id,
+            elem_idx: 0,
+            first_fail_frame: 10,
+        });
+
+        let at_boundary =
+            MovementContext::new(110, &mut world, &mut orders).take_expired_failures();
+        assert!(at_boundary.is_empty());
+        assert_eq!(orders.failed_path_requests.len(), 1);
+
+        let after_boundary =
+            MovementContext::new(111, &mut world, &mut orders).take_expired_failures();
+        assert_eq!(after_boundary.len(), 1);
+        assert_eq!(after_boundary[0].request.owner, owner);
+        assert_eq!(after_boundary[0].age, 101);
+        assert!(
+            !after_boundary[0].owner_is_pc,
+            "missing entity is not fabricated"
+        );
+        assert!(orders.failed_path_requests.is_empty());
     }
 }
 

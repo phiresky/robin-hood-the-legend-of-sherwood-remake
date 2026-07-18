@@ -655,7 +655,7 @@ fn get_transition_flags(ctx: &TransitionCtx) -> (EX, CP, EA) {
 
 /// Push a non-movement animation order onto the sequence element.
 fn push_anim_order(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, anim: OrderType) {
-    let id = engine.alloc_order_id();
+    let id = engine.orders.allocate_order_id();
     let order = crate::order::Order::new(anim, 0.0, 0.0, id);
     engine
         .orders
@@ -671,7 +671,7 @@ fn push_anim_order_no_dir(
     elem_idx: usize,
     anim: OrderType,
 ) {
-    let id = engine.alloc_order_id();
+    let id = engine.orders.allocate_order_id();
     let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
     order.compute_direction = false;
     engine

@@ -1186,8 +1186,12 @@ impl EngineInner {
             );
         }
         let (dseq, didx) = damage_element;
-        let mut roll_order =
-            crate::order::Order::new(OrderType::Rolling, dest.x, dest.y, self.alloc_order_id());
+        let mut roll_order = crate::order::Order::new(
+            OrderType::Rolling,
+            dest.x,
+            dest.y,
+            self.orders.allocate_order_id(),
+        );
         roll_order.compute_direction = false;
         self.orders
             .sequence_manager

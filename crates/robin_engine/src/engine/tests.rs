@@ -2469,6 +2469,37 @@ fn timer_tick_decrements_and_removes() {
 }
 
 #[test]
+fn timer_started_by_sequence_dispatch_ticks_on_its_launch_frame() {
+    use crate::element::Command;
+    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.control.fast_forward = true;
+
+    // DisplayPopupText is deferred through SequenceManager::Hourglass. Its
+    // termination synchronously advances to the immediate Timer, exactly
+    // like Emb05's PlayAnimFreeze(chariot_b1) -> Timer(100) handoff.
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new_generic(
+        1,
+        Command::DisplayPopupText,
+        None,
+    ));
+    let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(2));
+    sequence.append_element(timer);
+    engine.orders.sequence_manager.launch_sequence(sequence);
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(engine.orders.timer_elements.len(), 1);
+    assert_eq!(engine.orders.timer_elements[0].remaining, 1);
+}
+
+#[test]
 fn win_respects_show_window_false() {
     let mut engine = EngineInner::new();
     engine.win(false);
