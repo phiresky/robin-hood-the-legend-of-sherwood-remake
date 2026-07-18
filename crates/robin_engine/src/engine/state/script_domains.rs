@@ -87,11 +87,16 @@ pub(crate) struct ScrollState {
 
 /// Engine-owned deterministic state shared with mission-script natives.
 ///
-/// During the legacy five-field script transaction this value is moved, never
-/// copied, into `GameHost` beside the other temporarily leased engine state.
-/// Domain-specific state is added here one owner at a time.
+/// `ScriptSession` keeps this value in `EngineInner` and lends each native
+/// resume a typed mutable borrow. It is never copied or parked in `GameHost`.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub(crate) struct ScriptDomains {
+/// Canonical deterministic state shared by the engine and script natives.
+///
+/// The fields remain engine-internal; the public type lets external native
+/// adapters hold and pass the typed capability without exposing domain
+/// implementation details.
+#[doc(hidden)]
+pub struct ScriptDomains {
     pub(crate) buildings: BuildingState,
     pub(crate) interactables: InteractableState,
     #[serde(default)]

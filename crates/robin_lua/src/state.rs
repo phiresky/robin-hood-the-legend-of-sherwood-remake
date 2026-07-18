@@ -149,10 +149,11 @@ impl MissionLuaState {
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         let mut script_state = ScriptState::default();
-        self.with_host_and_state(host, &mut script_state, f)
+        self.with_host_and_state(host, &mut script_state, script_domains, f)
     }
 
     /// Variant used by mission execution, where script-owned state must
@@ -161,11 +162,13 @@ impl MissionLuaState {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.with_host_state_and_bindings(
             host,
             script_state,
+            script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
             robin_engine::natives::NativeQueryViews::default(),
             f,
@@ -176,6 +179,7 @@ impl MissionLuaState {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
         queries: robin_engine::natives::NativeQueryViews<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
@@ -183,6 +187,7 @@ impl MissionLuaState {
         self.lua.set_app_data(HostPtr::new(
             host as *mut _,
             script_state as *mut _,
+            script_domains as *mut _,
             bindings as *const _,
             queries,
         ));

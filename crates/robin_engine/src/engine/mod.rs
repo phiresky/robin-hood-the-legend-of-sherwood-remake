@@ -66,6 +66,8 @@ mod snapshot;
 mod soldier_helpers;
 mod special_motion;
 pub(crate) mod state;
+#[doc(hidden)]
+pub use state::ScriptDomains;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
@@ -3496,7 +3498,9 @@ impl EngineInner {
         script.post_initialized = true;
 
         let result = self
-            .with_script_session(assets, |script, queries| script.post_initialize(queries))
+            .with_script_session(assets, |script, script_domains, queries| {
+                script.post_initialize(script_domains, queries)
+            })
             .expect("PostInitialize mission script disappeared before dispatch");
 
         if let Err(e) = result {

@@ -244,11 +244,13 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
         assert!(s.bind_actor(
             sensitive_handle,
             "SourceSensitive",
+            &mut engine.script_domains,
             crate::natives::NativeQueryViews::default()
         ));
         assert!(s.bind_actor(
             noov_handle,
             "NoOverride",
+            &mut engine.script_domains,
             crate::natives::NativeQueryViews::default()
         ));
     }
@@ -664,6 +666,7 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let scb =
         build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::GetNumberOfSelectedPCs));
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 11;
     let inner_handle = 22;
     let sequences = crate::sequence::SequenceManager::new();
@@ -677,14 +680,15 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let frame = 41;
     let queries =
         crate::natives::NativeQueryViews::new(&sequences, &selection, &sounds, &weather, &frame);
-    assert!(script.bind_actor(outer_handle, "OuterCaller", queries));
-    assert!(script.bind_actor(inner_handle, "InnerTarget", queries));
+    assert!(script.bind_actor(outer_handle, "OuterCaller", &mut script_domains, queries));
+    assert!(script.bind_actor(inner_handle, "InnerTarget", &mut script_domains, queries));
 
     let result = script
         .call_actor_function(
             outer_handle,
             "FilterAIEvent",
             &[inner_handle, 0, 0],
+            &mut script_domains,
             queries,
         )
         .expect("nested dispatch runs cleanly");
@@ -696,10 +700,12 @@ fn nested_callback_keeps_the_canonical_query_views() {
 fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let inner_handle = 22;
     assert!(script.bind_actor(
         inner_handle,
         "InnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
 
@@ -708,6 +714,7 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
             inner_handle,
             "FilterAIEvent",
             &[0, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("direct actor callback runs cleanly");
@@ -723,16 +730,19 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     // See original-code/RHScript.cpp:6508-6535.
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 11;
     let prototype_handle = 22;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "InnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
 
@@ -741,6 +751,7 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
             outer_handle,
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("nested prototype dispatch runs cleanly");
@@ -767,6 +778,7 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
 fn prototype_filter_event_dispatches_to_target_actor_script() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
 
     // Bind two synthetic actor instances.  Their entity handles don't
     // need to map to real engine entities — `call_actor_function`
@@ -777,11 +789,13 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     assert!(script.bind_actor(
         inner_handle,
         "InnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
 
@@ -790,6 +804,7 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
             outer_handle,
             "FilterAIEvent",
             &[inner_handle, 0, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("nested dispatch runs cleanly");
@@ -804,16 +819,19 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
 #[test]
 fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     let mut script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 1;
     let inner_handle = 2;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     assert!(script.bind_actor(
         inner_handle,
         "InnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     script.game_host.script_this = 77;
@@ -824,11 +842,12 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     engine.attach_script_bindings(&assets);
 
     let result = engine
-        .with_script_session(&assets, |script, queries| {
+        .with_script_session(&assets, |script, script_domains, queries| {
             script.call_actor_function(
                 outer_handle,
                 "FilterAIEvent",
                 &[inner_handle, 0, 0],
+                script_domains,
                 queries,
             )
         })
@@ -848,16 +867,19 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
 fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let scb = build_nested_scb_with_default_inner();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 1;
     let prototype_handle = 2;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "DefaultInnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
 
@@ -866,6 +888,7 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
             outer_handle,
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("nested dispatch runs cleanly");
@@ -880,6 +903,7 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
 fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     let scb = build_nested_entity_mutation_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = crate::natives::GameHost::actor_handle_from_index(0);
     let prototype_handle = crate::natives::GameHost::actor_handle_from_index(1);
     script.game_host.entities.extend([
@@ -889,11 +913,13 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "InnerTarget",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
 
@@ -902,6 +928,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
             outer_handle,
             "FilterAIEvent",
             &[prototype_handle, prototype_handle, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("nested dispatch runs cleanly");
@@ -929,11 +956,13 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
 fn prototype_filter_event_unbound_target_uses_original_allow_default() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
 
     let outer_handle = 1;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default()
     ));
     // Note: don't bind anyone for handle 99.
@@ -943,6 +972,7 @@ fn prototype_filter_event_unbound_target_uses_original_allow_default() {
             outer_handle,
             "FilterAIEvent",
             &[99, 0, 0],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("nested dispatch runs cleanly");

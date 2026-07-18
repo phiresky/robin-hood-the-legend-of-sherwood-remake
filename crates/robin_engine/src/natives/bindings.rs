@@ -85,11 +85,13 @@ mod tests {
     fn get_location(bindings: &AttachedScriptBindings, index: i32) -> i32 {
         let mut host = GameHost::new();
         let mut state = ScriptState::default();
+        let mut script_domains = crate::engine::ScriptDomains::default();
         let mut stack = NativeStack::default();
         stack.push_i32(index);
         let mut context = NativeContext::with_bindings(
             &mut host,
             &mut state,
+            &mut script_domains,
             bindings,
             crate::natives::NativeQueryViews::default(),
         );

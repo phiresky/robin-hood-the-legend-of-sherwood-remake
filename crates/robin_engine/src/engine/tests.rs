@@ -7196,11 +7196,13 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
+    let mut script_domains = crate::engine::ScriptDomains::default();
 
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(2).unwrap(),
         3,
         "TestWaypoint",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default(),
     ));
     assert!(
@@ -7214,6 +7216,7 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
         crate::ai::PathId::new(4).unwrap(),
         0,
         "NonExistent",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default(),
     ));
     assert!(
@@ -7230,10 +7233,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
 fn call_waypoint_function_dispatches_and_falls_back() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(0).unwrap(),
         0,
         "TestWaypoint",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default(),
     ));
 
@@ -7245,6 +7250,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             0,
             "ReachPoint",
             &[actor_handle],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("ReachPoint");
@@ -7257,6 +7263,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             9,
             "ReachPoint",
             &[actor_handle],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("missing instance should be Ok(0)");
@@ -7269,6 +7276,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             0,
             "NotAFunction",
             &[],
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
         )
         .expect("missing function should be Ok(0)");
@@ -7410,10 +7418,12 @@ fn waypoint_script_heap_round_trips_through_serde() {
     };
 
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
+    let mut script_domains = crate::engine::ScriptDomains::default();
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(3).unwrap(),
         7,
         "HeapWaypoint",
+        &mut script_domains,
         crate::natives::NativeQueryViews::default(),
     ));
 

@@ -144,6 +144,7 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
             .bind_actor(
                 handle,
                 "MessageReceiver",
+                &mut engine.script_domains,
                 crate::natives::NativeQueryViews::default(),
             )
     );

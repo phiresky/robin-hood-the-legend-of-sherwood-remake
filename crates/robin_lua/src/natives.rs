@@ -35,6 +35,7 @@
 use std::cell::Cell;
 
 use mlua::{Function, Lua, Table, Value};
+use robin_engine::engine::ScriptDomains;
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
     AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeQueryViews,
@@ -53,6 +54,7 @@ use crate::state::MissionLuaState;
 pub(crate) struct HostPtr {
     host: Cell<*mut GameHost>,
     script_state: Cell<*mut ScriptState>,
+    script_domains: Cell<*mut ScriptDomains>,
     bindings: Cell<*const AttachedScriptBindings>,
     sequence_manager: Cell<*const robin_engine::sequence::SequenceManager>,
     selected_pcs: Cell<*const robin_engine::element::EntityId>,
@@ -71,6 +73,7 @@ impl HostPtr {
     pub(crate) fn new(
         host: *mut GameHost,
         script_state: *mut ScriptState,
+        script_domains: *mut ScriptDomains,
         bindings: *const AttachedScriptBindings,
         queries: NativeQueryViews<'_>,
     ) -> Self {
@@ -78,6 +81,7 @@ impl HostPtr {
         Self {
             host: Cell::new(host),
             script_state: Cell::new(script_state),
+            script_domains: Cell::new(script_domains),
             bindings: Cell::new(bindings),
             sequence_manager: Cell::new(
                 queries
@@ -130,6 +134,15 @@ impl HostPtr {
         assert!(
             !ptr.is_null(),
             "robin_lua: native invoked with no ScriptState attached; wrap the call site in MissionLuaState::with_host"
+        );
+        ptr
+    }
+
+    fn script_domains_ptr(&self) -> *mut ScriptDomains {
+        let ptr = self.script_domains.get();
+        assert!(
+            !ptr.is_null(),
+            "robin_lua: native invoked with no ScriptDomains capability attached; wrap the call site in MissionLuaState::with_host"
         );
         ptr
     }
@@ -460,10 +473,11 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // which is the only place this shim runs.
         let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
         let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
+        let script_domains: &mut ScriptDomains = unsafe { &mut *host_ptr.script_domains_ptr() };
         let bindings: &AttachedScriptBindings = unsafe { &*host_ptr.bindings_ptr() };
         let queries = unsafe { host_ptr.query_views() };
         let mut native_context =
-            NativeContext::with_bindings(host, script_state, bindings, queries);
+            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
         let mut stack = NativeStack::default();
         // Push in argument order — the engine's `pop_i32()` pulls
         // them off in *reverse*, so the last arg ends up on top of
@@ -682,6 +696,7 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // duration of the surrounding `with_host` scope.
         let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
         let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
+        let script_domains: &mut ScriptDomains = unsafe { &mut *script_domains_ptr(lua)? };
         let bindings: &AttachedScriptBindings = unsafe { &*bindings_ptr(lua)? };
         let queries = lua
             .app_data_ref::<HostPtr>()
@@ -689,7 +704,7 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
             .clone();
         let queries = unsafe { queries.query_views() };
         let mut native_context =
-            NativeContext::with_bindings(host, script_state, bindings, queries);
+            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
         let mut stack = NativeStack::default();
         // RecordSendMessage(actor, message) pops `message` first
         // (top of stack), then `actor`. So push actor, then
@@ -730,6 +745,13 @@ fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {
         )
     })?;
     Ok(ptr.script_state_ptr())
+}
+
+fn script_domains_ptr(lua: &Lua) -> mlua::Result<*mut ScriptDomains> {
+    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
+        mlua::Error::RuntimeError("native called with no ScriptDomains attached".into())
+    })?;
+    Ok(ptr.script_domains_ptr())
 }
 
 fn bindings_ptr(lua: &Lua) -> mlua::Result<*const AttachedScriptBindings> {

@@ -18,11 +18,15 @@ fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
 fn engine_native_called_from_lua_writes_host_state() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
-        .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
-            lua.load("InitGlobal(0, 42)").exec()
-        })
+        .with_host_and_state(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            |lua: &Lua| lua.load("InitGlobal(0, 42)").exec(),
+        )
         .unwrap();
     assert_eq!(script_state.globals.get(&0).copied(), Some(42));
 }
@@ -33,8 +37,9 @@ fn engine_native_called_from_lua_writes_host_state() {
 fn start_then_thanx_round_trips() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
             let start_ret: bool = lua.load("return Start()").eval()?;
             assert!(start_ret);
             // `Thanx` on an empty recording returns 0 with a
@@ -53,11 +58,15 @@ fn start_then_thanx_round_trips() {
 fn spellforge_alias_opens_recording() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
-        .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
-            lua.load("StartSequence()").exec()
-        })
+        .with_host_and_state(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            |lua: &Lua| lua.load("StartSequence()").exec(),
+        )
         .unwrap();
     assert!(
         script_state.sequence_recorder.recording.is_some(),
@@ -71,6 +80,7 @@ fn spellforge_alias_opens_recording() {
 fn get_actor_name_lookup() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     std::sync::Arc::make_mut(&mut bindings.lua_names)
         .actors
@@ -81,6 +91,7 @@ fn get_actor_name_lookup() {
         .with_host_state_and_bindings(
             &mut host,
             &mut script_state,
+            &mut script_domains,
             &bindings,
             robin_engine::natives::NativeQueryViews::default(),
             |lua: &Lua| {
@@ -104,6 +115,7 @@ fn get_actor_name_lookup() {
 fn get_all_actors_dumps_table() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     let names = std::sync::Arc::make_mut(&mut bindings.lua_names);
     names.actors.insert("Alice".to_owned(), 1);
@@ -114,6 +126,7 @@ fn get_all_actors_dumps_table() {
         .with_host_state_and_bindings(
             &mut host,
             &mut script_state,
+            &mut script_domains,
             &bindings,
             robin_engine::natives::NativeQueryViews::default(),
             |lua: &Lua| {
@@ -134,8 +147,9 @@ fn get_all_actors_dumps_table() {
 fn add_and_complete_objective_queue_changes() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
             lua.load("AddObjective(7, true); CompleteObjective(7)")
                 .exec()
         })
@@ -161,8 +175,9 @@ fn add_and_complete_objective_queue_changes() {
 fn is_actor_out_of_action_callable() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
             let r: bool = lua.load("return IsActorOutOfAction(99)").eval()?;
             assert!(!r);
             Ok(())
@@ -199,15 +214,21 @@ fn native_abi_is_signature_driven() {
     for (source, expected_return_type, expected_command) in cases {
         let (state, _dir) = fresh_state();
         let mut host = GameHost::new();
+        let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         state
-            .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
-                let return_type: String = lua
-                    .load(format!("return type((function() {source} end)())"))
-                    .eval()?;
-                assert_eq!(return_type, expected_return_type, "{source}");
-                Ok(())
-            })
+            .with_host_and_state(
+                &mut host,
+                &mut script_state,
+                &mut script_domains,
+                |lua: &Lua| {
+                    let return_type: String = lua
+                        .load(format!("return type((function() {source} end)())"))
+                        .eval()?;
+                    assert_eq!(return_type, expected_return_type, "{source}");
+                    Ok(())
+                },
+            )
             .unwrap();
 
         match expected_command {
@@ -243,8 +264,9 @@ fn invalid_native_arguments_are_typed_errors() {
 
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
             for (source, expected_message) in cases {
                 let err = lua.load(source).exec().expect_err(source);
                 assert!(
@@ -277,8 +299,9 @@ fn contains_native_abi_error(error: &mlua::Error) -> bool {
 fn sequence_call_registers_callback() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
             // A SequenceCall must happen inside a recording — open
             // one first so the engine doesn't reject the queued
             // SendMessage.
@@ -319,7 +342,10 @@ fn no_host_attached_errors() {
 fn host_pointer_cleared_after_scope() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
-    state.with_host(&mut host, |_lua: &Lua| Ok(())).unwrap();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    state
+        .with_host(&mut host, &mut script_domains, |_lua: &Lua| Ok(()))
+        .unwrap();
     let err = state.lua().load("InitGlobal(0, 1)").exec().unwrap_err();
     assert!(err.to_string().contains("no GameHost attached"));
 }

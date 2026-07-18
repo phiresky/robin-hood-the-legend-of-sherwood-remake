@@ -224,6 +224,7 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
             script.bind_target(
                 handle,
                 "TestTarget",
+                &mut engine.script_domains,
                 crate::natives::NativeQueryViews::default()
             ),
             "bind_target"

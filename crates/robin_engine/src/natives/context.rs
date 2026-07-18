@@ -93,15 +93,21 @@ impl<'a> NativeQueryViews<'a> {
 pub struct NativeContext<'a> {
     pub(crate) game_host: &'a mut GameHost,
     pub(crate) script_state: &'a mut ScriptState,
+    pub(crate) script_domains: &'a mut crate::engine::ScriptDomains,
     pub(crate) bindings: ScriptBindings<'a>,
     pub(crate) queries: NativeQueryViews<'a>,
 }
 
 impl<'a> NativeContext<'a> {
-    pub fn new(game_host: &'a mut GameHost, script_state: &'a mut ScriptState) -> Self {
+    pub fn new(
+        game_host: &'a mut GameHost,
+        script_state: &'a mut ScriptState,
+        script_domains: &'a mut crate::engine::ScriptDomains,
+    ) -> Self {
         Self {
             game_host,
             script_state,
+            script_domains,
             bindings: ScriptBindings::empty(),
             queries: NativeQueryViews::default(),
         }
@@ -110,12 +116,14 @@ impl<'a> NativeContext<'a> {
     pub fn with_bindings(
         game_host: &'a mut GameHost,
         script_state: &'a mut ScriptState,
+        script_domains: &'a mut crate::engine::ScriptDomains,
         bindings: &'a AttachedScriptBindings,
         queries: NativeQueryViews<'a>,
     ) -> Self {
         Self {
             game_host,
             script_state,
+            script_domains,
             bindings: bindings.view(),
             queries,
         }

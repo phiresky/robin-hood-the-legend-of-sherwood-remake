@@ -7501,7 +7501,7 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
                 match script.call_waypoint_function(
@@ -7509,6 +7509,7 @@ impl EngineInner {
                     wp_idx,
                     "ReachPoint",
                     &[actor_handle],
+                    script_domains,
                     queries,
                 ) {
                     Ok(_) => {}

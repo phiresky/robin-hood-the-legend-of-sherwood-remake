@@ -292,12 +292,14 @@ impl LuaSession {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
         self.run_event_with_bindings(
             host,
             script_state,
+            script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
             robin_engine::natives::NativeQueryViews::default(),
             event_name,
@@ -309,36 +311,42 @@ impl LuaSession {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
         queries: robin_engine::natives::NativeQueryViews<'_>,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
-        let result =
-            self.state
-                .with_host_state_and_bindings(host, script_state, bindings, queries, |lua| {
-                    let globals = lua.globals();
-                    let v: mlua::Value = globals.get(event_name)?;
-                    let Some(func) = (match &v {
-                        mlua::Value::Function(f) => Some(f.clone()),
-                        _ => None,
-                    }) else {
-                        tracing::debug!(
-                            "LuaSession[{}]: no global function `{event_name}`",
-                            self.mission_basename
-                        );
-                        return Ok(None);
-                    };
-                    // Variadic call — `mlua::Variadic` lets us pass a
-                    // slice without knowing arity statically. Convert i32
-                    // args once.
-                    let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
-                    for a in args {
-                        variadic.push(mlua::Value::Integer((*a).into()));
-                    }
-                    let ret: mlua::MultiValue = func.call(variadic)?;
-                    Ok(ret.into_iter().next())
-                });
+        let result = self.state.with_host_state_and_bindings(
+            host,
+            script_state,
+            script_domains,
+            bindings,
+            queries,
+            |lua| {
+                let globals = lua.globals();
+                let v: mlua::Value = globals.get(event_name)?;
+                let Some(func) = (match &v {
+                    mlua::Value::Function(f) => Some(f.clone()),
+                    _ => None,
+                }) else {
+                    tracing::debug!(
+                        "LuaSession[{}]: no global function `{event_name}`",
+                        self.mission_basename
+                    );
+                    return Ok(None);
+                };
+                // Variadic call — `mlua::Variadic` lets us pass a
+                // slice without knowing arity statically. Convert i32
+                // args once.
+                let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
+                for a in args {
+                    variadic.push(mlua::Value::Integer((*a).into()));
+                }
+                let ret: mlua::MultiValue = func.call(variadic)?;
+                Ok(ret.into_iter().next())
+            },
+        );
 
         let returned = result.map_err(|source| LuaSessionError::Event {
             mission: self.mission_basename.clone(),
@@ -380,12 +388,13 @@ impl LuaSession {
         native_parts: Option<(
             &mut GameHost,
             &mut ScriptState,
+            &mut robin_engine::engine::ScriptDomains,
             &robin_engine::natives::AttachedScriptBindings,
             robin_engine::natives::NativeQueryViews<'_>,
         )>,
         initialization_seed: i32,
     ) -> Result<(), SpellforgeSessionError> {
-        let Some((host, script_state, bindings, queries)) = native_parts else {
+        let Some((host, script_state, script_domains, bindings, queries)) = native_parts else {
             return Err(SpellforgeSessionError::MissingGameHost {
                 mission: self.mission_basename.clone(),
                 event: "Initialize",
@@ -395,12 +404,20 @@ impl LuaSession {
             ("Initialize", std::slice::from_ref(&initialization_seed)),
             ("PostInitialize", &[][..]),
         ] {
-            self.run_event_with_bindings(host, script_state, bindings, queries, event, args)
-                .map_err(|source| SpellforgeSessionError::RequiredEvent {
-                    mission: self.mission_basename.clone(),
-                    event,
-                    source,
-                })?;
+            self.run_event_with_bindings(
+                host,
+                script_state,
+                script_domains,
+                bindings,
+                queries,
+                event,
+                args,
+            )
+            .map_err(|source| SpellforgeSessionError::RequiredEvent {
+                mission: self.mission_basename.clone(),
+                event,
+                source,
+            })?;
         }
         Ok(())
     }
@@ -651,6 +668,7 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let valid_cases = [
             ("Missing", 0),
             ("NoReturn", 0),
@@ -661,19 +679,37 @@ mod tests {
         for (event, expected) in valid_cases {
             assert_eq!(
                 session
-                    .run_event(&mut host, &mut script_state, event, &[])
+                    .run_event(
+                        &mut host,
+                        &mut script_state,
+                        &mut script_domains,
+                        event,
+                        &[],
+                    )
                     .unwrap(),
                 expected
             );
         }
 
         assert!(matches!(
-            session.run_event(&mut host, &mut script_state, "BadReturn", &[]),
+            session.run_event(
+                &mut host,
+                &mut script_state,
+                &mut script_domains,
+                "BadReturn",
+                &[],
+            ),
             Err(LuaSessionError::UnexpectedEventReturn { actual, .. }) if actual == "table"
         ));
         #[cfg(target_pointer_width = "64")]
         assert!(matches!(
-            session.run_event(&mut host, &mut script_state, "WideIntegerReturn", &[]),
+            session.run_event(
+                &mut host,
+                &mut script_state,
+                &mut script_domains,
+                "WideIntegerReturn",
+                &[],
+            ),
             Err(LuaSessionError::EventIntegerOutOfRange {
                 value: 2_147_483_648,
                 ..
@@ -692,9 +728,16 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
         let err = session
-            .run_event(&mut host, &mut script_state, "Fails", &[])
+            .run_event(
+                &mut host,
+                &mut script_state,
+                &mut script_domains,
+                "Fails",
+                &[],
+            )
             .unwrap_err();
         assert!(matches!(err, LuaSessionError::Event { .. }));
         assert!(err.to_string().contains("deliberate failure"));
@@ -715,6 +758,7 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let bindings = robin_engine::natives::AttachedScriptBindings::default();
 
         let err = robin_engine::sim_rng::with_seed(7, || {
@@ -723,6 +767,7 @@ mod tests {
                     Some((
                         &mut host,
                         &mut script_state,
+                        &mut script_domains,
                         &bindings,
                         robin_engine::natives::NativeQueryViews::default(),
                     )),
@@ -773,6 +818,7 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let bindings = robin_engine::natives::AttachedScriptBindings::default();
         robin_engine::sim_rng::with_seed(0x5eed, || {
             session
@@ -780,6 +826,7 @@ mod tests {
                     Some((
                         &mut host,
                         &mut script_state,
+                        &mut script_domains,
                         &bindings,
                         robin_engine::natives::NativeQueryViews::default(),
                     )),

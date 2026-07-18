@@ -505,6 +505,7 @@ impl Engine {
             Option<(
                 &mut crate::natives::GameHost,
                 &mut crate::natives::ScriptState,
+                &mut crate::engine::ScriptDomains,
                 &crate::natives::AttachedScriptBindings,
                 crate::natives::NativeQueryViews<'_>,
             )>,
@@ -516,6 +517,7 @@ impl Engine {
                 (
                     &mut script.game_host,
                     &mut script.state,
+                    &mut inner.script_domains,
                     &script.bindings,
                     queries,
                 )
