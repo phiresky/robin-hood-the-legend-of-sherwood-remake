@@ -1465,7 +1465,6 @@ pub(super) async fn handle_sherwood_hud_buttons(
     events: &[GameEvent],
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
-    headless: bool,
 ) -> HandlerAction {
     let engine = &mut manager.engine;
     // ── Sherwood HUD buttons ──
@@ -1560,9 +1559,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     // QuitMission in Sherwood mode prompts
                     // REALLY_RETURN_TO_MAP, then on Yes re-raises the
                     // campaign map without leaving Sherwood.
-                    let confirmed = if headless {
-                        true
-                    } else if let Some(resources) = menu_resources.as_ref() {
+                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources
                             .menu_text
                             .get(resources::MT_MSG_REALLY_RETURN_TO_MAP);
@@ -1598,9 +1595,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     } else {
                         resources::MT_MSG_REALLY_START_MISSION
                     };
-                    let confirmed = if headless {
-                        true
-                    } else if let Some(resources) = menu_resources.as_ref() {
+                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources.menu_text.get(prompt_id);
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));

@@ -438,7 +438,7 @@ mod tests {
             3,
         ),
         (
-            "crates/robin_rs/src/game_session/mod.rs|fastrand::Rng::new",
+            "crates/robin_rs/src/game_session/interactive.rs|fastrand::Rng::new",
             1,
         ),
         (
