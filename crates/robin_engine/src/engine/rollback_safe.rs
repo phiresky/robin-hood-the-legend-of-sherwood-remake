@@ -291,14 +291,13 @@ impl Engine {
 
         // Sherwood-only: spawn production bonuses at the registered
         // points.
-        let is_sherwood = inner
-            .campaign()
-            .and_then(|c| c.current_mission_idx.map(|i| (c, i)))
-            .map(|(c, i)| {
-                c.missions[i].profile(&assets.profile_manager).location
-                    == crate::profiles::MissionLocation::Sherwood
-            })
-            .unwrap_or(false);
+        let campaign = inner.campaign();
+        let is_sherwood = campaign.current_mission_idx.is_some_and(|i| {
+            campaign.missions[i]
+                .profile(&assets.profile_manager)
+                .location
+                == crate::profiles::MissionLocation::Sherwood
+        });
         if is_sherwood {
             inner.with_sim_rng(|inner| {
                 inner.apply_production_sector_data(assets);

@@ -240,11 +240,7 @@ impl MissionBootstrap {
             .require(MissionBootstrapPhase::CampaignClockStarted);
         if !self.game.is_sherwood {
             if args.mission_start_map_output.is_none() {
-                let campaign = self
-                    .loaded
-                    .engine
-                    .campaign()
-                    .expect("restart snapshot requires the engine campaign");
+                let campaign = self.loaded.engine.campaign();
                 let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
                 callbacks.save_manager.write_restart_save_background(
                     &mut self.host,
@@ -315,11 +311,7 @@ impl MissionBootstrap {
             self.lifecycle.phase(),
             MissionBootstrapPhase::CampaignClockStarted | MissionBootstrapPhase::EntryPrepared
         ));
-        let campaign = self
-            .loaded
-            .engine
-            .campaign()
-            .expect("mission runtime construction requires the engine campaign");
+        let campaign = self.loaded.engine.campaign();
         let mission = campaign.missions.get(self.spec.mission_idx).unwrap_or_else(|| {
             panic!(
                 "mission runtime construction requires campaign mission index {} (campaign has {})",

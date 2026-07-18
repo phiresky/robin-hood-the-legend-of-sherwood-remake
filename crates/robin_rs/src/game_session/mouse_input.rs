@@ -1261,9 +1261,7 @@ pub(super) async fn handle_pause_menu_events(
                 let mut close_pause_menu = false;
                 let resources =
                     required_menu_resources(menu_resources, "pause-menu save/load picker");
-                let campaign = engine
-                    .campaign()
-                    .expect("pause-menu save/load picker requires the engine campaign");
+                let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
                 let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                 let picker_outcome = ingame_menu::show_save_load(
@@ -1483,7 +1481,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
         // for `are_selected_pc_in_mission_team`, which also walks the
         // campaign through `engine.campaign()`.
         let (has_next_mission, requirements_met, can_convert_merry_men, next_beam_mes) = {
-            let campaign = engine.campaign().expect("campaign");
+            let campaign = engine.campaign();
             let has_next = campaign.next_mission_idx.is_some();
             let requirements_met = campaign.mission_requirements_met(&assets.profile_manager);
             // Pass the *next* mission (not the blazon mission) to
@@ -1647,10 +1645,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         *sherwood_enable = SherwoodButtonEnable::pre_commit();
                         return HandlerAction::Continue;
                     }
-                    let mission_id = current_mission_id(
-                        engine.campaign().expect("campaign"),
-                        &assets.profile_manager,
-                    );
+                    let mission_id = current_mission_id(engine.campaign(), &assets.profile_manager);
                     // Harvest Sherwood's production-sector state into
                     // the campaign before exiting.  Executed with the
                     // Sherwood engine still live so current bonus
@@ -1735,13 +1730,10 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
 
         // Pseudo-mission debriefing is triggered from inside the map
         // modal after its 500 ms timer.
-        let pseudo_status = engine
-            .campaign()
-            .expect("campaign")
-            .get_last_pseudo_mission_status();
+        let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
 
-        let campaign = engine.campaign().expect("campaign");
+        let campaign = engine.campaign();
         sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
         // `menu_resources` is `None` only if `DEFAULT.RES` failed to
         // load — rare dev-only case.  Default `MenuText` returns an
@@ -1813,7 +1805,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     // Try the per-mission win/lose text first, fall
                     // back to the generic strategical-mission text
                     // only if the resource lookup fails.
-                    let last_id = engine.campaign().expect("campaign").last_pseudo_mission_id;
+                    let last_id = engine.campaign().last_pseudo_mission_id;
                     let pseudo_red = {
                         let filename = assets_res_descr::red_filename(last_id);
                         host.shipping
@@ -1870,7 +1862,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     );
                 }
                 engine.campaign_reset_last_pseudo_mission_status();
-                let ares_after = engine.campaign().expect("campaign").get_ares();
+                let ares_after = engine.campaign().get_ares();
                 if ares_after == 0 {
                     return Ok(HandlerAction::Exit(GameCode::Quit));
                 }
@@ -1887,7 +1879,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 // is re-shown.
                 let desc_outcome = if let Some(resources) = menu_resources.as_mut() {
                     let mission_descriptors = {
-                        let campaign = engine.campaign().expect("campaign");
+                        let campaign = engine.campaign();
                         let mission = &campaign.missions[idx];
                         let mission_id = mission.profile(&assets.profile_manager).id;
                         let filename = assets_res_descr::red_filename(mission_id);

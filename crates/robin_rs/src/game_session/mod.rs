@@ -451,9 +451,7 @@ async fn confirm_quickload_cross_mission(
         callbacks.save_manager.slot_mission_id(idx),
         "QuickLoad confirmation slot must have a cached mission ID",
     );
-    let campaign = engine
-        .campaign()
-        .expect("QuickLoad confirmation requires the engine campaign");
+    let campaign = engine.campaign();
     let current = current_mission_id(campaign, profiles);
     if target_mission_id == current {
         return;

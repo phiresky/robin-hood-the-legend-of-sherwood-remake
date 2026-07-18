@@ -443,17 +443,12 @@ pub struct GameSaveFile {
 }
 
 impl GameSaveFile {
-    /// Build a save file from a live engine.  Panics if the engine has
-    /// no active campaign.
+    /// Build a save file from a live engine.
     ///
     /// `game_persistent` is `None` for callers without a live `Game`
     /// handle (test-only); the real save/load pipeline threads the
     /// game state through via [`capture_with_game`](Self::capture_with_game).
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
-        assert!(
-            engine.campaign().is_some(),
-            "GameSaveFile::capture: engine has no active campaign"
-        );
         Self {
             header: SaveHeader::new(mission_id, display_text),
             engine: engine.clone(),
@@ -680,7 +675,6 @@ mod tests {
         decoded.apply_to(&mut engine2, &mut host2);
         assert_eq!(engine2.frame_counter(), 12345);
         assert!(engine2.mission().mission_won);
-        assert!(engine2.campaign().is_some());
     }
 
     #[test]

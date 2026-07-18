@@ -257,26 +257,12 @@ pub(super) fn handle_console_overlay_events(
     // engine.
     if let Some(path) = console_overlay.take_pending_load_campaign() {
         match GameSaveFile::read_from(&path) {
-            Ok(loaded) => match loaded.engine.campaign().cloned() {
-                Some(campaign) => {
-                    engine.replace_campaign_from_console(campaign);
-                    tracing::info!("Loaded campaign values from {}", path.display());
-                    // Echo the success message into the console.
-                    host.pending_console_output
-                        .push("Campaign values loaded !".to_string());
-                }
-                None => {
-                    tracing::error!(
-                        "CAMPAIGN load: save file {} has no active campaign",
-                        path.display(),
-                    );
-                    // The save header was readable but carried no
-                    // campaign.  Fall through to the same error
-                    // wording as the open-failure case — nothing
-                    // useful was applied.
-                    host.pending_console_output.push("Kaputt !".to_string());
-                }
-            },
+            Ok(loaded) => {
+                engine.replace_campaign_from_console(loaded.engine.campaign().clone());
+                tracing::info!("Loaded campaign values from {}", path.display());
+                host.pending_console_output
+                    .push("Campaign values loaded !".to_string());
+            }
             Err(err) => {
                 tracing::error!("CAMPAIGN load failed for {}: {err:#}", path.display());
                 // Echo the open-failure message into the console.

@@ -3517,10 +3517,9 @@ impl EngineInner {
         }
     }
 
-    /// Currently-owned campaign. Live engines always return `Some`; the
-    /// optional facade remains until downstream read-only APIs are consolidated.
-    pub fn campaign(&self) -> Option<&crate::campaign::Campaign> {
-        Some(&self.mission_domain.campaign)
+    /// The campaign owned by this live mission engine.
+    pub fn campaign(&self) -> &crate::campaign::Campaign {
+        &self.mission_domain.campaign
     }
 
     /// Has the given peasant display name already been registered on
@@ -3546,15 +3545,6 @@ impl EngineInner {
         self.mission_domain.campaign = campaign;
     }
 
-    /// Remove the campaign at mission-end (or shutdown) and return it
-    /// to the caller.  Host returns it to the outer owner.  Save/load
-    /// boundary — the engine is not ticking when this runs.
-    ///
-    /// Absence is an invariant violation, not a normal mission outcome.  The
-    /// generic conversion keeps the existing facade ABI (`Option<Campaign>`)
-    /// source-compatible while ensuring `EngineInner` itself only extracts a
-    /// concrete required campaign; `Campaign: Into<Option<Campaign>>` wraps a
-    /// present value and can never manufacture `None`.
     /// Consume a finished engine and return its one campaign allocation.
     pub(crate) fn into_campaign(self) -> crate::campaign::Campaign {
         self.mission_domain.campaign
@@ -3831,7 +3821,7 @@ mod campaign_lifecycle_tests {
             DifficultyLevel::Medium,
         );
 
-        let campaign = engine.campaign().expect("campaign stays installed");
+        let campaign = engine.campaign();
         assert_eq!(campaign.missions[0].status, MissionStatus::Won);
         assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
         assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 14);

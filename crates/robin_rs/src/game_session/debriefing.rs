@@ -57,9 +57,7 @@ pub(super) async fn run_lost_sherwood_gate(
         return None;
     }
 
-    let campaign = engine
-        .campaign()
-        .expect("lost-Sherwood gate requires the engine campaign");
+    let campaign = engine.campaign();
     if campaign.get_ares() != 0 {
         return None;
     }

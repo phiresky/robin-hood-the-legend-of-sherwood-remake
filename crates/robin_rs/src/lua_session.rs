@@ -888,10 +888,7 @@ mod tests {
 
         let slot = CampaignValue::custom(7).expect("custom campaign slot 7");
         assert_eq!(
-            engine
-                .campaign()
-                .expect("test engine retains its canonical campaign")
-                .values[slot],
+            engine.campaign().values[slot],
             4242,
             "Lua must mutate Engine's canonical campaign through the opaque query capability",
         );

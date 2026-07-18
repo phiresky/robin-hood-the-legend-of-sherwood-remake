@@ -984,10 +984,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                                 if !manager.engine.is_zoom_possible(&host.engine_display) {
                                     game.quick_save_after_zoom = true;
                                 } else {
-                                    let campaign = manager
-                                        .engine
-                                        .campaign()
-                                        .expect("QuickSave requires the engine campaign");
+                                    let campaign = manager.engine.campaign();
                                     let mission_id =
                                         current_mission_id(campaign, &assets.profile_manager);
                                     callbacks.pending =
@@ -1324,10 +1321,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // The Game state machine queues save/load intents on the
         // callbacks; `perform_pending_save_load` then flushes them to
         // disk with live engine access.
-        let exit_code = manager
-            .engine
-            .campaign()
-            .and_then(|c| game.process_operation(c, profiles, callbacks));
+        let exit_code = game.process_operation(manager.engine.campaign(), profiles, callbacks);
         let pending_thumbnail = if callbacks
             .pending
             .as_ref()
@@ -1362,10 +1356,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                     display_info_elapsed_secs:
                         <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
                             callbacks,
-                            manager
-                                .engine
-                                .campaign()
-                                .expect("save thumbnail requires engine campaign"),
+                            manager.engine.campaign(),
                         ),
                 },
             );

@@ -288,39 +288,37 @@ pub(super) fn setup_mission_audio(
         if res_loaded {
             // Collect unique exclamation IDs from all profile types
             let mut files_needed = std::collections::BTreeMap::<u32, String>::new();
-            if engine.campaign().is_some() {
-                for ch in &profiles.characters {
-                    if ch.exclamation_id != 0 {
-                        let bytes = ch.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(ch.exclamation_id, format!("actor{name}.dat"));
-                    }
+            for ch in &profiles.characters {
+                if ch.exclamation_id != 0 {
+                    let bytes = ch.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(ch.exclamation_id, format!("actor{name}.dat"));
                 }
-                for s in &profiles.soldiers {
-                    if s.exclamation_id != 0 {
-                        let bytes = s.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(s.exclamation_id, format!("actor{name}.dat"));
-                    }
+            }
+            for s in &profiles.soldiers {
+                if s.exclamation_id != 0 {
+                    let bytes = s.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(s.exclamation_id, format!("actor{name}.dat"));
                 }
-                for c in &profiles.civilians {
-                    if c.exclamation_id != 0 {
-                        let bytes = c.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(c.exclamation_id, format!("actor{name}.dat"));
-                    }
+            }
+            for c in &profiles.civilians {
+                if c.exclamation_id != 0 {
+                    let bytes = c.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(c.exclamation_id, format!("actor{name}.dat"));
                 }
             }
 
@@ -388,9 +386,8 @@ pub(super) fn setup_mission_audio(
     }
 
     // Initialize music pools from the mission profile.
-    if let Some(campaign) = engine.campaign()
-        && let Some(idx) = campaign.current_mission_idx
-    {
+    let campaign = engine.campaign();
+    if let Some(idx) = campaign.current_mission_idx {
         let prof = campaign.missions[idx].profile(profiles);
         host.sound.sound_cache.initialize_music(
             &prof.green_music,
@@ -696,7 +693,8 @@ pub(super) fn pre_decode_maps_and_resources(
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
-    let level_descriptors = engine.campaign().and_then(|campaign| {
+    let level_descriptors = (|| {
+        let campaign = engine.campaign();
         let mission_id = current_mission_id(campaign, profiles);
         let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
@@ -722,7 +720,7 @@ pub(super) fn pre_decode_maps_and_resources(
                 None
             }
         }
-    });
+    })();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {

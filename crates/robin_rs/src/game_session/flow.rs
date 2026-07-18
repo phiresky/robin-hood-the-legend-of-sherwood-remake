@@ -312,10 +312,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     display_info_elapsed_secs:
                         <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
                             callbacks,
-                            manager
-                                .engine
-                                .campaign()
-                                .expect("interactive mission time requires engine campaign"),
+                            manager.engine.campaign(),
                         ),
                 },
             );

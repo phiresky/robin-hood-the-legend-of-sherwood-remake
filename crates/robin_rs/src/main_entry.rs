@@ -1444,9 +1444,7 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::Restart => {
-            let campaign = engine
-                .campaign()
-                .expect("Restart save requires the engine campaign");
+            let campaign = engine.campaign();
             let mid = current_mission_id(campaign, profiles);
             if let Err(err) = callbacks.save_manager.write_restart_save(
                 host,

@@ -3392,7 +3392,7 @@ mod script_context_tests {
         engine.migrate_legacy_script_custom_values();
 
         let slot = CampaignValue::custom(7).unwrap();
-        assert_eq!(engine.campaign().unwrap().values[slot], 42);
+        assert_eq!(engine.campaign().values[slot], 42);
         assert!(
             engine
                 .scripts
@@ -3403,7 +3403,7 @@ mod script_context_tests {
                 .is_none()
         );
         engine.migrate_legacy_script_custom_values();
-        assert_eq!(engine.campaign().unwrap().values[slot], 42);
+        assert_eq!(engine.campaign().values[slot], 42);
     }
 
     #[test]
@@ -3439,10 +3439,7 @@ mod script_context_tests {
         engine.migrate_legacy_script_custom_values();
 
         assert_eq!(
-            engine
-                .campaign()
-                .expect("legacy campaign becomes canonical")
-                .values[CampaignValue::Custom20],
+            engine.campaign().values[CampaignValue::Custom20],
             0x8b_20_26
         );
     }
@@ -3468,10 +3465,7 @@ mod script_context_tests {
         restored.migrate_legacy_script_custom_values();
 
         assert_eq!(
-            restored
-                .campaign()
-                .expect("parked campaign migrated")
-                .values[CampaignValue::Custom19],
+            restored.campaign().values[CampaignValue::Custom19],
             0x19_08_25
         );
     }

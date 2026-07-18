@@ -505,10 +505,11 @@ pub(super) fn start_active_sherwood_report(
         return None;
     }
     host.pending_sherwood_report = false;
-    let (Some(campaign), Some(resources)) = (engine.campaign(), menu_resources.as_mut()) else {
-        tracing::warn!("DisplaySherwoodReport: campaign or menu resources unavailable — skipped");
+    let Some(resources) = menu_resources.as_mut() else {
+        tracing::warn!("DisplaySherwoodReport: menu resources unavailable — skipped");
         return None;
     };
+    let campaign = engine.campaign();
 
     let sherwood = SherwoodStat;
     let score_info = {
@@ -1029,7 +1030,8 @@ pub(super) async fn drain_pending_sherwood_stat(
     // `pending_sherwood_report`.
     if host.pending_sherwood_report {
         host.pending_sherwood_report = false;
-        if let (Some(campaign), Some(resources)) = (engine.campaign(), menu_resources.as_mut()) {
+        if let Some(resources) = menu_resources.as_mut() {
+            let campaign = engine.campaign();
             let sherwood = SherwoodStat;
             // The Sherwood stat panel pulls score / preserved lives
             // / play time from the active player profile.
