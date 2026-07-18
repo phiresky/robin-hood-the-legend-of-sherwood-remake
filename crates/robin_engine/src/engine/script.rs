@@ -2846,6 +2846,33 @@ impl EngineInner {
                     }
                     self.actor_make_crouched(eid);
                 }
+                EngineCommand::SetMobileActive {
+                    mobile_index,
+                    active,
+                } => {
+                    let mobile = self
+                        .world
+                        .mobile_elements
+                        .get_mut(usize::from(mobile_index))
+                        .unwrap_or_else(|| {
+                            panic!("SetMobileActive references missing mobile {mobile_index}")
+                        });
+                    mobile.set_active(active);
+                    let sprite_ids = mobile.sprite_ids.clone();
+                    for sprite_id in sprite_ids {
+                        let fx = self
+                            .world
+                            .entities
+                            .get_mut(sprite_id)
+                            .and_then(crate::element::Entity::as_fx_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "mobile {mobile_index} child {sprite_id} is missing or non-FX"
+                                )
+                            });
+                        fx.element.active = active;
+                    }
+                }
                 EngineCommand::MarkPc { actor_handle } => {
                     // Resolve the script handle to an EntityId and route
                     // it to the host via pending_side_effects.  The sim
@@ -3269,6 +3296,24 @@ mod script_context_tests {
         assert!(normalized["game_host"].get("script_this").is_none());
         assert!(normalized["game_host"].get("current_scroll").is_none());
         assert!(normalized["game_host"].get("nested_call_depth").is_none());
+    }
+
+    #[test]
+    fn v5_parked_ai_global_deserializes_only_through_legacy_dto() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(5);
+        let mut parked = crate::ai::AiGlobalState::default();
+        parked.golden_eye_mode = true;
+        parked.next_repulsive_point_id = 77;
+        snapshot["game_host"]["ai_global"] =
+            serde_json::to_value(parked).expect("serialize legacy parked AI mirror");
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("legacy parked AI mirror remains loadable");
+        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
+        assert_eq!(normalized["snapshot_version"], 6);
+        assert!(normalized["game_host"].get("ai_global").is_none());
     }
 
     #[test]
@@ -3743,6 +3788,58 @@ mod script_context_tests {
     }
 
     #[test]
+    fn native_ai_mutation_writes_engine_inner_directly() {
+        use crate::interp::{HostFunctions, NativeStack};
+        use crate::natives::NativeFn;
+
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+        engine.scripts.mission = Some(empty_mission_script());
+        engine.ai.global.next_repulsive_point_id = 9;
+        engine
+            .ai
+            .global
+            .repulsive_points
+            .push(crate::ai::RepulsivePoint {
+                id: 8,
+                position: crate::ai::Position::default(),
+                radius: 10.0,
+                action_radius: 20.0,
+                flags: 0,
+            });
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        let canonical_ai_global = std::ptr::addr_of_mut!(engine.ai.global);
+
+        let result = engine.with_script_session(&assets, |script, script_domains, queries| {
+            let mut context = crate::natives::NativeContext::with_bindings(
+                &mut script.game_host,
+                &mut script.state,
+                script_domains,
+                &script.bindings,
+                queries,
+            );
+            assert_eq!(
+                std::ptr::from_mut(context.ai_global_mut()),
+                canonical_ai_global,
+                "the native capability must borrow EngineInner's AI allocation"
+            );
+            let mut stack = NativeStack::default();
+            stack.push_i32(8);
+            HostFunctions::call(
+                &mut context,
+                NativeFn::DeleteRepulsivePoint as u32,
+                &mut stack,
+            )
+            .expect_return("DeleteRepulsivePoint is synchronous")
+        });
+
+        assert_eq!(result, Some(0));
+        assert!(engine.ai.global.repulsive_points.is_empty());
+        assert_eq!(engine.ai.global.next_repulsive_point_id, 9);
+    }
+
+    #[test]
     #[should_panic(expected = "native dispatch requires live level attachments")]
     fn external_native_rejects_a_detached_live_script() {
         let mut engine = EngineInner::new();
@@ -3819,6 +3916,10 @@ mod script_context_tests {
                     engine.script_domains.mission_ui.outline_display,
                     "canonical domain mutation survives session unwind"
                 );
+                assert!(
+                    engine.ai.global.golden_eye_mode,
+                    "canonical AI-global mutation survives session unwind"
+                );
             }
         }
 
@@ -3830,8 +3931,18 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let _verify = VerifyRestoredOnUnwind(&engine);
 
-        let _ = engine.with_script_session(&assets, |script, script_domains, _capabilities| {
+        let _ = engine.with_script_session(&assets, |script, script_domains, capabilities| {
             script_domains.mission_ui.outline_display = true;
+            {
+                let mut context = crate::natives::NativeContext::with_bindings(
+                    &mut script.game_host,
+                    &mut script.state,
+                    script_domains,
+                    &script.bindings,
+                    capabilities,
+                );
+                context.ai_global_mut().golden_eye_mode = true;
+            }
             script.with_call_frame(
                 crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
                 |_| panic!("simulated script panic"),

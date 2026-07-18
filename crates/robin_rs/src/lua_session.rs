@@ -898,6 +898,65 @@ mod tests {
     }
 
     #[test]
+    fn engine_lua_startup_borrows_the_scoped_canonical_ai_global() {
+        use robin_engine::campaign::Campaign;
+        use robin_engine::engine::{Engine, LevelAssets};
+        use robin_engine::profiles::MissionProfile;
+        use robin_engine::scb::{ClassEntry, SCB_VERSION, ScbFile};
+        use robin_engine::script_manager::ScriptProgram;
+
+        let session = session_with_script(
+            r#"
+            function Initialize()
+                local id = AddRepulsivePoint(GetLocationScript(0), 10.0, 20.0, 0)
+                DeleteRepulsivePoint(id)
+            end
+            "#,
+        );
+
+        let startup = ClassEntry {
+            source_file: "lua_ai_owner_test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: Vec::new(),
+            quads: Vec::new(),
+        };
+        let program = ScriptProgram::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![startup],
+        });
+
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .missions
+            .push(MissionProfile {
+                mission_filename: "lua_ai_owner_test".into(),
+                ..MissionProfile::default()
+            });
+        assets.mission_script_programs = std::sync::Arc::new(std::collections::BTreeMap::from([(
+            "lua_ai_owner_test".to_owned(),
+            std::sync::Arc::new(program),
+        )]));
+        assets.script_location_count = 1;
+        assets.script_point_count = 1;
+        assets.script_location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+        assets.script_location_layers = std::sync::Arc::new(vec![2]);
+        assets.script_location_sectors = std::sync::Arc::new(vec![44]);
+
+        let mut engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
+            .expect("construct engine with the minimal mission script");
+        engine.with_mission_script_game_host_and_rng(&assets, |native_parts| {
+            session
+                .run_required_startup_events(native_parts, 0)
+                .expect("Lua startup AI natives succeed")
+        });
+
+        assert_eq!(engine.ai_global().next_repulsive_point_id, 2);
+        assert!(engine.ai_global().repulsive_points.is_empty());
+    }
+
+    #[test]
     fn startup_random_draw_uses_the_installed_authoritative_scope() {
         let session = session_with_script(
             r#"

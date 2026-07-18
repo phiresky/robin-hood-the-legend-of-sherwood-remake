@@ -176,6 +176,29 @@ fn with_campaign_context<R>(
     f(&mut context)
 }
 
+fn with_bound_campaign_context<R>(
+    host: &mut BoundGameHost,
+    bindings: &AttachedScriptBindings,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    f: impl FnOnce(&mut NativeContext<'_, '_>) -> R,
+) -> R {
+    let capabilities = NativeSessionCapabilities::new(
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    )
+    .with_campaign(campaign, mission_stat);
+    let mut context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        bindings,
+        &capabilities,
+    );
+    f(&mut context)
+}
+
 fn call_campaign_native(
     host: &mut GameHost,
     campaign: &mut crate::campaign::Campaign,
@@ -623,6 +646,80 @@ fn script_actor_handle_maps_back_to_zero_based_entity_index() {
         GameHost::actor_handle_index(GameHost::actor_handle_from_index(70)),
         Some(70)
     );
+}
+
+fn mobile_fx(mobile_index: u16) -> Entity {
+    Entity::Fx(crate::element::ElementFx {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Fx,
+            active: true,
+            ..Default::default()
+        },
+        fx: crate::element::FxData {
+            mobile_index: Some(mobile_index),
+            ..Default::default()
+        },
+    })
+}
+
+#[test]
+fn mobile_master_is_appended_to_script_actor_indices() {
+    let mut host = BoundGameHost::new();
+    host.entities
+        .push(Some(Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            },
+            fx: crate::element::FxData::default(),
+        })));
+    host.entities.push(Some(mobile_fx(0)));
+
+    let mut get = NativeStack::default();
+    get.push_i32(1);
+    let handle = call_host_native(&mut host, NativeFn::GetActorScript, &mut get);
+    assert_eq!(handle, GameHost::actor_handle_from_index(1));
+
+    let mut reverse = NativeStack::default();
+    reverse.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::GetActorIndex, &mut reverse),
+        0
+    );
+
+    let mut is_cart = NativeStack::default();
+    is_cart.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsActorCart, &mut is_cart),
+        1
+    );
+}
+
+#[test]
+fn generic_mobile_activation_propagates_to_all_children() {
+    let mut host = BoundGameHost::new();
+    host.entities.push(Some(mobile_fx(0)));
+    host.entities.push(Some(mobile_fx(0)));
+    let handle = GameHost::actor_handle_from_index(0);
+
+    let mut deactivate = NativeStack::default();
+    deactivate.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::Deactivate, &mut deactivate),
+        1
+    );
+    assert!(
+        host.entities
+            .occupied()
+            .all(|(_, entity)| !entity.is_active())
+    );
+    assert!(matches!(
+        host.commands.as_slice(),
+        [EngineCommand::SetMobileActive {
+            mobile_index: 0,
+            active: false
+        }]
+    ));
 }
 
 #[test]
@@ -1720,7 +1817,7 @@ fn call_get_persistent_property(
 }
 
 fn call_set_persistent_property_with_campaign(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
@@ -1732,7 +1829,7 @@ fn call_set_persistent_property_with_campaign(
     stack.push_i32(actor);
     stack.push_i32(prop);
     stack.push_i32(amount);
-    with_campaign_context(host, bindings, campaign, mission_stat, |context| {
+    with_bound_campaign_context(host, bindings, campaign, mission_stat, |context| {
         context
             .call(NativeFn::SetPersistentProperty as u32, &mut stack)
             .expect_return("non-nested persistent-property test")
@@ -1740,7 +1837,7 @@ fn call_set_persistent_property_with_campaign(
 }
 
 fn call_get_persistent_property_with_campaign(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
@@ -1750,7 +1847,7 @@ fn call_get_persistent_property_with_campaign(
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
     stack.push_i32(prop);
-    with_campaign_context(host, bindings, campaign, mission_stat, |context| {
+    with_bound_campaign_context(host, bindings, campaign, mission_stat, |context| {
         context
             .call(NativeFn::GetPersistentProperty as u32, &mut stack)
             .expect_return("non-nested persistent-property test")
@@ -2031,7 +2128,7 @@ fn set_experiences_test_host() -> (BoundGameHost, crate::campaign::Campaign, i32
 }
 
 fn call_set_experiences(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
     actor: i32,
@@ -2043,12 +2140,16 @@ fn call_set_experiences(
     stack.push_i32(sword);
     stack.push_i32(bow);
     assert_eq!(
-        call_campaign_native(
+        with_bound_campaign_context(
             host,
+            AttachedScriptBindings::empty_ref(),
             campaign,
             mission_stat,
-            NativeFn::SetExperiences,
-            &mut stack,
+            |context| {
+                context
+                    .call(NativeFn::SetExperiences as u32, &mut stack)
+                    .expect_return("non-nested SetExperiences test")
+            },
         ),
         0
     );

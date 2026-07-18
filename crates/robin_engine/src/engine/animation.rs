@@ -3508,16 +3508,28 @@ impl EngineInner {
                 continue;
             }
 
-            // FX entities: frame advance.  Patch FX entities need
+            // FX entities: frame advance. Mobile children freeze with their
+            // stopped master (RHElementFXMasked::Hourglass checks
+            // IsStopped before advancing). Patch FX entities need
             // special handling: reversed playback during unapply
             // transitions, and final patch effects on completion.
             if entity.is_fx() {
                 if let Entity::Fx(fx) = entity
-                    && fx.fx.mobile_index.is_some()
+                    && let Some(mobile_index) = fx.fx.mobile_index
                 {
-                    fx.element
-                        .sprite
-                        .increment_frame_modulated(fx.fx.animation_speed);
+                    let stopped = self
+                        .world
+                        .mobile_elements
+                        .get(usize::from(mobile_index))
+                        .unwrap_or_else(|| {
+                            panic!("mobile FX references missing master {mobile_index}")
+                        })
+                        .stopped;
+                    if !stopped {
+                        fx.element
+                            .sprite
+                            .increment_frame_modulated(fx.fx.animation_speed);
+                    }
                     continue;
                 }
                 // Check if this is a patch FX entity.

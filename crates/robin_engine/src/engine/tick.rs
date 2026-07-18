@@ -5907,9 +5907,6 @@ impl EngineInner {
                 if tick.movement != crate::coordinates::MapVec::ZERO {
                     let position = fx.element.position_map() + tick.movement;
                     fx.element.set_position_map(position);
-                    for point in &mut fx.fx.display_polyline {
-                        *point = *point + tick.movement;
-                    }
                 }
                 fx.element.active = active;
                 fx.fx.animation_speed = animation_speed;
@@ -5917,6 +5914,7 @@ impl EngineInner {
                 fx.element
                     .set_sector(crate::position_interface::SectorHandle::new(sector));
             }
+            self.check_mobile_line_crossing(assets, mobile_index);
         }
 
         // ── Quit swordfight with far opponents ──────────────────

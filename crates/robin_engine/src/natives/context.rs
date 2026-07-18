@@ -293,6 +293,14 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         self.script_state
     }
 
+    pub(crate) fn ai_global(&self) -> &crate::ai::AiGlobalState {
+        &self.ai_global
+    }
+
+    pub(crate) fn ai_global_mut(&mut self) -> &mut crate::ai::AiGlobalState {
+        &mut self.ai_global
+    }
+
     // Associated functions do not participate in deref method lookup. Keep
     // these small forwards while dispatch is split between NativeContext and
     // the legacy GameHost helper implementation.

@@ -3542,7 +3542,10 @@ impl EngineInner {
                         display_polyline: raw
                             .display_polyline
                             .iter()
-                            .map(|&(x, y)| MapPoint::new(x as f32 + start.x, y as f32 + start.y))
+                            // RHElementFX reads this as absolute map geometry.
+                            // The mobile master translates the sprite, but never
+                            // its display-order polyline.
+                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect(),
                         patch_index: None,
                         mobile_index: Some(mobile_index_u16),
