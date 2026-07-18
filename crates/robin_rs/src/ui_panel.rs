@@ -1057,7 +1057,8 @@ fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
     };
     engine
         .campaign()
-        .and_then(|c| c.characters.get(usize::from(profile_idx)))
+        .characters
+        .get(usize::from(profile_idx))
         .map(|desc| desc.status.in_coma)
         .unwrap_or(false)
 }
@@ -1066,17 +1067,12 @@ fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
 ///
 /// Compares the PC's `current_action` against the profile's `actions[]` array.
 /// Returns `None` if `current_action == NoAction` or doesn't match any slot.
-fn active_action_index(
-    engine: &Engine,
-    profiles: &engine_profiles::ProfileManager,
-    entity: &Entity,
-) -> Option<u8> {
+fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Entity) -> Option<u8> {
     use crate::profiles::Action;
     let pc = entity.pc_data()?;
     if pc.current_action == Action::NoAction {
         return None;
     }
-    engine.campaign()?;
     let profile = profiles.get_character(pc.profile_index)?;
     profile
         .actions
@@ -1470,7 +1466,7 @@ pub fn draw_panel(
                 };
 
                 // Determine active action button index and disabled state.
-                let active_idx = entity.and_then(|e| active_action_index(engine, profiles, e));
+                let active_idx = entity.and_then(|e| active_action_index(profiles, e));
 
                 for i in 0..num_buttons {
                     let is_active = active_idx == Some(i as u8);
@@ -2258,9 +2254,7 @@ pub fn draw_pc_info_overlay(
     };
 
     // Pull sword / bow capacity from the campaign character descriptor.
-    let Some(campaign) = engine.campaign() else {
-        return;
-    };
+    let campaign = engine.campaign();
     let Some(desc) = campaign.characters.get(usize::from(pc.pc.profile_index)) else {
         return;
     };

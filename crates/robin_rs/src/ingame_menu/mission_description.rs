@@ -102,7 +102,7 @@ pub async fn show_mission_description(
     text_resources: &mut ResourceManager,
 ) -> (MissionChoice, bool) {
     let mut screen = {
-        let campaign = engine.campaign().expect("campaign");
+        let campaign = engine.campaign();
         let mission = &campaign.missions[mission_index];
         MissionDescriptionScreen::create(
             mission_index,
@@ -261,7 +261,7 @@ pub async fn show_mission_description(
         // only the Sherwood campaign-map tooltip turns it on after a
         // blazon pickup.
         let blazon_state = if screen.requires_blazons {
-            let campaign = engine.campaign().expect("campaign");
+            let campaign = engine.campaign();
             Some(blazon_set::build_for_mission(
                 campaign,
                 profiles,
@@ -510,7 +510,7 @@ async fn dispatch_convert_money(
     // by the enable-gate on the parent's button — we reached here
     // only when the player could afford it at open time.
     let (blazon_price, ransom) = {
-        let campaign = engine.campaign().expect("campaign");
+        let campaign = engine.campaign();
         let mission = &campaign.missions[mission_index];
         (
             mission.get_blazon_price() as u32,
@@ -544,7 +544,7 @@ async fn dispatch_convert_money(
 
     // Refresh parent-window button enables from the current campaign
     // state.
-    let campaign = engine.campaign().expect("campaign");
+    let campaign = engine.campaign();
     let can_peasants = campaign.can_convert_merry_men_to_blazons(mission_index, profiles);
     let can_money = campaign.can_convert_money_to_blazons(mission_index, profiles);
     let can_mission = campaign.can_convert_mission_to_blazons(mission_index, profiles);

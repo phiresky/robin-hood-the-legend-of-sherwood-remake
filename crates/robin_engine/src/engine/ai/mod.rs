@@ -757,7 +757,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
             entity,
             building_sector.is_some(),
             building_sector,
-            engine.mission_domain.campaign.as_ref(),
+            Some(&engine.mission_domain.campaign),
         );
 
         // Door-rail snap: while a human actor is passing a door, AI
@@ -2602,17 +2602,9 @@ impl EngineInner {
         // Only call `set_music_mode` when not in Sherwood.  Sherwood
         // has its own ambient track and shouldn't hear combat/alert
         // cues even if a soldier briefly goes yellow.
-        let is_sherwood = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let is_sherwood = Some(&self.mission_domain.campaign)
             .and_then(|c| c.current_mission_idx)
-            .and_then(|idx| {
-                self.mission_domain
-                    .campaign
-                    .as_ref()
-                    .and_then(|c| c.missions.get(idx))
-            })
+            .and_then(|idx| Some(&self.mission_domain.campaign).and_then(|c| c.missions.get(idx)))
             .is_some_and(|m| {
                 m.profile(profiles).location == crate::profiles::MissionLocation::Sherwood
             });

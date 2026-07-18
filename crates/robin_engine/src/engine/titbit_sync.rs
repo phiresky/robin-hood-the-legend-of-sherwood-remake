@@ -721,7 +721,7 @@ impl EngineInner {
 
         let mut states: Vec<HiddenState> = Vec::new();
 
-        if self.mission_domain.campaign.is_none() {
+        if false {
             return;
         }
 

@@ -186,14 +186,12 @@ fn entity_display_name(
 
 /// Whether a PC entity is a VIP (main hero) vs a merry man (peasant).
 ///
-/// Uses the `CharacterProfile::vip` flag when the campaign is available,
-/// falls back to name heuristic otherwise.
-fn is_vip_character(engine: &Engine, assets: &LevelAssets, entity: &Entity) -> bool {
+/// Uses the `CharacterProfile::vip` flag when the profile is available,
+/// falling back to the entity-kind heuristic otherwise.
+fn is_vip_character(assets: &LevelAssets, entity: &Entity) -> bool {
     match entity {
         Entity::Pc(pc) => {
-            if engine.campaign().is_some()
-                && let Some(profile) = assets.profile_manager.get_character(pc.pc.profile_index)
-            {
+            if let Some(profile) = assets.profile_manager.get_character(pc.pc.profile_index) {
                 return profile.vip;
             }
             // Fallback: VIP if not a merry-man template.
@@ -604,7 +602,7 @@ fn render_portrait_text_gpu(
         let name =
             entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default();
         if !name.is_empty() && !sword_visible {
-            let vip = is_vip_character(engine, assets, entity);
+            let vip = is_vip_character(assets, entity);
             let display_name = prepare_portrait_name(&name, vip);
             let name_x = x + TEXT_OFFSET_X;
             let name_y = vis_top + TEXT_OFFSET_Y;
@@ -707,10 +705,7 @@ fn pc_ammo_quantities(
     assets: &LevelAssets,
     pc: &crate::element::ActorPc,
 ) -> [Option<u16>; 3] {
-    let campaign = match engine.campaign() {
-        Some(c) => c,
-        None => return [None; 3],
-    };
+    let campaign = engine.campaign();
 
     let profile_idx = pc.pc.profile_index;
 

@@ -3,7 +3,6 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
-use super::{CampaignRestoreOwner, EngineCampaignSource, MissionCampaignLease};
 use crate::Host;
 use crate::audio_backend::KiraAudioBackend;
 use crate::campaign::Campaign;
@@ -289,39 +288,37 @@ pub(super) fn setup_mission_audio(
         if res_loaded {
             // Collect unique exclamation IDs from all profile types
             let mut files_needed = std::collections::BTreeMap::<u32, String>::new();
-            if engine.campaign().is_some() {
-                for ch in &profiles.characters {
-                    if ch.exclamation_id != 0 {
-                        let bytes = ch.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(ch.exclamation_id, format!("actor{name}.dat"));
-                    }
+            for ch in &profiles.characters {
+                if ch.exclamation_id != 0 {
+                    let bytes = ch.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(ch.exclamation_id, format!("actor{name}.dat"));
                 }
-                for s in &profiles.soldiers {
-                    if s.exclamation_id != 0 {
-                        let bytes = s.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(s.exclamation_id, format!("actor{name}.dat"));
-                    }
+            }
+            for s in &profiles.soldiers {
+                if s.exclamation_id != 0 {
+                    let bytes = s.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(s.exclamation_id, format!("actor{name}.dat"));
                 }
-                for c in &profiles.civilians {
-                    if c.exclamation_id != 0 {
-                        let bytes = c.exclamation_id.to_le_bytes();
-                        let name: String = bytes
-                            .iter()
-                            .filter(|&&b| b != 0)
-                            .map(|&b| b as char)
-                            .collect();
-                        files_needed.insert(c.exclamation_id, format!("actor{name}.dat"));
-                    }
+            }
+            for c in &profiles.civilians {
+                if c.exclamation_id != 0 {
+                    let bytes = c.exclamation_id.to_le_bytes();
+                    let name: String = bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect();
+                    files_needed.insert(c.exclamation_id, format!("actor{name}.dat"));
                 }
             }
 
@@ -389,9 +386,8 @@ pub(super) fn setup_mission_audio(
     }
 
     // Initialize music pools from the mission profile.
-    if let Some(campaign) = engine.campaign()
-        && let Some(idx) = campaign.current_mission_idx
-    {
+    let campaign = engine.campaign();
+    if let Some(idx) = campaign.current_mission_idx {
         let prof = campaign.missions[idx].profile(profiles);
         host.sound.sound_cache.initialize_music(
             &prof.green_music,
@@ -697,7 +693,8 @@ pub(super) fn pre_decode_maps_and_resources(
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
-    let level_descriptors = engine.campaign().and_then(|campaign| {
+    let level_descriptors = (|| {
+        let campaign = engine.campaign();
         let mission_id = current_mission_id(campaign, profiles);
         let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
@@ -723,7 +720,7 @@ pub(super) fn pre_decode_maps_and_resources(
                 None
             }
         }
-    });
+    })();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -1161,9 +1158,14 @@ pub(super) struct LoadedMissionCore {
     pub(super) engine_rng_seed: u64,
 }
 
-impl EngineCampaignSource for Engine {
-    fn take_campaign(&mut self) -> Option<Campaign> {
-        self.take_campaign()
+pub(super) struct MissionLoadError {
+    pub(super) message: String,
+    pub(super) campaign: Campaign,
+}
+
+impl MissionLoadError {
+    fn new(campaign: Campaign, message: String) -> Self {
+        Self { message, campaign }
     }
 }
 
@@ -1195,12 +1197,12 @@ fn construct_with_initial_rng_seed<T>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn load_level_and_sprite_bank<'a>(
+pub(super) fn load_level_and_sprite_bank(
     mut event_pump: Option<&mut crate::window::GameWindow>,
     loading_screen: &mut Option<crate::loading_screen::LoadingScreenRenderer>,
     host: &mut Host,
     game: &mut Game,
-    campaign_ref: &'a mut Campaign,
+    campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
     args: &crate::main_entry::CliArgs,
@@ -1209,7 +1211,7 @@ pub(super) fn load_level_and_sprite_bank<'a>(
     ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
     titbit_row_frame_counts: Vec<u16>,
     minimap_widget: Option<engine_api::MinimapWidgetSetup>,
-) -> Result<(LoadedMissionCore, MissionCampaignLease<'a>), String> {
+) -> Result<LoadedMissionCore, MissionLoadError> {
     let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
     // engine reads profiles via `&assets.profile_manager` everywhere now
@@ -1277,8 +1279,8 @@ pub(super) fn load_level_and_sprite_bank<'a>(
     // files itself; the host parses them (preferring shipping, falling
     // back to disk for the current mission), decodes immutable bytecode,
     // and stores the programs in `LevelAssets` before level load.
-    let mission_name = campaign_ref.current_mission_idx.map(|i| {
-        campaign_ref.missions[i]
+    let mission_name = campaign.current_mission_idx.map(|i| {
+        campaign.missions[i]
             .profile(&assets.profile_manager)
             .mission_filename
             .clone()
@@ -1315,10 +1317,10 @@ pub(super) fn load_level_and_sprite_bank<'a>(
 
     // Initialize Game's per-mission state from the campaign before we
     // hand it off to the engine.
-    game.initialize_for_mission(campaign_ref, &assets.profile_manager);
+    game.initialize_for_mission(&campaign, &assets.profile_manager);
 
-    // Construct the engine with campaign install + level load folded
-    // in.  The old `Engine::new(w, h)` + `install_campaign` +
+    // Construct the engine with campaign ownership + level load folded
+    // in.  The old split constructor followed by
     // `initialize_from_campaign` + `initialize` sequence collapses to
     // this single call.  Mission script was already loaded inside
     // `load_level()` → `load_mission_script()` so the level loader
@@ -1336,17 +1338,21 @@ pub(super) fn load_level_and_sprite_bank<'a>(
     // live — no post-construction fixup, no patrol paths silently
     // failing `TestIfPathIsFine` because the grid hadn't been sized
     // yet.
-    let loaded = {
+    let loaded_result = {
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
         engine_api::level_loading::load_mission_for_campaign(
-            campaign_ref,
+            &campaign,
             &assets.profile_manager,
             &level_directory,
             &mut progress,
         )
-        .map_err(|e| format!("Level load failed: {e}"))?
+        .map_err(|e| format!("Level load failed: {e}"))
+    };
+    let loaded = match loaded_result {
+        Ok(loaded) => loaded,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
     };
 
     // Pre-decode the background bitmap before `Engine::new` — the
@@ -1355,7 +1361,7 @@ pub(super) fn load_level_and_sprite_bank<'a>(
         .directory()
         .to_string();
     let map_name = loaded.mission.header.map_filename.clone();
-    let pre_decoded_bg = {
+    let pre_decoded_bg_result = {
         let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
             assets_frame_holder::ProgressUpdate::Tick(d) => {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), d);
@@ -1373,7 +1379,11 @@ pub(super) fn load_level_and_sprite_bank<'a>(
             host.shipping.as_deref(),
             &mut update,
         )
-        .map_err(|e| format!("Background map load failed: {e}"))?
+        .map_err(|e| format!("Background map load failed: {e}"))
+    };
+    let pre_decoded_bg = match pre_decoded_bg_result {
+        Ok(background) => background,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
     };
     let pre_decoded_mm = {
         let mut progress = |delta: f32| {
@@ -1409,12 +1419,14 @@ pub(super) fn load_level_and_sprite_bank<'a>(
         );
     }
 
-    let rng_seed = initial_rng_seed(args, host.mp_mission_seed)?;
+    let rng_seed = match initial_rng_seed(args, host.mp_mission_seed) {
+        Ok(seed) => seed,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
+    };
     // This is the only point at which setup transfers campaign ownership.
     // Every fallible file/decode step above borrows the session campaign, and
     // the preserving constructor returns the exact allocation on ingestion
     // failure.
-    let campaign = std::mem::take(campaign_ref);
     let engine = {
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
@@ -1435,16 +1447,13 @@ pub(super) fn load_level_and_sprite_bank<'a>(
         }) {
             Ok(engine) => engine,
             Err((error, campaign)) => {
-                *campaign_ref = campaign;
-                return Err(format!("Level init failed: {error}"));
+                return Err(MissionLoadError::new(
+                    campaign,
+                    format!("Level init failed: {error}"),
+                ));
             }
         }
     };
-    let engine_owner = CampaignRestoreOwner::new(
-        engine,
-        MissionCampaignLease::new(campaign_ref),
-        "dropped post-load engine setup",
-    );
     if rng_seed != 0 {
         tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
     }
@@ -1468,21 +1477,17 @@ pub(super) fn load_level_and_sprite_bank<'a>(
     // Generate night/fog variant dictionaries based on ambiance.
     // Runs host-side because the engine crate doesn't reference
     // `FrameHolder`.
-    crate::level_loading_host::initialize_sprite_variants(host, engine_owner.value());
+    crate::level_loading_host::initialize_sprite_variants(host, &engine);
     tick_progress(loading_screen, event_pump, 1.0);
 
-    let (engine, campaign_return) = engine_owner.into_parts();
-    Ok((
-        LoadedMissionCore {
-            engine,
-            assets,
-            dev,
-            pre_decoded_background: pre_decoded_bg,
-            pre_decoded_minimap: pre_decoded_mm,
-            engine_rng_seed: rng_seed,
-        },
-        campaign_return,
-    ))
+    Ok(LoadedMissionCore {
+        engine,
+        assets,
+        dev,
+        pre_decoded_background: pre_decoded_bg,
+        pre_decoded_minimap: pre_decoded_mm,
+        engine_rng_seed: rng_seed,
+    })
 }
 
 /// Build `ThreadedInput` + `InputTranslator`, load the active profile's

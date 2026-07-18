@@ -711,12 +711,12 @@ impl EngineInner {
                 self.reveal_all_blips();
             }
             CampaignSelectNextMission { mission_idx } => {
-                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
+                if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
                     campaign.select_next_mission(*mission_idx, &assets.profile_manager);
                 }
             }
             CampaignSwapPendingToAccessibleMissions => {
-                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
+                if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
                     campaign.swap_pending_to_accessible_missions();
                 }
             }
@@ -3216,7 +3216,7 @@ pub(super) fn is_pc_takable(
     // Runs before the `NoAction → true` fast-path because amulets
     // themselves carry `Action::NoAction`.
     if obj.object_type == crate::element::ObjectType::BonusAmulet
-        && let Some(campaign) = engine.mission_domain.campaign.as_ref()
+        && let Some(campaign) = Some(&engine.mission_domain.campaign)
         && campaign.get_value(crate::campaign::CampaignValue::Amulets)
             >= crate::campaign::MAXIMUM_AMULETS_NUMBER
     {
@@ -3447,10 +3447,7 @@ fn determine_use_command(
             if c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
                 && !c.npc.scroll_attached)
     {
-        let ransom = engine
-            .mission_domain
-            .campaign
-            .as_ref()
+        let ransom = Some(&engine.mission_domain.campaign)
             .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
             .unwrap_or(0);
         if ransom >= crate::engine::BEGGAR_SALARY {
@@ -3661,7 +3658,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -3718,7 +3715,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -4341,7 +4338,7 @@ mod tests {
     fn pickup_dispatch_bonus_returns_none_when_storage_full() {
         // PC has the action but current ammo == max → reject.
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Heal, 3)]);
-        if let Some(campaign) = engine.mission_domain.campaign.as_mut()
+        if let Some(campaign) = Some(&mut engine.mission_domain.campaign)
             && let Some(pc_desc) = campaign.characters.get_mut(0)
         {
             pc_desc.status.set_ammo(Action::Heal, 3);

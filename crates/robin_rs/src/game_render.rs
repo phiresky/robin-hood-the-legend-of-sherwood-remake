@@ -3195,10 +3195,7 @@ pub(crate) fn render_ransom_amulet_overlay(
     fonts: &HudFonts,
     menu_resources: Option<&IngameMenuResources>,
 ) {
-    let campaign = match engine.campaign() {
-        Some(c) => c,
-        None => return,
-    };
+    let campaign = engine.campaign();
 
     let ransom = campaign.get_value(CampaignValue::Ransom);
     let amulets = campaign.get_value(CampaignValue::Amulets);

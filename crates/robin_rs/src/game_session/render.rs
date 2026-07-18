@@ -932,9 +932,9 @@ pub(super) fn render_frame(
 
         // Requirements-bar hover (Sherwood only).
         if game.is_sherwood
-            && let Some(campaign) = engine.campaign()
-            && let Some(next_idx) = campaign.next_mission_idx
+            && let Some(next_idx) = engine.campaign().next_mission_idx
         {
+            let campaign = engine.campaign();
             let mission_team = campaign.mission_team_profile_indices();
             let selected = selected_pc_profile_indices(engine, local_seat);
             if let Some(req) = build_requirements_state(
@@ -1097,7 +1097,8 @@ pub(super) fn render_frame(
     // cursor is actually over a slot.
     requirements_tooltip.update(None);
     blazon_tooltip.update(None);
-    if let Some(campaign) = engine.campaign() {
+    {
+        let campaign = engine.campaign();
         let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
         let blinking = engine.active_blinking_blazons();
         if let Some(bb) = blazon_bar::build_blazon_bar_state(
@@ -1409,7 +1410,6 @@ pub(super) fn render_frame(
             && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
             && let Some(&pc_id) = engine.pc_ids().get(slot as usize)
             && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(pc_id)
-            && engine.campaign().is_some()
             && let Some(profile) = assets.profile_manager.get_character(pc.pc.profile_index)
             && let Some(&action) = profile.actions.get(btn as usize)
             && let Some(mt_id) = crate::ui_panel::action_button_tooltip_mt_id(action)

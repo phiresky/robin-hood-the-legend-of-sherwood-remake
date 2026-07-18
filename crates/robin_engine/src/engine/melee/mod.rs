@@ -452,7 +452,7 @@ impl EngineInner {
             Some(entity) => concussion_ctx_full(
                 entity,
                 self.world.weather.is_forest_level,
-                self.mission_domain.campaign.as_ref(),
+                Some(&self.mission_domain.campaign),
             ),
             None => ConcussionContext::default(),
         }

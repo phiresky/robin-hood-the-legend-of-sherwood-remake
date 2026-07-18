@@ -4989,7 +4989,7 @@ impl EngineInner {
                                 continue;
                             };
                             let dropped = if let Some(campaign) =
-                                self.mission_domain.campaign.as_mut()
+                                Some(&mut self.mission_domain.campaign)
                                 && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
@@ -5009,10 +5009,7 @@ impl EngineInner {
                             // reaches 0.  `dropped` was clamped to the
                             // available amount so "now empty" is
                             // detectable by re-reading.
-                            let now_empty = self
-                                .mission_domain
-                                .campaign
-                                .as_ref()
+                            let now_empty = Some(&self.mission_domain.campaign)
                                 .and_then(|c| c.characters.get(status_idx))
                                 .map(|d| d.status.get_ammo(action) == 0)
                                 .unwrap_or(false);
@@ -5226,7 +5223,7 @@ impl EngineInner {
                                 continue;
                             };
                             let dropped = if let Some(campaign) =
-                                self.mission_domain.campaign.as_mut()
+                                Some(&mut self.mission_domain.campaign)
                                 && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
@@ -5243,10 +5240,7 @@ impl EngineInner {
                                 continue;
                             }
                             // Auto-disable when empty.
-                            let now_empty = self
-                                .mission_domain
-                                .campaign
-                                .as_ref()
+                            let now_empty = Some(&self.mission_domain.campaign)
                                 .and_then(|c| c.characters.get(status_idx))
                                 .map(|d| d.status.get_ammo(action) == 0)
                                 .unwrap_or(false);
@@ -6375,7 +6369,7 @@ impl EngineInner {
         // BeingDropped) synchronized with the carrier.  Needs the
         // campaign profile manager to look up LittleJohnCarry contextual
         // actions on the carrier.
-        if self.mission_domain.campaign.is_some() {
+        if true {
             abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
         }
 
@@ -6603,7 +6597,7 @@ impl EngineInner {
                     .element_terminated(seq_id, elem_idx);
                 return;
             };
-            self.mission_domain.campaign.as_ref().unwrap_or_else(|| {
+            Some(&self.mission_domain.campaign).unwrap_or_else(|| {
                 panic!("dispatch_stealth_command: campaign missing for entity {owner:?}")
             });
             let profile = assets
@@ -8938,7 +8932,7 @@ impl EngineInner {
     fn advance_mission_clock(&mut self) {
         self.control.frame_counter += 1;
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND)
-            && let Some(campaign) = self.mission_domain.campaign.as_mut()
+            && let Some(campaign) = Some(&mut self.mission_domain.campaign)
         {
             campaign.add_value(crate::campaign::CampaignValue::MissionLength, 1);
         }
@@ -9781,7 +9775,7 @@ mod drop_ammo_merge_tests {
         };
         desc.status.set_ammo(Action::Bow, bow_ammo);
         campaign.characters.push(desc);
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let mut element = ElementData {
             kind: ElementKind::ActorPc,

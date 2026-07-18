@@ -85,7 +85,7 @@ impl EngineInner {
             .map(|pc| pc.profile_index);
 
         // Pick the peasant via the campaign helper.
-        let Some(campaign) = self.mission_domain.campaign.as_mut() else {
+        let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
             return;
         };
         let Some(char_idx) =

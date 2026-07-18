@@ -602,9 +602,12 @@ impl SaveGameManager {
     ) {
         let slot = &mut self.saves[index];
         Self::sync_slot_metadata_from_header(slot, &save.header);
-        if let Some(campaign) = save.engine.campaign() {
-            Self::sync_slot_campaign_metadata(slot, campaign, save.header.mission_id, profiles);
-        }
+        Self::sync_slot_campaign_metadata(
+            slot,
+            save.engine.campaign(),
+            save.header.mission_id,
+            profiles,
+        );
     }
 
     fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) {
@@ -839,7 +842,6 @@ mod tests {
         mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
-        assert!(engine2.campaign().is_some());
     }
 
     #[test]

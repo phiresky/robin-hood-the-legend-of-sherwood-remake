@@ -228,7 +228,7 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
 /// source-sensitive NPC, and a no-override NPC.
 fn build_engine() -> (EngineInner, i32, i32, i32) {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
     engine.attach_script_bindings(&LevelAssets::new());
@@ -1068,7 +1068,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     let outer_handle = 1;
     let inner_handle = 2;
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
@@ -1233,7 +1233,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     drop(capabilities);
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(script);
     let mut assets = LevelAssets::new();
     assets.script_location_count = 1;

@@ -1586,8 +1586,7 @@ fn determine_use_command(
     {
         let ransom = engine
             .campaign()
-            .map(|c| c.get_value(engine_campaign::CampaignValue::Ransom))
-            .unwrap_or(0);
+            .get_value(engine_campaign::CampaignValue::Ransom);
         if ransom >= engine_api::BEGGAR_SALARY {
             return Some(Command::Pay);
         }

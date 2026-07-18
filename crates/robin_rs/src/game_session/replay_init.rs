@@ -186,7 +186,7 @@ pub(super) fn init_replay_and_rollback(
                 writer,
                 mission_id.to_string(),
                 engine_rng_seed,
-                engine.campaign(),
+                Some(engine.campaign()),
             ) {
                 Ok(rec) => Some(rec),
                 Err(e) => {

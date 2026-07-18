@@ -360,7 +360,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
         let idx = usize::from(pc_data.list_index);
-        let campaign = self.mission_domain.campaign.as_ref()?;
+        let campaign = &self.mission_domain.campaign;
         let Some(desc) = campaign.characters.get(idx) else {
             tracing::warn!(
                 "PC status index {} out of range for profile {}",
@@ -386,7 +386,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<&crate::campaign::PcDescription> {
         let idx = self.pc_description_index_for_pc_data(pc_data)?;
-        self.mission_domain.campaign.as_ref()?.characters.get(idx)
+        self.mission_domain.campaign.characters.get(idx)
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
@@ -400,20 +400,23 @@ impl EngineInner {
         self.migrate_legacy_script_custom_values();
     }
 
-    /// Create a new engine instance.
-    ///
-    /// Replicates the state setup of the original engine constructor.
-    /// Subsystem creation is deferred to stubs.
-    ///
-    /// `pub(crate)` — downstream crates construct through [`Engine::new`]
-    /// (the facade wrapper), never by reaching in here.
+    /// Test fixture constructor. Production construction always supplies the
+    /// concrete campaign through [`Self::new_with_campaign`].
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::new_with_campaign(crate::campaign::Campaign::default())
+    }
+
+    /// Create the deterministic kernel for a live mission. Downstream crates
+    /// construct through the [`Engine`] facade, so every production path must
+    /// supply the campaign up front.
+    pub(crate) fn new_with_campaign(campaign: crate::campaign::Campaign) -> Self {
         // Engine starts with canonical seat 0. This is not "the local
         // player"; every peer has the same seat table, and joined peers
         // add deterministic seats via `ConnectSeat`.
         //
         Self {
-            mission_domain: MissionDomain::new(),
+            mission_domain: MissionDomain::new(campaign),
             // Original: the `__TEST` path in
             // `original-code/launcher.cpp:762-766` calls `srand(0)`.
             // `Engine::new` replaces this bare-engine test seed with the
@@ -588,7 +591,7 @@ impl EngineInner {
 
     /// Get the current mission's type from the campaign, if available.
     pub fn mission_type(&self, profiles: &crate::profiles::ProfileManager) -> Option<MissionType> {
-        let campaign = self.mission_domain.campaign.as_ref()?;
+        let campaign = &self.mission_domain.campaign;
         let idx = campaign.current_mission_idx?;
         Some(campaign.missions.get(idx)?.profile(profiles).mission_type)
     }
@@ -2907,10 +2910,7 @@ impl EngineInner {
 
     /// `true` when the current mission is the Sherwood (HQ) hideout.
     pub fn is_sherwood(&self, profiles: &crate::profiles::ProfileManager) -> bool {
-        self.mission_domain
-            .campaign
-            .as_ref()
-            .is_some_and(|c| self.is_sherwood_mission(c, profiles))
+        self.is_sherwood_mission(&self.mission_domain.campaign, profiles)
     }
 
     /// Build a fresh `Order` (via `alloc_order_id` for the id) and push
@@ -3237,10 +3237,7 @@ impl EngineInner {
         &mut self,
         profiles: &crate::profiles::ProfileManager,
     ) {
-        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
-            tracing::warn!("convert_selected_peasants_to_blazons: no campaign");
-            return;
-        };
+        let campaign = &self.mission_domain.campaign;
         let number_to_convert =
             campaign.get_number_of_peasants_to_convert_to_blazons(profiles) as usize;
         let quotation = {
@@ -3294,11 +3291,7 @@ impl EngineInner {
                 crate::sim_rng::RngSite::PeasantReservistSurvival,
                 0..LIFEPOINTS_PC_X2,
             ) as i32;
-            let campaign = self
-                .mission_domain
-                .campaign
-                .as_mut()
-                .expect("campaign vanished mid-loop");
+            let campaign = &mut self.mission_domain.campaign;
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
             } else {
@@ -3311,13 +3304,12 @@ impl EngineInner {
         }
 
         // Reset the mission team.
-        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
-            campaign.reset_mission_team();
-            // Credit `floor(number_to_convert / quotation)` blazons.
-            if quotation != 0 {
-                let credited = (number_to_convert as i32) / (quotation as i32);
-                campaign.add_value(crate::campaign::CampaignValue::Blazon, credited);
-            }
+        let campaign = &mut self.mission_domain.campaign;
+        campaign.reset_mission_team();
+        // Credit `floor(number_to_convert / quotation)` blazons.
+        if quotation != 0 {
+            let credited = (number_to_convert as i32) / (quotation as i32);
+            campaign.add_value(crate::campaign::CampaignValue::Blazon, credited);
         }
     }
 
@@ -3459,10 +3451,7 @@ impl EngineInner {
     /// to the per-mission added-score counter.  Other campaign values
     /// have no extra side effects.
     pub fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
-        if self.mission_domain.campaign.is_none() {
-            return;
-        }
-        self.mission_domain.campaign.as_mut().unwrap().values[name] += amount;
+        self.mission_domain.campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_domain.mission_stat,
             &mut self.feedback.pending_side_effects,
@@ -3477,11 +3466,8 @@ impl EngineInner {
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
     pub fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
-        if self.mission_domain.campaign.is_none() {
-            return;
-        }
-        let old = self.mission_domain.campaign.as_ref().unwrap().values[name];
-        self.mission_domain.campaign.as_mut().unwrap().values[name] = value;
+        let old = self.mission_domain.campaign.values[name];
+        self.mission_domain.campaign.values[name] = value;
         Self::apply_value_set_side_effects(
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
@@ -3531,9 +3517,9 @@ impl EngineInner {
         }
     }
 
-    /// Currently-owned campaign.  `None` outside of a mission.
-    pub fn campaign(&self) -> Option<&crate::campaign::Campaign> {
-        self.mission_domain.campaign.as_ref()
+    /// The campaign owned by this live mission engine.
+    pub fn campaign(&self) -> &crate::campaign::Campaign {
+        &self.mission_domain.campaign
     }
 
     /// Has the given peasant display name already been registered on
@@ -3541,49 +3527,27 @@ impl EngineInner {
     pub fn is_peasant_name_registered(&self, name: &str) -> bool {
         self.mission_domain
             .campaign
-            .as_ref()
-            .is_some_and(|c| c.is_peasant_name_registered(name))
+            .is_peasant_name_registered(name)
     }
 
     /// Add a display name to the campaign's peasant-name dedupe list.
     /// Called once per peasant at level-load, before the mission
     /// begins ticking.
     pub(crate) fn register_peasant_name(&mut self, name: String) {
-        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
-            campaign.register_peasant_name(name);
-        }
-    }
-
-    /// Install a campaign for the duration of a mission.  Called at
-    /// mission-start and save-load from the host's level-loader,
-    /// outside any active tick; mirrors `std::mem::take(campaign_ref)`
-    /// followed by assignment.
-    pub fn install_campaign(&mut self, campaign: crate::campaign::Campaign) {
-        assert!(
-            self.mission_domain.campaign.is_none(),
-            "cannot replace an installed campaign"
-        );
-        self.mission_domain.campaign = Some(campaign);
-    }
-
-    /// Remove the campaign at mission-end (or shutdown) and return it
-    /// to the caller.  Host returns it to the outer owner.  Save/load
-    /// boundary — the engine is not ticking when this runs.
-    ///
-    /// Absence is an invariant violation, not a normal mission outcome.  The
-    /// generic conversion keeps the existing facade ABI (`Option<Campaign>`)
-    /// source-compatible while ensuring `EngineInner` itself only extracts a
-    /// concrete required campaign; `Campaign: Into<Option<Campaign>>` wraps a
-    /// present value and can never manufacture `None`.
-    pub fn take_campaign<T>(&mut self) -> T
-    where
-        T: From<crate::campaign::Campaign>,
-    {
         self.mission_domain
-            .campaign
-            .take()
-            .expect("active engine campaign is missing")
-            .into()
+            .required_campaign_mut("registering a mission peasant name")
+            .register_peasant_name(name);
+    }
+
+    /// Explicitly replace campaign progress for the `CAMPAIGN` developer
+    /// console command. Mission construction and teardown never use this.
+    pub(crate) fn replace_campaign(&mut self, campaign: crate::campaign::Campaign) {
+        self.mission_domain.campaign = campaign;
+    }
+
+    /// Consume a finished engine and return its one campaign allocation.
+    pub(crate) fn into_campaign(self) -> crate::campaign::Campaign {
+        self.mission_domain.campaign
     }
 
     /// Reset transient runtime state that isn't — or shouldn't be —
@@ -3817,36 +3781,20 @@ mod campaign_lifecycle_tests {
     }
 
     #[test]
-    #[should_panic(expected = "active engine campaign is missing")]
-    fn taking_an_active_campaign_rejects_absence() {
-        let mut engine = EngineInner::new();
-        let _: Campaign = engine.take_campaign();
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot replace an installed campaign")]
-    fn installing_a_campaign_rejects_replacement() {
-        let mut engine = EngineInner::new();
-        engine.install_campaign(marked_campaign());
-        engine.install_campaign(Campaign::default());
-    }
-
-    #[test]
     fn quit_updates_preserve_the_campaign_allocation() {
-        let mut engine = EngineInner::new();
         let mut campaign = marked_campaign();
         campaign.production_sectors.reserve_exact(257);
         assert!(!campaign.production_sectors.is_empty());
         let production_sectors = campaign.production_sectors.as_ptr();
         let production_sector_capacity = campaign.production_sectors.capacity();
-        engine.install_campaign(campaign);
+        let mut engine = EngineInner::new_with_campaign(campaign);
 
         engine.apply_quit_mission_updates(
             &LevelAssets::default(),
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
         );
-        let campaign: Campaign = engine.take_campaign();
+        let campaign = engine.into_campaign();
 
         assert_eq!(campaign.production_sectors.as_ptr(), production_sectors);
         assert_eq!(
@@ -3857,34 +3805,23 @@ mod campaign_lifecycle_tests {
     }
 
     #[test]
-    #[should_panic(expected = "quit-mission updates: active campaign is missing")]
-    fn quit_updates_reject_a_missing_required_campaign() {
-        EngineInner::new().apply_quit_mission_updates(
-            &LevelAssets::default(),
-            GameCode::LevelFailed,
-            DifficultyLevel::Medium,
-        );
-    }
-
-    #[test]
     fn successful_quit_updates_keep_original_order_and_state() {
         let (mut campaign, assets) = active_historical_mission();
         campaign.values[CampaignValue::LivingSoldiers] = 7;
         campaign.values[CampaignValue::DeadSoldiers] = 11;
         campaign.values[CampaignValue::Score] = 13;
 
-        let mut engine = EngineInner::new();
+        let mut engine = EngineInner::new_with_campaign(campaign);
         engine.mission_domain.mission_stat.living_soldier_count = 2;
         engine.mission_domain.mission_stat.total_soldier_count = 5;
         engine.mission_domain.mission_stat.new_peasant_count = 99;
-        engine.install_campaign(campaign);
         engine.apply_quit_mission_updates(
             &assets,
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
         );
 
-        let campaign = engine.campaign().expect("campaign stays installed");
+        let campaign = engine.campaign();
         assert_eq!(campaign.missions[0].status, MissionStatus::Won);
         assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
         assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 14);
@@ -3896,10 +3833,8 @@ mod campaign_lifecycle_tests {
     #[test]
     fn serialized_quit_command_applies_deterministically() {
         let (campaign, assets) = active_historical_mission();
-        let mut first = EngineInner::new();
-        first.install_campaign(campaign.clone());
-        let mut second = EngineInner::new();
-        second.install_campaign(campaign);
+        let mut first = EngineInner::new_with_campaign(campaign.clone());
+        let mut second = EngineInner::new_with_campaign(campaign);
 
         let command = PlayerCommand::ApplyQuitMissionUpdates {
             exit_code: GameCode::LevelSucceeded,
@@ -3927,17 +3862,14 @@ mod campaign_lifecycle_tests {
 
     #[test]
     fn save_load_round_trip_preserves_the_required_campaign() {
-        let mut engine = EngineInner::new();
-        engine.install_campaign(marked_campaign());
+        let engine = EngineInner::new_with_campaign(marked_campaign());
 
         let json = serde_json::to_string(&engine).expect("serialize active engine");
-        let mut loaded: EngineInner =
-            serde_json::from_str(&json).expect("deserialize active engine");
-        let campaign: Campaign = loaded.take_campaign();
+        let loaded: EngineInner = serde_json::from_str(&json).expect("deserialize active engine");
+        let campaign = loaded.into_campaign();
 
         assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
         assert_eq!(campaign.production_sectors.len(), 13);
-        assert!(loaded.campaign().is_none());
     }
 }
 

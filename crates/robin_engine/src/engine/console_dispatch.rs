@@ -129,10 +129,6 @@ impl EngineInner {
             GiveMoney { amount, show_help } => {
                 // Panic on missing campaign — matches `campaign_mut_or_panic`'s
                 // contract for cheats issued outside a mission.
-                assert!(
-                    self.mission_domain.campaign.is_some(),
-                    "console: no active campaign to mutate"
-                );
                 self.add_campaign_value(CampaignValue::Ransom, *amount as i32);
                 // Always prints "Money !" first, then emits a four-line
                 // help listing (`Try also the following:`, the three
@@ -198,10 +194,7 @@ impl EngineInner {
                 // (soldier + bonus − collected) + rescue PCs + pending
                 // bonus-blazon pickups to the campaign totals before
                 // calling `engine.win(true)`.
-                let in_sherwood = self
-                    .mission_domain
-                    .campaign
-                    .as_ref()
+                let in_sherwood = Some(&self.mission_domain.campaign)
                     .and_then(|c| {
                         let idx = c.current_mission_idx?;
                         Some(
@@ -229,7 +222,7 @@ impl EngineInner {
                 }
 
                 self.add_campaign_value(CampaignValue::Ransom, money_delta);
-                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
+                if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
                     // Per-mission rescue-PC table — adds recruits
                     // matching the current mission filename (e.g.
                     // S01_Not_VL → Stutely + Paysan A/B/C).
@@ -262,7 +255,7 @@ impl EngineInner {
                 // profile.  Rust profiles are `Arc`-shared, so we stash
                 // the override on `Mission::ares_state_override` — read
                 // by `Campaign::set_mission_done` when the win lands.
-                if let Some(campaign) = self.mission_domain.campaign.as_mut()
+                if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                     && let Some(idx) = campaign.current_mission_idx
                 {
                     campaign.missions[idx].ares_state_override = Some(9);
@@ -805,10 +798,7 @@ impl EngineInner {
                 // launches hp=10000 / concussion=0 damage on the first
                 // selected PC.
                 let selected = self.players.seats[0].selection.first().copied();
-                let amulets = self
-                    .mission_domain
-                    .campaign
-                    .as_ref()
+                let amulets = Some(&self.mission_domain.campaign)
                     .map(|c| c.get_value(CampaignValue::Amulets))
                     .unwrap_or(0);
                 match (selected, amulets) {
@@ -853,7 +843,7 @@ impl EngineInner {
                             .get_entity(id)
                             .and_then(|e| e.pc_data())
                             .map(|pc| pc.profile_index);
-                        match (profile_idx, self.mission_domain.campaign.as_ref()) {
+                        match (profile_idx, Some(&self.mission_domain.campaign)) {
                             (Some(idx), Some(_)) => assets
                                 .profile_manager
                                 .get_character(idx)
@@ -916,7 +906,7 @@ impl EngineInner {
                     })
                     .collect();
                 for (id, profile_idx, status_idx) in pcs {
-                    let Some(campaign) = self.mission_domain.campaign.as_mut() else {
+                    let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
                         continue;
                     };
                     let actions = match assets.profile_manager.get_character(profile_idx) {
@@ -1142,7 +1132,7 @@ impl EngineInner {
                     .map(|pc| (id, pc.profile_index))
             })
             .collect();
-        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             for (_id, idx) in &profile_indices {
                 if let Some(desc) = campaign.characters.get_mut(usize::from(*idx)) {
                     desc.status.force_set_ammo(action, amount);
@@ -1182,7 +1172,7 @@ impl EngineInner {
     /// RJTSWMABC) !".
     fn resolve_pcs_by_initials(&self, assets: &LevelAssets, initials: &str) -> Vec<EntityId> {
         let mut out = Vec::new();
-        if self.mission_domain.campaign.is_none() {
+        if false {
             return out;
         }
         for ch in initials.chars() {
@@ -1234,10 +1224,7 @@ impl EngineInner {
     /// state outside of a mission.  Matches the "don't fabricate data"
     /// project rule — failing loudly is better than silently no-opping.
     fn campaign_mut_or_panic(&mut self) -> &mut crate::campaign::Campaign {
-        self.mission_domain
-            .campaign
-            .as_mut()
-            .expect("console: no active campaign to mutate")
+        &mut self.mission_domain.campaign
     }
 }
 
@@ -1357,7 +1344,7 @@ mod tests {
     fn engine_with_campaign() -> (EngineInner, DevState) {
         let dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.mission_domain.campaign = Some(Campaign::new());
+        engine.mission_domain.campaign = Campaign::new();
         (engine, dev)
     }
 
@@ -1433,10 +1420,7 @@ mod tests {
     #[test]
     fn give_money_mutates_campaign() {
         let (mut engine, mut dev) = engine_with_campaign();
-        let before = engine
-            .mission_domain
-            .campaign
-            .as_ref()
+        let before = Some(&engine.mission_domain.campaign)
             .unwrap()
             .get_value(CampaignValue::Ransom);
         let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "EZB 500");
@@ -1444,10 +1428,7 @@ mod tests {
             resp,
             ConsoleResponse::Ok("Money !\n500 gold added.".to_string())
         );
-        let after = engine
-            .mission_domain
-            .campaign
-            .as_ref()
+        let after = Some(&engine.mission_domain.campaign)
             .unwrap()
             .get_value(CampaignValue::Ransom);
         assert_eq!(after, before + 500);

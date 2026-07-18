@@ -525,10 +525,7 @@ impl InteractiveFrameSimulation {
         if manager.engine.is_zoom_possible(&host.engine_display) {
             if game.quick_save_after_zoom {
                 game.quick_save_after_zoom = false;
-                let campaign = manager
-                    .engine
-                    .campaign()
-                    .expect("deferred QuickSave requires the engine campaign");
+                let campaign = manager.engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
                 callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
             }
@@ -568,8 +565,8 @@ impl InteractiveFrameSimulation {
             // Apply quit-mission updates (stat sync, coma reset,
             // score bonuses, warcrime recruitment, blazon
             // consumption) before showing the debriefing so it
-            // displays correct stats.  The engine internally
-            // takes/restores its owned campaign.
+            // displays correct stats. The command mutates the campaign in
+            // place inside the engine's required mission domain.
             dispatch_local_command(
                 host,
                 &mut manager.engine,
@@ -676,15 +673,11 @@ impl InteractiveFrameSimulation {
                 // abstraction. The current implementation returns the
                 // deterministic campaign counter, which advances from
                 // completed sim seconds.
-                let mission_length = manager
-                    .engine
-                    .campaign()
-                    .map(|c| {
-                        <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
-                            callbacks, c,
-                        )
-                    })
-                    .unwrap_or(0);
+                let mission_length =
+                    <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
+                        callbacks,
+                        manager.engine.campaign(),
+                    );
                 // When restart is allowed, the debriefing accepts a
                 // QuickLoad keypress to short-circuit into a load.
                 // Pull the configured `QuickLoad1` key out of
@@ -698,10 +691,7 @@ impl InteractiveFrameSimulation {
                 // Restart click to "skip body, show stat".
                 let restart_snapshot_exists =
                     ui.restart_allowed && callbacks.save_manager.has_restart_save();
-                let campaign = manager
-                    .engine
-                    .campaign()
-                    .expect("mission debriefing requires the engine campaign");
+                let campaign = manager.engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
 
                 // Re-entry loop for the Load button: clicking Load
