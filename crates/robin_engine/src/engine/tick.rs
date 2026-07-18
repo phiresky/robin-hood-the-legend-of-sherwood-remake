@@ -1025,6 +1025,267 @@ impl NpcStateCommandContext<'_> {
     }
 }
 
+/// Direct actor abilities whose translation is confined to entity state,
+/// sequence state, order-id allocation, and immutable animation profiles.
+/// Campaign-backed ammo checks are evaluated by the caller and passed as a
+/// value so this context cannot reach mission or campaign ownership.
+struct DirectAbilityCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+    profiles: &'a crate::profiles::ProfileManager,
+}
+
+impl DirectAbilityCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        ammo_available: bool,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        match command {
+            Command::TieCmd => {
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                };
+                let result = abilities::begin_tie(
+                    self.entities,
+                    self.sequence_manager,
+                    owner,
+                    target,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::HealCmd => {
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                };
+                if !ammo_available {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                }
+                let result = abilities::begin_heal(
+                    self.entities,
+                    self.sequence_manager,
+                    owner,
+                    target,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::WhistleCmd => {
+                let result = abilities::begin_whistle(
+                    self.entities,
+                    self.sequence_manager,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::EatCmd => {
+                if !ammo_available {
+                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                }
+                let result = abilities::begin_eat(
+                    self.entities,
+                    self.sequence_manager,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::HitCmd | Command::StrangleCmd => {
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                };
+                let result = match command {
+                    Command::HitCmd => abilities::begin_hit(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    Command::StrangleCmd => abilities::begin_strangle(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    _ => unreachable!(),
+                };
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::ReceivePurse => {
+                let result = abilities::begin_receive_purse(
+                    self.entities,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::EnterListen => {
+                let result = abilities::begin_listen(
+                    self.entities,
+                    self.profiles,
+                    self.sequence_manager,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                    self.next_order_id,
+                );
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::LeaveListen => {
+                if abilities::begin_leave_listen(self.entities, owner, self.next_order_id) {
+                    tracing::debug!(
+                        ?owner,
+                        "Listen: LeaveListen flipped phase to ExitTransition"
+                    );
+                }
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                OwnerActionBarrier::Reach
+            }
+            Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
+                let field = match command {
+                    Command::ThrowNet => crate::sequence::Field::NetTarget,
+                    Command::ThrowPurse => crate::sequence::Field::PurseTarget,
+                    Command::ThrowWaspNest => crate::sequence::Field::WaspNestTarget,
+                    _ => unreachable!(),
+                };
+                let Some(target) = self
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| read_sequence_map_point_property(element, field))
+                else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                };
+                if !ammo_available {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Reach;
+                }
+                let result = match command {
+                    Command::ThrowNet => abilities::begin_throw_net(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    Command::ThrowPurse => abilities::begin_throw_purse(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    Command::ThrowWaspNest => abilities::begin_throw_wasp_nest(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    _ => unreachable!(),
+                };
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            Command::ThrowApple | Command::ThrowStone => {
+                let Some(target) = self.interaction_target(seq_id, elem_idx) else {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                };
+                if !ammo_available {
+                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                }
+                let result = match command {
+                    Command::ThrowApple => abilities::begin_throw_apple(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    Command::ThrowStone => abilities::begin_throw_stone(
+                        self.entities,
+                        self.sequence_manager,
+                        owner,
+                        target,
+                        seq_id,
+                        elem_idx,
+                        self.next_order_id,
+                    ),
+                    _ => unreachable!(),
+                };
+                self.finish_begin(result, seq_id, elem_idx)
+            }
+            _ => unreachable!("non-direct ability passed to direct ability context"),
+        }
+    }
+
+    fn interaction_target(
+        &self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<EntityId> {
+        self.sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+                _ => None,
+            })
+    }
+
+    fn finish_begin(
+        &mut self,
+        result: AbilityBeginResult,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        match result {
+            AbilityBeginResult::Started => {
+                self.sequence_manager.element_in_progress(seq_id, elem_idx)
+            }
+            AbilityBeginResult::Impossible => {
+                self.sequence_manager.element_impossible(seq_id, elem_idx)
+            }
+        }
+        OwnerActionBarrier::Reach
+    }
+}
+
 #[cfg(test)]
 mod sequence_phase_context_tests {
     use super::*;
@@ -4401,41 +4662,66 @@ impl EngineInner {
                                 }
                             }
                         }
-                        Command::TieCmd => {
-                            let target = match &elem.data {
-                                crate::sequence::SequenceElementData::Interaction {
-                                    antagonist,
-                                } => *antagonist,
-                                _ => None,
+                        Command::TieCmd
+                        | Command::HealCmd
+                        | Command::WhistleCmd
+                        | Command::EatCmd
+                        | Command::HitCmd
+                        | Command::StrangleCmd
+                        | Command::ReceivePurse
+                        | Command::EnterListen
+                        | Command::LeaveListen
+                        | Command::ThrowNet
+                        | Command::ThrowPurse
+                        | Command::ThrowWaspNest
+                        | Command::ThrowApple
+                        | Command::ThrowStone => {
+                            let ammo_available = match cmd {
+                                Command::HealCmd => {
+                                    self.has_ammo(owner, crate::profiles::Action::Heal)
+                                }
+                                Command::EatCmd => self
+                                    .get_entity(owner)
+                                    .and_then(|entity| match entity {
+                                        Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
+                                        _ => None,
+                                    })
+                                    .is_some_and(|description| {
+                                        description.status.get_ammo(crate::profiles::Action::Eat)
+                                            > 0
+                                    }),
+                                Command::ThrowNet => {
+                                    self.has_ammo(owner, crate::profiles::Action::Net)
+                                }
+                                Command::ThrowPurse => {
+                                    self.has_ammo(owner, crate::profiles::Action::Purse)
+                                }
+                                Command::ThrowWaspNest => {
+                                    self.has_ammo(owner, crate::profiles::Action::WaspNest)
+                                }
+                                Command::ThrowApple => {
+                                    self.has_ammo(owner, crate::profiles::Action::Apple)
+                                }
+                                Command::ThrowStone => {
+                                    self.has_ammo(owner, crate::profiles::Action::Stone)
+                                }
+                                _ => true,
                             };
-                            match target {
-                                Some(target_id) => {
-                                    match abilities::begin_tie(
-                                        &mut self.world.entities,
-                                        &mut self.orders.sequence_manager,
-                                        owner,
-                                        target_id,
-                                        seq_id,
-                                        elem_idx,
-                                        &mut self.orders.next_order_id,
-                                    ) {
-                                        AbilityBeginResult::Started => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_in_progress(seq_id, elem_idx);
-                                        }
-                                        AbilityBeginResult::Impossible => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_impossible(seq_id, elem_idx);
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
+                            let barrier = DirectAbilityCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                                profiles: &assets.profile_manager,
+                            }
+                            .dispatch(
+                                owner,
+                                cmd,
+                                ammo_available,
+                                seq_id,
+                                elem_idx,
+                            );
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
                             }
                         }
                         Command::ClimbDownFromShoulders => {
@@ -4540,186 +4826,6 @@ impl EngineInner {
                                 }
                             }
                         }
-                        Command::HealCmd => {
-                            let target = match &elem.data {
-                                crate::sequence::SequenceElementData::Interaction {
-                                    antagonist,
-                                } => *antagonist,
-                                _ => None,
-                            };
-                            match target {
-                                Some(target_id) => {
-                                    if !self.has_ammo(owner, crate::profiles::Action::Heal) {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                    } else {
-                                        match abilities::begin_heal(
-                                            &mut self.world.entities,
-                                            &mut self.orders.sequence_manager,
-                                            owner,
-                                            target_id,
-                                            seq_id,
-                                            elem_idx,
-                                            &mut self.orders.next_order_id,
-                                        ) {
-                                            AbilityBeginResult::Started => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_in_progress(seq_id, elem_idx);
-                                            }
-                                            AbilityBeginResult::Impossible => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_impossible(seq_id, elem_idx);
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::WhistleCmd => {
-                            match abilities::begin_whistle(
-                                &mut self.world.entities,
-                                &mut self.orders.sequence_manager,
-                                owner,
-                                seq_id,
-                                elem_idx,
-                                &mut self.orders.next_order_id,
-                            ) {
-                                AbilityBeginResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                AbilityBeginResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::EatCmd => {
-                            // If eat ammo > 0, push the EATING order;
-                            // otherwise terminate.  Eat and Guzzle
-                            // share the `num_rations` counter
-                            // (pc_status.rs:374-387), so a single
-                            // `Action::Eat` lookup covers both.
-                            let ammo = self
-                                .get_entity(owner)
-                                .and_then(|e| match e {
-                                    crate::element::Entity::Pc(pc) => {
-                                        self.pc_description_for_pc_data(&pc.pc)
-                                    }
-                                    _ => None,
-                                })
-                                .map(|d| d.status.get_ammo(crate::profiles::Action::Eat))
-                                .unwrap_or(0);
-                            if ammo == 0 {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                                continue;
-                            }
-                            match abilities::begin_eat(
-                                &mut self.world.entities,
-                                &mut self.orders.sequence_manager,
-                                owner,
-                                seq_id,
-                                elem_idx,
-                                &mut self.orders.next_order_id,
-                            ) {
-                                AbilityBeginResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                AbilityBeginResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::HitCmd => {
-                            let target = match &elem.data {
-                                crate::sequence::SequenceElementData::Interaction {
-                                    antagonist,
-                                } => *antagonist,
-                                _ => None,
-                            };
-                            match target {
-                                Some(target_id) => {
-                                    match abilities::begin_hit(
-                                        &mut self.world.entities,
-                                        &mut self.orders.sequence_manager,
-                                        owner,
-                                        target_id,
-                                        seq_id,
-                                        elem_idx,
-                                        &mut self.orders.next_order_id,
-                                    ) {
-                                        AbilityBeginResult::Started => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_in_progress(seq_id, elem_idx);
-                                        }
-                                        AbilityBeginResult::Impossible => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_impossible(seq_id, elem_idx);
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::StrangleCmd => {
-                            let target = match &elem.data {
-                                crate::sequence::SequenceElementData::Interaction {
-                                    antagonist,
-                                } => *antagonist,
-                                _ => None,
-                            };
-                            match target {
-                                Some(target_id) => {
-                                    match abilities::begin_strangle(
-                                        &mut self.world.entities,
-                                        &mut self.orders.sequence_manager,
-                                        owner,
-                                        target_id,
-                                        seq_id,
-                                        elem_idx,
-                                        &mut self.orders.next_order_id,
-                                    ) {
-                                        AbilityBeginResult::Started => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_in_progress(seq_id, elem_idx);
-                                        }
-                                        AbilityBeginResult::Impossible => {
-                                            self.orders
-                                                .sequence_manager
-                                                .element_impossible(seq_id, elem_idx);
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
                         Command::Pay => {
                             // Validate campaign has enough ransom.
                             // The original aborts with the post-walk
@@ -4772,76 +4878,6 @@ impl EngineInner {
                                         .element_impossible(seq_id, elem_idx);
                                 }
                             }
-                        }
-                        Command::ReceivePurse => {
-                            match abilities::begin_receive_purse(
-                                &mut self.world.entities,
-                                owner,
-                                seq_id,
-                                elem_idx,
-                                &mut self.orders.next_order_id,
-                            ) {
-                                AbilityBeginResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                AbilityBeginResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::EnterListen => {
-                            // Completion is driven by the multi-phase
-                            // Listen state machine: begin_listen →
-                            // entry transition (tick_abilities) →
-                            // CountingDown (ai.rs) → exit transition
-                            // (tick_abilities) → ListenDone →
-                            // element_terminated in combat.rs.
-                            match abilities::begin_listen(
-                                &mut self.world.entities,
-                                &assets.profile_manager,
-                                &mut self.orders.sequence_manager,
-                                owner,
-                                seq_id,
-                                elem_idx,
-                                &mut self.orders.next_order_id,
-                            ) {
-                                AbilityBeginResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                AbilityBeginResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::LeaveListen => {
-                            // Cancel an in-progress Listen by flipping
-                            // `listen_phase` to `ExitTransition`.  The
-                            // LeaveListen sequence element has no
-                            // animation of its own — the still-active
-                            // EnterListen ability drives the exit
-                            // transition animation — so we terminate
-                            // the LeaveListen element immediately.
-                            if abilities::begin_leave_listen(
-                                &mut self.world.entities,
-                                owner,
-                                &mut self.orders.next_order_id,
-                            ) {
-                                tracing::debug!(
-                                    ?owner,
-                                    "Listen: LeaveListen flipped phase to ExitTransition"
-                                );
-                            }
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(seq_id, elem_idx);
                         }
                         Command::DropAmmo => {
                             // Decrement the PC's ammo for the action,
@@ -5281,207 +5317,6 @@ impl EngineInner {
                                 .sequence_manager
                                 .element_terminated(seq_id, elem_idx);
                         }
-                        Command::ThrowNet => {
-                            let target_pos = read_sequence_map_point_property(
-                                elem,
-                                crate::sequence::Field::NetTarget,
-                            );
-                            match target_pos {
-                                Some(pos) => {
-                                    if !self.has_ammo(owner, crate::profiles::Action::Net) {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                    } else {
-                                        match abilities::begin_throw_net(
-                                            &mut self.world.entities,
-                                            &mut self.orders.sequence_manager,
-                                            owner,
-                                            pos,
-                                            seq_id,
-                                            elem_idx,
-                                            &mut self.orders.next_order_id,
-                                        ) {
-                                            AbilityBeginResult::Started => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_in_progress(seq_id, elem_idx);
-                                            }
-                                            AbilityBeginResult::Impossible => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_impossible(seq_id, elem_idx);
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::ThrowPurse => {
-                            let target_pos = read_sequence_map_point_property(
-                                elem,
-                                crate::sequence::Field::PurseTarget,
-                            );
-                            match target_pos {
-                                Some(pos) => {
-                                    if !self.has_ammo(owner, crate::profiles::Action::Purse) {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                    } else {
-                                        match abilities::begin_throw_purse(
-                                            &mut self.world.entities,
-                                            &mut self.orders.sequence_manager,
-                                            owner,
-                                            pos,
-                                            seq_id,
-                                            elem_idx,
-                                            &mut self.orders.next_order_id,
-                                        ) {
-                                            AbilityBeginResult::Started => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_in_progress(seq_id, elem_idx);
-                                            }
-                                            AbilityBeginResult::Impossible => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_impossible(seq_id, elem_idx);
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-                        Command::ThrowWaspNest => {
-                            let target_pos = read_sequence_map_point_property(
-                                elem,
-                                crate::sequence::Field::WaspNestTarget,
-                            );
-                            match target_pos {
-                                Some(pos) => {
-                                    if !self.has_ammo(owner, crate::profiles::Action::WaspNest) {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                    } else {
-                                        match abilities::begin_throw_wasp_nest(
-                                            &mut self.world.entities,
-                                            &mut self.orders.sequence_manager,
-                                            owner,
-                                            pos,
-                                            seq_id,
-                                            elem_idx,
-                                            &mut self.orders.next_order_id,
-                                        ) {
-                                            AbilityBeginResult::Started => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_in_progress(seq_id, elem_idx);
-                                            }
-                                            AbilityBeginResult::Impossible => {
-                                                self.orders
-                                                    .sequence_manager
-                                                    .element_impossible(seq_id, elem_idx);
-                                            }
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-
-                        // ── ThrowApple / ThrowStone ──────────────
-                        // When the THROWING_APPLE / THROWING_STONE
-                        // animation first plays, begin the ability;
-                        // on completion, the engine spawns the
-                        // projectile.
-                        Command::ThrowApple | Command::ThrowStone => {
-                            let (target_opt, action) = match cmd {
-                                Command::ThrowApple => (
-                                    match &elem.data {
-                                        crate::sequence::SequenceElementData::Interaction {
-                                            antagonist,
-                                        } => *antagonist,
-                                        _ => None,
-                                    },
-                                    crate::profiles::Action::Apple,
-                                ),
-                                Command::ThrowStone => (
-                                    match &elem.data {
-                                        crate::sequence::SequenceElementData::Interaction {
-                                            antagonist,
-                                        } => *antagonist,
-                                        _ => None,
-                                    },
-                                    crate::profiles::Action::Stone,
-                                ),
-                                _ => unreachable!(),
-                            };
-                            let target = match target_opt {
-                                Some(t) => t,
-                                None => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    continue;
-                                }
-                            };
-                            if !self.has_ammo(owner, action) {
-                                self.orders
-                                    .sequence_manager
-                                    .element_impossible(seq_id, elem_idx);
-                                continue;
-                            }
-                            let begin = match cmd {
-                                Command::ThrowApple => abilities::begin_throw_apple(
-                                    &mut self.world.entities,
-                                    &mut self.orders.sequence_manager,
-                                    owner,
-                                    target,
-                                    seq_id,
-                                    elem_idx,
-                                    &mut self.orders.next_order_id,
-                                ),
-                                Command::ThrowStone => abilities::begin_throw_stone(
-                                    &mut self.world.entities,
-                                    &mut self.orders.sequence_manager,
-                                    owner,
-                                    target,
-                                    seq_id,
-                                    elem_idx,
-                                    &mut self.orders.next_order_id,
-                                ),
-                                _ => unreachable!(),
-                            };
-                            match begin {
-                                AbilityBeginResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                AbilityBeginResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                }
-                            }
-                        }
-
                         // ── Turn ───────────────────────────────
                         // Rotate the actor to face the `CameraPoint`
                         // property (or `Direction` property if no
@@ -9640,6 +9475,106 @@ mod bow_command_body_parity_tests {
             ]
         );
         assert!(element.orders.iter().all(|order| !order.compute_direction));
+    }
+
+    #[test]
+    fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::WhistleCmd, Some(owner)));
+
+        let barrier = DirectAbilityCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WhistleCmd, true, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::Whistling)
+        );
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .whistle_wait_time,
+            25
+        );
+    }
+
+    #[test]
+    fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::EatCmd, Some(owner)));
+
+        let barrier = DirectAbilityCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::EatCmd, false, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Skip);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::Terminated);
+        assert!(element.orders.is_empty());
+    }
+
+    #[test]
+    fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::ThrowApple, Some(owner)));
+
+        let barrier = DirectAbilityCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::ThrowApple, true, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Skip);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible
+        );
     }
 }
 
