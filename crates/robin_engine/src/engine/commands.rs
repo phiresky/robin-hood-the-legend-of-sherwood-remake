@@ -2488,9 +2488,9 @@ impl EngineInner {
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (adj_src_pos, adj_src_sector) = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|h| {
+                let adapted = host.and_then(|_h| {
                     crate::engine::movement::adapt_source_to_current_door(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         door_handle,
                         door_direction,
                     )
@@ -2506,9 +2506,9 @@ impl EngineInner {
             let level = self.world.fast_grid.level.clone();
             let gate_path = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                host.and_then(|h| {
+                host.and_then(|_h| {
                     crate::gate::find_path_gates(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         (adj_src_pos.x, adj_src_pos.y),
                         adj_src_sector,
                         (target_pos.x, target_pos.y),

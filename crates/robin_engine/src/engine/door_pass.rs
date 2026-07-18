@@ -570,8 +570,12 @@ impl EngineInner {
     ) -> Option<BuiltDoorPass> {
         // Snapshot door geometry and type (releases borrow on mission_script).
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let game_host = self.mission_script.as_mut()?.game_host_mut()?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let _game_host = self.mission_script.as_mut()?.game_host_mut()?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             (
                 door.door_type,
                 door.point_mid,
@@ -776,11 +780,16 @@ impl EngineInner {
 
         // Snapshot door data before mutable borrows.
         let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            let door = match game_host.doors.get(usize::from(door_index)) {
+            let door = match self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+            {
                 Some(d) => d,
                 None => return,
             };
@@ -1143,8 +1152,12 @@ impl EngineInner {
         direct: bool,
     ) {
         let Some((target_sector, lift_type, lift_direction)) = (|| {
-            let game_host = self.mission_script.as_ref()?.game_host()?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let _game_host = self.mission_script.as_ref()?.game_host()?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             let target_sector = if direct {
                 door.sector_in
             } else {
@@ -1273,11 +1286,16 @@ impl EngineInner {
     fn apply_door_patch(&mut self, assets: &LevelAssets, door_index: crate::gate::DoorIndex) {
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            match game_host.doors.get(usize::from(door_index)) {
+            match self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+            {
                 Some(door) => door.patch_index,
                 None => return,
             }
@@ -1296,17 +1314,21 @@ impl EngineInner {
         // closing.  The matching `finish_transition` fires when the
         // patch's FX animation ends (see `tick_entity_animations`).
         let was_applied = {
-            let game_host = match self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            let _game_host = match self.mission_script.as_ref().and_then(|s| s.game_host()) {
                 Some(h) => h,
                 None => return,
             };
-            match game_host.patches.get(patch_idx) {
+            match self.script_domains.interactables.patches.get(patch_idx) {
                 Some(p) => p.applied,
                 None => return,
             }
         };
-        if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
-            && let Some(door) = game_host.doors.get_mut(usize::from(door_index))
+        if let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+            && let Some(door) = self
+                .script_domains
+                .interactables
+                .doors
+                .get_mut(usize::from(door_index))
         {
             if was_applied {
                 door.gate_state.request_close();
@@ -1317,11 +1339,11 @@ impl EngineInner {
 
         // Apply the patch and collect effects.
         let effects = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            let patch = match game_host.patches.get_mut(patch_idx) {
+            let patch = match self.script_domains.interactables.patches.get_mut(patch_idx) {
                 Some(p) => p,
                 None => return,
             };

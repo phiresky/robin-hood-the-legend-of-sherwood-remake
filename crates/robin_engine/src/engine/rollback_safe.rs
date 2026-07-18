@@ -603,6 +603,14 @@ impl Engine {
             .refresh_selected_patch_display_doors(selected_patch_idx);
     }
 
+    pub fn doors(&self) -> &[crate::gate::Door] {
+        &self.inner.script_domains.interactables.doors
+    }
+
+    pub fn patches(&self) -> &[crate::patch::Patch] {
+        &self.inner.script_domains.interactables.patches
+    }
+
     // ── Per-frame drains ────
     // Patch-effect bg blits now travel through `SideEffects`
     // (`apply_side_effects` moves them into `Host::pending_bg_blits`)

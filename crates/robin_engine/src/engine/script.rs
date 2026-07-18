@@ -2157,7 +2157,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|ms| ms.game_host())
-            .map(|gh| gh.doors.as_slice());
+            .map(|_| self.script_domains.interactables.doors.as_slice());
         let ai_global = &mut self.ai.global;
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return false;
@@ -3077,7 +3077,7 @@ impl EngineInner {
             let Some(ref script) = self.mission_script else {
                 return;
             };
-            let Some(game_host) = script.game_host() else {
+            let Some(_game_host) = script.game_host() else {
                 return;
             };
             let gate_handle = self
@@ -3089,7 +3089,7 @@ impl EngineInner {
                 .copied();
             let point_in = gate_handle
                 .and_then(crate::natives::GameHost::door_index)
-                .and_then(|di| game_host.doors.get(di))
+                .and_then(|di| self.script_domains.interactables.doors.get(di))
                 .map(|d| d.point_in);
             let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
                 if gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16) {
@@ -3417,6 +3417,61 @@ mod script_context_tests {
             .legacy_custom_values
             .expect("v2 custom values must survive until engine attachment");
         assert_eq!(legacy.campaign.get(&7), Some(&42));
+    }
+
+    #[test]
+    fn legacy_game_host_interactables_migrate_to_engine_domains_once() {
+        let mut engine = EngineInner::new();
+        engine.mission_script = Some(empty_mission_script());
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                locked_pc: true,
+                ..Default::default()
+            });
+        engine
+            .script_domains
+            .interactables
+            .patches
+            .push(crate::patch::Patch {
+                active: true,
+                applied: true,
+                initially_active: true,
+                ..Default::default()
+            });
+
+        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
+        let domains = snapshot["script_domains"]
+            .take()
+            .as_object()
+            .cloned()
+            .expect("current engine domains");
+        let interactables = domains["interactables"]
+            .as_object()
+            .expect("current interactable domain");
+        snapshot["mission_script"]["game_host"]["doors"] = interactables["doors"].clone();
+        snapshot["mission_script"]["game_host"]["patches"] = interactables["patches"].clone();
+
+        let restored: EngineInner =
+            serde_json::from_value(snapshot).expect("normalize legacy interactables");
+        assert_eq!(restored.script_domains.interactables.doors.len(), 1);
+        assert!(restored.script_domains.interactables.doors[0].locked_pc);
+        assert_eq!(restored.script_domains.interactables.patches.len(), 1);
+        assert!(restored.script_domains.interactables.patches[0].applied);
+        assert!(
+            restored
+                .mission_script
+                .as_ref()
+                .expect("mission script survives migration")
+                .game_host
+                .engine_domains
+                .interactables
+                .doors
+                .is_empty(),
+            "legacy storage must be consumed instead of retained as a mirror"
+        );
     }
 
     #[test]

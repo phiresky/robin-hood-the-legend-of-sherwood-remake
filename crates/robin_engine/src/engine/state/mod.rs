@@ -13,5 +13,5 @@ pub(crate) use feedback::FeedbackRuntime;
 pub(crate) use mission::MissionDomain;
 pub(crate) use orders::OrderRuntime;
 pub(crate) use players::PlayerRuntime;
-pub(crate) use script_domains::{BuildingState, ScriptDomains, ScrollState};
+pub(crate) use script_domains::{BuildingState, InteractableState, ScriptDomains, ScrollState};
 pub(crate) use world::WorldState;

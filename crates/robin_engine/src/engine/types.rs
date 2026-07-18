@@ -969,7 +969,7 @@ pub struct PendingLevelData {
     /// iff its ambience bitmask overlaps the mission's ambience.
     pub light_sectors: Vec<crate::level_data::RawLightSector>,
     /// Jump-gate `Door` specs produced by `load_jump_lines_from_proto`,
-    /// pushed into `game_host.doors` once `populate_game_host_from_level`
+    /// pushed into `self.script_domains.interactables.doors` once `populate_game_host_from_level`
     /// has run.  The proto-stream jump-init phase now runs *before* the
     /// mission script is loaded (so beam-me / soldier sector validations
     /// see the populated grid), but `game_host` doesn't exist that early
@@ -1170,6 +1170,8 @@ struct CompatibleGameHost {
     actor_building: Option<BTreeMap<i32, i32>>,
     building_active: Option<Vec<bool>>,
     building_gates: Option<Vec<Vec<i32>>>,
+    doors: Option<Vec<crate::gate::Door>>,
+    patches: Option<Vec<crate::patch::Patch>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1185,6 +1187,21 @@ struct LegacyNpcValues(
 );
 
 impl CompatibleGameHost {
+    fn legacy_interactables<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::InteractableState>, E> {
+        match (&self.doors, &self.patches) {
+            (None, None) => Ok(None),
+            (Some(doors), Some(patches)) => Ok(Some(super::state::InteractableState {
+                doors: doors.clone(),
+                patches: patches.clone(),
+            })),
+            _ => Err(E::custom(
+                "legacy GameHost has an incomplete interactable-domain field set",
+            )),
+        }
+    }
+
     fn legacy_buildings<E: serde::de::Error>(
         &self,
     ) -> Result<Option<super::state::BuildingState>, E> {
@@ -1329,12 +1346,16 @@ impl<'de> Deserialize<'de> for MissionScript {
 
         let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
         let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
+        let legacy_interactables = snapshot.game_host.legacy_interactables::<D::Error>()?;
         let mut game_host = snapshot.game_host.current;
         if let Some(scrolls) = legacy_scrolls.clone() {
             game_host.engine_domains.scrolls = scrolls;
         }
         if let Some(buildings) = legacy_buildings.clone() {
             game_host.engine_domains.buildings = buildings;
+        }
+        if let Some(interactables) = legacy_interactables.clone() {
+            game_host.engine_domains.interactables = interactables;
         }
 
         Ok(Self {
@@ -1360,7 +1381,9 @@ impl<'de> Deserialize<'de> for MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
             campaign_lease: None,
-            legacy_script_domains_present: legacy_scrolls.is_some() || legacy_buildings.is_some(),
+            legacy_script_domains_present: legacy_scrolls.is_some()
+                || legacy_buildings.is_some()
+                || legacy_interactables.is_some(),
         })
     }
 }
@@ -2682,7 +2705,7 @@ pub struct InputState {
     pub selected_sector_idx: Option<crate::fast_find_grid::SectorIndex>,
     /// Index into `GameHost::patches` for the patch whose overlay sector
     /// the mouse is hovering, if any.  Persisted on InputState so the
-    /// cursor / render hooks don't re-scan `game_host.patches` each
+    /// cursor / render hooks don't re-scan `self.script_domains.interactables.patches` each
     /// frame.
     pub selected_patch_idx: Option<u32>,
     /// Index into `GameHost::doors` for a door whose click polygon is

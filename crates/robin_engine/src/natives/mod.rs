@@ -176,12 +176,6 @@ pub struct GameHost {
     pub completed_sequences: Vec<Sequence>,
 
     // ── Door / patch / building / sound state for script natives ────
-    /// Door state. Script handles are tagged 0-based indices (0 = null).
-    /// Populated by the engine when loading a level.
-    pub doors: Vec<Door>,
-    /// Patch state. Script handles are tagged 0-based indices (0 = null).
-    /// Populated by the engine when loading a level.
-    pub patches: Vec<Patch>,
     /// Queued sound commands for the engine to process after script execution.
     pub sound_commands: Vec<SoundCommand>,
     /// Set to true when a patch change requires background redraw.
@@ -253,8 +247,6 @@ impl GameHost {
             production_registrations: Vec::new(),
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
-            doors: Vec::new(),
-            patches: Vec::new(),
             sound_commands: Vec::new(),
             background_invalidated: false,
             current_scroll: 0,
@@ -686,11 +678,18 @@ impl NativeContext<'_> {
         goal_sector: u16,
         goal: (f32, f32),
     ) -> Option<crate::gate::DoorIndex> {
-        self.doors.iter().enumerate().find_map(|(idx, door)| {
-            let matches_endpoint = door.sector_out == goal_sector || door.sector_in == goal_sector;
-            let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
-            (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
-        })
+        self.engine_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .find_map(|(idx, door)| {
+                let matches_endpoint =
+                    door.sector_out == goal_sector || door.sector_in == goal_sector;
+                let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+                (matches_endpoint || matches_click_sector)
+                    .then_some(crate::gate::DoorIndex(idx as u32))
+            })
     }
 
     /// Walks the gate path from `(source_sector, source)` to
@@ -752,7 +751,11 @@ impl NativeContext<'_> {
             let pi = entity.position_iface();
             (pi.get_door(), pi.get_door_direction())
         }) && let Some((adapted_source, adapted_sector, adapted_layer)) =
-            crate::engine::adapt_source_to_current_door(&self.doors, door_handle, door_direction)
+            crate::engine::adapt_source_to_current_door(
+                &self.engine_domains.interactables.doors,
+                door_handle,
+                door_direction,
+            )
         {
             source = (adapted_source.x, adapted_source.y);
             source_sector = adapted_sector;
@@ -814,7 +817,7 @@ impl NativeContext<'_> {
             self.door_index_for_goal_sector(goal_sector, goal)
                 .and_then(|door_idx| {
                     find_path_into_door(
-                        &self.doors,
+                        &self.engine_domains.interactables.doors,
                         source,
                         source_sector,
                         door_idx,
@@ -825,7 +828,7 @@ impl NativeContext<'_> {
                 })
         } else {
             find_path_gates(
-                &self.doors,
+                &self.engine_domains.interactables.doors,
                 source,
                 source_sector,
                 goal,
@@ -864,14 +867,16 @@ impl NativeContext<'_> {
 
         // First-jump gate index — controls TO_JUMP flag.
         let first_jump = gate_steps.iter().enumerate().find_map(|(i, step)| {
-            self.doors
+            self.engine_domains
+                .interactables
+                .doors
                 .get(usize::from(step.door_index))
                 .filter(|d| d.is_jump())
                 .map(|_| i)
         });
 
         // Snapshot per-gate data into a local struct so the per-gate
-        // emission loop can run without re-borrowing `self.doors`.
+        // emission loop can run without re-borrowing `self.engine_domains.interactables.doors`.
         #[derive(Clone, Copy)]
         struct GateShot {
             door_index: crate::gate::DoorIndex,
@@ -892,7 +897,11 @@ impl NativeContext<'_> {
         let gate_shots: Vec<GateShot> = gate_steps
             .iter()
             .filter_map(|step| {
-                let door = self.doors.get(usize::from(step.door_index))?;
+                let door = self
+                    .engine_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(step.door_index))?;
                 let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
                     (
                         door.point_out,
@@ -1235,6 +1244,8 @@ impl NativeContext<'_> {
                 && let Some(last_shot) = gate_shots.last()
             {
                 let point_in = self
+                    .engine_domains
+                    .interactables
                     .doors
                     .get(usize::from(last_shot.door_index))
                     .map(|d| d.point_in)
@@ -2348,6 +2359,10 @@ impl GameHost {
         Self::make_script_handle(SCRIPT_HANDLE_DOOR_TAG, index)
     }
 
+    pub fn patch_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_PATCH_TAG, index)
+    }
+
     pub fn location_handle_from_index(index: usize) -> i32 {
         Self::make_script_handle(SCRIPT_HANDLE_LOCATION_TAG, index)
     }
@@ -2398,22 +2413,22 @@ impl GameHost {
 
     fn get_door(&self, handle: i32) -> Option<&Door> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
-            .and_then(|idx| self.doors.get(idx))
+            .and_then(|idx| self.engine_domains.interactables.doors.get(idx))
     }
 
     fn get_door_mut(&mut self, handle: i32) -> Option<&mut Door> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
-            .and_then(|idx| self.doors.get_mut(idx))
+            .and_then(|idx| self.engine_domains.interactables.doors.get_mut(idx))
     }
 
     fn get_patch(&self, handle: i32) -> Option<&Patch> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
-            .and_then(|idx| self.patches.get(idx))
+            .and_then(|idx| self.engine_domains.interactables.patches.get(idx))
     }
 
     fn get_patch_mut(&mut self, handle: i32) -> Option<&mut Patch> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
-            .and_then(|idx| self.patches.get_mut(idx))
+            .and_then(|idx| self.engine_domains.interactables.patches.get_mut(idx))
     }
 }
 
@@ -3302,13 +3317,13 @@ impl NativeContext<'_> {
                 }
                 GetDoorScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.doors.len(),
+                    self.engine_domains.interactables.doors.len(),
                     "door",
                     SCRIPT_HANDLE_DOOR_TAG,
                 ),
                 GetPatchScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.patches.len(),
+                    self.engine_domains.interactables.patches.len(),
                     "patch",
                     SCRIPT_HANDLE_PATCH_TAG,
                 ),
@@ -3951,7 +3966,7 @@ impl NativeContext<'_> {
                     // 300px of the target; if none, return 0.
                     let max_sq_dist = 300.0_f32 * 300.0;
                     let mut best: Option<(f32, f32, f32, u16, u16)> = None;
-                    for door in &self.doors {
+                    for door in &self.engine_domains.interactables.doors {
                         let ddx = door.point_mid.x - lx;
                         let ddy = door.point_mid.y - ly;
                         let sq = ddx * ddx + ddy * ddy;
@@ -7231,7 +7246,11 @@ impl NativeContext<'_> {
                 ApplyPatch => {
                     let h = stack.pop_i32();
                     if let Some(patch_index) = Self::patch_index(h)
-                        && let Some(patch) = self.patches.get_mut(patch_index)
+                        && let Some(patch) = self
+                            .engine_domains
+                            .interactables
+                            .patches
+                            .get_mut(patch_index)
                     {
                         let effects = patch.apply();
                         if !effects.is_empty()
@@ -7250,7 +7269,11 @@ impl NativeContext<'_> {
                 ResetPatch => {
                     let h = stack.pop_i32();
                     if let Some(patch_index) = Self::patch_index(h)
-                        && let Some(patch) = self.patches.get_mut(patch_index)
+                        && let Some(patch) = self
+                            .engine_domains
+                            .interactables
+                            .patches
+                            .get_mut(patch_index)
                     {
                         let effects = patch.force_reset();
                         if !effects.is_empty()
@@ -8474,10 +8497,17 @@ impl GameHost {
         goal_sector: u16,
         goal: (f32, f32),
     ) -> Option<crate::gate::DoorIndex> {
-        self.doors.iter().enumerate().find_map(|(idx, door)| {
-            let matches_endpoint = door.sector_out == goal_sector || door.sector_in == goal_sector;
-            let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
-            (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
-        })
+        self.engine_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .find_map(|(idx, door)| {
+                let matches_endpoint =
+                    door.sector_out == goal_sector || door.sector_in == goal_sector;
+                let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+                (matches_endpoint || matches_click_sector)
+                    .then_some(crate::gate::DoorIndex(idx as u32))
+            })
     }
 }

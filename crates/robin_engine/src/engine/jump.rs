@@ -714,7 +714,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|s| s.game_host())
-            .map(|gh| gh.doors.as_slice())
+            .map(|_| self.script_domains.interactables.doors.as_slice())
         else {
             return false;
         };
@@ -753,7 +753,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|s| s.game_host())
-            .map(|gh| gh.doors.as_slice())?;
+            .map(|_| self.script_domains.interactables.doors.as_slice())?;
         let pc_auth = entity.actor_auth_info();
         get_nearest_jumpable_jump_line(
             &self.world.fast_grid,

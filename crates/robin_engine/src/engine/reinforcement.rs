@@ -58,10 +58,15 @@ impl EngineInner {
             let Some(script) = self.mission_script.as_mut() else {
                 return;
             };
-            let Some(game_host) = script.game_host_mut() else {
+            let Some(_game_host) = script.game_host_mut() else {
                 return;
             };
-            let Some(door) = game_host.doors.get(usize::from(door_index)) else {
+            let Some(door) = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+            else {
                 return;
             };
             DoorSnapshot {

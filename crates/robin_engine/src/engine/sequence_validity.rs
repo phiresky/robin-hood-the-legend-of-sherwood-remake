@@ -591,10 +591,12 @@ impl EngineInner {
                 let Some(id) = door_id else {
                     return false;
                 };
-                let Some(host) = self.mission_script.as_ref().and_then(|s| s.game_host()) else {
+                let Some(_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) else {
                     return false;
                 };
-                host.doors
+                self.script_domains
+                    .interactables
+                    .doors
                     .get(usize::from(id))
                     .map(|d| d.is_unlockable())
                     .unwrap_or(false)

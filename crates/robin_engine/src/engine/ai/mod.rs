@@ -706,7 +706,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         .mission_script
         .as_ref()
         .and_then(|s| s.game_host())
-        .map(|gh| gh.doors.as_slice())
+        .map(|_| engine.script_domains.interactables.doors.as_slice())
         .unwrap_or(&[]);
 
     // Pre-scan nets for `compute_nets_covering_me` reverse index:
@@ -1129,7 +1129,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .map(|h| h.doors.as_slice())
+                .map(|_| self.script_domains.interactables.doors.as_slice())
                 .unwrap_or(&[]);
             tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
         }
@@ -1141,7 +1141,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .map(|h| h.doors.as_slice())
+                .map(|_| self.script_domains.interactables.doors.as_slice())
                 .unwrap_or(&[]);
             tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
                 &self.world.entities,
@@ -1198,7 +1198,7 @@ impl EngineInner {
                     .mission_script
                     .as_ref()
                     .and_then(|ms| ms.game_host())
-                    .map(|h| h.doors.as_slice())
+                    .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
                 let door_pass = s
@@ -2396,8 +2396,8 @@ impl EngineInner {
         // it.  Trap doors (`BuildingTrap`) remain excluded — those
         // sectors aren't regular building interiors and shouldn't
         // carry rally points.
-        if let Some(game_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
-            for (idx, door) in game_host.doors.iter().enumerate() {
+        if let Some(_game_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
                 }

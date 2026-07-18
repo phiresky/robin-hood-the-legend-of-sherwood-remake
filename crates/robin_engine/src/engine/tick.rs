@@ -2073,7 +2073,12 @@ impl EngineInner {
                                         .mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(door_idx))
+                                        })
                                         .map(|d| d.sector_out);
                                     let actor_sector = self
                                         .get_entity(owner)
@@ -2111,7 +2116,12 @@ impl EngineInner {
                                     .mission_script
                                     .as_mut()
                                     .and_then(|s| s.game_host_mut())
-                                    .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                    .and_then(|_| {
+                                        self.script_domains
+                                            .interactables
+                                            .doors
+                                            .get(usize::from(door_idx))
+                                    })
                                     .map(|door| {
                                         door.is_actor_authorized(
                                             direct,
@@ -2142,7 +2152,12 @@ impl EngineInner {
                                         .mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(door_idx))
+                                        })
                                         .and_then(|d| match d.door_type {
                                             crate::gate::DoorType::LiftHigh
                                             | crate::gate::DoorType::LiftLow
@@ -2402,7 +2417,12 @@ impl EngineInner {
                                     self.mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(*di)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(*di))
+                                        })
                                         .map(|d| {
                                             (
                                                 d.sector_in,
@@ -5480,7 +5500,9 @@ impl EngineInner {
                                 .mission_script
                                 .as_ref()
                                 .and_then(|s| s.game_host())
-                                .and_then(|h| h.doors.get(usize::from(id)))
+                                .and_then(|_| {
+                                    self.script_domains.interactables.doors.get(usize::from(id))
+                                })
                                 .map(|d| match d.door_type {
                                     crate::gate::DoorType::BuildingTrap => {
                                         crate::order::OrderType::UnlockingTrap
@@ -6891,7 +6913,12 @@ impl EngineInner {
             self.mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|host| host.doors.get(usize::from(door_index)))
+                .and_then(|_| {
+                    self.script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(door_index))
+                })
                 .map(|door| {
                     (
                         door.layer_in,
@@ -7072,11 +7099,15 @@ impl EngineInner {
         };
 
         let Some((snap_point, posture, action_state, sector_in)) = (|| {
-            let game_host = self
+            let _game_host = self
                 .mission_script
                 .as_mut()
                 .and_then(|s| s.game_host_mut())?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             let snap = match action {
                 OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
                     x: door.point_mid.x,
@@ -7219,8 +7250,12 @@ impl EngineInner {
         }
 
         for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
-            if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
-                && let Some(door) = game_host.doors.get_mut(usize::from(door_id))
+            if let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                && let Some(door) = self
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get_mut(usize::from(door_id))
             {
                 door.locked_pc = false;
                 tracing::debug!(

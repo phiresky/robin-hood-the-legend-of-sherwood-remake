@@ -808,7 +808,13 @@ fn build_ctx(
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|h| h.doors.get(usize::from(idx)));
+                .and_then(|_| {
+                    engine
+                        .script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(idx))
+                });
             match door {
                 Some(d) => {
                     let ty = d.door_type;

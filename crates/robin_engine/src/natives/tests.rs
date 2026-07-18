@@ -265,12 +265,72 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
         ..Default::default()
     };
     door.rebuild_click_bbox();
-    host.doors.push(door);
+    host.engine_domains.interactables.doors.push(door);
 
     assert_eq!(
         host.door_index_for_goal_sector(99, (20.0, 20.0)),
         Some(crate::gate::DoorIndex(0))
     );
+}
+
+#[test]
+fn door_mutation_is_visible_to_later_native_in_same_callback() {
+    let mut host = GameHost::new();
+    host.engine_domains.interactables.doors.push(Door {
+        active: false,
+        locked_pc: true,
+        ..Default::default()
+    });
+    let door = GameHost::door_handle_from_index(0);
+
+    let mut unlock = NativeStack::default();
+    unlock.push_i32(door);
+    unlock.push_i32(0);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::SetDoorLockedPC, &mut unlock),
+        0
+    );
+
+    let mut query = NativeStack::default();
+    query.push_i32(door);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsDoorLockedPC, &mut query),
+        0
+    );
+    assert!(
+        host.engine_domains.interactables.doors[0].active,
+        "the Original activates a door when script unlocks it"
+    );
+}
+
+#[test]
+fn patch_mutation_is_visible_to_later_native_in_same_callback() {
+    let mut host = GameHost::new();
+    host.engine_domains.interactables.patches.push(Patch {
+        active: true,
+        initially_active: true,
+        ..Default::default()
+    });
+    let patch = GameHost::patch_handle_from_index(0);
+
+    let mut apply = NativeStack::default();
+    apply.push_i32(patch);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::ApplyPatch, &mut apply),
+        1
+    );
+
+    let mut query = NativeStack::default();
+    query.push_i32(patch);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsPatchApplied, &mut query),
+        1
+    );
+    assert!(matches!(
+        host.deferred_commands.as_slice(),
+        [DeferredCommand::ProcessPatchEffects { patch_index, .. }]
+            if usize::from(*patch_index) == 0
+    ));
 }
 
 // --- Sequence manager ---

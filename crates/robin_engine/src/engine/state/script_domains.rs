@@ -16,6 +16,12 @@ pub(crate) struct BuildingState {
     pub(crate) gates: Vec<Vec<i32>>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct InteractableState {
+    pub(crate) doors: Vec<crate::gate::Door>,
+    pub(crate) patches: Vec<crate::patch::Patch>,
+}
+
 /// Deterministic scroll state shared by engine systems and script natives.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScrollState {
@@ -32,6 +38,7 @@ pub(crate) struct ScrollState {
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScriptDomains {
     pub(crate) buildings: BuildingState,
+    pub(crate) interactables: InteractableState,
     pub(crate) scrolls: ScrollState,
     pub(crate) zones: ZoneState,
 }

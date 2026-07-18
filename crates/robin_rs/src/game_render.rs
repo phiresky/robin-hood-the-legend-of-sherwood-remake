@@ -74,7 +74,7 @@ pub(crate) fn render_door_overlays(
     use crate::profiles::Action;
     use crate::sector::SectorType;
 
-    let Some(game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
+    let Some(_game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
         return;
     };
 
@@ -114,7 +114,7 @@ pub(crate) fn render_door_overlays(
                              sector: &crate::fast_find_grid::GridSector,
                              require_active: bool| {
         for &gate_idx in &sector.gate_indices {
-            let Some(door) = game_host.doors.get(usize::from(gate_idx)) else {
+            let Some(door) = engine.doors().get(usize::from(gate_idx)) else {
                 continue;
             };
             if !door.is_door() {
@@ -160,7 +160,7 @@ pub(crate) fn render_door_overlays(
     // ── 2. Shift-held: display all doors and jump zones ──
     if shift_held {
         // All gates, except lift entry/exit doors.
-        for door in game_host.doors.iter() {
+        for door in engine.doors().iter() {
             if !door.is_door() {
                 continue;
             }
@@ -172,9 +172,9 @@ pub(crate) fn render_door_overlays(
 
         // Every patch's own doors.  We inline the draw here since the
         // patch-FX consumer isn't plumbed into the renderer.
-        for patch in game_host.patches.iter() {
+        for patch in engine.patches().iter() {
             for &door_idx in &patch.door_indices {
-                if let Some(door) = game_host.doors.get(door_idx as usize) {
+                if let Some(door) = engine.doors().get(door_idx as usize) {
                     draw_door(renderer, door);
                 }
             }
@@ -225,7 +225,7 @@ pub(crate) fn render_door_overlays(
 
     if host.input.display_door
         && let Some(door_idx) = host.input.hovered_door_idx
-        && let Some(door) = game_host.doors.get(door_idx as usize)
+        && let Some(door) = engine.doors().get(door_idx as usize)
     {
         match door.door_type {
             DoorType::Building | DoorType::BuildingTrap => {
@@ -251,7 +251,7 @@ pub(crate) fn render_door_overlays(
         if host.input.display_door
             && sector.sector_type.is_door()
             && let Some(door_idx) = sector.door_index
-            && let Some(door) = game_host.doors.get(door_idx as usize)
+            && let Some(door) = engine.doors().get(door_idx as usize)
         {
             // Defer to the patch-FX path on either side of the door↔patch
             // wiring: door_triggered (door.patch_index set) or
@@ -335,7 +335,7 @@ pub(crate) fn render_door_overlays(
     // ── 6. Hovered-patch branch ──
     //    `Patch::display_doors` is refreshed each frame in `update_mouse`
     //    (cleared on every patch, set on the hovered one).
-    for patch in game_host.patches.iter() {
+    for patch in engine.patches().iter() {
         if !patch.display_doors {
             continue;
         }
@@ -359,7 +359,7 @@ pub(crate) fn render_door_overlays(
         }
 
         for &door_idx in &patch.door_indices {
-            let Some(door) = game_host.doors.get(door_idx as usize) else {
+            let Some(door) = engine.doors().get(door_idx as usize) else {
                 continue;
             };
 
@@ -1419,8 +1419,8 @@ fn transition_crenel_climb_up_mask_position(
     if door_pass.current_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel {
         return None;
     }
-    let game_host = engine.mission_script().and_then(|m| m.game_host())?;
-    let door = game_host.doors.get(usize::from(door_pass.door_index))?;
+    let _game_host = engine.mission_script().and_then(|m| m.game_host())?;
+    let door = engine.doors().get(usize::from(door_pass.door_index))?;
     let point_mid = door.point_mid;
     let point_out = door.point_out;
 
@@ -2451,7 +2451,7 @@ pub(crate) fn render_debug_doors(
     if !dev.debug.door_display {
         return;
     }
-    let Some(game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
+    let Some(_game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
         return;
     };
 
@@ -2477,7 +2477,7 @@ pub(crate) fn render_debug_doors(
         renderer.render_gpu_rect(x - half, y - half, side, side, r, g, b, 255);
     };
 
-    for door in &game_host.doors {
+    for door in engine.doors() {
         if !door.is_door() {
             continue;
         }
