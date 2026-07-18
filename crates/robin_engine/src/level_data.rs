@@ -1336,10 +1336,21 @@ pub struct RawMobileElement {
 }
 
 /// Data loaded from a proto-level file (.rhp).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum ProtoElementChunk {
+    Animation,
+    Patch,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct LoadedProtoLevel {
     pub format: LevelFormat,
     pub misc: Option<ProtoMisc>,
+    /// Source-file order of chunks that create script/render entities.
+    #[serde(default)]
+    pub element_chunk_order: Vec<ProtoElementChunk>,
     pub patches: Vec<RawPatch>,
     pub animations: Vec<RawElementFx>,
     pub material_sectors: Vec<RawMaterialSector>,
@@ -1413,6 +1424,7 @@ impl LoadedLevel {
             proto: LoadedProtoLevel {
                 format: LevelFormat::Fullgame,
                 misc: None,
+                element_chunk_order: Vec::new(),
                 patches: Vec::new(),
                 animations: Vec::new(),
                 material_sectors: Vec::new(),
@@ -1522,6 +1534,7 @@ pub fn load_proto_level(
     reader.chunk_start(format.proto_tag(), format.file_version())?;
 
     let mut misc = None;
+    let mut element_chunk_order = Vec::new();
     let mut patches = Vec::new();
     let mut animations = Vec::new();
     let mut material_sectors = Vec::new();
@@ -1546,9 +1559,11 @@ pub fn load_proto_level(
             misc = Some(read_proto_misc(reader, format)?);
         } else if tag == *format.patch_tag() {
             tracing::debug!("Proto: loading PATCH chunk");
+            element_chunk_order.push(ProtoElementChunk::Patch);
             patches = read_proto_patches(reader, format, true)?;
         } else if tag == *format.animation_tag() {
             tracing::debug!("Proto: loading ANIMATION chunk");
+            element_chunk_order.push(ProtoElementChunk::Animation);
             animations = read_proto_animations(reader, format)?;
         } else if tag == *format.material_tag() {
             tracing::debug!("Proto: loading MATERIAL chunk");
@@ -1622,6 +1637,7 @@ pub fn load_proto_level(
     Ok(LoadedProtoLevel {
         format,
         misc,
+        element_chunk_order,
         patches,
         animations,
         material_sectors,
@@ -3863,6 +3879,36 @@ mod tests {
 
         assert!(reader.at_end_of_chunk());
         reader.chunk_end().unwrap();
+    }
+
+    #[test]
+    fn proto_element_chunk_order_is_preserved() {
+        let format = LevelFormat::Demo;
+        let empty_count = 0u16.to_le_bytes();
+
+        for expected in [
+            vec![ProtoElementChunk::Animation, ProtoElementChunk::Patch],
+            vec![ProtoElementChunk::Patch, ProtoElementChunk::Animation],
+        ] {
+            let mut payload = Vec::new();
+            for chunk in &expected {
+                let (tag, version) = match chunk {
+                    ProtoElementChunk::Animation => {
+                        (format.animation_tag(), format.animation_ver())
+                    }
+                    ProtoElementChunk::Patch => (format.patch_tag(), format.patch_ver()),
+                };
+                payload.extend_from_slice(&build_chunk(tag, version, &empty_count));
+            }
+
+            let proto = build_chunk(format.proto_tag(), format.file_version(), &payload);
+            let (_dir, path) = write_temp_file("proto-order.rhp", &proto);
+            let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+            let mut reader = ChunkReader::new(file);
+
+            let loaded = load_proto_level(&mut reader, format).unwrap();
+            assert_eq!(loaded.element_chunk_order, expected);
+        }
     }
 
     #[test]

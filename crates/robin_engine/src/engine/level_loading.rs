@@ -453,14 +453,8 @@ fn map_pc_initial_action(
     }
 }
 
-/// Spawn the animation elements owned by mission-level patches.
-///
-/// The original loader walks mission chunks in file order. Shipped missions
-/// place `PATCH_2` before `ELEMENT`, so these FX entries must occupy script
-/// slots after the proto animations but before every mission actor. Omitting
-/// them shifts all later `GetActorScript` lookups; in ambush missions that
-/// makes startup/arrow-trigger messages hit the wrong soldiers.
-fn spawn_mission_patch_fx_entities(
+/// Spawn the animation elements owned by proto- or mission-level patches.
+fn spawn_patch_fx_entities(
     engine: &mut EngineInner,
     assets: &mut LevelAssets,
     patches: &[crate::level_data::RawPatch],
@@ -471,8 +465,8 @@ fn spawn_mission_patch_fx_entities(
     let bank_signature = assets.bank_signature;
     let mut handles = Vec::with_capacity(patches.len());
 
-    for (mission_patch_idx, raw) in patches.iter().enumerate() {
-        let patch_idx = patch_index_offset + mission_patch_idx;
+    for (local_patch_idx, raw) in patches.iter().enumerate() {
+        let patch_idx = patch_index_offset + local_patch_idx;
         let fname = &raw.element_fx.sprite.frame_profile_name;
         let profile = &raw.element_fx.sprite.profile_name;
 
@@ -518,7 +512,7 @@ fn spawn_mission_patch_fx_entities(
                     }
                     Err(e) => {
                         tracing::error!(
-                            "Failed to load sprite for mission patch {patch_idx} animation \
+                            "Failed to load sprite for patch {patch_idx} animation \
                              '{fname}' profile '{profile}': {e}"
                         );
                     }
@@ -526,7 +520,7 @@ fn spawn_mission_patch_fx_entities(
             }
             Err(e) => {
                 tracing::error!(
-                    "Failed to resolve RHS path for mission patch {patch_idx} animation \
+                    "Failed to resolve RHS path for patch {patch_idx} animation \
                      '{fname}': {e}"
                 );
             }
@@ -574,6 +568,97 @@ fn spawn_mission_patch_fx_entities(
     }
 
     handles
+}
+
+/// Spawn the ordinary FX elements from a proto `ANIMATION` chunk.
+fn spawn_proto_animation_fx_entities(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    animations: &[crate::level_data::RawElementFx],
+) {
+    let anim_base_dir = "Data/Animations";
+    let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
+    let bank_signature = assets.bank_signature;
+
+    for raw in animations {
+        let fname = &raw.sprite.frame_profile_name;
+        let profile = &raw.sprite.profile_name;
+        let mut sprite = crate::sprite::Sprite::default();
+        match crate::sprite_script::SpriteScriptor::resolve_rhs_path(
+            crate::sprite_script::FrameKind::Animation,
+            anim_base_dir,
+            fname,
+            sprite_ambiance,
+        ) {
+            Ok(path) => {
+                let cache_key = format!("{fname}/{profile}");
+                match assets.sprite_scriptor_mut().load(
+                    &path,
+                    profile,
+                    &cache_key,
+                    crate::sprite_script::FrameKind::Animation,
+                    |file| {
+                        let mut sig = 0u32;
+                        file.serialize_u32(&mut sig)
+                            .map_err(|e| format!("read signature: {e}"))?;
+                        if sig != bank_signature {
+                            return Err(format!(
+                                "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
+                            ));
+                        }
+                        Ok(())
+                    },
+                ) {
+                    Ok(info) => {
+                        sprite.scripts = info.scripts.clone();
+                        sprite.conversion = info.conversion.clone();
+                        sprite.center = info.center;
+                        sprite.current_width = info.size.x as u16;
+                        sprite.current_height = info.size.y as u16;
+                        sprite.frame_profile_name = fname.clone();
+                        sprite.profile_cache_key = cache_key;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to load sprite scripts for animation '{fname}' \
+                             profile '{profile}': {e}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to resolve animation RHS path for '{fname}': {e}");
+            }
+        }
+        apply_animation_sprite_placement(&mut sprite, &raw.sprite);
+        let entity = Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: raw.active,
+                sprite,
+                ..Default::default()
+            },
+            fx: crate::element::FxData {
+                restore_background: false,
+                force_display: raw.force_display,
+                animation: crate::order::OrderType::NonanimationEnd,
+                display_polyline: raw
+                    .display_polyline
+                    .iter()
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+                    .collect(),
+                patch_index: None,
+                mobile_index: None,
+                animation_speed: 1.0,
+                rendering_properties: if raw.blit_type != 0 {
+                    crate::element::RenderingProperties::NeedShadow
+                } else {
+                    crate::element::RenderingProperties::Blocky
+                },
+            },
+        });
+        let _ = engine.add_entity(entity);
+    }
 }
 
 impl EngineInner {
@@ -1613,7 +1698,7 @@ impl EngineInner {
         // visible at mission start.
         //
         // Load order:
-        //   1. Proto patch FX + animation FX  (loaded before mission file)
+        //   1. Proto animation/patch FX in their source chunk order
         //   2. Mission PATCH_2 FX  (shipped files place it before ELEMENT)
         //   3. Mission ELEMENT chunk sub-chunks in file order:
         //        BETE animals (skipped) → GOOD beam-mes (no script entry) →
@@ -1627,226 +1712,68 @@ impl EngineInner {
         // Some types (PRIS, GUYS) are not yet spawned; we push None placeholders
         // for them so the script-position-to-entity-index mapping stays aligned.
 
-        // Spawn patch FX entities (door/trap overlay animations).
-        // Patches are loaded from the PATCH chunk before the ANIMATION
-        // chunk, so patch FX entities appear first in the element array.
-        {
-            let anim_base_dir = "Data/Animations";
-            let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
-            let bank_signature = assets.bank_signature;
-            let mut patch_entity_handles: Vec<Option<i32>> = Vec::new();
-
-            for (patch_idx, raw) in loaded.proto.patches.iter().enumerate() {
-                let fname = &raw.element_fx.sprite.frame_profile_name;
-                let profile = &raw.element_fx.sprite.profile_name;
-
-                if fname.is_empty() {
-                    patch_entity_handles.push(None);
-                    continue;
-                }
-
-                let mut sprite = crate::sprite::Sprite::default();
-                match crate::sprite_script::SpriteScriptor::resolve_rhs_path(
-                    crate::sprite_script::FrameKind::Animation,
-                    anim_base_dir,
-                    fname,
-                    sprite_ambiance,
-                ) {
-                    Ok(path) => {
-                        let cache_key = format!("{fname}/{profile}");
-                        match assets.sprite_scriptor_mut().load(&path, profile, &cache_key, crate::sprite_script::FrameKind::Animation, |file| {
-                            let mut sig = 0u32;
-                            file.serialize_u32(&mut sig)
-                                .map_err(|e| format!("read signature: {e}"))?;
-                            if sig != bank_signature {
-                                return Err(format!(
-                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                                ));
-                            }
-                            Ok(())
-                        }) {
-                            Ok(info) => {
-                                sprite.scripts = info.scripts.clone();
-                                sprite.conversion = info.conversion.clone();
-                                sprite.center = info.center;
-                                sprite.current_width = info.size.x as u16;
-                                sprite.current_height = info.size.y as u16;
-                                sprite.frame_profile_name = fname.clone();
-                                sprite.profile_cache_key = cache_key;
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to load sprite for patch {patch_idx} animation '{fname}' profile '{profile}': {e}"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to resolve RHS path for patch {patch_idx} animation '{fname}': {e}"
-                        );
-                    }
-                }
-
-                // Determine initial active state from start_animation_valid.
-                let initially_active = raw.start_animation_valid;
-                apply_animation_sprite_placement(&mut sprite, &raw.element_fx.sprite);
-
-                // When `start_animation_valid`, park the FX element on the
-                // initial animation row.  Without this, the patch starts on
-                // `current_row=0` which only matches PATCH_INITIAL by
-                // coincidence (depends on the sprite's conversion table);
-                // patches whose conversion maps PATCH_INITIAL to a non-zero
-                // row would render the wrong animation until the next
-                // StartAnimation effect fires.
-                if initially_active {
-                    if let Some(row) = sprite.row_for_action(crate::order::OrderType::PATCH_INITIAL)
-                    {
-                        sprite.current_row = row;
-                    }
-                    // Reset the sprite frame to 0.
-                    sprite.current_frame = 0;
-                    sprite.frame_count = 0;
-                }
-                let entity = crate::element::Entity::Fx(crate::element::ElementFx {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::Fx,
-                        active: initially_active,
-                        sprite,
-                        ..Default::default()
-                    },
-                    fx: crate::element::FxData {
-                        restore_background: raw.integrate_in_background,
-                        force_display: raw.element_fx.force_display,
-                        animation: crate::order::OrderType::NonanimationEnd,
-                        display_polyline: raw
-                            .element_fx
-                            .display_polyline
-                            .iter()
-                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                            .collect(),
-                        patch_index: crate::patch::PatchIndex::new(patch_idx as u32),
-                        mobile_index: None,
-                        animation_speed: 1.0,
-                        // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
-                        rendering_properties: if raw.element_fx.blit_type != 0 {
-                            crate::element::RenderingProperties::NeedShadow
-                        } else {
-                            crate::element::RenderingProperties::Blocky
-                        },
-                    },
-                });
-                let id = self.add_entity(entity);
-                let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
-                patch_entity_handles.push(Some(handle));
-                tracing::trace!(
-                    "Spawned patch {patch_idx} FX entity: id={:?}, handle={handle}, sprite='{fname}'",
-                    id,
-                );
-            }
-
-            // Store the mapping for later GameHost population.
-            // Will be transferred in populate_game_host_from_level below.
-            assets.patch_entity_handles = std::sync::Arc::new(patch_entity_handles);
-
-            tracing::info!("Spawned {} patch FX entities", loaded.proto.patches.len(),);
-        }
-        progress(1.0);
-
-        // Spawn proto-level FX animations (water, flags, decorations, etc.)
-        {
-            let anim_base_dir = "Data/Animations";
-            let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
-            let bank_signature = assets.bank_signature;
-
-            for raw in &loaded.proto.animations {
-                let fname = &raw.sprite.frame_profile_name;
-                let profile = &raw.sprite.profile_name;
-
-                // Resolve .rhs path and load sprite scripts
-                let mut sprite = crate::sprite::Sprite::default();
-                match crate::sprite_script::SpriteScriptor::resolve_rhs_path(
-                    crate::sprite_script::FrameKind::Animation,
-                    anim_base_dir,
-                    fname,
-                    sprite_ambiance,
-                ) {
-                    Ok(path) => {
-                        let cache_key = format!("{fname}/{profile}");
-                        match assets.sprite_scriptor_mut().load(&path, profile, &cache_key, crate::sprite_script::FrameKind::Animation, |file| {
-                            let mut sig = 0u32;
-                            file.serialize_u32(&mut sig)
-                                .map_err(|e| format!("read signature: {e}"))?;
-                            if sig != bank_signature {
-                                return Err(format!(
-                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                                ));
-                            }
-                            Ok(())
-                        }) {
-                            Ok(info) => {
-                                sprite.scripts = info.scripts.clone();
-                                sprite.conversion = info.conversion.clone();
-                                sprite.center = info.center;
-                                sprite.current_width = info.size.x as u16;
-                                sprite.current_height = info.size.y as u16;
-                                sprite.frame_profile_name = fname.clone();
-                                sprite.profile_cache_key = cache_key;
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to load sprite scripts for animation '{fname}' profile '{profile}': {e}");
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to resolve animation RHS path for '{fname}': {e}");
-                    }
-                }
-                apply_animation_sprite_placement(&mut sprite, &raw.sprite);
-                let entity = Entity::Fx(crate::element::ElementFx {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::Fx,
-                        active: raw.active,
-                        sprite,
-                        ..Default::default()
-                    },
-                    fx: crate::element::FxData {
-                        restore_background: false,
-                        force_display: raw.force_display,
-                        animation: crate::order::OrderType::NonanimationEnd,
-                        display_polyline: raw
-                            .display_polyline
-                            .iter()
-                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                            .collect(),
-                        patch_index: None, // background animations aren't patches
-                        mobile_index: None,
-                        animation_speed: 1.0,
-                        // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
-                        rendering_properties: if raw.blit_type != 0 {
-                            crate::element::RenderingProperties::NeedShadow
-                        } else {
-                            crate::element::RenderingProperties::Blocky
-                        },
-                    },
-                });
-                let _ = self.add_entity(entity);
-            }
-
-            tracing::info!(
-                "Spawned {} proto-level animations ({} with sprites)",
-                loaded.proto.animations.len(),
-                self.bg_animation_ids().len(),
-            );
+        let mut proto_patch_handles = None;
+        let mut animations_spawned = false;
+        let mut patches_spawned = false;
+        let mut proto_element_chunks = loaded.proto.element_chunk_order.clone();
+        if proto_element_chunks.is_empty() {
+            // Backward-compatible fallback for programmatically constructed
+            // levels and old serialized test fixtures.
+            proto_element_chunks.extend([
+                crate::level_data::ProtoElementChunk::Animation,
+                crate::level_data::ProtoElementChunk::Patch,
+            ]);
         }
 
+        for chunk in proto_element_chunks {
+            match chunk {
+                crate::level_data::ProtoElementChunk::Animation if !animations_spawned => {
+                    spawn_proto_animation_fx_entities(self, assets, &loaded.proto.animations);
+                    animations_spawned = true;
+                }
+                crate::level_data::ProtoElementChunk::Patch if !patches_spawned => {
+                    proto_patch_handles = Some(spawn_patch_fx_entities(
+                        self,
+                        assets,
+                        &loaded.proto.patches,
+                        0,
+                    ));
+                    patches_spawned = true;
+                }
+                _ => {}
+            }
+        }
+
+        // A malformed/custom file could omit one of the chunks while a test
+        // constructs the corresponding vector directly. Do not silently drop
+        // those entities.
+        if !animations_spawned && !loaded.proto.animations.is_empty() {
+            spawn_proto_animation_fx_entities(self, assets, &loaded.proto.animations);
+        }
+        if !patches_spawned && !loaded.proto.patches.is_empty() {
+            proto_patch_handles = Some(spawn_patch_fx_entities(
+                self,
+                assets,
+                &loaded.proto.patches,
+                0,
+            ));
+        }
+
+        assets.patch_entity_handles = std::sync::Arc::new(
+            proto_patch_handles.unwrap_or_else(|| vec![None; loaded.proto.patches.len()]),
+        );
+        tracing::info!(
+            "Spawned {} proto animations and {} proto patch FX entities in source order",
+            loaded.proto.animations.len(),
+            loaded.proto.patches.len(),
+        );
         progress(1.0);
 
         // Mission PATCH_2 precedes ELEMENT in shipped mission streams. The
         // patch animations therefore belong here in the flat script-element
         // array, between proto FX and mission actors (RHengine.cpp's mission
         // chunk loop calls InitializePatchFromProtoStream immediately).
-        let mission_patch_handles = spawn_mission_patch_fx_entities(
+        let mission_patch_handles = spawn_patch_fx_entities(
             self,
             assets,
             &loaded.mission.mission_patches,
