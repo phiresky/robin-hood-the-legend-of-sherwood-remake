@@ -333,6 +333,41 @@ fn patch_mutation_is_visible_to_later_native_in_same_callback() {
     ));
 }
 
+#[test]
+fn mission_ui_mutations_are_visible_in_same_callback() {
+    let mut host = GameHost::new();
+
+    let mut set_outline = NativeStack::default();
+    set_outline.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::SetOutlineDisplay, &mut set_outline),
+        0
+    );
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::GetOutlineDisplay,
+            &mut NativeStack::default(),
+        ),
+        1
+    );
+    assert!(host.engine_domains.mission_ui.outline_display);
+    assert!(matches!(
+        host.commands.as_slice(),
+        [EngineCommand::SetOutlineDisplay { display: true }]
+    ));
+
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::ForceCheckVictory,
+            &mut NativeStack::default(),
+        ),
+        0
+    );
+    assert!(host.engine_domains.mission_ui.force_check);
+}
+
 // --- Sequence manager ---
 
 #[test]

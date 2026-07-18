@@ -1173,6 +1173,11 @@ struct CompatibleGameHost {
     building_gates: Option<Vec<Vec<i32>>>,
     doors: Option<Vec<crate::gate::Door>>,
     patches: Option<Vec<crate::patch::Patch>>,
+    force_check: Option<bool>,
+    outline_display: Option<bool>,
+    men_to_blazon_conversion_mode: Option<bool>,
+    blinking_blazons: Option<u32>,
+    blink_expire_frame: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1185,12 +1190,16 @@ pub(crate) struct LegacyScriptCustomValues {
 pub(crate) struct LegacyScriptDomains {
     pub(crate) buildings: Option<super::state::BuildingState>,
     pub(crate) interactables: Option<super::state::InteractableState>,
+    pub(crate) mission_ui: Option<super::state::MissionUiState>,
     pub(crate) scrolls: Option<super::state::ScrollState>,
 }
 
 impl LegacyScriptDomains {
     fn is_empty(&self) -> bool {
-        self.buildings.is_none() && self.interactables.is_none() && self.scrolls.is_none()
+        self.buildings.is_none()
+            && self.interactables.is_none()
+            && self.mission_ui.is_none()
+            && self.scrolls.is_none()
     }
 }
 
@@ -1201,6 +1210,35 @@ struct LegacyNpcValues(
 );
 
 impl CompatibleGameHost {
+    fn legacy_mission_ui<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::MissionUiState>, E> {
+        let present = [
+            self.force_check.is_some(),
+            self.outline_display.is_some(),
+            self.men_to_blazon_conversion_mode.is_some(),
+            self.blinking_blazons.is_some(),
+            self.blink_expire_frame.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete mission-UI field set",
+            ));
+        }
+        Ok(Some(super::state::MissionUiState {
+            force_check: self.force_check.expect("validated above"),
+            outline_display: self.outline_display.expect("validated above"),
+            men_to_blazon_conversion_mode: self
+                .men_to_blazon_conversion_mode
+                .expect("validated above"),
+            blinking_blazons: self.blinking_blazons.expect("validated above"),
+            blink_expire_frame: self.blink_expire_frame.expect("validated above"),
+        }))
+    }
+
     fn legacy_interactables<E: serde::de::Error>(
         &self,
     ) -> Result<Option<super::state::InteractableState>, E> {
@@ -1361,9 +1399,11 @@ impl<'de> Deserialize<'de> for MissionScript {
         let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
         let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
         let legacy_interactables = snapshot.game_host.legacy_interactables::<D::Error>()?;
+        let legacy_mission_ui = snapshot.game_host.legacy_mission_ui::<D::Error>()?;
         let legacy_script_domains = LegacyScriptDomains {
             buildings: legacy_buildings,
             interactables: legacy_interactables,
+            mission_ui: legacy_mission_ui,
             scrolls: legacy_scrolls,
         };
 

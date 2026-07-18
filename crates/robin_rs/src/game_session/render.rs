@@ -1070,16 +1070,8 @@ pub(super) fn render_frame(
     requirements_tooltip.update(None);
     blazon_tooltip.update(None);
     if let Some(campaign) = engine.campaign() {
-        let (men_to_blazon, blinking) = engine
-            .mission_script()
-            .and_then(|s| s.game_host())
-            .map(|h| {
-                (
-                    h.men_to_blazon_conversion_mode,
-                    h.active_blinking_blazons(engine.frame_counter()),
-                )
-            })
-            .unwrap_or((false, 0));
+        let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
+        let blinking = engine.active_blinking_blazons();
         if let Some(bb) = blazon_bar::build_blazon_bar_state(
             campaign,
             &assets.profile_manager,

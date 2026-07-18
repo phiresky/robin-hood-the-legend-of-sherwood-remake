@@ -1,12 +1,12 @@
 //! Stable serialization boundary for [`EngineInner`].
 //!
 //! The in-memory engine is going to be split into cohesive owned state groups.
-//! Save files and multiplayer bincode snapshots must not change merely because
-//! fields move. This flat schema deliberately repeats the current field names,
-//! types, attributes, and declaration order. Future in-memory regrouping maps
-//! through this boundary instead of deriving a new external schema from the
-//! runtime layout. Deterministic hashing follows the current runtime ownership
-//! layout and is intentionally separate from this compatibility adapter.
+//! JSON save fields remain compatible while in-memory ownership changes. This
+//! flat schema deliberately repeats the historical top-level field names and
+//! normalizes legacy nested owners. Bincode rollback/replay bytes are locked
+//! within a build, but historical replay compatibility is intentionally not a
+//! constraint on the runtime layout. Deterministic hashing likewise follows
+//! the current runtime ownership layout.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStruct};
 
@@ -106,7 +106,7 @@ impl Serialize for EngineInner {
         )?;
         snapshot.serialize_field("next_order_id", &self.orders.next_order_id)?;
         snapshot.serialize_field("chorus_timer", &self.control.chorus_timer)?;
-        snapshot.serialize_field("force_check", &self.mission_domain.force_check)?;
+        snapshot.serialize_field("force_check", &self.script_domains.mission_ui.force_check)?;
         snapshot.serialize_field("messenger", &self.orders.messenger)?;
         snapshot.serialize_field("fast_grid", &self.world.fast_grid)?;
         snapshot.serialize_field("pathfinder", &self.world.pathfinder)?;
@@ -205,6 +205,14 @@ impl<'de> Deserialize<'de> for EngineInner {
                 }
                 script_domains.interactables = interactables;
             }
+            if let Some(mission_ui) = legacy.mission_ui {
+                if !script_domains.mission_ui.is_default_for_legacy_merge() {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy mission UI state",
+                    ));
+                }
+                script_domains.mission_ui = mission_ui;
+            }
             if let Some(scrolls) = legacy.scrolls {
                 let current = &script_domains.scrolls;
                 if !current.status.is_empty()
@@ -226,12 +234,12 @@ impl<'de> Deserialize<'de> for EngineInner {
             }
             script_domains.zones.scripts = legacy_zones;
         }
+        script_domains.mission_ui.force_check |= snapshot.force_check;
         Ok(Self {
             sim_config: snapshot.sim_config,
             mission_domain: MissionDomain {
                 state: snapshot.mission,
                 cheat_used_flags: snapshot.cheat_used_flags,
-                force_check: snapshot.force_check,
                 short_briefings: snapshot.short_briefings,
                 mission_stat: snapshot.mission_stat,
                 dead_pc: snapshot.dead_pc,

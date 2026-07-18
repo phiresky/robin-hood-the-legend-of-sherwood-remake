@@ -126,17 +126,10 @@ pub struct GameHost {
     #[serde(skip)]
     #[state_hash(skip)]
     test_script_state: ScriptState,
-    /// Set by `ForceCheckVictory` native — tells the engine to run
-    /// `CheckVictoryCondition` on the next frame instead of waiting
-    /// for the 3-second interval.
-    pub force_check: bool,
     /// If true, print each call to stderr as it happens.
     pub verbose: bool,
     /// Deferred commands for the engine to process after script execution.
     pub commands: Vec<EngineCommand>,
-    /// Current outline display state (readable by GetOutlineDisplay).
-    pub outline_display: bool,
-
     /// Entity storage, swapped in from EngineInner before script execution
     /// and swapped back out after.  Empty when no script is running.
     pub entities: Vec<Option<Entity>>,
@@ -193,18 +186,6 @@ pub struct GameHost {
     /// — only Spellforge mods touch it).
     pub pending_objective_changes: Vec<ObjectiveChange>,
 
-    /// Whether the game is in "men to blazon" conversion UI mode (Sherwood).
-    pub men_to_blazon_conversion_mode: bool,
-
-    /// Number of trailing "castle" blazons on the blazon bar that should
-    /// flash to "normal" after a tactical-mission overflow.  Set by
-    /// `SetBlinkingBlazons`; zero means no blink is active.
-    pub blinking_blazons: u32,
-    /// EngineInner frame at which the blink latch clears.  `u32::MAX`
-    /// when no blink is armed.  The blazon-set refresh decrements over
-    /// `BLINK_TIMEOUT` (50) ticks.
-    pub blink_expire_frame: u32,
-
     /// Recursion depth of the nested-script-call stack.  Each actor
     /// script normally has its own VMCore (giving an implicit per-core
     /// stack-depth limit); we cap explicitly (see
@@ -233,7 +214,6 @@ impl GameHost {
         Self {
             #[cfg(test)]
             test_script_state: ScriptState::default(),
-            force_check: false,
             verbose: false,
             entities: Vec::new(),
             ai_global: AiGlobalState::default(),
@@ -242,7 +222,6 @@ impl GameHost {
             mission_stat: crate::mission_stat::MissionStat::default(),
             engine_domains: crate::engine::state::ScriptDomains::default(),
             commands: Vec::new(),
-            outline_display: false,
             script_this: 0,
             production_registrations: Vec::new(),
             production_points: Vec::new(),
@@ -252,9 +231,6 @@ impl GameHost {
             current_scroll: 0,
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
-            men_to_blazon_conversion_mode: false,
-            blinking_blazons: 0,
-            blink_expire_frame: u32::MAX,
             nested_call_depth: 0,
         }
     }
@@ -323,30 +299,6 @@ impl GameHost {
     pub fn verbose(mut self) -> Self {
         self.verbose = true;
         self
-    }
-
-    /// Arm the blazon-bar blink latch for `BLINK_TIMEOUT` frames.
-    /// The last `n` castle blazons flash to the "normal" sprite, then
-    /// revert once the blazon-set refresh counts the timeout down to
-    /// zero.  `n == 0` disarms the latch.
-    pub fn set_blinking_blazons(&mut self, n: u32, frame_counter: u32) {
-        const BLINK_TIMEOUT: u32 = 50;
-        self.blinking_blazons = n;
-        self.blink_expire_frame = if n == 0 {
-            u32::MAX
-        } else {
-            frame_counter.saturating_add(BLINK_TIMEOUT)
-        };
-    }
-
-    /// The blink count that the blazon bar should display this frame.
-    /// Returns 0 once the blazon-set refresh timeout would have fired.
-    pub fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
-        if frame_counter < self.blink_expire_frame {
-            self.blinking_blazons
-        } else {
-            0
-        }
     }
 
     /// Look up an entity by actor handle. Returns None for null or invalid handles.
@@ -1605,7 +1557,9 @@ impl NativeContext<'_> {
         }
         if let Some(n) = tactical_overflow {
             let frame_counter = self.frame_counter();
-            self.set_blinking_blazons(n, frame_counter);
+            self.engine_domains
+                .mission_ui
+                .set_blinking_blazons(n, frame_counter);
         }
 
         // `UpdateInformationBars` / `UpdateBlazons` only fire in
@@ -2720,7 +2674,7 @@ impl NativeContext<'_> {
             match f {
                 // --- victory ---
                 ForceCheckVictory => {
-                    self.force_check = true;
+                    self.engine_domains.mission_ui.force_check = true;
                     0
                 }
 
@@ -3539,15 +3493,15 @@ impl NativeContext<'_> {
                 SetOutlineDisplay => {
                     let val = stack.pop_i32();
                     let display = val != 0;
-                    if self.outline_display != display {
-                        self.outline_display = display;
+                    if self.engine_domains.mission_ui.outline_display != display {
+                        self.engine_domains.mission_ui.outline_display = display;
                         self.commands
                             .push(EngineCommand::SetOutlineDisplay { display });
                     }
                     0
                 }
                 GetOutlineDisplay => {
-                    if self.outline_display {
+                    if self.engine_domains.mission_ui.outline_display {
                         1
                     } else {
                         0
@@ -7958,7 +7912,7 @@ impl NativeContext<'_> {
                     })
                 }
                 IsMenToBlazonConversionMode => {
-                    if self.men_to_blazon_conversion_mode {
+                    if self.engine_domains.mission_ui.men_to_blazon_conversion_mode {
                         1
                     } else {
                         0

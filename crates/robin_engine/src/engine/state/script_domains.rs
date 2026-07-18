@@ -22,6 +22,61 @@ pub(crate) struct InteractableState {
     pub(crate) patches: Vec<crate::patch::Patch>,
 }
 
+/// Deterministic mission UI controls and the script-requested victory latch.
+///
+/// These values are queried or mutated by both ordinary engine systems and
+/// script natives, so the native adapter only leases this single owner during
+/// a callback. Presentation changes derived from the values remain effects.
+#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct MissionUiState {
+    pub(crate) outline_display: bool,
+    /// Serialized through the historical top-level Engine `force_check` key.
+    #[serde(skip)]
+    pub(crate) force_check: bool,
+    pub(crate) men_to_blazon_conversion_mode: bool,
+    pub(crate) blinking_blazons: u32,
+    pub(crate) blink_expire_frame: u32,
+}
+
+impl Default for MissionUiState {
+    fn default() -> Self {
+        Self {
+            outline_display: false,
+            force_check: false,
+            men_to_blazon_conversion_mode: false,
+            blinking_blazons: 0,
+            blink_expire_frame: u32::MAX,
+        }
+    }
+}
+
+impl MissionUiState {
+    const BLINK_TIMEOUT: u32 = 50;
+
+    pub(crate) fn set_blinking_blazons(&mut self, count: u32, frame_counter: u32) {
+        self.blinking_blazons = count;
+        self.blink_expire_frame = if count == 0 {
+            u32::MAX
+        } else {
+            frame_counter.saturating_add(Self::BLINK_TIMEOUT)
+        };
+    }
+
+    pub(crate) fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
+        (frame_counter < self.blink_expire_frame)
+            .then_some(self.blinking_blazons)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn is_default_for_legacy_merge(&self) -> bool {
+        !self.outline_display
+            && !self.force_check
+            && !self.men_to_blazon_conversion_mode
+            && self.blinking_blazons == 0
+            && self.blink_expire_frame == u32::MAX
+    }
+}
+
 /// Deterministic scroll state shared by engine systems and script natives.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScrollState {
@@ -39,6 +94,8 @@ pub(crate) struct ScrollState {
 pub(crate) struct ScriptDomains {
     pub(crate) buildings: BuildingState,
     pub(crate) interactables: InteractableState,
+    #[serde(default)]
+    pub(crate) mission_ui: MissionUiState,
     pub(crate) scrolls: ScrollState,
     pub(crate) zones: ZoneState,
 }

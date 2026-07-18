@@ -760,9 +760,9 @@ impl EngineInner {
             // Check victory/defeat conditions every 3 game-seconds
             // (or immediately if force_check was set by a native call).
             if game_seconds.is_multiple_of(VICTORY_CHECK_INTERVAL)
-                || self.mission_domain.force_check
+                || self.script_domains.mission_ui.force_check
             {
-                self.mission_domain.force_check = false;
+                self.script_domains.mission_ui.force_check = false;
 
                 // Take the script out to avoid borrow conflicts with `self`.
                 if let Some(mut script) = self.mission_script.take() {

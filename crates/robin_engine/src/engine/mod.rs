@@ -3448,15 +3448,18 @@ impl EngineInner {
         self.mission_script.as_mut()?.game_host_mut()
     }
 
-    /// True iff the script host's `men_to_blazon_conversion_mode` flag
-    /// is set.  Read by titbit rendering to suppress the per-PC
+    /// True iff men-to-blazon conversion mode is active. Read by titbit
+    /// rendering to suppress the per-PC
     /// WorkIcon while the conversion screen is up.
     pub fn is_men_to_blazon_conversion_mode(&self) -> bool {
-        self.mission_script
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .map(|h| h.men_to_blazon_conversion_mode)
-            .unwrap_or(false)
+        self.script_domains.mission_ui.men_to_blazon_conversion_mode
+    }
+
+    /// Number of temporary blazon highlights active on this frame.
+    pub fn active_blinking_blazons(&self) -> u32 {
+        self.script_domains
+            .mission_ui
+            .active_blinking_blazons(self.control.frame_counter)
     }
 
     /// Refresh the per-patch `display_doors` flag for this frame's
@@ -3495,13 +3498,11 @@ impl EngineInner {
         }
     }
 
-    /// Toggle the script host's `men_to_blazon_conversion_mode` flag.
-    /// Read by the `IsMenToBlazonConversionMode` native and the
+    /// Toggle the engine-owned men-to-blazon conversion mode. Read by the
+    /// `IsMenToBlazonConversionMode` native and the
     /// blazon-bar recomputation in `UpdateInformationBars`.
     pub(crate) fn set_men_to_blazon_conversion_mode(&mut self, enabled: bool) {
-        if let Some(game_host) = self.mission_script_game_host_mut() {
-            game_host.men_to_blazon_conversion_mode = enabled;
-        }
+        self.script_domains.mission_ui.men_to_blazon_conversion_mode = enabled;
     }
 
     /// Run the mission script's `PostInitialize` hook once, then no-op.
@@ -3712,7 +3713,7 @@ impl EngineInner {
         // reset in `Host::post_load_reset` too.
 
         // Per-frame / per-tick scratch flags.
-        self.mission_domain.force_check = false;
+        self.script_domains.mission_ui.force_check = false;
         self.control.chorus_timer = 0;
         self.control.fast_forward = false;
         self.orders.pending_move_requests.clear();

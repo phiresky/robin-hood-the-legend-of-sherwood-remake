@@ -254,12 +254,6 @@ impl EngineInner {
                 game_host.background_invalidated = false;
             }
 
-            // ── ForceCheckVictory ──
-            if game_host.force_check {
-                self.mission_domain.force_check = true;
-                game_host.force_check = false;
-            }
-
             // ── Camera / UI commands ──
             engine_commands = game_host.drain_commands();
 
@@ -2932,25 +2926,19 @@ impl EngineInner {
                     // states here so the log/trace reflects what the
                     // next HUD frame will show.
                     if let Some(campaign) = self.mission_domain.campaign.as_ref() {
-                        // `Game::is_men_to_blazon_conversion` is mirrored
-                        // onto `GameHost::men_to_blazon_conversion_mode`
-                        // (the `SetMenToBlazonConversionMode` setter
-                        // writes both; see `Game::set_men_to_blazon_conversion`).
-                        // Read the host copy here so the blazon bar can
+                        // `Game::is_men_to_blazon_conversion` is reflected in
+                        // the engine-owned mission UI domain by the
+                        // `SetMenToBlazonConversionMode` player command.
+                        // Read that state here so the blazon bar can
                         // switch to next-mission targeting during
                         // conversion mode without needing a `&Game`
                         // borrow at the engine tick.
-                        let (men_to_blazon, blinking) = self
-                            .mission_script
-                            .as_ref()
-                            .and_then(|s| s.game_host())
-                            .map(|h| {
-                                (
-                                    h.men_to_blazon_conversion_mode,
-                                    h.active_blinking_blazons(self.control.frame_counter),
-                                )
-                            })
-                            .unwrap_or((false, 0));
+                        let men_to_blazon =
+                            self.script_domains.mission_ui.men_to_blazon_conversion_mode;
+                        let blinking = self
+                            .script_domains
+                            .mission_ui
+                            .active_blinking_blazons(self.control.frame_counter);
                         let bb = crate::widget_state::blazon_bar::build_blazon_bar_state(
                             campaign,
                             &assets.profile_manager,
@@ -3469,6 +3457,66 @@ mod script_context_tests {
                 .doors
                 .is_empty(),
             "legacy storage must be consumed instead of retained as a mirror"
+        );
+    }
+
+    #[test]
+    fn legacy_game_host_mission_ui_migrates_without_overwriting_force_check() {
+        let mut engine = EngineInner::new();
+        engine.mission_script = Some(empty_mission_script());
+        engine.script_domains.mission_ui.outline_display = true;
+        engine.script_domains.mission_ui.force_check = true;
+        engine
+            .script_domains
+            .mission_ui
+            .men_to_blazon_conversion_mode = true;
+        engine
+            .script_domains
+            .mission_ui
+            .set_blinking_blazons(3, 100);
+
+        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
+        let ui = snapshot["script_domains"]["mission_ui"]
+            .as_object()
+            .cloned()
+            .expect("current mission UI domain");
+        let host = snapshot["mission_script"]["game_host"]
+            .as_object_mut()
+            .expect("legacy GameHost object");
+        host.insert("force_check".into(), serde_json::json!(false));
+        for field in [
+            "outline_display",
+            "men_to_blazon_conversion_mode",
+            "blinking_blazons",
+            "blink_expire_frame",
+        ] {
+            host.insert(field.into(), ui[field].clone());
+        }
+        snapshot["script_domains"]["mission_ui"] =
+            serde_json::to_value(crate::engine::state::MissionUiState::default())
+                .expect("serialize default mission UI");
+
+        let restored: EngineInner =
+            serde_json::from_value(snapshot).expect("normalize legacy mission UI");
+        let ui = &restored.script_domains.mission_ui;
+        assert!(ui.outline_display);
+        assert!(
+            ui.force_check,
+            "top-level legacy force_check remains authoritative"
+        );
+        assert!(ui.men_to_blazon_conversion_mode);
+        assert_eq!(ui.blinking_blazons, 3);
+        assert_eq!(ui.blink_expire_frame, 150);
+        assert!(
+            restored
+                .mission_script
+                .as_ref()
+                .expect("mission script survives migration")
+                .game_host
+                .engine_domains
+                .mission_ui
+                .is_default_for_legacy_merge(),
+            "legacy UI storage must be consumed instead of retained as a mirror"
         );
     }
 

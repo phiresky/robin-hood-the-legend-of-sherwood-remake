@@ -362,7 +362,7 @@ pub enum PlayerCommand {
 
     // ── Host-driven sim mutations routed through the command pipeline
     //    so replay / rollback reproduces them deterministically. ──
-    /// Toggle the script host's `men_to_blazon_conversion_mode` flag.
+    /// Toggle the engine-owned men-to-blazon conversion mode.
     SetMenToBlazonConversionMode {
         on: bool,
     },

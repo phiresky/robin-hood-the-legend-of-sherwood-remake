@@ -470,8 +470,7 @@ impl Game {
     // ── Blazon conversion ───────────────────────────────────────────
 
     /// Set the persistent men-to-blazon conversion flag.  Callers who
-    /// also need the engine's `GameHost::men_to_blazon_conversion_mode`
-    /// flag updated must dispatch
+    /// also need the engine-owned mission UI mode updated must dispatch
     /// [`PlayerCommand::SetMenToBlazonConversionMode`] through
     /// `engine.apply_command` so replay / rollback see the toggle at
     /// the same frame.
