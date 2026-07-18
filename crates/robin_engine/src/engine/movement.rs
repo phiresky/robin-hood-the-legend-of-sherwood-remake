@@ -1192,14 +1192,9 @@ impl EngineInner {
                 .sector_idx
                 .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
                 .and_then(|s| s.door_index);
-            let clicked_polygon_door_index = self
-                .scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .and_then(|_| {
-                    door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
-                });
+            let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
+                door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
+            });
             let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
             let is_door_click = is_door_click_sector || clicked_door_index.is_some();
 
@@ -1548,12 +1543,7 @@ impl EngineInner {
                 .map(|p| (p.get_door(), p.get_door_direction()))
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (pc_pos, path_src_sector, _path_src_layer) = {
-                let host = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|_h| {
+                let adapted = self.scripts.mission.as_ref().and_then(|_| {
                     adapt_source_to_current_door(
                         &self.script_domains.interactables.doors,
                         door_handle,
@@ -1583,12 +1573,7 @@ impl EngineInner {
             let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
             let level = self.world.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
-                let host = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut());
-                host.and_then(|_h| {
+                self.scripts.mission.as_ref().and_then(|_| {
                     crate::gate::find_path_to_door(
                         &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
@@ -1622,12 +1607,7 @@ impl EngineInner {
                     continue;
                 };
                 let level = self.world.fast_grid.level.clone();
-                let game_host = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut());
-                game_host.and_then(|_h| {
+                self.scripts.mission.as_ref().and_then(|_| {
                     crate::gate::find_path_gates(
                         &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
@@ -1851,8 +1831,10 @@ impl EngineInner {
         let apply_to_jump = !matches!(goal, GoalShape::Line { .. });
         let first_jump: Option<usize> = if apply_to_jump {
             gate_path.iter().enumerate().find_map(|(i, step)| {
-                let host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
-                let is_jump = host
+                let is_jump = self
+                    .scripts
+                    .mission
+                    .as_ref()
                     .and_then(|_| {
                         self.script_domains
                             .interactables
@@ -1874,10 +1856,9 @@ impl EngineInner {
             }
         };
 
-        // Snapshot all the gate data we need while we briefly hold
-        // the GameHost borrow, so the main loop can call grid /
-        // sequence helpers on `self` without fighting the borrow
-        // checker.
+        // Snapshot the canonical gate data in one short borrow so the main
+        // loop can call grid and sequence helpers on `self` without fighting
+        // the borrow checker.
         #[derive(Clone, Copy)]
         struct GateShot {
             door_index: crate::gate::DoorIndex,
@@ -1904,15 +1885,9 @@ impl EngineInner {
         }
 
         let (gate_shots, starting_sector) = {
-            let _game_host = match self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-            {
-                Some(h) => h,
-                None => return,
-            };
+            if self.scripts.mission.is_none() {
+                return;
+            }
             // Starting sector = the sector on the "old" side of the
             // first gate.  Needed to decide whether the actor's
             // current location is a building (→ first gate uses the
@@ -2444,15 +2419,17 @@ impl EngineInner {
                             })
                             .unwrap_or((None, 0.0, trailing_flags));
                         let point_in = {
-                            let host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
-                            host.and_then(|_| {
-                                self.script_domains
-                                    .interactables
-                                    .doors
-                                    .get(usize::from(last_shot.door_index))
-                            })
-                            .map(|d| d.point_in)
-                            .unwrap_or(last_shot.exit)
+                            self.scripts
+                                .mission
+                                .as_ref()
+                                .and_then(|_| {
+                                    self.script_domains
+                                        .interactables
+                                        .doors
+                                        .get(usize::from(last_shot.door_index))
+                                })
+                                .map(|d| d.point_in)
+                                .unwrap_or(last_shot.exit)
                         };
                         let mut seek_move = SequenceElement::new_movement(
                             level,
@@ -2523,15 +2500,17 @@ impl EngineInner {
                     // not on which branch (building vs non-building)
                     // was selected.
                     let goal_door_pc_lockable = {
-                        let host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
-                        host.and_then(|_| {
-                            self.script_domains
-                                .interactables
-                                .doors
-                                .get(usize::from(door_index))
-                        })
-                        .map(|d| d.locked_pc && d.unlockable)
-                        .unwrap_or(false)
+                        self.scripts
+                            .mission
+                            .as_ref()
+                            .and_then(|_| {
+                                self.script_domains
+                                    .interactables
+                                    .doors
+                                    .get(usize::from(door_index))
+                            })
+                            .map(|d| d.locked_pc && d.unlockable)
+                            .unwrap_or(false)
                     };
                     if !move_after_last_door {
                         // "Stop at the door" variant — caller set
@@ -2563,8 +2542,7 @@ impl EngineInner {
                         level += 1;
 
                         let (dx, dy) = {
-                            let host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
-                            let d = host.and_then(|_| {
+                            let d = self.scripts.mission.as_ref().and_then(|_| {
                                 self.script_domains
                                     .interactables
                                     .doors
@@ -2647,8 +2625,7 @@ impl EngineInner {
                     // is emitted.
                     if goal_door_pc_lockable && has_lockpick {
                         let (cam_pt, direct) = {
-                            let host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
-                            let d = host.and_then(|_| {
+                            let d = self.scripts.mission.as_ref().and_then(|_| {
                                 self.script_domains
                                     .interactables
                                     .doors
@@ -3525,7 +3502,6 @@ impl EngineInner {
                         self.scripts
                             .mission
                             .as_ref()
-                            .and_then(|s| s.game_host())
                             .and_then(|_| {
                                 self.script_domains
                                     .interactables
@@ -6307,10 +6283,9 @@ impl EngineInner {
             let patch_usize = patch_index.get() as usize;
 
             let (is_active, apply_sector_idx) = {
-                let Some(_game_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host())
-                else {
+                if self.scripts.mission.is_none() {
                     return;
-                };
+                }
                 let Some(patch) = self.script_domains.interactables.patches.get(patch_usize) else {
                     continue;
                 };
@@ -6343,14 +6318,9 @@ impl EngineInner {
             let inside_apply = apply_sector.contains_point(new_pos);
 
             let effects = {
-                let Some(_game_host) = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut())
-                else {
+                if self.scripts.mission.is_none() {
                     return;
-                };
+                }
                 let Some(patch) = self
                     .script_domains
                     .interactables

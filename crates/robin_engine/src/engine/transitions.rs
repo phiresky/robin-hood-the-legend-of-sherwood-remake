@@ -804,18 +804,13 @@ fn build_ctx(
     // Door type / adjacent-sector lift kind lookup for PASS_DOOR.
     let (door_type, door_lift_kind) = match (elem.command, gate_id, actor_sector_num) {
         (Command::PassDoor, Some(idx), actor_sector) => {
-            let door = engine
-                .scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .and_then(|_| {
-                    engine
-                        .script_domains
-                        .interactables
-                        .doors
-                        .get(usize::from(idx))
-                });
+            let door = engine.scripts.mission.as_ref().and_then(|_| {
+                engine
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(idx))
+            });
             match door {
                 Some(d) => {
                     let ty = d.door_type;

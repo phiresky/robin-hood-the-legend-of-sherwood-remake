@@ -54,19 +54,13 @@ fn apply_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
 }
 
 fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
+    engine.mission_script()?;
     engine
-        .mission_script()
-        .and_then(|s| s.game_host())
-        .and_then(|_| {
-            engine
-                .doors()
-                .iter()
-                .enumerate()
-                .find(|(_, door)| {
-                    door.is_door() && door.click_polygon_contains(mouse_map.x, mouse_map.y)
-                })
-                .map(|(idx, _)| idx as u32)
-        })
+        .doors()
+        .iter()
+        .enumerate()
+        .find(|(_, door)| door.is_door() && door.click_polygon_contains(mouse_map.x, mouse_map.y))
+        .map(|(idx, _)| idx as u32)
 }
 
 //
@@ -334,12 +328,11 @@ pub fn choose_mouse_pointer_for_no_action(
             .map(|s| s.sector_type.is_patch())
             .unwrap_or(false);
         // `find_patch_for_grid_sector` returns `None` only when no
-        // mission/game host is loaded; in that state we can't evaluate
+        // mission script is loaded; in that state we can't evaluate
         // patch doors and fall through to the default cursor logic.
         if is_patch && let Some(patch_idx) = engine.find_patch_for_grid_sector(patch_sector_idx) {
             let first_door = engine
                 .mission_script()
-                .and_then(|s| s.game_host())
                 .and_then(|_| engine.patches().get(patch_idx as usize))
                 .and_then(|p| p.door_indices.first().copied());
             // Door-cursor pointer freezes the cursor animation.
@@ -772,9 +765,10 @@ pub fn update_mouse(
     host.input.selected_patch_idx = selected_patch_idx;
     host.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map_pt);
 
-    // Refresh `Patch::display_doors` for the currently-selected
-    // patch. This is render-only state (`GameHost.patches` is not
-    // rollback-hashed), so keep it out of the command log.
+    // Refresh `Patch::display_doors` for the currently-selected patch. This
+    // individual render-only field is skipped by rollback hashing even though
+    // the rest of the canonical patch domain is hashed, so keep it out of the
+    // command log.
     engine.refresh_selected_patch_display_doors(host.input.selected_patch_idx);
 
     // `valid_position_for_move` is true when the hovered patch is

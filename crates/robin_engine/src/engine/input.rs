@@ -222,9 +222,8 @@ impl EngineInner {
 
         match entity {
             Entity::Scroll(_) => {
-                // Only Visible/Opened scrolls are focusable. Scroll
-                // status is stored on `GameHost::scroll_status` keyed
-                // by entity handle.
+                // Only Visible/Opened scrolls are focusable. Scroll status
+                // lives in the canonical script-domain map keyed by entity handle.
                 use super::scroll_reveal::ScrollStatus;
                 if !matches!(
                     self.scroll_status(entity_id),
@@ -2321,14 +2320,14 @@ impl EngineInner {
         }
     }
 
-    // Safe: read-only — scans `mission_script.self.script_domains.interactables.patches` and
+    // Safe: read-only — scans the canonical interactable patch domain and
     // returns the owning patch index; performs no engine mutation, so
     // stays `&self` even though called from the host cursor path.
     pub fn find_patch_for_grid_sector(
         &self,
         sector_idx: crate::fast_find_grid::SectorIndex,
     ) -> Option<u32> {
-        let _game_host = self.scripts.mission.as_ref()?.game_host()?;
+        self.scripts.mission.as_ref()?;
         let raw = u32::from(sector_idx);
         let pos = self
             .script_domains
@@ -2341,8 +2340,8 @@ impl EngineInner {
         match pos {
             Some(i) => Some(i as u32),
             None => panic!(
-                "patch sector {sector_idx} has no owning patch in \
-                 GameHost.patches — level data inconsistency"
+                "patch sector {sector_idx} has no owner in the canonical patch domain — \
+                 level data inconsistency"
             ),
         }
     }
@@ -2358,9 +2357,9 @@ impl EngineInner {
     ///
     /// Used by rendering to defer a door's polygon to the patch FX
     /// path on either side of the wiring.  Returns `None` when no
-    /// mission script / game host is loaded.
+    /// mission script is loaded.
     pub fn find_patch_for_door(&self, door_idx: u32) -> Option<u32> {
-        let _game_host = self.scripts.mission.as_ref()?.game_host()?;
+        self.scripts.mission.as_ref()?;
         // Fast path: door_triggered link cached on the door.
         if let Some(door) = self
             .script_domains
@@ -2402,7 +2401,6 @@ impl EngineInner {
                     .scripts
                     .mission
                     .as_ref()
-                    .and_then(|s| s.game_host())
                     .and_then(|_| {
                         self.script_domains
                             .interactables
@@ -2424,7 +2422,6 @@ impl EngineInner {
             .scripts
             .mission
             .as_ref()
-            .and_then(|s| s.game_host())
             .and_then(|_| {
                 self.script_domains
                     .interactables

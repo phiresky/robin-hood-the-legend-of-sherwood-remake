@@ -2724,14 +2724,13 @@ impl EngineInner {
         let mut completion_outcomes = AnimCompletionOutcomes::default();
 
         // Snapshot patch (applied, in_transition) states before entity
-        // iteration.  We need this to decide Reversed vs Default progression
-        // for patch FX entities, but can't borrow GameHost during the
-        // mutable entity loop.
+        // iteration. We need this to decide Reversed vs Default progression
+        // for patch FX entities, but cannot borrow the canonical patch domain
+        // during the mutable entity loop.
         let patch_states: Vec<(bool, bool)> = self
             .scripts
             .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
+            .as_ref()
             .map(|_| {
                 self.script_domains
                     .interactables
@@ -2762,7 +2761,6 @@ impl EngineInner {
                     .scripts
                     .mission
                     .as_ref()
-                    .and_then(|script| script.game_host())
                     .and_then(|_| {
                         self.script_domains
                             .interactables
@@ -3634,15 +3632,9 @@ impl EngineInner {
         // flag and apply the patch's final effects.
         for patch_idx in completed_patch_transitions {
             let effects = {
-                let _game_host = match self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut())
-                {
-                    Some(h) => h,
-                    None => continue,
-                };
+                if self.scripts.mission.is_none() {
+                    continue;
+                }
                 let patch = match self
                     .script_domains
                     .interactables
@@ -3664,21 +3656,14 @@ impl EngineInner {
             // passable/impassable answer instead of inspecting patch
             // internals.  "Applied" == "Open"; the state changes
             // atomically at apply-final time.
-            if let Some(_game_host) = self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-            {
-                for door in self.script_domains.interactables.doors.iter_mut() {
-                    if door.patch_index == Some(patch_idx) {
-                        door.gate_state.finish_transition();
-                        tracing::debug!(
-                            %patch_idx,
-                            new_state = ?door.gate_state,
-                            "gate_state advanced on patch transition complete"
-                        );
-                    }
+            for door in self.script_domains.interactables.doors.iter_mut() {
+                if door.patch_index == Some(patch_idx) {
+                    door.gate_state.finish_transition();
+                    tracing::debug!(
+                        %patch_idx,
+                        new_state = ?door.gate_state,
+                        "gate_state advanced on patch transition complete"
+                    );
                 }
             }
 
