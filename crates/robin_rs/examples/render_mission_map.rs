@@ -52,6 +52,14 @@ struct Args {
     /// the final offscreen screenshot.
     #[arg(long)]
     headless: bool,
+
+    /// Fog-tint all Day-based world sprites on fog maps.
+    #[arg(long, conflicts_with = "no_fog_tint_all_sprites")]
+    fog_tint_all_sprites: bool,
+
+    /// Force original sprite-variant behavior, regardless of profile config.
+    #[arg(long)]
+    no_fog_tint_all_sprites: bool,
 }
 
 fn main() -> ExitCode {
@@ -69,6 +77,13 @@ fn main() -> ExitCode {
 fn run() -> Result<i32, String> {
     let args = Args::parse();
     let window_visible = !args.headless;
+    let fog_tint_all_sprites = if args.fog_tint_all_sprites {
+        Some(true)
+    } else if args.no_fog_tint_all_sprites {
+        Some(false)
+    } else {
+        None
+    };
     let invocation_dir = std::env::current_dir()
         .map_err(|err| format!("failed to determine current directory: {err}"))?;
     let output = absolute_path(
@@ -106,6 +121,16 @@ fn run() -> Result<i32, String> {
     game_args.fast_forward = true;
 
     let (campaign, profiles, application_context) = robin_rs::main_entry::rust_init()?;
+    if let Some(enabled) = fog_tint_all_sprites {
+        let mut profile_manager = robin_rs::player_profile::PlayerProfileManager::global();
+        let active = profile_manager
+            .as_mut()
+            .and_then(|manager| manager.get_active_mut())
+            .ok_or_else(|| {
+                "--fog-tint-all-sprites requires an active player profile".to_string()
+            })?;
+        active.graphic_config.apply_fog_to_all_sprites = enabled;
+    }
     robin_rs::window::run_with_game_visibility(
         "Robin Hood — mission map renderer",
         1024,

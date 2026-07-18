@@ -1105,10 +1105,11 @@ pub enum GraphicsOption {
     TransparentShadows = 1,
     EffectAnimations = 2,
     BackgroundAnimations = 3,
+    FogTintAllSprites = 4,
 }
 
 /// Number of graphics option toggles.
-pub const GRAPHICS_OPTION_COUNT: usize = 4;
+pub const GRAPHICS_OPTION_COUNT: usize = 5;
 
 /// State for the graphics settings screen.
 ///
@@ -1121,7 +1122,7 @@ pub struct GraphicsScreen {
     pub original_config: GraphicConfig,
     /// Currently selected resolution preset.
     pub resolution: ResolutionPreset,
-    /// Toggle states for the four option buttons.
+    /// Toggle states for the graphics option buttons.
     pub option_toggles: [bool; GRAPHICS_OPTION_COUNT],
     /// Whether any setting was changed.
     pub changed: bool,
@@ -1140,6 +1141,7 @@ impl GraphicsScreen {
             config.display_shadow,
             config.display_anim,
             config.display_titbits,
+            config.apply_fog_to_all_sprites,
         ];
         Self {
             config: config.clone(),
@@ -1180,6 +1182,9 @@ impl GraphicsScreen {
             }
             GraphicsOption::BackgroundAnimations => {
                 self.config.display_titbits = self.option_toggles[idx];
+            }
+            GraphicsOption::FogTintAllSprites => {
+                self.config.apply_fog_to_all_sprites = self.option_toggles[idx];
             }
         }
     }
@@ -2389,6 +2394,10 @@ mod tests {
         screen.on_toggle(GraphicsOption::TransparentShadows);
         assert_ne!(screen.config.display_shadow, original_shadow);
         assert!(screen.changed);
+
+        assert!(screen.config.apply_fog_to_all_sprites);
+        screen.on_toggle(GraphicsOption::FogTintAllSprites);
+        assert!(!screen.config.apply_fog_to_all_sprites);
     }
 
     // -- SoundsScreen -------------------------------------------------------

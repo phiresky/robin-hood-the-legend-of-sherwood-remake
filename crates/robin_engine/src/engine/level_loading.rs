@@ -122,6 +122,86 @@ mod animation_placement_tests {
     }
 }
 
+#[cfg(test)]
+mod all_sprite_fog_variant_tests {
+    use super::EngineInner;
+    use crate::element::{
+        ElementBonus, ElementData, ElementFx, ElementKind, ElementTarget, Entity, FxData,
+        ObjectData, ObjectType, TargetData,
+    };
+    use crate::engine::Ambiance;
+    use crate::sprite_variant::SpriteVariant;
+
+    fn bonus() -> Entity {
+        Entity::Bonus(ElementBonus {
+            element: ElementData {
+                kind: ElementKind::ObjectBonus,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: ObjectType::BonusApple,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn fx(mobile_index: Option<u16>) -> Entity {
+        Entity::Fx(ElementFx {
+            element: ElementData {
+                kind: ElementKind::Fx,
+                ..Default::default()
+            },
+            fx: FxData {
+                mobile_index,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn target() -> Entity {
+        Entity::Target(ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+            target: TargetData::default(),
+        })
+    }
+
+    #[test]
+    fn all_sprite_fog_tints_only_day_based_sprites() {
+        let mut engine = EngineInner::new();
+        engine.world.weather.ambiance = Ambiance::Fog;
+
+        assert_eq!(
+            engine.resolve_render_variant(&bonus(), false),
+            SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&bonus(), true),
+            SpriteVariant::Fog
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&fx(None), true),
+            SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&target(), true),
+            SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&fx(Some(0)), true),
+            SpriteVariant::Fog
+        );
+        engine.world.weather.ambiance = Ambiance::Night;
+        assert_eq!(
+            engine.resolve_render_variant(&bonus(), true),
+            SpriteVariant::Day
+        );
+    }
+}
+
 /// Minimap bitmap metadata produced by the host after GPU upload and
 /// consumed by [`super::Engine::apply_level_bitmaps_loaded`] to finish
 /// the minimap-widget wiring (hit mask, map size, initial position).
@@ -4035,27 +4115,43 @@ impl EngineInner {
     /// Resolve the sprite variant to use when rendering `entity` this frame.
     ///
     /// PCs/NPCs always pick up the default variant; objects/projectiles only
-    /// do so when their object type has an ambiance variant.  Animals, FX,
-    /// targets, bonuses, scrolls, and mobiles always render as Day.
+    /// do so when their object type has an ambiance variant. Other Day-based
+    /// sprites normally retain that palette. With `apply_fog_to_all_sprites`,
+    /// those sprites also receive the generated Fog variant.
     pub fn resolve_render_variant(
         &self,
         entity: &crate::element::Entity,
+        apply_fog_to_all_sprites: bool,
     ) -> crate::sprite_variant::SpriteVariant {
         use crate::element::Entity;
         use crate::sprite_variant::SpriteVariant;
 
-        let apply_ambiance = match entity {
-            // PCs/NPCs always pick up the default variant.
-            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => true,
-            // Objects/projectiles only pick up the variant when their type
-            // has an ambiance variant.
-            Entity::Projectile(p) => p.object.object_type.has_ambiance_variant(),
-            Entity::Net(n) => n.object.object_type.has_ambiance_variant(),
-            Entity::Bonus(b) => b.object.object_type.has_ambiance_variant(),
-            // Scroll, Animal, Fx, FxMasked, Target, Mobile: variant stays
-            // at its default (Day).
+        // Ordinary FX and targets are loaded from Data/Animations/<Ambiance>,
+        // so their pixels already contain the mission fog. Applying the Fog
+        // shader variant again would double-tint patches and decorations.
+        // Mobile child FX are deliberately loaded from the Day directory and
+        // therefore still need the generated variant.
+        let has_ambiance_baked_pixels = match entity {
+            Entity::Fx(fx) => fx.fx.mobile_index.is_none(),
+            Entity::Target(_) => true,
             _ => false,
         };
+        let force_fog_variant = apply_fog_to_all_sprites
+            && self.world.weather.ambiance == Ambiance::Fog
+            && !has_ambiance_baked_pixels;
+        let apply_ambiance = force_fog_variant
+            || match entity {
+                // PCs/NPCs always pick up the default variant.
+                Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => true,
+                // Objects/projectiles only pick up the variant when their type
+                // has an ambiance variant.
+                Entity::Projectile(p) => p.object.object_type.has_ambiance_variant(),
+                Entity::Net(n) => n.object.object_type.has_ambiance_variant(),
+                Entity::Bonus(b) => b.object.object_type.has_ambiance_variant(),
+                // Scroll, Animal, Fx, FxMasked, Target, Mobile: variant stays
+                // at its default (Day).
+                _ => false,
+            };
         if !apply_ambiance {
             return SpriteVariant::Day;
         }
