@@ -72,6 +72,7 @@ pub(crate) use movement::adapt_source_to_current_door;
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,
+    SnapshotGridComponent, SnapshotRestoreError,
 };
 pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
 pub use seat::SeatState;
@@ -389,15 +390,13 @@ impl EngineInner {
         self.mission_domain.campaign.characters.get(idx)
     }
 
-    pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
-        self.world
-            .attach_level_assets(assets, self.script_domains.zones.scripts.len());
-        self.scripts.attach_level_assets(
+    pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
+        self.world.attach_preflighted_level_assets(assets);
+        self.scripts.attach_preflighted_level_assets(
             assets,
             &self.world.dynamic_sight_obstacles,
             &self.world.static_sight_obstacle_active,
         );
-        self.migrate_legacy_script_custom_values();
     }
 
     /// Test fixture constructor. Production construction always supplies the
@@ -3610,6 +3609,9 @@ impl EngineInner {
         // Anonymous sequence-timer entries are tied to `SequenceManager`
         // state that was just replaced; the reloaded manager rebuilds
         // its own timer list as sequences resume.
+        // TODO(original-parity): verify whether the original load path clears
+        // these timers or reconstructs their remaining duration from sequences.
+        // Preserve the established Rust save-load behavior until that is known.
         self.orders.timer_elements.clear();
 
         // Walk every PC and reconcile the loaded selection list

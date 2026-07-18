@@ -21,7 +21,8 @@
 //! Not serialized (transient or re-derivable):
 //! - DebugFlags, InputState, WeatherState
 //! - Rendering surface handles, DrawManager, FrameHolder, SpriteScriptor
-//! - Console, MissionScript (reloaded from level after load)
+//! - Console and immutable mission-script program/native attachments (restored
+//!   from `LevelAssets` after load)
 //! - FailedPathRequest list (just a 100-frame grace timer)
 //! - script_*_count / script_location_positions (recomputed from level data)
 //! - hiking_paths, profile_manager (Arc'd immutable data reloaded at level init)
@@ -29,7 +30,7 @@
 use crate::Host;
 #[cfg(test)]
 use robin_engine::engine as engine_api;
-use robin_engine::engine::Engine;
+use robin_engine::engine::{Engine, LevelAssets, SnapshotRestoreError};
 use std::fs;
 use std::path::{Path, PathBuf};
 use web_time::{SystemTime, UNIX_EPOCH};
@@ -483,21 +484,27 @@ impl GameSaveFile {
     /// The caller is responsible for checking that the engine has
     /// already been initialized for the matching mission ID (level
     /// geometry loaded).  The engine-side half of post-load resync
-    /// lives in [`Engine::restore`](robin_engine::engine::Engine::restore)
-    /// (Arc transfer + transient reset); the host-side half lives in
+    /// lives in [`Engine::try_restore`](robin_engine::engine::Engine::try_restore)
+    /// (asset attachment + transient reset); the host-side half lives in
     /// [`Host::post_load_reset`].
     ///
     /// Does **not** touch a live `Game` — use
     /// [`apply_to_with_game`](Self::apply_to_with_game) when a mutable
     /// `Game` is in scope so the persistent flags (`campaign_map_*`,
     /// widget enables, men-to-blazon mode) can be restored.
-    pub fn apply_to(self, engine: &mut Engine, host: &mut Host) {
-        engine.restore(&mut host.engine_display, self.engine);
+    pub fn apply_to(
+        self,
+        engine: &mut Engine,
+        host: &mut Host,
+        assets: &LevelAssets,
+    ) -> std::result::Result<(), SnapshotRestoreError> {
+        engine.try_restore(&mut host.engine_display, self.engine, assets)?;
         host.sound = self.sound;
         // Re-arm the sound engine and prime the next hourglass to
         // (re)load music + resolve pendings.
         host.sound.after_load(&engine.sound_sim().sources);
         host.post_load_reset();
+        Ok(())
     }
 
     /// Apply a save file to the engine *and* restore the host-side
@@ -508,18 +515,21 @@ impl GameSaveFile {
         engine: &mut Engine,
         host: &mut Host,
         game: &mut crate::game::Game,
-    ) {
+        assets: &LevelAssets,
+    ) -> std::result::Result<(), SnapshotRestoreError> {
         let draw_hidden = self.game_persistent.as_ref().map(|p| p.draw_hidden);
-        if let Some(persistent) = self.game_persistent.clone() {
+        let persistent = self.game_persistent.clone();
+        self.apply_to(engine, host, assets)?;
+        if let Some(persistent) = persistent {
             game.persistent = persistent;
         }
-        self.apply_to(engine, host);
         // Restore the debug `draw_hidden` toggle.  Must run after
         // `apply_to` because `Host::post_load_reset` may reset
         // transient input state.
         if let Some(show) = draw_hidden {
             host.input.draw_hidden = show;
         }
+        Ok(())
     }
 
     /// Write the save file to disk as JSON.
@@ -670,9 +680,12 @@ mod tests {
         assert_eq!(decoded.header.mission_id, 7);
         assert_eq!(decoded.header.display_text, "Test Save");
 
-        let (mut engine2, _assets2) = fresh_engine();
+        let (mut engine2, assets2) = fresh_engine();
         let mut host2 = Host::new(800.0, 600.0);
-        decoded.apply_to(&mut engine2, &mut host2);
+        decoded
+            .apply_to(&mut engine2, &mut host2, &assets2)
+            .expect("apply decoded save");
+        engine2.test_assert_level_assets_attached(&assets2);
         assert_eq!(engine2.frame_counter(), 12345);
         assert!(engine2.mission().mission_won);
     }
@@ -766,17 +779,42 @@ mod tests {
 
         let save = GameSaveFile::capture(&engine, &host, 0, String::new());
 
-        let (mut engine3, _assets3) = fresh_engine();
+        let (mut engine3, assets3) = fresh_engine();
         let mut host2 = Host::new(800.0, 600.0);
         host2.input.multi_selection_active = true;
         host2.input.left_mouse_down = true;
         host2.valid_trajectory = true;
 
-        save.apply_to(&mut engine3, &mut host2);
+        save.apply_to(&mut engine3, &mut host2, &assets3)
+            .expect("apply save");
 
         assert!(!host2.input.multi_selection_active);
         assert!(!host2.input.left_mouse_down);
         assert!(host2.input.focused_entity_id.is_none());
         assert!(!host2.valid_trajectory);
+    }
+
+    #[test]
+    fn failed_apply_preserves_live_engine_and_host_state() {
+        let (mut saved_engine, _saved_assets) = fresh_engine();
+        saved_engine.test_set_frame_counter(123);
+        let saved_host = Host::new(800.0, 600.0);
+        let save = GameSaveFile::capture(&saved_engine, &saved_host, 0, String::new());
+
+        let (mut live_engine, mut assets) = fresh_engine();
+        live_engine.test_set_frame_counter(999);
+        assets.mobile_element_count = 1;
+        let mut live_host = Host::new(800.0, 600.0);
+        live_host.input.left_mouse_down = true;
+
+        let error = save
+            .apply_to(&mut live_engine, &mut live_host, &assets)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            SnapshotRestoreError::WorldInvariantViolation { .. }
+        ));
+        assert_eq!(live_engine.frame_counter(), 999);
+        assert!(live_host.input.left_mouse_down);
     }
 }

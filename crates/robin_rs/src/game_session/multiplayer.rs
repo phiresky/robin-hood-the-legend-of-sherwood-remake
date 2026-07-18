@@ -182,35 +182,47 @@ pub(crate) fn drain_net_inputs(
                         &engine_bytes,
                         bincode::config::standard(),
                     ) {
-                        Ok((mut snapshot, _)) => {
-                            received_initial_snapshot = true;
-                            snapshot.attach_level_assets(assets);
+                        Ok((snapshot, _)) => {
                             let snap_hash = crate::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
+                                received_initial_snapshot = true;
                                 tracing::info!(
                                     hash = format!("{local_hash:016x}"),
                                     "multiplayer: skipping frame-0 snapshot adopt; \
                                      local engine already matches host"
                                 );
+                                if let Some(net) = host.net.as_ref() {
+                                    net.send_ready_to_sim(frame);
+                                }
                             } else {
-                                manager.engine = snapshot;
-                                manager.engine.attach_level_assets(assets);
-                                let adopted_hash = crate::replay::state_hash(&manager.engine);
-                                tracing::info!(
-                                    local = format!("{local_hash:016x}"),
-                                    snap = format!("{snap_hash:016x}"),
-                                    adopted = format!("{adopted_hash:016x}"),
-                                    "multiplayer: adopted frame-0 host snapshot after \
-                                     local init diverged"
-                                );
-                                *rewind_buffer = RewindBuffer::new();
-                                manager.drop_pending_inputs_before(frame);
-                                recent_timeline_history.clear();
-                                peer_hashes.retain(|&f, _| f >= frame);
-                                rewrote_sim_state = true;
-                            }
-                            if let Some(net) = host.net.as_ref() {
-                                net.send_ready_to_sim(frame);
+                                match manager.engine.try_adopt_snapshot(snapshot, assets) {
+                                    Ok(()) => {
+                                        received_initial_snapshot = true;
+                                        let adopted_hash =
+                                            crate::replay::state_hash(&manager.engine);
+                                        tracing::info!(
+                                            local = format!("{local_hash:016x}"),
+                                            snap = format!("{snap_hash:016x}"),
+                                            adopted = format!("{adopted_hash:016x}"),
+                                            "multiplayer: adopted frame-0 host snapshot after \
+                                             local init diverged"
+                                        );
+                                        *rewind_buffer = RewindBuffer::new();
+                                        manager.drop_pending_inputs_before(frame);
+                                        recent_timeline_history.clear();
+                                        peer_hashes.retain(|&f, _| f >= frame);
+                                        rewrote_sim_state = true;
+                                        if let Some(net) = host.net.as_ref() {
+                                            net.send_ready_to_sim(frame);
+                                        }
+                                    }
+                                    Err(error) => {
+                                        tracing::error!(
+                                            %error,
+                                            "multiplayer: rejected incompatible frame-0 host snapshot"
+                                        );
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -222,36 +234,43 @@ pub(crate) fn drain_net_inputs(
                     continue;
                 }
 
-                // Mid-mission rejoin (frame > 0): adopt the host's
-                // snapshot, then reattach immutable level assets
-                // (script bytecode, profile manager, sprite scripts)
-                // from the locally loaded LevelAssets.
+                // Mid-mission rejoin (frame > 0): atomically adopt the host's
+                // snapshot after attaching immutable script/grid/sprite data
+                // once from the locally loaded LevelAssets.
                 match bincode::serde::decode_from_slice::<Engine, _>(
                     &engine_bytes,
                     bincode::config::standard(),
                 ) {
-                    Ok((mut snapshot, _)) => {
-                        received_initial_snapshot = true;
-                        snapshot.attach_level_assets(assets);
-                        manager.engine = snapshot;
-                        manager.engine.attach_level_assets(assets);
-                        let adopted_hash = crate::replay::state_hash(&manager.engine);
-                        tracing::info!(
-                            frame,
-                            local_sim_frame = manager.sim_frame,
-                            bytes = engine_bytes.len(),
-                            adopted_hash = format!("{adopted_hash:016x}"),
-                            "multiplayer: adopting host's engine snapshot"
-                        );
-                        manager.set_sim_frame(frame);
-                        if let Some(net) = host.net.as_ref() {
-                            net.send_ready_to_sim(frame);
+                    Ok((snapshot, _)) => {
+                        match manager.engine.try_adopt_snapshot(snapshot, assets) {
+                            Ok(()) => {
+                                received_initial_snapshot = true;
+                                let adopted_hash = crate::replay::state_hash(&manager.engine);
+                                tracing::info!(
+                                    frame,
+                                    local_sim_frame = manager.sim_frame,
+                                    bytes = engine_bytes.len(),
+                                    adopted_hash = format!("{adopted_hash:016x}"),
+                                    "multiplayer: adopting host's engine snapshot"
+                                );
+                                manager.set_sim_frame(frame);
+                                if let Some(net) = host.net.as_ref() {
+                                    net.send_ready_to_sim(frame);
+                                }
+                                *rewind_buffer = RewindBuffer::new();
+                                manager.drop_pending_inputs_before(frame);
+                                recent_timeline_history.clear();
+                                peer_hashes.retain(|&f, _| f >= frame);
+                                rewrote_sim_state = true;
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    frame,
+                                    %error,
+                                    "multiplayer: rejected incompatible host snapshot"
+                                );
+                            }
                         }
-                        *rewind_buffer = RewindBuffer::new();
-                        manager.drop_pending_inputs_before(frame);
-                        recent_timeline_history.clear();
-                        peer_hashes.retain(|&f, _| f >= frame);
-                        rewrote_sim_state = true;
                     }
                     Err(e) => {
                         tracing::error!("multiplayer: failed to deserialize host snapshot: {e}");
