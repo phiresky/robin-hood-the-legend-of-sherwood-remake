@@ -555,6 +555,476 @@ impl TargetInteractionContext<'_> {
     }
 }
 
+/// Directional and one-shot owner commands that only mutate entity facing
+/// plus the owning sequence/order allocator.
+struct TurnCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl TurnCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        match command {
+            Command::Turn | Command::TurnFast => {
+                let element = self.sequence_manager.get_element(seq_id, elem_idx);
+                let camera_point = element
+                    .and_then(|element| {
+                        read_sequence_map_point_property(
+                            element,
+                            crate::sequence::Field::CameraPoint,
+                        )
+                    })
+                    .map(|point| (point.x, point.y));
+                let explicit_direction = element
+                    .and_then(|element| element.get_property(crate::sequence::Field::Direction))
+                    .and_then(|value| match value {
+                        crate::sequence::FieldValue::Integer(direction) => Some(*direction as i16),
+                        _ => None,
+                    });
+                if let Some(entity) = self.entities.get_mut(owner) {
+                    if let Some(direction) = explicit_direction {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    } else if let Some((target_x, target_y)) = camera_point {
+                        let position = entity.element_data().position_map();
+                        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                            target_x - position.x,
+                            target_y - position.y,
+                        );
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
+                }
+                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, true);
+            }
+            Command::TurnElement => {
+                let antagonist = self
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| match &element.data {
+                        crate::sequence::SequenceElementData::Interaction { antagonist } => {
+                            *antagonist
+                        }
+                        _ => None,
+                    });
+                if let Some(antagonist) = antagonist {
+                    let antagonist_position = self
+                        .entities
+                        .get(antagonist)
+                        .map(|entity| entity.element_data().position_map());
+                    if let (Some(antagonist_position), Some(entity)) =
+                        (antagonist_position, self.entities.get_mut(owner))
+                    {
+                        let position = entity.element_data().position_map();
+                        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                            antagonist_position.x - position.x,
+                            antagonist_position.y - position.y,
+                        );
+                        entity.element_data_mut().set_direction_instantly(direction);
+                    }
+                }
+                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, true);
+            }
+            Command::Freeze => {
+                self.push_order(seq_id, elem_idx, crate::order::OrderType::Freezing, true);
+            }
+            Command::Point | Command::GatherSoldiers => {
+                let order_type = match command {
+                    Command::Point => crate::order::OrderType::Pointing,
+                    Command::GatherSoldiers => crate::order::OrderType::GatheringSoldiers,
+                    _ => unreachable!(),
+                };
+                if command == Command::Point {
+                    let explicit_direction = self
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|element| element.get_property(crate::sequence::Field::Direction))
+                        .and_then(|value| match value {
+                            crate::sequence::FieldValue::Integer(direction) => {
+                                Some(*direction as i16)
+                            }
+                            _ => None,
+                        });
+                    if let (Some(entity), Some(direction)) =
+                        (self.entities.get_mut(owner), explicit_direction)
+                    {
+                        entity.element_data_mut().set_direction_instantly(direction);
+                    }
+                }
+                self.push_order(seq_id, elem_idx, order_type, false);
+            }
+            _ => unreachable!("non-turn command passed to turn command context"),
+        }
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+        compute_direction: bool,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+        order.compute_direction = compute_direction;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
+}
+
+/// WAIT/WAIT_TIMER translation against entity state, sequence state, and the
+/// immutable profile table used by the carried-VIP animation branch.
+struct WaitCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+    profiles: &'a crate::profiles::ProfileManager,
+}
+
+impl WaitCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let (
+            is_soldier,
+            is_pc,
+            posture,
+            action_state,
+            is_attentive,
+            is_dead,
+            is_unconscious,
+            is_swordfighting,
+            is_stuck_under_net,
+            carrier_is_vip,
+        ) = {
+            let entity = self.entities.get(owner);
+            let carrier = entity
+                .and_then(|entity| entity.human_data())
+                .and_then(|human| human.carrier);
+            (
+                entity.is_some_and(Entity::is_soldier),
+                entity.is_some_and(Entity::is_pc),
+                entity
+                    .map(|entity| entity.element_data().posture)
+                    .unwrap_or_default(),
+                entity
+                    .and_then(Entity::actor_data)
+                    .map(|actor| actor.action_state)
+                    .unwrap_or_default(),
+                entity
+                    .and_then(Entity::enemy_ai)
+                    .is_some_and(|enemy| enemy.attentive),
+                entity.is_some_and(Entity::is_dead),
+                entity
+                    .and_then(Entity::human_data)
+                    .is_some_and(|human| human.unconscious),
+                entity
+                    .and_then(Entity::human_data)
+                    .is_some_and(|human| !human.opponents.is_empty()),
+                entity
+                    .and_then(Entity::human_data)
+                    .is_some_and(|human| human.stuck_under_nets_counter > 0),
+                carrier
+                    .and_then(|carrier| self.entities.get(carrier))
+                    .is_some_and(|carrier| self.is_entity_vip(carrier)),
+            )
+        };
+
+        let after_state = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|element| element.action_state_after_transition)
+            .unwrap_or_default();
+        let pc_posture_animation = if is_pc {
+            use crate::element::{ActionState as AS, Posture as P};
+            use crate::order::OrderType as OT;
+            match posture {
+                P::HelpingToClimb => Some(OT::WaitingHelpingClimbing),
+                P::CarryingOnShoulders => Some(OT::WaitingCarryingOnShoulders),
+                P::OnShoulders => Some(OT::WaitingOnShoulders),
+                P::CarryingCorpse => Some(OT::WaitingWithCorpse),
+                P::SimulatingBeggar => Some(OT::SimulatingBeggar),
+                P::Spy => Some(OT::WaitingCape),
+                P::AnonymousArcher => Some(match after_state {
+                    AS::AimingWithBow => OT::AimingWithBowAnonymous,
+                    AS::AimingWithBowUp => OT::AimingWithBowUpAnonymous,
+                    _ => OT::WaitingCapeAnonymousArcher,
+                }),
+                P::Tree => Some(OT::WaitingHidden),
+                P::Upright if action_state == AS::Listening => Some(OT::Listening),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let mut set_posture_stuck_under_net = false;
+        let animation = if let Some(pc_animation) = pc_posture_animation {
+            Some(pc_animation)
+        } else if is_soldier
+            && is_attentive
+            && posture == crate::element::Posture::Upright
+            && action_state == crate::element::ActionState::Waiting
+            && !is_dead
+            && !is_unconscious
+        {
+            Some(crate::order::OrderType::WaitingAlerted)
+        } else if is_soldier && posture == crate::element::Posture::LeaningOut {
+            Some(match after_state {
+                crate::element::ActionState::AimingWithBow
+                | crate::element::ActionState::AimingWithBowDown => {
+                    crate::order::OrderType::AimingWithBowLeaningOut
+                }
+                _ => crate::order::OrderType::LeaningOut,
+            })
+        } else {
+            use crate::element::{ActionState as AS, Posture as P};
+            use crate::order::OrderType as OT;
+            let upright_animation = if is_swordfighting {
+                match after_state {
+                    AS::ParryingSword | AS::ParryingSwordLow => OT::ParryingSword,
+                    AS::WaitingSword | AS::MovingSword | AS::MovingFastSword => OT::WaitingSword,
+                    _ => OT::TransitionRaisingSword,
+                }
+            } else {
+                match after_state {
+                    AS::HoldingShield | AS::ParryingShield | AS::MovingShield => OT::WaitingShield,
+                    AS::AimingWithBow => OT::AimingWithBow,
+                    AS::AimingWithBowUp => OT::AimingWithBowUp,
+                    AS::WaitingSword | AS::MovingSword | AS::MovingFastSword => OT::WaitingSword,
+                    AS::Menacing => OT::Menacing,
+                    AS::Sleeping => OT::SleepingUpright,
+                    AS::ParryingSword | AS::ParryingSwordLow => OT::ParryingSword,
+                    _ => OT::WaitingUprightBored,
+                }
+            };
+            match posture {
+                P::Upright => Some(upright_animation),
+                P::Crouched => Some(OT::WaitingCrouched),
+                P::OnWall | P::OnLadder => Some(OT::Freezing),
+                P::Sitting => Some(OT::Sitting),
+                P::Lying if is_unconscious || command == Command::WaitTimer => {
+                    Some(match after_state {
+                        state if state.is_sword() || state == AS::Menacing => {
+                            OT::BeingUnconsciousSword
+                        }
+                        state if state.is_bow() => OT::BeingUnconsciousBow,
+                        _ => OT::BeingUnconscious,
+                    })
+                }
+                P::Lying => {
+                    if is_stuck_under_net {
+                        set_posture_stuck_under_net = true;
+                        Some(OT::LyingStuckUnderNet)
+                    } else {
+                        Some(match after_state {
+                            state if state.is_sword() || state == AS::Menacing => {
+                                OT::StandingUpSword
+                            }
+                            state if state.is_bow() => OT::StandingUpBow,
+                            _ => OT::StandingUp,
+                        })
+                    }
+                }
+                P::DeadBack => Some(match after_state {
+                    AS::WaitingSword | AS::Menacing => OT::BeingDeadFallenBackSword,
+                    AS::AimingWithBow | AS::AimingWithBowDown => OT::BeingDeadFallenBackBow,
+                    _ => OT::BeingDeadFallenBack,
+                }),
+                P::Dead => Some(match after_state {
+                    AS::WaitingSword => OT::BeingDeadSword,
+                    AS::AimingWithBow | AS::AimingWithBowDown => OT::BeingDeadBow,
+                    _ => OT::BeingDead,
+                }),
+                P::Carried => {
+                    tracing::warn!(
+                        ?owner,
+                        "Wait/Translate: CARRIED posture reached (asserted unreachable upstream); \
+                         queuing BeingCarried{{LittleJohn|PeasantC}}"
+                    );
+                    Some(if carrier_is_vip {
+                        OT::BeingCarriedLittleJohn
+                    } else {
+                        OT::BeingCarriedPeasantC
+                    })
+                }
+                P::Tied => Some(OT::BeingTied),
+                P::Leisure => Some(OT::Special),
+                P::StuckUnderNet => Some(OT::LyingStuckUnderNet),
+                _ => None,
+            }
+        };
+
+        if command == Command::WaitTimer {
+            let timer = self
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.get_property(crate::sequence::Field::Timer))
+                .and_then(|value| match value {
+                    crate::sequence::FieldValue::Integer(timer) => Some(*timer),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            if let Some(actor) = self
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+            {
+                actor.wait_time = timer;
+            }
+        }
+        if is_pc
+            && posture == crate::element::Posture::Upright
+            && action_state == crate::element::ActionState::Listening
+            && let Some(actor) = self
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+        {
+            const TIME_LISTEN_WAIT: u32 = 25;
+            actor.wait_time = TIME_LISTEN_WAIT;
+        }
+        if set_posture_stuck_under_net && let Some(entity) = self.entities.get_mut(owner) {
+            entity
+                .element_data_mut()
+                .set_posture(crate::element::Posture::StuckUnderNet);
+        }
+
+        if let Some(animation) = animation {
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
+            order.compute_direction = false;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    fn is_entity_vip(&self, entity: &Entity) -> bool {
+        match entity {
+            Entity::Soldier(soldier) => self
+                .profiles
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .is_some_and(|profile| profile.vip),
+            Entity::Civilian(civilian) => self
+                .profiles
+                .civilians
+                .get(usize::from(civilian.civilian.civilian_profile_index))
+                .is_some_and(|profile| profile.civilian_type == crate::profiles::CivilianType::Vip),
+            _ => false,
+        }
+    }
+}
+
+/// Fixed NPC posture/action-state transition order translation.
+struct NpcStateCommandContext<'a> {
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl NpcStateCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        match command {
+            Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
+                let order_type = match command {
+                    Command::SitDown => crate::order::OrderType::TransitionWaitingUprightSitting,
+                    Command::BeggarShowFace => crate::order::OrderType::BeggarShowingFace,
+                    Command::EnterLeisure => {
+                        crate::order::OrderType::TransitionWaitingUprightSpecial
+                    }
+                    _ => unreachable!(),
+                };
+                self.push_order(seq_id, elem_idx, order_type);
+                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            }
+            Command::StartMenace
+            | Command::StopMenace
+            | Command::StopSleep
+            | Command::LowerBowLeanOut
+            | Command::RaiseBowLeanOut => {
+                match command {
+                    Command::StartMenace => {
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionRaisingSword,
+                        );
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionWaitingSwordMenacing,
+                        );
+                    }
+                    Command::StopMenace => {
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionMenacingWaitingSword,
+                        );
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            crate::order::OrderType::TransitionLoweringSword,
+                        );
+                    }
+                    Command::StopSleep => self.push_order(
+                        seq_id,
+                        elem_idx,
+                        crate::order::OrderType::TransitionSleepingWaitingUpright,
+                    ),
+                    Command::LowerBowLeanOut => self.push_order(
+                        seq_id,
+                        elem_idx,
+                        crate::order::OrderType::TransitionLoweringBowLeaningOut,
+                    ),
+                    Command::RaiseBowLeanOut => self.push_order(
+                        seq_id,
+                        elem_idx,
+                        crate::order::OrderType::TransitionRaisingBowLeaningOut,
+                    ),
+                    _ => unreachable!(),
+                }
+                if matches!(command, Command::LowerBowLeanOut | Command::RaiseBowLeanOut) {
+                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                } else {
+                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                }
+            }
+            _ => unreachable!("non-NPC-state command passed to NPC state context"),
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
+}
+
 #[cfg(test)]
 mod sequence_phase_context_tests {
     use super::*;
@@ -5017,104 +5487,30 @@ impl EngineInner {
                         // element and push Turning onto the order
                         // queue; only Upright posture is legal.
                         Command::Turn | Command::TurnFast => {
-                            let elem_props =
-                                self.orders.sequence_manager.get_element(seq_id, elem_idx);
-                            let camera_point = elem_props
-                                .and_then(|e| {
-                                    read_sequence_map_point_property(
-                                        e,
-                                        crate::sequence::Field::CameraPoint,
-                                    )
-                                })
-                                .map(|p| (p.x, p.y));
-                            let explicit_direction = elem_props
-                                .and_then(|e| e.get_property(crate::sequence::Field::Direction))
-                                .and_then(|v| match v {
-                                    crate::sequence::FieldValue::Integer(d) => Some(*d as i16),
-                                    _ => None,
-                                });
-                            if let Some(entity) = self.world.entities.get_mut(owner) {
-                                // Apply the direction: explicit wins;
-                                // otherwise face the camera point.
-                                // Use `set_direction_goal` (not
-                                // `set_direction_instantly`) so the
-                                // body rotates progressively via
-                                // `turn_fast()` in the Turning
-                                // order's Execute loop.  Snapping
-                                // `direction == direction_goal` would
-                                // make `turn_fast()` short-circuit on
-                                // the first tick.
-                                if let Some(dir) = explicit_direction {
-                                    entity.element_data_mut().set_direction_goal(dir);
-                                } else if let Some((tx, ty)) = camera_point {
-                                    let pos = entity.element_data().position_map();
-                                    let dx = tx - pos.x;
-                                    let dy = ty - pos.y;
-                                    // Convert `(camera_point -
-                                    // position_map)` into the 0..15
-                                    // facing sector.
-                                    let dir =
-                                        crate::position_interface::vector_to_sector_0_to_15_iso(
-                                            dx, dy,
-                                        );
-                                    entity.element_data_mut().set_direction_goal(dir);
-                                }
+                            let barrier = TurnCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
-                            // Push the Turning animation onto the Turn
-                            // element.  The animation driver reads the
-                            // front order via `current_order_for_actor`
-                            // and the default `AdvanceElement` completion
-                            // terminates the element when the rotation
-                            // finishes (see Turning-specific `turn_fast`
-                            // gate in `tick_entity_animations`).
-                            self.push_new_order(
-                                seq_id,
-                                elem_idx,
-                                crate::order::OrderType::Turning,
-                                0.0,
-                                0.0,
-                            );
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
+                            }
                         }
 
                         // Face the element's antagonist, then push
                         // Turning.  Carried by
                         // `SequenceElementData::Interaction`.
                         Command::TurnElement => {
-                            let antagonist = match &elem.data {
-                                crate::sequence::SequenceElementData::Interaction {
-                                    antagonist,
-                                } => *antagonist,
-                                _ => None,
-                            };
-                            if let Some(antag_id) = antagonist {
-                                let antag_pos = self
-                                    .get_entity(antag_id)
-                                    .map(|e| e.element_data().position_map());
-                                if let (Some(antag_pos), Some(entity)) =
-                                    (antag_pos, self.world.entities.get_mut(owner))
-                                {
-                                    let pos = entity.element_data().position_map();
-                                    let dir =
-                                        crate::position_interface::vector_to_sector_0_to_15_iso(
-                                            antag_pos.x - pos.x,
-                                            antag_pos.y - pos.y,
-                                        );
-                                    entity.element_data_mut().set_direction_instantly(dir);
-                                }
+                            let barrier = TurnCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
-                            self.push_new_order(
-                                seq_id,
-                                elem_idx,
-                                crate::order::OrderType::Turning,
-                                0.0,
-                                0.0,
-                            );
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
+                            }
                         }
 
                         // Owner-ful Freeze pushes a `Freezing` order
@@ -5123,16 +5519,15 @@ impl EngineInner {
                         // of this file handles non-owner Freeze
                         // (which collapses into FreezeAll).
                         Command::Freeze => {
-                            self.push_new_order(
-                                seq_id,
-                                elem_idx,
-                                crate::order::OrderType::Freezing,
-                                0.0,
-                                0.0,
-                            );
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            let barrier = TurnCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                            }
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
+                            }
                         }
 
                         // ── Point / GatherSoldiers ─────────────
@@ -5145,43 +5540,15 @@ impl EngineInner {
                         // element on animation completion, wired via
                         // `AiAnimCompletion::SequenceElement`.
                         Command::Point | Command::GatherSoldiers => {
-                            let order_type = match elem.command {
-                                Command::Point => crate::order::OrderType::Pointing,
-                                Command::GatherSoldiers => {
-                                    crate::order::OrderType::GatheringSoldiers
-                                }
-                                _ => unreachable!(),
-                            };
-                            let explicit_direction = if elem.command == Command::Point {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .and_then(|e| e.get_property(crate::sequence::Field::Direction))
-                                    .and_then(|v| match v {
-                                        crate::sequence::FieldValue::Integer(d) => Some(*d as i16),
-                                        _ => None,
-                                    })
-                            } else {
-                                None
-                            };
-                            if let Some(entity) = self.world.entities.get_mut(owner)
-                                && let Some(dir) = explicit_direction
-                            {
-                                entity.element_data_mut().set_direction_instantly(dir);
+                            let barrier = TurnCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
-                            let mut order = crate::order::Order::new(
-                                order_type,
-                                0.0,
-                                0.0,
-                                self.orders.allocate_order_id(),
-                            );
-                            order.compute_direction = false;
-                            self.orders
-                                .sequence_manager
-                                .push_order_on(seq_id, elem_idx, order);
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
+                            }
                         }
 
                         // ── Wait (soldier-specific override) ───
@@ -5199,352 +5566,17 @@ impl EngineInner {
                         // above for the lift-occupancy bookkeeping;
                         // we don't intercept it here.
                         Command::Wait | Command::WaitTimer => {
-                            let (
-                                is_soldier,
-                                is_pc,
-                                posture,
-                                action_state,
-                                is_attentive,
-                                is_dead,
-                                is_unconscious,
-                                is_swordfighting,
-                                is_stuck_under_net,
-                                carrier_is_vip,
-                            ) = {
-                                let ent = self.get_entity(owner);
-                                let is_soldier = ent.map(|e| e.is_soldier()).unwrap_or(false);
-                                let is_pc = ent.map(|e| e.is_pc()).unwrap_or(false);
-                                let posture =
-                                    ent.map(|e| e.element_data().posture).unwrap_or_default();
-                                let action_state = ent
-                                    .and_then(|e| e.actor_data())
-                                    .map(|a| a.action_state)
-                                    .unwrap_or_default();
-                                let attentive =
-                                    ent.and_then(|e| e.enemy_ai()).is_some_and(|e| e.attentive);
-                                let dead = ent.is_some_and(|e| e.is_dead());
-                                let unc = ent
-                                    .and_then(|e| e.human_data())
-                                    .is_some_and(|h| h.unconscious);
-                                // Swordfighting iff the human's
-                                // opponent list is non-empty.
-                                let sword = ent
-                                    .and_then(|e| e.human_data())
-                                    .is_some_and(|h| !h.opponents.is_empty());
-                                // Stuck-under-net iff the counter
-                                // is positive.
-                                let stuck = ent
-                                    .and_then(|e| e.human_data())
-                                    .is_some_and(|h| h.stuck_under_nets_counter > 0);
-                                // Carrier-is-VIP — only meaningful
-                                // for the CARRIED branch below.
-                                let carrier_id =
-                                    ent.and_then(|e| e.human_data()).and_then(|h| h.carrier);
-                                let carrier_vip = carrier_id
-                                    .and_then(|cid| self.get_entity(cid))
-                                    .is_some_and(|c| self.is_entity_vip(assets, c));
-                                (
-                                    is_soldier,
-                                    is_pc,
-                                    posture,
-                                    action_state,
-                                    attentive,
-                                    dead,
-                                    unc,
-                                    sword,
-                                    stuck,
-                                    carrier_vip,
-                                )
-                            };
-
-                            // Pick the starting order for the wait
-                            // element.  Soldier overrides handle the
-                            // attentive + leaning arms; the
-                            // posture-based fallback covers everyone
-                            // else.
-                            let after_state = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .map(|e| e.action_state_after_transition)
-                                .unwrap_or_default();
-                            // PC-specific WAIT posture arms.  PCs in
-                            // HelpingToClimb / CarryingOnShoulders /
-                            // OnShoulders / CarryingCorpse /
-                            // SimulatingBeggar / Spy /
-                            // AnonymousArcher / Tree posture, or
-                            // Upright + Listening, queue a posture-
-                            // specific idle animation rather than
-                            // falling through to the base human
-                            // matrix.
-                            let pc_posture_anim = if is_pc {
-                                use crate::element::{ActionState as AS, Posture as P};
-                                use crate::order::OrderType as OT;
-                                match posture {
-                                    P::HelpingToClimb => Some(OT::WaitingHelpingClimbing),
-                                    P::CarryingOnShoulders => Some(OT::WaitingCarryingOnShoulders),
-                                    P::OnShoulders => Some(OT::WaitingOnShoulders),
-                                    P::CarryingCorpse => Some(OT::WaitingWithCorpse),
-                                    P::SimulatingBeggar => Some(OT::SimulatingBeggar),
-                                    P::Spy => Some(OT::WaitingCape),
-                                    P::AnonymousArcher => Some(match after_state {
-                                        AS::AimingWithBow => OT::AimingWithBowAnonymous,
-                                        AS::AimingWithBowUp => OT::AimingWithBowUpAnonymous,
-                                        _ => OT::WaitingCapeAnonymousArcher,
-                                    }),
-                                    P::Tree => Some(OT::WaitingHidden),
-                                    // Upright + LISTENING queues
-                                    // LISTENING and arms `wait_time`
-                                    // (handled below).  Otherwise
-                                    // fall through.
-                                    P::Upright if action_state == AS::Listening => {
-                                        Some(OT::Listening)
-                                    }
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            };
-                            // Track the conscious-Lying-stuck-under-
-                            // net side-effect:
-                            // `SetPosture(StuckUnderNet)` runs before
-                            // the order is queued.
-                            let mut set_posture_stuck_under_net = false;
-                            let anim = if let Some(pc_anim) = pc_posture_anim {
-                                Some(pc_anim)
-                            } else if is_soldier
-                                && is_attentive
-                                && posture == crate::element::Posture::Upright
-                                && action_state == crate::element::ActionState::Waiting
-                                && !is_dead
-                                && !is_unconscious
-                            {
-                                Some(crate::order::OrderType::WaitingAlerted)
-                            } else if is_soldier && posture == crate::element::Posture::LeaningOut {
-                                Some(match after_state {
-                                    crate::element::ActionState::AimingWithBow
-                                    | crate::element::ActionState::AimingWithBowDown => {
-                                        crate::order::OrderType::AimingWithBowLeaningOut
-                                    }
-                                    _ => crate::order::OrderType::LeaningOut,
-                                })
-                            } else {
-                                use crate::element::{ActionState as AS, Posture as P};
-                                use crate::order::OrderType as OT;
-                                // WAIT/WAIT_TIMER posture matrix.
-                                // The matrix keys off the element's
-                                // action-state-after-transition for
-                                // the stance arms.  The Upright
-                                // IsSwordfighting branch routes a
-                                // non-sword stance through
-                                // TransitionRaisingSword so the actor
-                                // re-enters combat stance before
-                                // idling.
-                                let upright_anim = if is_swordfighting {
-                                    match after_state {
-                                        AS::ParryingSword | AS::ParryingSwordLow => {
-                                            OT::ParryingSword
-                                        }
-                                        AS::WaitingSword
-                                        | AS::MovingSword
-                                        | AS::MovingFastSword => OT::WaitingSword,
-                                        _ => OT::TransitionRaisingSword,
-                                    }
-                                } else {
-                                    match after_state {
-                                        AS::HoldingShield
-                                        | AS::ParryingShield
-                                        | AS::MovingShield => OT::WaitingShield,
-                                        AS::AimingWithBow => OT::AimingWithBow,
-                                        AS::AimingWithBowUp => OT::AimingWithBowUp,
-                                        AS::WaitingSword
-                                        | AS::MovingSword
-                                        | AS::MovingFastSword => OT::WaitingSword,
-                                        AS::Menacing => OT::Menacing,
-                                        AS::Sleeping => OT::SleepingUpright,
-                                        AS::ParryingSword | AS::ParryingSwordLow => {
-                                            OT::ParryingSword
-                                        }
-                                        // Default falls through to
-                                        // the base, which queues
-                                        // WAITING_UPRIGHT_BORED for
-                                        // Upright posture.
-                                        _ => OT::WaitingUprightBored,
-                                    }
-                                };
-                                match posture {
-                                    P::Upright => Some(upright_anim),
-                                    P::Crouched => Some(OT::WaitingCrouched),
-                                    P::OnWall | P::OnLadder => Some(OT::Freezing),
-                                    P::Sitting => Some(OT::Sitting),
-                                    // Unconscious actors (or any
-                                    // WAIT_TIMER) play the
-                                    // BeingUnconscious idle loop; the
-                                    // stance suffix tracks what they
-                                    // were holding when they
-                                    // collapsed.
-                                    P::Lying
-                                        if is_unconscious || elem.command == Command::WaitTimer =>
-                                    {
-                                        Some(match after_state {
-                                            s if s.is_sword() || s == AS::Menacing => {
-                                                OT::BeingUnconsciousSword
-                                            }
-                                            s if s.is_bow() => OT::BeingUnconsciousBow,
-                                            _ => OT::BeingUnconscious,
-                                        })
-                                    }
-                                    // Conscious Lying + plain WAIT.
-                                    // If the actor is stuck under a
-                                    // net, snap the posture to
-                                    // StuckUnderNet and queue the
-                                    // lying-net pose; otherwise stand
-                                    // back up with the stance-
-                                    // appropriate STANDING_UP variant.
-                                    P::Lying => {
-                                        if is_stuck_under_net {
-                                            set_posture_stuck_under_net = true;
-                                            Some(OT::LyingStuckUnderNet)
-                                        } else {
-                                            Some(match after_state {
-                                                s if s.is_sword() || s == AS::Menacing => {
-                                                    OT::StandingUpSword
-                                                }
-                                                s if s.is_bow() => OT::StandingUpBow,
-                                                _ => OT::StandingUp,
-                                            })
-                                        }
-                                    }
-                                    P::DeadBack => Some(match after_state {
-                                        AS::WaitingSword | AS::Menacing => {
-                                            OT::BeingDeadFallenBackSword
-                                        }
-                                        AS::AimingWithBow | AS::AimingWithBowDown => {
-                                            OT::BeingDeadFallenBackBow
-                                        }
-                                        _ => OT::BeingDeadFallenBack,
-                                    }),
-                                    P::Dead => Some(match after_state {
-                                        AS::WaitingSword => OT::BeingDeadSword,
-                                        AS::AimingWithBow | AS::AimingWithBowDown => {
-                                            OT::BeingDeadBow
-                                        }
-                                        _ => OT::BeingDead,
-                                    }),
-                                    // CARRIED is asserted
-                                    // unreachable upstream, but the
-                                    // matrix below still selects a
-                                    // stance.  Apply the matrix and
-                                    // log a warning if it fires (we
-                                    // don't crash the game).
-                                    P::Carried => {
-                                        tracing::warn!(
-                                            ?owner,
-                                            "Wait/Translate: CARRIED posture reached \
-                                             (asserted unreachable upstream); \
-                                             queuing BeingCarried{{LittleJohn|PeasantC}}"
-                                        );
-                                        Some(if carrier_is_vip {
-                                            OT::BeingCarriedLittleJohn
-                                        } else {
-                                            OT::BeingCarriedPeasantC
-                                        })
-                                    }
-                                    P::Tied => Some(OT::BeingTied),
-                                    // `Special` is the leisure idle
-                                    // pose.
-                                    P::Leisure => Some(OT::Special),
-                                    P::StuckUnderNet => Some(OT::LyingStuckUnderNet),
-                                    // Spy/Tree/Beggar/HelpingToClimb/
-                                    // CarryingOnShoulders/OnShoulders/
-                                    // CarryingCorpse/AnonymousArcher
-                                    // are PC-specific and handled by
-                                    // `pc_posture_anim` above.  The
-                                    // base human matrix has no arm
-                                    // for them.
-                                    _ => None,
-                                }
-                            };
-
-                            // `WAIT_TIMER`: record the timer value
-                            // on the actor so later tick code can
-                            // decrement it.
-                            if elem.command == Command::WaitTimer {
-                                let timer_val = self
-                                    .orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .and_then(|e| e.get_property(crate::sequence::Field::Timer))
-                                    .and_then(|v| match v {
-                                        crate::sequence::FieldValue::Integer(n) => Some(*n),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                if let Some(entity) = self.world.entities.get_mut(owner)
-                                    && let Some(actor) = entity.actor_data_mut()
-                                {
-                                    actor.wait_time = timer_val;
-                                }
+                            let barrier = WaitCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                                profiles: &assets.profile_manager,
                             }
-                            // Upright + LISTENING forces
-                            // `wait_time = TIME_LISTEN_WAIT` (25
-                            // frames) even for plain WAIT (not
-                            // WAIT_TIMER).
-                            if is_pc
-                                && posture == crate::element::Posture::Upright
-                                && action_state == crate::element::ActionState::Listening
-                            {
-                                const TIME_LISTEN_WAIT: u32 = 25;
-                                if let Some(entity) = self.world.entities.get_mut(owner)
-                                    && let Some(actor) = entity.actor_data_mut()
-                                {
-                                    actor.wait_time = TIME_LISTEN_WAIT;
-                                }
-                            }
-
-                            // `SetPosture(StuckUnderNet)` happens
-                            // inline inside Translate, before the
-                            // order is queued, when a conscious Lying
-                            // actor is stuck under a net.
-                            if set_posture_stuck_under_net
-                                && let Some(entity) = self.world.entities.get_mut(owner)
-                            {
-                                entity
-                                    .element_data_mut()
-                                    .set_posture(crate::element::Posture::StuckUnderNet);
-                            }
-
-                            if let Some(anim_ot) = anim {
-                                let mut order = crate::order::Order::new(
-                                    anim_ot,
-                                    0.0,
-                                    0.0,
-                                    self.orders.allocate_order_id(),
-                                );
-                                order.compute_direction = false;
-                                // Per-arm completion semantics for
-                                // BORED / BORED_RANDOM (advance only
-                                // on TERMINATED, with 1/10 roll +
-                                // NewID in place) live in
-                                // `dispatch_arm_completion`
-                                // (engine/animation.rs) — no order-
-                                // level flag required here.
-                                self.orders
-                                    .sequence_manager
-                                    .push_order_on(seq_id, elem_idx, order);
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                // No starting order — nothing visible to
-                                // drive.  Terminate so the element
-                                // doesn't sit idle.
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
                             }
                         }
-
                         // ── NPC-specific one-shot anims ────────
                         // Each command appends one animation order
                         // with `compute_direction = false`, so we
@@ -5562,37 +5594,15 @@ impl EngineInner {
                         // needed leave-action/posture orders have already been
                         // queued ahead of the command's own animation.
                         Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
-                            let order_type = match elem.command {
-                                Command::SitDown => {
-                                    crate::order::OrderType::TransitionWaitingUprightSitting
-                                }
-                                Command::BeggarShowFace => {
-                                    crate::order::OrderType::BeggarShowingFace
-                                }
-                                Command::EnterLeisure => {
-                                    crate::order::OrderType::TransitionWaitingUprightSpecial
-                                }
-                                _ => unreachable!(),
-                            };
-                            // Build the order with
-                            // `compute_direction = false` for
-                            // SIT_DOWN / BEGGAR_SHOW_FACE /
-                            // ENTER_LEISURE.  In-place anims never
-                            // invoke `compute_increment_all`, so the
-                            // flag is dead today, but keeping it
-                            // honest leaves the contract intact if a
-                            // future order-type wires movement.
-                            let id = self.orders.allocate_order_id();
-                            let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-                            order.compute_direction = false;
-                            self.orders
-                                .sequence_manager
-                                .push_order_on(seq_id, elem_idx, order);
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            let barrier = NpcStateCommandContext {
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                            }
+                            .dispatch(cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
+                            }
                         }
-
                         // ── Menace / Sleep transitions ─────────
                         // Each pushes a fixed sequence of transition
                         // orders with `compute_direction = false`.
@@ -5608,71 +5618,15 @@ impl EngineInner {
                         | Command::StopSleep
                         | Command::LowerBowLeanOut
                         | Command::RaiseBowLeanOut => {
-                            let command = elem.command;
-                            // Push `compute_direction = false`
-                            // transition orders onto the owning
-                            // sequence element — these are one- and
-                            // two-order transition arms.
-                            let push = |engine: &mut EngineInner, ot: crate::order::OrderType| {
-                                let id = engine.orders.allocate_order_id();
-                                let mut order = crate::order::Order::new(ot, 0.0, 0.0, id);
-                                order.compute_direction = false;
-                                engine
-                                    .orders
-                                    .sequence_manager
-                                    .push_order_on(seq_id, elem_idx, order);
-                            };
-                            match command {
-                                Command::StartMenace => {
-                                    push(self, crate::order::OrderType::TransitionRaisingSword);
-                                    push(
-                                        self,
-                                        crate::order::OrderType::TransitionWaitingSwordMenacing,
-                                    );
-                                }
-                                Command::StopMenace => {
-                                    push(
-                                        self,
-                                        crate::order::OrderType::TransitionMenacingWaitingSword,
-                                    );
-                                    push(self, crate::order::OrderType::TransitionLoweringSword);
-                                }
-                                Command::StopSleep => {
-                                    push(
-                                        self,
-                                        crate::order::OrderType::TransitionSleepingWaitingUpright,
-                                    );
-                                }
-                                // Single transition order per
-                                // command.
-                                Command::LowerBowLeanOut => {
-                                    push(
-                                        self,
-                                        crate::order::OrderType::TransitionLoweringBowLeaningOut,
-                                    );
-                                }
-                                Command::RaiseBowLeanOut => {
-                                    push(
-                                        self,
-                                        crate::order::OrderType::TransitionRaisingBowLeaningOut,
-                                    );
-                                }
-                                _ => unreachable!(),
+                            let barrier = NpcStateCommandContext {
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
-                            if matches!(
-                                command,
-                                Command::LowerBowLeanOut | Command::RaiseBowLeanOut
-                            ) {
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            .dispatch(cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
                             }
                         }
-
                         // ── DrinkAle / Take ────────────────────
                         // DrinkAle / Take push a single interaction
                         // order whose animation (DRINKING_ALE /
@@ -9556,6 +9510,130 @@ mod bow_command_body_parity_tests {
             ],
             "C++ TestBowAimUp expects UnequipBow from bow-up to lower, unload, then unequip"
         );
+    }
+
+    #[test]
+    fn turn_context_sets_goal_without_snapping_and_books_turning() {
+        use crate::sequence::{Field, FieldValue};
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
+        turn.set_property(Field::Direction, FieldValue::Integer(5));
+        let seq_id = engine.orders.sequence_manager.launch_element(turn);
+
+        let barrier = TurnCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+        }
+        .dispatch(owner, Command::Turn, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().direction(), 0);
+        assert_eq!(
+            u8::from(
+                entity
+                    .element_data()
+                    .sprite
+                    .position_iface
+                    .get_direction_goal()
+            ),
+            5,
+            "Turn must set the progressive direction goal, not snap direction"
+        );
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::Turning)
+        );
+        assert!(element.current_order().unwrap().compute_direction);
+    }
+
+    #[test]
+    fn wait_timer_context_arms_actor_and_books_upright_idle() {
+        use crate::sequence::{Field, FieldValue};
+
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
+        wait.set_property(Field::Timer, FieldValue::Integer(7));
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        let barrier = WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitTimer, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .wait_time,
+            7
+        );
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::WaitingUprightBored)
+        );
+        assert!(!element.current_order().unwrap().compute_direction);
+    }
+
+    #[test]
+    fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::StartMenace, Some(owner)));
+
+        let barrier = NpcStateCommandContext {
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+        }
+        .dispatch(Command::StartMenace, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::Terminated);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![
+                OrderType::TransitionRaisingSword,
+                OrderType::TransitionWaitingSwordMenacing,
+            ]
+        );
+        assert!(element.orders.iter().all(|order| !order.compute_direction));
     }
 }
 
