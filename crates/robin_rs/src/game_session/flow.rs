@@ -7,6 +7,7 @@
 use super::frame_prepare::{
     FramePreparation, FramePresentationState, InteractiveFramePreparation, PreparedFrame,
 };
+use super::runtime::FrameContractStage;
 use super::*;
 
 /// Application/session services borrowed by a loaded interactive mission.
@@ -206,14 +207,50 @@ impl InteractiveMission {
         services: &mut MissionServices<'_>,
         state: FramePresentationState,
     ) {
+        InteractiveFrameFinish {
+            mission: self,
+            services,
+            state,
+        }
+        .run()
+        .await;
+    }
+}
+
+/// Short-lived owner of the post-modal graphical tail. It keeps application
+/// services outside mission state while giving recorder, audio, presentation,
+/// PostInitialize, and pacing one explicit orchestration boundary.
+struct InteractiveFrameFinish<'mission, 'services, 'app> {
+    mission: &'mission mut InteractiveMission,
+    services: &'services mut MissionServices<'app>,
+    state: FramePresentationState,
+}
+
+impl InteractiveFrameFinish<'_, '_, '_> {
+    async fn run(self) {
+        let Self {
+            mission,
+            services,
+            state,
+        } = self;
         let callbacks = &mut *services.callbacks;
         let args = services.args;
-        let InteractiveMission { runtime, frontend } = self;
+        let FramePresentationState {
+            mut frame,
+            rewind_active,
+            consumed_buffered: _,
+            shift_held,
+            modal_rendered: modal_rendered_this_frame,
+        } = state;
+        let InteractiveMission { runtime, frontend } = mission;
         let MissionRuntime {
             world,
             timeline: runtime,
             ..
         } = runtime;
+        finalize_interactive_recording(runtime, &mut frame);
+        finish_interactive_audio(runtime, world, frontend, callbacks);
+
         let MissionWorld {
             host,
             game,
@@ -222,59 +259,12 @@ impl InteractiveMission {
             dev,
         } = world;
         let input = &mut frontend.input;
-        let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
-        let FramePresentationState {
-            mut frame,
-            rewind_active,
-            consumed_buffered,
-            shift_held,
-            modal_rendered: modal_rendered_this_frame,
-        } = state;
-
-        // ── Commit the recorder frame ──
-        // Deferred from the record block above so every modal drain,
-        // including final mission-state/debriefing popups, can append
-        // `ModalDismiss` entries to the same frame as the engine tick
-        // that queued them.
-        runtime.finish_recording(
-            std::mem::take(&mut frame.modal_dismissals),
-            !rewind_active && !consumed_buffered,
-        );
-        // Warn if any recorded dismissals went unused — this should not
-        // happen for a clean replay; if it does, the replay commands
-        // have drifted out of sync with the engine's modal output.
-        if !frame.replay_modal_dismissals.is_empty() {
-            tracing::warn!(
-                "Replay: {} recorded ModalDismiss command(s) unused this frame",
-                frame.replay_modal_dismissals.len()
-            );
-        }
-
-        // Execute any sound-mode / jingle / mouse intents queued by the
-        // state machine (`game.process_operation`), the pause-menu input
-        // handler, or script-triggered menus. Must run before the sound
-        // hourglass so a fresh `set_mode(Mission)` immediately tees up
-        // `load_music = true` before the tick.
-        execute_app_effects(
-            &mut callbacks.app_effects,
-            &mut host.sound,
-            &mut input.threaded,
-            audio
-                .backend
-                .as_mut()
-                .map(|b| b as &mut dyn crate::sound::AudioBackend),
-        );
-
-        // ── Sound tick ──
-        // Combat/alert music transitions + sim-emitted sound drains.
-        // See `tick_audio` for the breakdown.
-        audio.tick(manager, host);
-
         runtime.begin_presentation();
+        runtime.trace(FrameContractStage::Presentation);
 
         // ── Render dispatch ──
         // The display-state machine (display_op transitions, scrolling
@@ -406,29 +396,13 @@ impl InteractiveMission {
         // the opposite host order above, so dispatch only after both have
         // completed.  Script mutations and emitted sound/UI effects first
         // become observable on the next frame, matching the original.
-        let mut display = std::mem::take(&mut host.engine_display);
-        let post_initialized = crate::sim_timeline::run_post_initialize_stage(
-            host,
-            &mut display,
-            &assets,
-            &mut manager.engine,
-            dev,
-        );
-        host.engine_display = display;
-        if post_initialized
-            && let Some(net) = host.net.as_ref()
-            && host.local_seat == engine_player_command::PlayerId::HOST
-        {
-            // The initial authoritative snapshot is published once before
-            // presentation bookkeeping. Replace it with the completed
-            // post-refresh state so joiners start from the same frame-one
-            // boundary as live and rollback replay.
-            net.set_initial_snapshot(manager.sim_frame, &manager.engine);
-        }
+        run_interactive_post_initialize(runtime, host, manager, assets, dev);
 
         pace_interactive_frame(runtime, host, manager, &frame, args).await;
     }
+}
 
+impl InteractiveMission {
     /// Run one interactive frame using short-lived borrows of the mission
     /// components and application services.
     async fn run_frame(
@@ -486,6 +460,72 @@ impl InteractiveMission {
     }
 }
 
+/// Close the per-frame recorder token after all modal drains have had a chance
+/// to append their acknowledgements.
+fn finalize_interactive_recording(
+    runtime: &mut super::runtime::TimelineRuntime,
+    frame: &mut MissionFrame,
+) {
+    runtime.finish_recording(frame);
+    if !frame.replay_modal_dismissals.is_empty() {
+        tracing::warn!(
+            "Replay: {} recorded ModalDismiss command(s) unused this frame",
+            frame.replay_modal_dismissals.len()
+        );
+    }
+}
+
+/// Apply queued process effects, then cross the original sound-hourglass
+/// boundary. Keeping these as one focused method makes their required order
+/// explicit while retaining separate execution trace checkpoints.
+fn finish_interactive_audio(
+    runtime: &mut super::runtime::TimelineRuntime,
+    world: &mut MissionWorld,
+    frontend: &mut InteractiveFrontend,
+    callbacks: &mut RustCallbacks,
+) {
+    execute_app_effects(
+        &mut callbacks.app_effects,
+        &mut world.host.sound,
+        &mut frontend.input.threaded,
+        frontend
+            .audio
+            .backend
+            .as_mut()
+            .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+    );
+    runtime.trace(FrameContractStage::AppEffects);
+    frontend.audio.tick(&mut world.manager, &mut world.host);
+    runtime.trace(FrameContractStage::Audio);
+}
+
+/// Cross the one-shot post-refresh script boundary and update the initial
+/// authoritative multiplayer snapshot from that completed state.
+fn run_interactive_post_initialize(
+    runtime: &mut super::runtime::TimelineRuntime,
+    host: &mut Host,
+    manager: &mut robin_engine::engine_manager::EngineManager,
+    assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
+    dev: &mut robin_engine::engine::DevState,
+) {
+    let mut display = std::mem::take(&mut host.engine_display);
+    let post_initialized = crate::sim_timeline::run_post_initialize_stage(
+        host,
+        &mut display,
+        assets,
+        &mut manager.engine,
+        dev,
+    );
+    host.engine_display = display;
+    runtime.trace(FrameContractStage::PostInitialize);
+    if post_initialized
+        && let Some(net) = host.net.as_ref()
+        && host.local_seat == engine_player_command::PlayerId::HOST
+    {
+        net.set_initial_snapshot(manager.sim_frame, &manager.engine);
+    }
+}
+
 /// Apply graphical cadence, host-clock correction, and authoritative hash
 /// publication after presentation and PostInitialize complete.
 async fn pace_interactive_frame(
@@ -495,6 +535,7 @@ async fn pace_interactive_frame(
     frame: &MissionFrame,
     args: &crate::main_entry::CliArgs,
 ) {
+    runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
     // `--fast-forward` CLI flag skips the pacing sleep entirely so
     // the loop runs at full host speed (tests / profiling).  The
