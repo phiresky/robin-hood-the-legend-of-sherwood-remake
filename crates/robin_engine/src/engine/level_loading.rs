@@ -820,7 +820,7 @@ impl EngineInner {
         &mut self,
         assets: &mut crate::engine::LevelAssets,
     ) {
-        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+        let Some(campaign) = Some(&self.mission_domain.campaign) else {
             return;
         };
         let bank_signature = assets.bank_signature;
@@ -880,9 +880,7 @@ impl EngineInner {
         self.mission_domain.mission_stat.reset();
         self.mission_domain.short_briefings.clear();
 
-        self.mission_domain
-            .campaign
-            .as_ref()
+        Some(&self.mission_domain.campaign)
             .expect("Campaign must be set before initialize_from_mission");
         let profiles = assets.profile_manager.clone();
 
@@ -2068,10 +2066,7 @@ impl EngineInner {
             let char_idx = {
                 let profile = char_profile
                     .unwrap_or_else(|| panic!("rescue PC profile {} not found", raw.profile_index));
-                let campaign = self
-                    .mission_domain
-                    .campaign
-                    .as_mut()
+                let campaign = Some(&mut self.mission_domain.campaign)
                     .expect("Campaign must be set before spawning rescue PCs");
                 let existing = campaign.get_character_by_profile(profile_idx);
                 let char_idx = match (profile.vip, existing) {
@@ -2814,10 +2809,7 @@ impl EngineInner {
         )>;
         let is_sherwood;
         {
-            let campaign = self
-                .mission_domain
-                .campaign
-                .as_mut()
+            let campaign = Some(&mut self.mission_domain.campaign)
                 .expect("Campaign must be set before spawning PCs");
 
             // Determine Sherwood-camp flag up front — the Sherwood
@@ -3206,7 +3198,7 @@ impl EngineInner {
                             let new_profile_idx =
                                 crate::profiles::CharacterProfileIdx(new_idx as u32);
                             profile_idx = new_profile_idx;
-                            if let Some(campaign) = self.mission_domain.campaign.as_mut()
+                            if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                                 && let Some(desc) = campaign.characters.get_mut(char_idx)
                             {
                                 desc.character_profile_idx = Some(new_profile_idx);
@@ -3400,16 +3392,10 @@ impl EngineInner {
                 // (or whose purse threshold isn't met) starts greyed out
                 // instead of waiting for the first runtime ammo update.
                 let disabled_actions: Vec<bool> = {
-                    let pc_status_opt = self
-                        .mission_domain
-                        .campaign
-                        .as_ref()
+                    let pc_status_opt = Some(&self.mission_domain.campaign)
                         .and_then(|c| c.characters.get(char_idx))
                         .map(|d| &d.status);
-                    let ransom = self
-                        .mission_domain
-                        .campaign
-                        .as_ref()
+                    let ransom = Some(&self.mission_domain.campaign)
                         .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                         .unwrap_or(0);
                     let purse_threshold = crate::inventory::COINS_PER_PURSE as i32
@@ -3477,7 +3463,7 @@ impl EngineInner {
                 // Phase B because this is the only point we have both
                 // the post-shuffle beam-me and the char_idx in scope
                 // with a live mut-borrow path to `campaign.characters`.
-                if let Some(campaign) = self.mission_domain.campaign.as_mut()
+                if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                     && let Some(desc) = campaign.characters.get_mut(char_idx)
                 {
                     desc.status.beam_me_index_in_sherwood = if is_sherwood {
@@ -3504,7 +3490,7 @@ impl EngineInner {
         // that read `mission_team_indices` while the player is back in
         // Sherwood don't see the team from whichever mission we just
         // finished.
-        if is_sherwood && let Some(campaign) = self.mission_domain.campaign.as_mut() {
+        if is_sherwood && let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             campaign.reset_mission_team();
         }
 
@@ -6103,7 +6089,7 @@ impl EngineInner {
                 let profile_idx = pc.pc.profile_index;
 
                 if train_bow_filter {
-                    let Some(_campaign) = self.mission_domain.campaign.as_ref() else {
+                    let Some(_campaign) = Some(&self.mission_domain.campaign) else {
                         continue;
                     };
                     let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
@@ -6117,7 +6103,7 @@ impl EngineInner {
                 }
 
                 // Find the PcDescription index (position in campaign.characters).
-                let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+                let Some(campaign) = Some(&self.mission_domain.campaign) else {
                     continue;
                 };
                 let Some(pc_description_idx) = campaign
@@ -6147,7 +6133,7 @@ impl EngineInner {
         // Now that engine reads are done, write into the campaign sectors:
         // amount harvest (from entities) + occupants (from zones above).
         let entities_snapshot = &self.world.entities;
-        let Some(campaign) = self.mission_domain.campaign.as_mut() else {
+        let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
             return;
         };
         for sector in &mut campaign.production_sectors {
@@ -6197,7 +6183,7 @@ impl EngineInner {
 
         // Resolve last-mission info — drives UpdateAmount/Experience/LifePoints.
         let (last_won, last_length) = {
-            let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+            let Some(campaign) = Some(&self.mission_domain.campaign) else {
                 return;
             };
             match campaign.last_mission_idx {
@@ -6255,7 +6241,7 @@ impl EngineInner {
 
         // Finalize amounts + gather plan data.
         {
-            let Some(campaign) = self.mission_domain.campaign.as_mut() else {
+            let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
                 return;
             };
             // snapshot specialist resolution before mutating occupants — it
@@ -6375,10 +6361,7 @@ impl EngineInner {
         }
 
         // Snapshot collected relics for the RELIC branch.
-        let collected_relics: Vec<u32> = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let collected_relics: Vec<u32> = Some(&self.mission_domain.campaign)
             .map(|c| c.collected_relics.clone())
             .unwrap_or_default();
 
@@ -6514,7 +6497,7 @@ impl EngineInner {
             for occupant in &plan.occupants {
                 // Resolve the PC description → profile_index → find live entity.
                 let profile_idx = {
-                    let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+                    let Some(campaign) = Some(&self.mission_domain.campaign) else {
                         continue;
                     };
                     let Some(desc) = campaign.characters.get(occupant.pc_description_idx) else {
@@ -6601,7 +6584,7 @@ impl EngineInner {
                     // `add_pc_experience` would over-credit Sherwood
                     // training by 100 Score per skill-capacity threshold
                     // crossed.
-                    if let Some(campaign) = self.mission_domain.campaign.as_mut()
+                    if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                         && let Some(desc) = campaign.characters.get_mut(occupant.pc_description_idx)
                     {
                         desc.status
@@ -6616,7 +6599,7 @@ impl EngineInner {
                     {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }
-                    if let Some(campaign) = self.mission_domain.campaign.as_mut()
+                    if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                         && let Some(desc) = campaign.characters.get_mut(occupant.pc_description_idx)
                     {
                         crate::pc_status::heal(&mut desc.status.life_points, amount, false);

@@ -227,14 +227,13 @@ impl Engine {
     pub fn new_preserving_campaign(
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
-        let mut inner = EngineInner::new();
+        let mut inner = EngineInner::new_with_campaign(args.campaign);
         // Seed the PRNG and apply engine-global cheat flags FIRST,
         // before any setup that might draw from the RNG or branch on
         // the cheat flag.  See `EngineArgs::rng_seed` /
         // `EngineArgs::goldeneye` docs for the rationale.
         inner.restore_rng_from_seed(args.rng_seed);
         inner.set_golden_eye_mode(args.goldeneye);
-        inner.install_campaign(args.campaign);
         if let Some(gm) = args.ground_mark_sprite {
             inner.set_ground_mark_sprite_data(
                 gm.half_w,
@@ -272,7 +271,7 @@ impl Engine {
                 progress,
             )
         }) {
-            let campaign = inner.take_campaign();
+            let campaign = inner.into_campaign();
             return Err((error, campaign));
         }
         inner.populate_sector_gates_from_doors();
@@ -401,6 +400,7 @@ impl Engine {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> SideEffects {
+        self.require_live_campaign("performing an engine tick");
         self.inner.perform_hourglass(display, assets, dev)
     }
 
@@ -413,6 +413,7 @@ impl Engine {
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
     ) -> Option<SideEffects> {
+        self.require_live_campaign("performing mission PostInitialize");
         self.inner.perform_post_initialize(display, assets)
     }
 
@@ -425,6 +426,7 @@ impl Engine {
         assets: &LevelAssets,
         cmd: &PlayerCommand,
     ) {
+        self.require_live_campaign("applying a player command");
         self.inner.apply_command(display, input, assets, cmd);
     }
 
@@ -437,6 +439,7 @@ impl Engine {
         assets: &LevelAssets,
         cmds: &[PlayerInput],
     ) {
+        self.require_live_campaign("applying replay or network commands");
         self.inner.apply_commands(display, input, assets, cmds);
     }
 
@@ -449,6 +452,7 @@ impl Engine {
         assets: &LevelAssets,
         cmds: &[PlayerCommand],
     ) {
+        self.require_live_campaign("applying local commands");
         self.inner
             .apply_local_commands(display, input, assets, cmds);
     }
@@ -477,8 +481,8 @@ impl Engine {
 
     // ── Setup / lifecycle ──────────────────────────────────────────
 
-    pub fn install_campaign(&mut self, campaign: Campaign) {
-        self.inner.install_campaign(campaign);
+    pub fn replace_campaign_from_console(&mut self, campaign: Campaign) {
+        self.inner.replace_campaign(campaign);
     }
 
     /// Mutable access to the mission script's `GameHost`. Exposed
@@ -530,8 +534,13 @@ impl Engine {
         })
     }
 
-    pub fn take_campaign(&mut self) -> Option<Campaign> {
-        self.inner.take_campaign()
+    /// Consume a finished mission engine and return its campaign allocation.
+    pub fn into_campaign(self) -> Campaign {
+        self.inner.into_campaign()
+    }
+
+    fn require_live_campaign(&self, context: &str) {
+        self.inner.mission_domain.required_campaign(context);
     }
 
     /// Run a console-cheat input and return the dispatch response
@@ -644,11 +653,12 @@ impl Engine {
         mission_index: usize,
         profiles: &crate::profiles::ProfileManager,
     ) -> Option<bool> {
-        self.inner
-            .mission_domain
-            .campaign
-            .as_mut()
-            .map(|c| c.buy_blazon(mission_index, profiles))
+        Some(
+            self.inner
+                .mission_domain
+                .campaign
+                .buy_blazon(mission_index, profiles),
+        )
     }
 
     /// Reset the campaign's `last_pseudo_mission_status` flag after the
@@ -656,17 +666,19 @@ impl Engine {
     /// Runs on a mission-lifecycle boundary (sim paused) — `Campaign` is
     /// part of the rollback hash.  No-op when no campaign is installed.
     pub fn campaign_reset_last_pseudo_mission_status(&mut self) {
-        if let Some(c) = self.inner.mission_domain.campaign.as_mut() {
-            c.reset_last_pseudo_mission_status();
-        }
+        self.inner
+            .mission_domain
+            .campaign
+            .reset_last_pseudo_mission_status();
     }
 
     /// Reset the campaign's `MissionLength` accumulator to 0 before
     /// the mission begins.
     pub fn campaign_reset_mission_length(&mut self) {
-        if let Some(c) = self.inner.mission_domain.campaign.as_mut() {
-            c.set_value(crate::campaign::CampaignValue::MissionLength, 0);
-        }
+        self.inner
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::MissionLength, 0);
     }
 
     /// Queue the `UpdateInformationBars` script-host command so the

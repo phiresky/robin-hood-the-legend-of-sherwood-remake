@@ -824,10 +824,7 @@ impl EngineInner {
                 if !self.pc_has_ammo(actor_id, crate::profiles::Action::Purse) {
                     return false;
                 }
-                let ransom = self
-                    .mission_domain
-                    .campaign
-                    .as_ref()
+                let ransom = Some(&self.mission_domain.campaign)
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 let purse_cost = (crate::inventory::COINS_PER_PURSE as i32)
@@ -920,10 +917,7 @@ impl EngineInner {
                 if !actor.is_pc() {
                     return true;
                 }
-                let ransom = self
-                    .mission_domain
-                    .campaign
-                    .as_ref()
+                let ransom = Some(&self.mission_domain.campaign)
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 if ransom < crate::engine::BEGGAR_SALARY {
@@ -1129,7 +1123,7 @@ impl EngineInner {
         let Some(pc) = entity.pc_data() else {
             return false;
         };
-        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+        let Some(campaign) = Some(&self.mission_domain.campaign) else {
             return false;
         };
         campaign

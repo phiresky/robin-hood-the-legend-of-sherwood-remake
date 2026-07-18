@@ -299,7 +299,9 @@ impl<'de> Deserialize<'de> for EngineInner {
                 short_briefings: snapshot.short_briefings,
                 mission_stat: snapshot.mission_stat,
                 dead_pc: snapshot.dead_pc,
-                campaign: snapshot.campaign,
+                campaign: snapshot.campaign.ok_or_else(|| {
+                    serde::de::Error::custom("Engine snapshot has no active campaign")
+                })?,
             },
             control: SimulationControl {
                 frame_counter: snapshot.frame_counter,

@@ -259,7 +259,7 @@ pub(super) fn handle_console_overlay_events(
         match GameSaveFile::read_from(&path) {
             Ok(loaded) => match loaded.engine.campaign().cloned() {
                 Some(campaign) => {
-                    engine.install_campaign(campaign);
+                    engine.replace_campaign_from_console(campaign);
                     tracing::info!("Loaded campaign values from {}", path.display());
                     // Echo the success message into the console.
                     host.pending_console_output

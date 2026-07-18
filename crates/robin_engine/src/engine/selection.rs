@@ -80,10 +80,7 @@ impl EngineInner {
         }
 
         // A VIP is not selectable while the Men-To-Blazon cutscene is active.
-        let is_vip = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let is_vip = Some(&self.mission_domain.campaign)
             .and(assets.profile_manager.get_character(pc.pc.profile_index))
             .map(|p| p.vip)
             .unwrap_or(false);
@@ -299,7 +296,7 @@ impl EngineInner {
     /// After level load, pick the playable PC with the highest profile
     /// priority (Robin has priority 10) and center + select.
     pub(crate) fn select_highest_priority_pc(&mut self, assets: &LevelAssets, seat: usize) {
-        if self.mission_domain.campaign.is_none() {
+        if false {
             return;
         }
         let profiles = assets.profile_manager.clone();
@@ -350,7 +347,7 @@ impl EngineInner {
         tracing::info!(entity = ?pc_id, "reset_coma — reviving from coma");
 
         // Clear coma in campaign status
-        if let Some(ref mut campaign) = self.mission_domain.campaign
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign)
             && let Some(desc) = campaign.characters.get_mut(status_idx)
         {
             desc.status.in_coma = false;
@@ -498,7 +495,7 @@ impl EngineInner {
     /// unavailable, because the downstream GoToExit gate uses `== false` to
     /// mean "at least one selected PC is missing from the team".
     pub fn are_selected_pc_in_mission_team(&self) -> bool {
-        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
+        let Some(campaign) = Some(&self.mission_domain.campaign) else {
             return true;
         };
         let team_profiles = campaign.mission_team_profile_indices();
@@ -1202,7 +1199,7 @@ impl EngineInner {
         action: Action,
         out: &mut Vec<EntityId>,
     ) {
-        if self.mission_domain.campaign.is_none() {
+        if false {
             return;
         }
         for &pc_id in &self.world.pc_ids {

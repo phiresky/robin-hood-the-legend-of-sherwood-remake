@@ -881,7 +881,7 @@ impl EngineInner {
             return; // Civilians / props don't track ammo
         };
 
-        let remaining = if let Some(ref mut campaign) = self.mission_domain.campaign
+        let remaining = if let Some(campaign) = Some(&mut self.mission_domain.campaign)
             && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
         {
             let removed = pc_desc
@@ -946,7 +946,7 @@ impl EngineInner {
             return; // Only PCs track ammo
         };
 
-        let remaining = if let Some(ref mut campaign) = self.mission_domain.campaign {
+        let remaining = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 let removed = pc_desc.status.decrease_ammo(action, 1);
                 let remaining = pc_desc.status.get_ammo(action);
@@ -1199,10 +1199,7 @@ impl EngineInner {
     /// ransom mutation.
     pub(super) fn tick_refresh_purse_disable(&mut self, assets: &LevelAssets) {
         use crate::profiles::Action;
-        let ransom = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let ransom = Some(&self.mission_domain.campaign)
             .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
             .unwrap_or(0);
         let threshold =
@@ -1280,7 +1277,7 @@ impl EngineInner {
             })
             .unwrap_or(u16::MAX);
 
-        let new_ammo = if let Some(ref mut campaign) = self.mission_domain.campaign {
+        let new_ammo = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 let added = pc_desc.status.increase_ammo(action, amount, max_ammo);
                 let new_count = pc_desc.status.get_ammo(action);
@@ -1335,7 +1332,7 @@ impl EngineInner {
         let difficulty = crate::player_profile::DifficultyLevel::current();
 
         // Use the pure-function pickup logic from inventory module.
-        let result = if let Some(ref mut campaign) = self.mission_domain.campaign {
+        let result = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 crate::inventory::take_object(
                     &mut pc_desc.status,
@@ -1397,7 +1394,7 @@ impl EngineInner {
         match obj_type {
             // ── Amulet (clover): adds to amulet pool, no counter titbit ──
             ObjectType::BonusAmulet => {
-                if let Some(c) = self.mission_domain.campaign.as_mut() {
+                if let Some(c) = Some(&mut self.mission_domain.campaign) {
                     c.add_value(crate::campaign::CampaignValue::Amulets, quantity as i32);
                 }
                 remove = true;
@@ -1462,7 +1459,7 @@ impl EngineInner {
             | ObjectType::BonusDomesdayBook
             | ObjectType::BonusSwordOfTheState => {
                 const SCORE_COLLECTED_RELIC: i32 = 1000;
-                if let Some(c) = self.mission_domain.campaign.as_mut() {
+                if let Some(c) = Some(&mut self.mission_domain.campaign) {
                     c.add_relic(relic_object_type_index(obj_type));
                 }
                 self.add_campaign_value(
@@ -1850,7 +1847,7 @@ impl EngineInner {
             None => return, // Only PCs get XP
         };
 
-        if let Some(ref mut campaign) = self.mission_domain.campaign {
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             // The PC AddExperience path also awards a
             // `PC_ADDITIONAL_CAPACITY_POINTS` campaign-score bonus
             // whenever the call crosses a 100-XP boundary.

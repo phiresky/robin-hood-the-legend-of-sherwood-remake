@@ -1270,10 +1270,7 @@ impl EngineInner {
                 .and_then(|id| self.get_entity(id))
                 .is_some_and(|e| self.is_entity_vip(assets, e));
             if selector_is_vip {
-                let ransom = self
-                    .mission_domain
-                    .campaign
-                    .as_ref()
+                let ransom = Some(&self.mission_domain.campaign)
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 return if ransom >= crate::engine::BEGGAR_SALARY {

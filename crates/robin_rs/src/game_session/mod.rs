@@ -140,6 +140,25 @@ pub(crate) enum SessionResult {
     QuitToMenu,
 }
 
+/// Consuming result of one mission. The campaign is returned on every
+/// controlled exit, including setup and runtime errors.
+pub(crate) struct MissionOutcome {
+    pub(crate) campaign: Campaign,
+    pub(crate) result: Result<GameCode, String>,
+}
+
+impl MissionOutcome {
+    pub(crate) fn new(campaign: Campaign, result: Result<GameCode, String>) -> Self {
+        Self { campaign, result }
+    }
+}
+
+/// Consuming result of the outer mission-selection loop.
+pub(crate) struct SessionOutcome {
+    pub(crate) campaign: Campaign,
+    pub(crate) result: Result<SessionResult, String>,
+}
+
 /// Control-flow signal returned by `run_mission` helpers that were
 /// extracted from inside the outer `loop { ... }` body but retain
 /// original control flow (outer-loop `continue`, outer function
@@ -153,134 +172,6 @@ pub(super) enum HandlerAction {
     Proceed,
     /// Caller should `return Ok(code)` from `run_mission`.
     Exit(GameCode),
-}
-
-/// Move the campaign back out of an engine at a mission-loop boundary.
-///
-/// Original: `original-code/RHCampaign.cpp:38-55` installs the concrete
-/// campaign as a singleton, while `original-code/launcher.cpp:956-958` owns
-/// that campaign across mission runs. There is no empty/default campaign to
-/// substitute if the engine loses ownership unexpectedly.
-fn restore_required_campaign(
-    campaign_ref: &mut Campaign,
-    campaign: Option<Campaign>,
-    context: &str,
-) {
-    let campaign = campaign.unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
-    restore_campaign_value(campaign_ref, campaign);
-}
-
-fn restore_campaign_value(campaign_ref: &mut Campaign, campaign: Campaign) {
-    *campaign_ref = campaign;
-}
-
-/// Session-side owner of the campaign while an active mission leases its value
-/// to the Engine.
-///
-/// Loading is the only ownership-transfer boundary: once
-/// `load_level_and_sprite_bank` succeeds, every controlled mission outcome is
-/// routed through [`Self::finish`]. Consuming the lease makes restoration a
-/// once-only operation while still leaving the Engine as the live campaign
-/// owner for saves, deterministic ticks, and Sherwood transitions.
-#[must_use = "an active mission campaign lease must be finalized"]
-pub(super) struct MissionCampaignLease<'a> {
-    session_campaign: Option<&'a mut Campaign>,
-}
-
-impl<'a> MissionCampaignLease<'a> {
-    pub(super) fn new(session_campaign: &'a mut Campaign) -> Self {
-        Self {
-            session_campaign: Some(session_campaign),
-        }
-    }
-
-    pub(super) fn restore_campaign(&mut self, campaign: Option<Campaign>, context: &str) {
-        let session_campaign = self
-            .session_campaign
-            .take()
-            .unwrap_or_else(|| panic!("{context}: campaign lease was already restored"));
-        restore_required_campaign(session_campaign, campaign, context);
-    }
-
-    #[cfg(test)]
-    fn finish_campaign<T>(mut self, campaign: Option<Campaign>, outcome: T, context: &str) -> T {
-        self.restore_campaign(campaign, context);
-        outcome
-    }
-}
-
-/// Source whose live engine owns the campaign leased from the session.
-pub(super) trait EngineCampaignSource {
-    fn take_campaign(&mut self) -> Option<Campaign>;
-}
-
-/// Couples an engine-containing mission stage to the session slot that must
-/// receive its campaign again. Every async owner uses this wrapper, so dropping
-/// a builder future or a running mission restores the campaign exactly once.
-pub(super) struct CampaignRestoreOwner<'a, T: EngineCampaignSource> {
-    value: Option<T>,
-    campaign_return: Option<MissionCampaignLease<'a>>,
-    drop_context: &'static str,
-}
-
-impl<'a, T: EngineCampaignSource> CampaignRestoreOwner<'a, T> {
-    pub(super) fn new(
-        value: T,
-        campaign_return: MissionCampaignLease<'a>,
-        drop_context: &'static str,
-    ) -> Self {
-        Self {
-            value: Some(value),
-            campaign_return: Some(campaign_return),
-            drop_context,
-        }
-    }
-
-    pub(super) fn value(&self) -> &T {
-        self.value
-            .as_ref()
-            .expect("campaign owner value must exist until ownership transfer")
-    }
-
-    pub(super) fn value_mut(&mut self) -> &mut T {
-        self.value
-            .as_mut()
-            .expect("campaign owner value must exist until ownership transfer")
-    }
-
-    fn restore(&mut self, context: &str) {
-        let Some(mut campaign_return) = self.campaign_return.take() else {
-            return;
-        };
-        let value = self
-            .value
-            .as_mut()
-            .expect("pending campaign return requires an engine-containing value");
-        campaign_return.restore_campaign(value.take_campaign(), context);
-    }
-
-    pub(super) fn finish<R>(mut self, outcome: R, context: &str) -> R {
-        self.restore(context);
-        outcome
-    }
-
-    pub(super) fn into_parts(mut self) -> (T, MissionCampaignLease<'a>) {
-        let value = self
-            .value
-            .take()
-            .expect("campaign owner value must exist during ownership transfer");
-        let campaign_return = self
-            .campaign_return
-            .take()
-            .expect("campaign lease must exist during ownership transfer");
-        (value, campaign_return)
-    }
-}
-
-impl<T: EngineCampaignSource> Drop for CampaignRestoreOwner<'_, T> {
-    fn drop(&mut self) {
-        self.restore(self.drop_context);
-    }
 }
 
 /// Construct the optional custom-mission Lua state before level loading.
@@ -343,20 +234,20 @@ pub(super) fn selected_pc_profile_indices(
 
 pub(crate) async fn run_mission_headless(
     callbacks: &mut RustCallbacks,
-    campaign_ref: &mut Campaign,
+    campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
     args: &crate::main_entry::CliArgs,
-) -> Result<GameCode, String> {
+) -> MissionOutcome {
     let mut mission = match HeadlessMissionBuilder::build(
         callbacks,
-        campaign_ref,
+        campaign,
         profiles,
         mission_idx,
         location,
         args,
-    )? {
+    ) {
         HeadlessBuildOutcome::Ready(mission) => mission,
         HeadlessBuildOutcome::Finished(outcome) => return outcome,
     };
@@ -371,11 +262,11 @@ pub(crate) async fn run_mission_headless(
 /// (see `main_menu::save_load`).
 pub(crate) async fn run_session(
     window: &mut GameWindow,
-    campaign: &mut Campaign,
+    mut campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
-) -> Result<SessionResult, String> {
+) -> SessionOutcome {
     let mut callbacks = RustCallbacks::new();
     callbacks.pending = initial_load;
 
@@ -401,7 +292,7 @@ pub(crate) async fn run_session(
 
         // Run the actual mission
         tracing::info!("Starting mission idx={} at {:?}", mission_idx, location);
-        let game_result = run_mission(
+        let mission_outcome = run_mission(
             window,
             &mut callbacks,
             campaign,
@@ -410,10 +301,25 @@ pub(crate) async fn run_session(
             location,
             args,
         )
-        .await?;
+        .await;
+        campaign = mission_outcome.campaign;
+        let game_result = match mission_outcome.result {
+            Ok(result) => result,
+            Err(error) => {
+                return SessionOutcome {
+                    campaign,
+                    result: Err(error),
+                };
+            }
+        };
 
         match game_result {
-            GameCode::Quit => return Ok(SessionResult::QuitToMenu),
+            GameCode::Quit => {
+                return SessionOutcome {
+                    campaign,
+                    result: Ok(SessionResult::QuitToMenu),
+                };
+            }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted if campaign.get_ares() >= 9 => {
                 if campaign.get_ares() == 9 {
                     // Campaign just completed — play the outro cinematic
@@ -427,7 +333,10 @@ pub(crate) async fn run_session(
                     campaign.set_ares(10);
                 }
                 tracing::info!("Returning to main menu (ARES={})", campaign.get_ares());
-                return Ok(SessionResult::QuitToMenu);
+                return SessionOutcome {
+                    campaign,
+                    result: Ok(SessionResult::QuitToMenu),
+                };
             }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted => {
                 // Continue to next mission selection
@@ -571,22 +480,22 @@ async fn confirm_quickload_cross_mission(
 pub(crate) async fn run_mission(
     window: &mut GameWindow,
     callbacks: &mut RustCallbacks,
-    campaign_ref: &mut Campaign,
+    campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
     args: &crate::main_entry::CliArgs,
-) -> Result<GameCode, String> {
+) -> MissionOutcome {
     let mut mission = match InteractiveMissionBuilder::build(
         window,
         callbacks,
-        campaign_ref,
+        campaign,
         profiles,
         mission_idx,
         location,
         args,
     )
-    .await?
+    .await
     {
         InteractiveBuildOutcome::Ready(mission) => mission,
         InteractiveBuildOutcome::Finished(outcome) => return outcome,
@@ -597,29 +506,28 @@ pub(crate) async fn run_mission(
 
 #[cfg(test)]
 mod required_state_tests {
-    use super::{MissionCampaignLease, required_menu_resources, restore_campaign_value};
+    use super::{MissionOutcome, required_menu_resources};
     use crate::campaign::{Campaign, CampaignValue};
     use crate::game_operation::GameCode;
     use crate::ingame_menu::IngameMenuResources;
 
     #[test]
     fn mission_exit_restores_the_exact_campaign_allocation() {
-        let mut outer_campaign = Campaign::default();
         let mut engine_campaign = Campaign::default();
         engine_campaign.values[CampaignValue::Custom20] = 0x25_25_25;
         let production_sectors = engine_campaign.production_sectors.as_ptr();
 
-        restore_campaign_value(&mut outer_campaign, engine_campaign);
+        let outcome = MissionOutcome::new(engine_campaign, Ok(GameCode::LevelSucceeded));
 
-        assert_eq!(outer_campaign.values[CampaignValue::Custom20], 0x25_25_25);
+        assert_eq!(outcome.campaign.values[CampaignValue::Custom20], 0x25_25_25);
         assert_eq!(
-            outer_campaign.production_sectors.as_ptr(),
+            outcome.campaign.production_sectors.as_ptr(),
             production_sectors
         );
     }
 
     #[test]
-    fn campaign_lease_finalizes_every_controlled_exit_outcome() {
+    fn mission_outcome_returns_campaign_for_success_and_error() {
         let exit_outcomes = [
             ("normal mission exit", Ok(GameCode::LevelSucceeded)),
             ("mission-start map export", Ok(GameCode::Quit)),
@@ -640,37 +548,25 @@ mod required_state_tests {
         ];
 
         for (index, (path, outcome)) in exit_outcomes.into_iter().enumerate() {
-            let mut session_campaign = Campaign::default();
             let mut engine_campaign = Campaign::default();
             let marker = index as i32 + 1;
             engine_campaign.values[CampaignValue::Custom20] = marker;
             let production_sectors = engine_campaign.production_sectors.as_ptr();
 
-            let actual = MissionCampaignLease::new(&mut session_campaign).finish_campaign(
-                Some(engine_campaign),
-                outcome.clone(),
-                path,
-            );
+            let actual = MissionOutcome::new(engine_campaign, outcome.clone());
 
-            assert_eq!(actual, outcome, "{path}");
+            assert_eq!(actual.result, outcome, "{path}");
             assert_eq!(
-                session_campaign.values[CampaignValue::Custom20],
+                actual.campaign.values[CampaignValue::Custom20],
                 marker,
                 "{path}"
             );
             assert_eq!(
-                session_campaign.production_sectors.as_ptr(),
+                actual.campaign.production_sectors.as_ptr(),
                 production_sectors,
                 "{path}"
             );
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "test campaign lease: engine campaign is missing")]
-    fn campaign_lease_rejects_missing_engine_campaign() {
-        let mut campaign = Campaign::default();
-        MissionCampaignLease::new(&mut campaign).finish_campaign(None, (), "test campaign lease");
     }
 
     #[test]

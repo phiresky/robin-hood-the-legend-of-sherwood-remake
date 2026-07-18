@@ -1398,7 +1398,7 @@ impl EngineInner {
                 _ => None,
             })
             .unwrap_or_default();
-        if let Some(ref mut campaign) = self.mission_domain.campaign {
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             // The PC experience-add awards a campaign-score bonus
             // whenever the call crosses a 100-XP boundary.
             campaign.add_pc_experience(
@@ -1454,10 +1454,7 @@ impl EngineInner {
         }
 
         // Check if already in coma
-        let in_coma = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let in_coma = Some(&self.mission_domain.campaign)
             .and_then(|c| c.characters.get(status_idx))
             .map(|desc| desc.status.in_coma)
             .unwrap_or(false);
@@ -1467,10 +1464,7 @@ impl EngineInner {
 
         // Check amulets
         let has_amulets = is_vip
-            && self
-                .mission_domain
-                .campaign
-                .as_ref()
+            && Some(&self.mission_domain.campaign)
                 .map(|c| c.values[crate::campaign::CampaignValue::Amulets] >= 1)
                 .unwrap_or(false);
         if !has_amulets {
@@ -1487,7 +1481,7 @@ impl EngineInner {
             pc.human.unconscious = true;
             pc.element.set_posture(Posture::Lying);
         }
-        if let Some(ref mut campaign) = self.mission_domain.campaign {
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;
             }

@@ -55,6 +55,10 @@ impl MissionWorld {
             dev,
         }
     }
+
+    pub(super) fn into_campaign(self) -> crate::campaign::Campaign {
+        self.manager.engine.into_campaign()
+    }
 }
 
 /// Mission-lifetime host controls which are neither deterministic Engine state
@@ -159,6 +163,10 @@ impl MissionRuntime {
             timeline,
             control,
         }
+    }
+
+    pub(super) fn into_campaign(self) -> crate::campaign::Campaign {
+        self.world.into_campaign()
     }
 
     /// Open one host frame at the deterministic pre-command boundary.

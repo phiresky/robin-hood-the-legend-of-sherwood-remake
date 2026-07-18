@@ -2854,7 +2854,7 @@ impl EngineInner {
             let ctx = concussion_ctx_full(
                 entity,
                 self.world.weather.is_forest_level,
-                self.mission_domain.campaign.as_ref(),
+                Some(&self.mission_domain.campaign),
             );
 
             // Determine healing speed: per-profile `wake_up` for PCs

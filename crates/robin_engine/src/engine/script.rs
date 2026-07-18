@@ -43,11 +43,7 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             &crate::natives::NativeSessionCapabilities<'_>,
         ) -> R,
     ) -> R {
-        let campaign = self
-            .engine
-            .mission_domain
-            .campaign
-            .as_mut()
+        let campaign = Some(&mut self.engine.mission_domain.campaign)
             .expect("active mission entered a script call without its campaign");
         let capabilities = crate::natives::NativeSessionCapabilities::new(
             &mut self.engine.world.entities,
@@ -137,25 +133,18 @@ impl EngineInner {
         };
 
         if let Some(parked) = legacy.parked_campaign {
-            if let Some(canonical) = self.mission_domain.campaign.as_ref() {
-                let parked_value = serde_json::to_value(&parked)
-                    .expect("serialize legacy parked campaign for comparison");
-                let canonical_value = serde_json::to_value(canonical)
-                    .expect("serialize canonical campaign for comparison");
-                assert_eq!(
-                    parked_value, canonical_value,
-                    "legacy GameHost campaign contradicts canonical engine campaign"
-                );
-            } else {
-                self.mission_domain.campaign = Some(parked);
-            }
+            let parked_value = serde_json::to_value(&parked)
+                .expect("serialize legacy parked campaign for comparison");
+            let canonical_value = serde_json::to_value(&self.mission_domain.campaign)
+                .expect("serialize canonical campaign for comparison");
+            assert_eq!(
+                parked_value, canonical_value,
+                "legacy GameHost campaign contradicts canonical engine campaign"
+            );
         }
 
         if !legacy.campaign.is_empty() {
-            let campaign = self
-                .mission_domain
-                .campaign
-                .as_mut()
+            let campaign = Some(&mut self.mission_domain.campaign)
                 .expect("legacy script campaign values require an active campaign");
             for (index, value) in legacy.campaign {
                 let slot = CampaignValue::custom(index).unwrap_or_else(|| {
@@ -1775,7 +1764,7 @@ impl EngineInner {
             self.script_domains.zones.scripts[zone_idx].production_sector_type = prod_type_enum;
 
             // Attach to the campaign's SectorProduction so its `speed` is set.
-            if let Some(campaign) = self.mission_domain.campaign.as_mut()
+            if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                 && (prod_type as usize) < campaign.production_sectors.len()
             {
                 let prod = &mut campaign.production_sectors[prod_type as usize];
@@ -1808,7 +1797,7 @@ impl EngineInner {
                     crate::coordinates::MapPoint::new(x, y),
                 )
                 .unwrap_or(0xFFFF);
-            if let Some(campaign) = self.mission_domain.campaign.as_mut()
+            if let Some(campaign) = Some(&mut self.mission_domain.campaign)
                 && (prod_type as usize) < campaign.production_sectors.len()
             {
                 let prod = &mut campaign.production_sectors[prod_type as usize];
@@ -2247,10 +2236,7 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
-        let campaign = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let campaign = Some(&self.mission_domain.campaign)
             .expect("initialize_from_campaign: campaign not set on engine");
         let idx = campaign
             .current_mission_idx
@@ -2923,7 +2909,7 @@ impl EngineInner {
                     // Nothing to cache on the engine side: derive the
                     // states here so the log/trace reflects what the
                     // next HUD frame will show.
-                    if let Some(campaign) = self.mission_domain.campaign.as_ref() {
+                    if let Some(campaign) = Some(&self.mission_domain.campaign) {
                         // `Game::is_men_to_blazon_conversion` is reflected in
                         // the engine-owned mission UI domain by the
                         // `SetMenToBlazonConversionMode` player command.

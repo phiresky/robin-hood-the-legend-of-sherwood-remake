@@ -2275,7 +2275,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 100;
-    engine.mission_domain.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 500;
+    Some(&mut engine.mission_domain.campaign).unwrap().values[CampaignValue::Ransom] = 500;
     engine.mission_domain.mission_stat.collected_money = 200;
 
     // A purse throw (`combat.rs:2433`) issues a negative delta.
@@ -2316,7 +2316,7 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 50;
-    engine.mission_domain.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 200;
+    Some(&mut engine.mission_domain.campaign).unwrap().values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
     engine.set_campaign_value(CampaignValue::Ransom, 100);

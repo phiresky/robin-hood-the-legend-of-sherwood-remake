@@ -260,7 +260,7 @@ impl EngineInner {
         let ctx = concussion_ctx_full(
             victim,
             self.world.weather.is_forest_level,
-            self.mission_domain.campaign.as_ref(),
+            Some(&self.mission_domain.campaign),
         );
 
         // Build params and apply damage
@@ -805,7 +805,7 @@ impl EngineInner {
         let ctx = concussion_ctx_full(
             victim,
             self.world.weather.is_forest_level,
-            self.mission_domain.campaign.as_ref(),
+            Some(&self.mission_domain.campaign),
         );
         let max_lp = get_max_life_points(victim);
 
@@ -927,7 +927,7 @@ impl EngineInner {
         let ctx = concussion_ctx_full(
             victim,
             self.world.weather.is_forest_level,
-            self.mission_domain.campaign.as_ref(),
+            Some(&self.mission_domain.campaign),
         );
         let max_lp = get_max_life_points(victim);
 
@@ -1067,7 +1067,7 @@ impl EngineInner {
         let ctx = concussion_ctx_full(
             victim,
             self.world.weather.is_forest_level,
-            self.mission_domain.campaign.as_ref(),
+            Some(&self.mission_domain.campaign),
         );
         let life_points = get_life_points(victim);
         let is_lacklandist = victim.is_soldier()
@@ -1645,23 +1645,14 @@ impl EngineInner {
         let Some(profile_idx) = pc_info else {
             return;
         };
-        let (is_vip, profile_name) = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let (is_vip, profile_name) = Some(&self.mission_domain.campaign)
             .and(assets.profile_manager.get_character(profile_idx))
             .map(|cp| (cp.vip, cp.profile_name.clone()))
             .unwrap_or((false, String::new()));
-        let amulets = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let amulets = Some(&self.mission_domain.campaign)
             .map(|c| c.values[crate::campaign::CampaignValue::Amulets])
             .unwrap_or(0);
-        let char_idx = self
-            .mission_domain
-            .campaign
-            .as_ref()
+        let char_idx = Some(&self.mission_domain.campaign)
             .and_then(|c| c.get_character_by_profile(profile_idx));
 
         // `!is_vip || amulets == 0` forwards the kill message and
@@ -1669,7 +1660,7 @@ impl EngineInner {
         // victim is a VIP — net effect: `dead_pc = victim` iff
         // `is_vip && amulets == 0`.
         if !is_vip || amulets == 0 {
-            if let (Some(idx), Some(c)) = (char_idx, self.mission_domain.campaign.as_mut()) {
+            if let (Some(idx), Some(c)) = (char_idx, Some(&mut self.mission_domain.campaign)) {
                 c.remove_from_gang(idx);
             }
             if is_vip {
@@ -1679,10 +1670,7 @@ impl EngineInner {
 
         // Peasant trumpet + killed-peasant stat.
         if !is_vip {
-            let has_replacement = self
-                .mission_domain
-                .campaign
-                .as_ref()
+            let has_replacement = Some(&self.mission_domain.campaign)
                 .and_then(|c| {
                     c.get_random_peasant_from_gang(Some(profile_idx), &assets.profile_manager)
                 })
@@ -1957,7 +1945,7 @@ impl EngineInner {
             .unwrap_or(false);
         if bump_lacklandist_score
             && !projectile_death
-            && let Some(campaign) = self.mission_domain.campaign.as_mut()
+            && let Some(campaign) = Some(&mut self.mission_domain.campaign)
         {
             campaign.add_value(
                 crate::campaign::CampaignValue::Score,

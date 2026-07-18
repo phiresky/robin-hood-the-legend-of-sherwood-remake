@@ -1892,16 +1892,18 @@ pub async fn run_rust_game(
         replay_args.replay_data = Some(pending.data);
         replay_args.start_paused = replay_args.start_paused || pending.paused;
         let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
-        run_mission(
+        let outcome = run_mission(
             window,
             &mut callbacks,
-            &mut campaign,
+            campaign,
             &profiles,
             idx,
             location,
             &replay_args,
         )
-        .await?;
+        .await;
+        campaign = outcome.campaign;
+        outcome.result?;
         return Ok(0);
     }
 
@@ -1910,16 +1912,18 @@ pub async fn run_rust_game(
     // when present, otherwise append a synthetic profile and launch it.
     if let Some((idx, location)) = force_mission_launch(&mut campaign, &mut profiles, args)? {
         let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
-        run_mission(
+        let outcome = run_mission(
             window,
             &mut callbacks,
-            &mut campaign,
+            campaign,
             &profiles,
             idx,
             location,
             args,
         )
-        .await?;
+        .await;
+        campaign = outcome.campaign;
+        outcome.result?;
         return Ok(0);
     }
 
@@ -1941,16 +1945,18 @@ pub async fn run_rust_game(
         // Demo mission is index 1 (index 0 = Sherwood)
         campaign.current_mission_idx = Some(1);
         let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
-        run_mission(
+        let outcome = run_mission(
             window,
             &mut callbacks,
-            &mut campaign,
+            campaign,
             &profiles,
             1,
             location,
             args,
         )
-        .await?;
+        .await;
+        campaign = outcome.campaign;
+        outcome.result?;
         return Ok(0);
     }
 
@@ -1965,16 +1971,18 @@ pub async fn run_rust_game(
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
         let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
-        run_mission(
+        let outcome = run_mission(
             window,
             &mut callbacks,
-            &mut campaign,
+            campaign,
             &profiles,
             0,
             MissionLocation::Sherwood,
             args,
         )
-        .await?;
+        .await;
+        campaign = outcome.campaign;
+        outcome.result?;
         return Ok(0);
     }
 
@@ -2014,16 +2022,18 @@ pub async fn run_rust_game(
                     campaign.current_mission_idx = Some(idx);
                     let mut callbacks =
                         RustCallbacks::with_application_context(application_context.clone());
-                    run_mission(
+                    let outcome = run_mission(
                         window,
                         &mut callbacks,
-                        &mut campaign,
+                        campaign,
                         &profiles,
                         idx,
                         location,
                         args,
                     )
-                    .await?;
+                    .await;
+                    campaign = outcome.campaign;
+                    outcome.result?;
                     return Ok(0);
                 } else {
                     tracing::warn!(
@@ -2085,23 +2095,26 @@ pub async fn run_rust_game(
                     campaign.current_mission_idx = Some(idx);
                     let mut callbacks =
                         RustCallbacks::with_application_context(application_context.clone());
-                    run_mission(
+                    let outcome = run_mission(
                         window,
                         &mut callbacks,
-                        &mut campaign,
+                        campaign,
                         &profiles,
                         idx,
                         location,
                         args,
                     )
-                    .await?;
+                    .await;
+                    campaign = outcome.campaign;
+                    outcome.result?;
                     tracing::info!("Returned to main menu");
                     continue;
                 }
 
                 // Session always returns to menu (window close causes Quit → QuitToMenu)
-                let SessionResult::QuitToMenu =
-                    run_session(window, &mut campaign, &profiles, args, None).await?;
+                let outcome = run_session(window, campaign, &profiles, args, None).await;
+                campaign = outcome.campaign;
+                let SessionResult::QuitToMenu = outcome.result?;
                 adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu");
             }
@@ -2125,9 +2138,9 @@ pub async fn run_rust_game(
                     );
                 }
                 tracing::info!("Main menu Load: slot={slot}, mission_id={mission_id}");
-                let SessionResult::QuitToMenu = run_session(
+                let outcome = run_session(
                     window,
-                    &mut campaign,
+                    campaign,
                     &profiles,
                     args,
                     Some(SaveLoadRequest::Load {
@@ -2135,7 +2148,9 @@ pub async fn run_rust_game(
                         mission_id,
                     }),
                 )
-                .await?;
+                .await;
+                campaign = outcome.campaign;
+                let SessionResult::QuitToMenu = outcome.result?;
                 adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu from Load");
             }
@@ -2178,8 +2193,9 @@ pub async fn run_rust_game(
                 }
                 mp_args.mp_start_at_epoch_ms = launch.start_at_epoch_ms;
                 mp_args.mp_expected_players = Some(launch.expected_players);
-                let SessionResult::QuitToMenu =
-                    run_session(window, &mut campaign, &profiles, &mp_args, None).await?;
+                let outcome = run_session(window, campaign, &profiles, &mp_args, None).await;
+                campaign = outcome.campaign;
+                let SessionResult::QuitToMenu = outcome.result?;
                 adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu from Multiplayer");
             }
@@ -2259,8 +2275,9 @@ pub async fn run_rust_game(
                     );
                     session_args.rollback_check = false;
                 }
-                let SessionResult::QuitToMenu =
-                    run_session(window, &mut campaign, &profiles, &session_args, None).await?;
+                let outcome = run_session(window, campaign, &profiles, &session_args, None).await;
+                campaign = outcome.campaign;
+                let SessionResult::QuitToMenu = outcome.result?;
                 adopt_legacy_stores_into_context(&application_context)?;
                 drop(mount_guard);
                 tracing::info!("Returned to main menu from CustomMission");
@@ -2348,15 +2365,9 @@ pub async fn run_rust_game_headless(
     };
 
     let mut callbacks = RustCallbacks::with_application_context(application_context);
-    run_mission_headless(
-        &mut callbacks,
-        &mut campaign,
-        &profiles,
-        idx,
-        location,
-        args,
-    )
-    .await?;
+    let outcome =
+        run_mission_headless(&mut callbacks, campaign, &profiles, idx, location, args).await;
+    outcome.result?;
     Ok(0)
 }
 
