@@ -1554,6 +1554,13 @@ impl std::fmt::Debug for MissionScript {
     }
 }
 
+fn nested_actor_function_default(fn_name: &str) -> i32 {
+    match fn_name {
+        "FilterAIEvent" => 1,
+        _ => 0,
+    }
+}
+
 impl MissionScript {
     pub(crate) fn take_legacy_script_domains(&mut self) -> Option<LegacyScriptDomains> {
         self.legacy_script_domains.take()
@@ -1918,7 +1925,12 @@ impl MissionScript {
                 "nested script call depth limit ({}) exceeded; returning base-class default",
                 crate::natives::MAX_NESTED_CALL_DEPTH,
             );
-            if pc.fn_name == "FilterAIEvent" { 1 } else { 0 }
+            nested_actor_function_default(&pc.fn_name)
+        } else if !self.actor_has_function(pc.actor_handle, &pc.fn_name) {
+            // ActorScript's inherited FilterAIEvent body returns one. A
+            // missing Rust instance/override represents that inherited body,
+            // not a script-authored zero result.
+            nested_actor_function_default(&pc.fn_name)
         } else {
             match self.call_actor_function_with_script_this(
                 pc.actor_handle,
@@ -1938,7 +1950,7 @@ impl MissionScript {
                         error = %e,
                         "nested script call failed; returning base-class default (1 for FilterAIEvent, 0 otherwise)",
                     );
-                    if pc.fn_name == "FilterAIEvent" { 1 } else { 0 }
+                    nested_actor_function_default(&pc.fn_name)
                 }
             }
         };

@@ -230,6 +230,42 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
 }
 
 #[test]
+fn script_send_message_callback_completes_before_sequence_launch_returns() {
+    let (mut engine, _receiver, handle) = engine_with_receiver();
+    let assets = LevelAssets::new();
+
+    // Original: RHScript::SendMessage calls LaunchSequenceElement, whose
+    // RHCOMMAND_SEND_MESSAGE ExecutedImmediately path invokes ProcessMessage
+    // inline (RHScript.cpp:6846-6865; RHsequenceelement.cpp:736-777).
+    engine.launch_script_send_message(&assets, handle, 314, 0, 0);
+
+    assert_eq!(
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .expect("script installed")
+            .state
+            .globals
+            .get(&900),
+        Some(&314),
+        "the nested ProcessMessage mutation must be visible when sequence launch returns"
+    );
+    let send = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .find(|element| element.command == Command::SendMessage)
+        .expect("SendMessage launch should retain its sequence element");
+    assert_eq!(
+        send.state,
+        SequenceState::Terminated,
+        "ProcessMessage and termination both happen inside the launch call"
+    );
+}
+
+#[test]
 fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
     let (mut engine, _receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();

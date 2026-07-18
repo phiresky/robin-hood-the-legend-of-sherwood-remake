@@ -591,7 +591,7 @@ impl EngineInner {
     /// deliberately bypasses `Instruct` priority contention and leaves the
     /// actor's current sequence untouched. `ProcessMessage` runs before the
     /// SendMessage element changes from `Todo` to `Terminated`.
-    fn launch_script_send_message(
+    pub(super) fn launch_script_send_message(
         &mut self,
         assets: &LevelAssets,
         actor: i32,
