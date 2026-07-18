@@ -194,49 +194,82 @@ pub struct EngineInner {
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
 
-/// Unwind guard for operations that must temporarily take the campaign out of
-/// `EngineInner` to satisfy Rust's disjoint-borrow rules.
-struct RequiredCampaignGuard {
-    owner: *mut Option<crate::campaign::Campaign>,
-    campaign: Option<crate::campaign::Campaign>,
-    context: String,
+/// Disjoint engine-owned state needed after the entity/coma phases of mission
+/// teardown. The campaign remains borrowed in place from `MissionDomain` for
+/// the entire update; this context owns nothing and needs no unwind repair.
+struct QuitMissionContext<'a> {
+    campaign: &'a mut crate::campaign::Campaign,
+    mission_stat: &'a mut MissionStat,
+    pending_side_effects: &'a mut SideEffects,
+    frame_counter: u32,
+    sim_config: &'a std::cell::Cell<Option<SimConfig>>,
 }
 
-impl RequiredCampaignGuard {
-    fn new(owner: &mut Option<crate::campaign::Campaign>, context: &str) -> Self {
-        let campaign = owner
-            .take()
-            .unwrap_or_else(|| panic!("{context}: active campaign is missing"));
-        Self {
-            owner,
-            campaign: Some(campaign),
-            context: context.to_owned(),
+impl QuitMissionContext<'_> {
+    fn apply_won_updates(
+        &mut self,
+        profiles: &crate::profiles::ProfileManager,
+        living: u32,
+        dead: u32,
+        tied_score: i32,
+    ) {
+        sync_mission_stats_to_campaign(self.mission_stat, self.campaign);
+
+        self.add_campaign_value(crate::campaign::CampaignValue::Score, tied_score);
+
+        let idx = self
+            .campaign
+            .current_mission_idx
+            .expect("quit-mission updates: current mission disappeared");
+        let mission_type = self.campaign.missions[idx].profile(profiles).mission_type;
+        if mission_type != crate::profiles::MissionType::Ambush {
+            self.add_campaign_value(crate::campaign::CampaignValue::Score, 1000);
         }
+
+        // Original provenance: `original-code/RHengine.cpp:16381-16398`
+        // reads difficulty only after the score updates above.
+        let difficulty = self
+            .sim_config
+            .get()
+            .expect(
+                "engine gameplay requires SimConfig; Game must attach its application context before ticking",
+            )
+            .difficulty;
+        let recruited = self
+            .campaign
+            .recruit_post_mission_peasants(living, dead, difficulty, profiles);
+        self.mission_stat.new_peasant_count = recruited;
+        tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
+
+        self.campaign.consume_blazons_post_mission(profiles);
     }
 
-    fn campaign_mut(&mut self) -> &mut crate::campaign::Campaign {
-        self.campaign
-            .as_mut()
-            .expect("required campaign guard already restored its campaign")
+    fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
+        self.campaign.values[name] += amount;
+        EngineInner::apply_value_add_side_effects(
+            self.mission_stat,
+            self.pending_side_effects,
+            self.frame_counter,
+            name,
+            amount,
+        );
     }
 }
 
-impl Drop for RequiredCampaignGuard {
-    fn drop(&mut self) {
-        // SAFETY: `owner` points to the
-        // `EngineInner::mission_domain.campaign` field that created this
-        // guard. The guard never dereferences it while the closure's
-        // `&mut EngineInner` is live; Drop runs only after that call has
-        // returned or started unwinding, and the borrowed EngineInner cannot
-        // move during the call.
-        let owner = unsafe { &mut *self.owner };
-        assert!(
-            owner.is_none(),
-            "{}: operation installed a second campaign",
-            self.context
-        );
-        *owner = self.campaign.take();
-    }
+fn sync_mission_stats_to_campaign(
+    mission_stat: &MissionStat,
+    campaign: &mut crate::campaign::Campaign,
+) {
+    campaign.add_value(
+        crate::campaign::CampaignValue::LivingSoldiers,
+        mission_stat.living_soldier_count as i32,
+    );
+    campaign.add_value(
+        crate::campaign::CampaignValue::DeadSoldiers,
+        mission_stat
+            .total_soldier_count
+            .saturating_sub(mission_stat.living_soldier_count) as i32,
+    );
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
@@ -608,58 +641,62 @@ impl EngineInner {
     /// blazons.  Called from the game session loop when the engine tick
     /// signals mission end, before the debriefing is shown.
     ///
-    /// The campaign is passed separately because the host has `take()`n
-    /// it out of `self.mission_domain.campaign` to avoid aliasing `&mut EngineInner`.
-    pub(crate) fn apply_quit_mission_updates_inner(
+    pub(crate) fn apply_quit_mission_updates(
         &mut self,
         assets: &LevelAssets,
         exit_code: crate::game_operation::GameCode,
-        campaign: &mut crate::campaign::Campaign,
     ) {
         let won = exit_code == crate::game_operation::GameCode::LevelSucceeded;
 
         let profiles = &assets.profile_manager;
+        let campaign = self
+            .mission_domain
+            .required_campaign_mut("quit-mission updates");
         if campaign.current_mission_idx.is_some() {
             campaign.set_mission_done(won, None, profiles);
         }
 
         let (living, dead) = self.count_soldiers_at_quit();
 
-        self.reset_all_pc_comas(assets, campaign);
+        self.reset_all_pc_comas(assets);
 
-        if won && campaign.current_mission_idx.is_some() {
+        if won
+            && self
+                .mission_domain
+                .required_campaign("quit-mission updates")
+                .current_mission_idx
+                .is_some()
+        {
             // The LIVING/DEAD/SCORE `AddValue` calls are gated on
             // `mission_won` — a lost mission must NOT accumulate these
             // totals onto the campaign.
-            self.sync_stats_to_campaign(campaign);
-
             let tied_score = self.score_tied_unconscious_soldiers();
-            self.add_campaign_value_to(campaign, crate::campaign::CampaignValue::Score, tied_score);
-
-            let idx = campaign.current_mission_idx.unwrap();
-            let mission_type = campaign.missions[idx].profile(profiles).mission_type;
-            if mission_type != crate::profiles::MissionType::Ambush {
-                self.add_campaign_value_to(campaign, crate::campaign::CampaignValue::Score, 1000);
-            }
-
-            // Original provenance: `original-code/RHengine.cpp:16381-16398`
-            // reads the active profile difficulty to scale post-mission
-            // warcrime recruitment. The Rust engine receives that value in
-            // `SimConfig` before the tick, so two simultaneous game contexts
-            // cannot observe one another's active profile.
-            let difficulty = self.required_sim_config().difficulty;
-
-            let recruited =
-                campaign.recruit_post_mission_peasants(living, dead, difficulty, profiles);
-            // Assign the recruited-peasant count once, after the recruit
-            // loop, replacing any prior accumulation on the field.
-            self.mission_domain.mission_stat.new_peasant_count = recruited;
-            tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
-
-            campaign.consume_blazons_post_mission(profiles);
+            self.quit_mission_context()
+                .apply_won_updates(profiles, living, dead, tied_score);
         } else {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
+        }
+    }
+
+    /// Split-borrow the engine owners used by the campaign-only tail of
+    /// mission teardown. This deliberately cannot expose `&mut EngineInner`.
+    fn quit_mission_context(&mut self) -> QuitMissionContext<'_> {
+        let Self {
+            sim_config,
+            mission_domain,
+            control,
+            feedback,
+            ..
+        } = self;
+        let (campaign, mission_stat) =
+            mission_domain.required_campaign_and_stat("quit-mission updates");
+        QuitMissionContext {
+            campaign,
+            mission_stat,
+            pending_side_effects: &mut feedback.pending_side_effects,
+            frame_counter: control.frame_counter,
+            sim_config,
         }
     }
 
@@ -670,47 +707,11 @@ impl EngineInner {
         self.sim_config.set(Some(config));
     }
 
-    fn required_sim_config(&self) -> SimConfig {
-        self.sim_config.get().expect(
-            "engine gameplay requires SimConfig; Game must attach its application context before ticking",
-        )
-    }
-
     /// Compute score bonus for living enemy soldiers that are tied or
     /// unconscious: iterates all Lacklandist soldiers, adds
     /// `SCORE_SOLDIER_TIED_AND_UNCONSCIOUS` (70) for each living soldier
     /// that is tied or unconscious.
     ///
-    /// Run the end-of-mission updates using the campaign the engine
-    /// owns.  Dispatched via [`PlayerCommand::ApplyQuitMissionUpdates`]
-    /// once the tick signals mission end and before the debriefing is
-    /// shown.
-    pub(crate) fn apply_quit_mission_updates(
-        &mut self,
-        assets: &LevelAssets,
-        exit_code: crate::game_operation::GameCode,
-    ) {
-        self.with_required_campaign("quit-mission updates", |engine, campaign| {
-            engine.apply_quit_mission_updates_inner(assets, exit_code, campaign);
-        });
-    }
-
-    /// Temporarily move the required active campaign aside while an operation
-    /// needs both `&mut EngineInner` and `&mut Campaign`.
-    ///
-    /// The campaign is put back before an error panic resumes unwinding.  This
-    /// is the Rust ownership equivalent of the original process-wide
-    /// `RHCampaign::mpCampaign`, which remains the same object throughout
-    /// `RHGame` calls.
-    fn with_required_campaign<R>(
-        &mut self,
-        context: &str,
-        f: impl FnOnce(&mut Self, &mut crate::campaign::Campaign) -> R,
-    ) -> R {
-        let mut campaign = RequiredCampaignGuard::new(&mut self.mission_domain.campaign, context);
-        f(self, campaign.campaign_mut())
-    }
-
     pub fn score_tied_unconscious_soldiers(&self) -> i32 {
         use crate::element::{Actor as _, Camp, Human as _};
         const SCORE_SOLDIER_TIED_AND_UNCONSCIOUS: i32 = 70;
@@ -769,25 +770,25 @@ impl EngineInner {
     ///
     /// Iterates all PCs and calls ResetComa on any that are in coma
     /// (amulet death-save).
-    pub(crate) fn reset_all_pc_comas(
-        &mut self,
-        assets: &LevelAssets,
-        campaign: &crate::campaign::Campaign,
-    ) {
-        let coma_pc_ids: Vec<EntityId> = self
-            .world
-            .pc_ids
-            .iter()
-            .copied()
-            .filter(|&pc_id| match self.get_entity(pc_id) {
-                Some(Entity::Pc(pc)) => campaign
-                    .characters
-                    .get(usize::from(pc.pc.profile_index))
-                    .map(|desc| desc.status.in_coma)
-                    .unwrap_or(false),
-                _ => false,
-            })
-            .collect();
+    pub(crate) fn reset_all_pc_comas(&mut self, assets: &LevelAssets) {
+        let coma_pc_ids: Vec<EntityId> = {
+            let campaign = self
+                .mission_domain
+                .required_campaign("quit-mission updates");
+            self.world
+                .pc_ids
+                .iter()
+                .copied()
+                .filter(|&pc_id| match self.world.entities.get(pc_id) {
+                    Some(Entity::Pc(pc)) => campaign
+                        .characters
+                        .get(usize::from(pc.pc.profile_index))
+                        .map(|desc| desc.status.in_coma)
+                        .unwrap_or(false),
+                    _ => false,
+                })
+                .collect()
+        };
         for pc_id in coma_pc_ids {
             self.reset_coma(assets, pc_id);
         }
@@ -2593,20 +2594,8 @@ impl EngineInner {
     pub fn bg_animation_ids(&self) -> Vec<EntityId> {
         self.world
             .entities
-            .fxs()
-            .filter_map(|(id, fx)| {
-                (fx.element.position().z == 0.0 && fx.fx.mobile_index.is_none())
-                    .then_some(id.into())
-            })
-            .collect()
-    }
-
-    /// Patch FX entity ids.
-    pub fn patch_fx_ids(&self) -> Vec<EntityId> {
-        self.world
-            .entities
-            .fxs()
-            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(id.into()))
+            .occupied()
+            .filter_map(|(id, entity)| entity.is_background_animation().then_some(id))
             .collect()
     }
 
@@ -3401,8 +3390,8 @@ impl EngineInner {
     /// rollback determinism, but crate-external callers must take care
     /// to only call from script-event sites (right after a
     /// `swap_engine_state` swap-in, before the swap-out), since the
-    /// host's view of entity/AI/fast-grid state is only live during
-    /// that window.
+    /// host's view of entity/fast-grid state is only live during that window.
+    /// Canonical AI-global state is borrowed separately by `NativeContext`.
     ///
     /// Exposed `pub` so the host crate's Lua scripting layer
     /// (`robin_rs::lua_session`) can drive custom-mission Lua events
@@ -3531,25 +3520,6 @@ impl EngineInner {
             name,
             old,
             value,
-        );
-    }
-
-    /// `add_campaign_value` variant for callers that hold the campaign
-    /// separately (e.g. `apply_quit_mission_updates_inner`, which has
-    /// `take()`'d it out of `self.mission_domain.campaign` to avoid aliasing).
-    pub fn add_campaign_value_to(
-        &mut self,
-        campaign: &mut crate::campaign::Campaign,
-        name: crate::campaign::CampaignValue,
-        amount: i32,
-    ) {
-        campaign.values[name] += amount;
-        Self::apply_value_add_side_effects(
-            &mut self.mission_domain.mission_stat,
-            &mut self.feedback.pending_side_effects,
-            self.control.frame_counter,
-            name,
-            amount,
         );
     }
 
@@ -3840,13 +3810,40 @@ impl EngineInner {
 
 #[cfg(test)]
 mod campaign_lifecycle_tests {
-    use super::EngineInner;
+    use std::sync::Arc;
+
+    use super::{EngineInner, LevelAssets, SimConfig};
     use crate::campaign::{Campaign, CampaignValue};
+    use crate::game_operation::GameCode;
+    use crate::mission::{Mission, MissionStatus};
+    use crate::profiles::{MissionProfile, MissionType, ProfileManager};
 
     fn marked_campaign() -> Campaign {
         let mut campaign = Campaign::default();
         campaign.values[CampaignValue::Custom20] = 0x25_25_25;
         campaign
+    }
+
+    fn active_historical_mission() -> (Campaign, LevelAssets) {
+        let mut profiles = ProfileManager::default();
+        profiles.missions.push(MissionProfile {
+            mission_type: MissionType::Historical,
+            min_new_team_members: 0,
+            max_new_team_members: 0,
+            ..MissionProfile::default()
+        });
+
+        let mut mission = Mission::new();
+        mission.profile_idx = Some(0);
+        let mut campaign = marked_campaign();
+        campaign.missions.push(mission);
+        campaign.current_mission_idx = Some(0);
+
+        let assets = LevelAssets {
+            profile_manager: Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        (campaign, assets)
     }
 
     #[test]
@@ -3865,44 +3862,73 @@ mod campaign_lifecycle_tests {
     }
 
     #[test]
-    #[should_panic(expected = "simulated operation panic")]
-    fn temporary_engine_ownership_restores_campaign_during_unwind() {
-        struct VerifyRestoredOnUnwind {
-            engine: *const EngineInner,
-            production_sectors: *const crate::sector_production::SectorProduction,
-        }
+    fn quit_updates_preserve_the_campaign_allocation() {
+        let mut engine = EngineInner::new();
+        let mut campaign = marked_campaign();
+        campaign.production_sectors.reserve_exact(257);
+        assert!(!campaign.production_sectors.is_empty());
+        let production_sectors = campaign.production_sectors.as_ptr();
+        let production_sector_capacity = campaign.production_sectors.capacity();
+        engine.install_campaign(campaign);
 
-        impl Drop for VerifyRestoredOnUnwind {
-            fn drop(&mut self) {
-                // SAFETY: `engine` is a local declared before this verifier.
-                // `RequiredCampaignGuard` is created later inside
-                // `with_required_campaign`, so it restores first during
-                // reverse-order unwinding.
-                let engine = unsafe { &*self.engine };
-                let campaign = engine
-                    .campaign()
-                    .expect("campaign restored before panic resumes");
-                assert_eq!(
-                    campaign.production_sectors.as_ptr(),
-                    self.production_sectors
-                );
-                assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
-                assert_eq!(campaign.values[CampaignValue::Custom19], 41);
-            }
-        }
+        engine.apply_quit_mission_updates(&LevelAssets::default(), GameCode::LevelFailed);
+        let campaign: Campaign = engine.take_campaign();
+
+        assert_eq!(campaign.production_sectors.as_ptr(), production_sectors);
+        assert_eq!(
+            campaign.production_sectors.capacity(),
+            production_sector_capacity
+        );
+        assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
+    }
+
+    #[test]
+    #[should_panic(expected = "quit-mission updates: active campaign is missing")]
+    fn quit_updates_reject_a_missing_required_campaign() {
+        EngineInner::new()
+            .apply_quit_mission_updates(&LevelAssets::default(), GameCode::LevelFailed);
+    }
+
+    #[test]
+    fn successful_quit_updates_keep_original_order_and_state() {
+        let (mut campaign, assets) = active_historical_mission();
+        campaign.values[CampaignValue::LivingSoldiers] = 7;
+        campaign.values[CampaignValue::DeadSoldiers] = 11;
+        campaign.values[CampaignValue::Score] = 13;
 
         let mut engine = EngineInner::new();
-        let campaign = marked_campaign();
-        let production_sectors = campaign.production_sectors.as_ptr();
+        engine.mission_domain.mission_stat.living_soldier_count = 2;
+        engine.mission_domain.mission_stat.total_soldier_count = 5;
+        engine.mission_domain.mission_stat.new_peasant_count = 99;
         engine.install_campaign(campaign);
-        let _verify = VerifyRestoredOnUnwind {
-            engine: &engine,
-            production_sectors,
-        };
-        engine.with_required_campaign("test operation", |_engine, campaign| {
-            campaign.values[CampaignValue::Custom19] = 41;
-            panic!("simulated operation panic");
-        });
+        engine.attach_sim_config(SimConfig::default());
+
+        engine.apply_quit_mission_updates(&assets, GameCode::LevelSucceeded);
+
+        let campaign = engine.campaign().expect("campaign stays installed");
+        assert_eq!(campaign.missions[0].status, MissionStatus::Won);
+        assert_eq!(campaign.values[CampaignValue::LivingSoldiers], 9);
+        assert_eq!(campaign.values[CampaignValue::DeadSoldiers], 14);
+        assert_eq!(campaign.values[CampaignValue::Score], 1013);
+        assert_eq!(engine.mission_domain.mission_stat.added_score, 1000);
+        assert_eq!(engine.mission_domain.mission_stat.new_peasant_count, 0);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "engine gameplay requires SimConfig; Game must attach its application context before ticking"
+    )]
+    fn quit_update_rejects_missing_sim_config_without_detaching_campaign() {
+        let (campaign, assets) = active_historical_mission();
+        let mut engine = EngineInner::new();
+        engine.mission_domain.mission_stat.living_soldier_count = 2;
+        engine.mission_domain.mission_stat.total_soldier_count = 5;
+        engine.mission_domain.mission_stat.new_peasant_count = 77;
+        engine.install_campaign(campaign);
+
+        // The typed quit context borrows the installed campaign in place; no
+        // restoration action is required when this expected panic unwinds.
+        engine.apply_quit_mission_updates(&assets, GameCode::LevelSucceeded);
     }
 
     #[test]

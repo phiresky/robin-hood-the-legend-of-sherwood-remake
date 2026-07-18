@@ -677,6 +677,13 @@ impl EngineInner {
         let mut non_animations: Vec<EntityId> = Vec::new();
 
         for (id, entity) in self.world.entities.occupied() {
+            // RHEngine::AddElement puts elevation-zero FX-base elements only
+            // in marrayBackgroundAnimations. They render once before the
+            // sorted element pass and must not be drawn again over patches.
+            if entity.is_background_animation() {
+                continue;
+            }
+
             // Scrolls whose current status is neither Visible nor
             // Opened are filtered out entirely — Invisible / Taken
             // scrolls don't render, and dropping them from the draw
@@ -954,4 +961,70 @@ fn is_element_behind_polyline(
     // Det(a, b) = a.x * b.y - a.y * b.x
     let det = seg_x * to_y - seg_y * to_x;
     det < 0.0
+}
+
+#[cfg(test)]
+mod display_order_tests {
+    use super::*;
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
+
+    fn fx_entity(
+        position: WorldPoint3D,
+        display_polyline: Vec<MapPoint>,
+        patch_index: Option<crate::patch::PatchIndex>,
+    ) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::Fx,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position(position);
+        Entity::Fx(ElementFx {
+            element,
+            fx: FxData {
+                display_polyline,
+                patch_index,
+                ..Default::default()
+            },
+        })
+    }
+
+    #[test]
+    fn elevation_zero_fx_render_only_in_background_pass() {
+        let mut engine = EngineInner::new();
+        let background = engine.add_entity(fx_entity(
+            WorldPoint3D::new(10.0, 20.0, 0.0),
+            Vec::new(),
+            None,
+        ));
+        let elevated = engine.add_entity(fx_entity(
+            WorldPoint3D::new(10.0, 30.0, 10.0),
+            Vec::new(),
+            None,
+        ));
+
+        assert_eq!(engine.bg_animation_ids(), vec![background]);
+        assert_eq!(engine.compute_display_order().ids, vec![elevated]);
+    }
+
+    #[test]
+    fn elevated_interior_fx_sort_behind_closing_patch() {
+        let mut engine = EngineInner::new();
+        let interior_fire = engine.add_entity(fx_entity(
+            WorldPoint3D::new(100.0, 110.0, 10.0),
+            Vec::new(),
+            None,
+        ));
+        let closing_patch = engine.add_entity(fx_entity(
+            WorldPoint3D::new(100.0, 210.0, 10.0),
+            vec![MapPoint::new(0.0, 150.0), MapPoint::new(300.0, 150.0)],
+            crate::patch::PatchIndex::new(0),
+        ));
+
+        assert_eq!(
+            engine.compute_display_order().ids,
+            vec![interior_fire, closing_patch]
+        );
+    }
 }

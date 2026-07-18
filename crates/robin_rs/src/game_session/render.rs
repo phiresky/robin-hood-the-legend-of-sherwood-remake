@@ -13,9 +13,8 @@ use crate::game_render::{
     render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
     render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
     render_entities_gpu, render_ground_marks, render_listen_ping, render_minimap,
-    render_noise_display, render_patch_fx_gpu, render_ransom_amulet_overlay,
-    render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
-    render_view_cone_overlay,
+    render_noise_display, render_ransom_amulet_overlay, render_selection_outlines_gpu,
+    render_shadow_polygon_sphere_debug, render_trajectory_preview, render_view_cone_overlay,
 };
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
@@ -841,11 +840,10 @@ pub(super) fn render_frame(
     // ═══════════════════════════════════════════════════════════
     renderer.flush_base_layer();
 
-    // C++ parity: RHengine::PerformRefreshAllElements refreshes background
-    // animations/patch FX before ShowDetectionPolygon.  Keep the cone below
-    // sprites, but above those background patches.
+    // C++ parity: RHengine::PerformRefreshAllElements refreshes elevation-zero
+    // background animations before ShowDetectionPolygon. Elevated patch FX
+    // stay in the normal sorted entity pass.
     render_bg_animations_gpu(engine, host, assets, renderer);
-    render_patch_fx_gpu(engine, host, assets, renderer);
 
     // Darken the map inside the selected view element's vision cone (if
     // any). C++ draws this immediately after background animations and

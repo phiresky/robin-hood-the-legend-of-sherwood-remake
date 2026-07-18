@@ -67,6 +67,11 @@ fn call_host_native_with_queries(
     stack: &mut NativeStack,
     queries: NativeQueryViews<'_>,
 ) -> i32 {
+    let ai_global = NativeAiGlobalCapability::new(&mut host.ai_global);
+    let fast_grid_capability = NativeFastGridCapability::new(&mut host.fast_grid);
+    let queries = queries
+        .with_ai_global_capability(&ai_global)
+        .with_fast_grid_capability(&fast_grid_capability);
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
@@ -84,12 +89,17 @@ fn call_bound_host_native(
     native: NativeFn,
     stack: &mut NativeStack,
 ) -> i32 {
+    let ai_global = NativeAiGlobalCapability::new(&mut host.ai_global);
+    let fast_grid_capability = NativeFastGridCapability::new(&mut host.fast_grid);
+    let queries = NativeQueryViews::default()
+        .with_ai_global_capability(&ai_global)
+        .with_fast_grid_capability(&fast_grid_capability);
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         bindings,
-        NativeQueryViews::default(),
+        queries,
     );
     <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native test")
@@ -156,6 +166,8 @@ impl HostFunctions for CampaignGameHost {
 
 struct BoundGameHost {
     host: GameHost,
+    ai_global: crate::ai::AiGlobalState,
+    fast_grid: crate::fast_find_grid::FastFindGrid,
     state: ScriptState,
     script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
@@ -165,6 +177,8 @@ impl BoundGameHost {
     fn new() -> Self {
         Self {
             host: GameHost::new(),
+            ai_global: crate::ai::AiGlobalState::default(),
+            fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             state: ScriptState::default(),
             script_domains: crate::engine::ScriptDomains::default(),
             bindings: AttachedScriptBindings::default(),
@@ -207,12 +221,17 @@ impl std::ops::DerefMut for BoundGameHost {
 
 impl HostFunctions for BoundGameHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        let ai_global = NativeAiGlobalCapability::new(&mut self.ai_global);
+        let fast_grid_capability = NativeFastGridCapability::new(&mut self.fast_grid);
+        let queries = NativeQueryViews::default()
+            .with_ai_global_capability(&ai_global)
+            .with_fast_grid_capability(&fast_grid_capability);
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
             &mut self.script_domains,
             &self.bindings,
-            NativeQueryViews::default(),
+            queries,
         )
         .call(index, stack)
     }
@@ -225,6 +244,22 @@ fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCom
     let stop = vm.run(&prog);
     let mut host = vm.take_host();
     (stop, std::mem::take(&mut host.deferred_commands))
+}
+
+#[test]
+#[should_panic(expected = "script native requires the live canonical AiGlobalState capability")]
+fn ai_native_rejects_missing_canonical_capability() {
+    let mut host = GameHost::new();
+    let mut state = ScriptState::default();
+    let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut context = NativeContext::new(&mut host, &mut state, &mut script_domains);
+    let mut stack = NativeStack::default();
+    stack.push_i32(1);
+    let _ = HostFunctions::call(
+        &mut context,
+        NativeFn::DeleteRepulsivePoint as u32,
+        &mut stack,
+    );
 }
 
 #[test]
@@ -378,6 +413,49 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
     assert_eq!(
         host.door_index_for_goal_sector(99, (20.0, 20.0)),
         Some(crate::gate::DoorIndex(0))
+    );
+}
+
+#[test]
+fn path_expansion_sector_queries_use_borrowed_fast_grid_allocation() {
+    let mut host = BoundGameHost::new();
+    host.fast_grid.add_sector(
+        crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 2,
+            sector_number: crate::sector::SectorNumber::new(77),
+            door_index: None,
+            lift_type: Some(crate::sector::LiftType::Ladder),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        },
+        2,
+    );
+    let canonical_grid = std::ptr::addr_of!(host.fast_grid);
+    let capability = NativeFastGridCapability::new(&mut host.fast_grid);
+    let queries = NativeQueryViews::default().with_fast_grid_capability(&capability);
+    let context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        &host.bindings,
+        queries,
+    );
+
+    assert_eq!(std::ptr::from_ref(context.fast_grid()), canonical_grid);
+    assert!(context.sector_is_ladder_lift(77));
+    assert_eq!(
+        context.sector_lift_type(crate::sector::SectorNumber::new(77)),
+        Some(crate::sector::LiftType::Ladder)
     );
 }
 

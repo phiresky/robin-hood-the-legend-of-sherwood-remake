@@ -486,7 +486,8 @@ impl Engine {
     /// can drive custom-mission Lua events against the same
     /// `GameHost` the `.scb` VM uses. Only safe to call from
     /// script-event windows (right after `swap_engine_state`
-    /// install, before swap-out) — see the doc on
+    /// installs the entity/grid adapter, before swap-out); AI-global state is
+    /// passed through the accompanying `NativeQueryViews` capability. See
     /// [`EngineInner::mission_script_game_host_mut`].
     pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
         self.inner.mission_script_game_host_mut()
@@ -926,7 +927,10 @@ mod tests {
             ..crate::mission::Mission::default()
         });
         campaign.current_mission_idx = Some(0);
-        let missions_ptr = campaign.missions.as_ptr();
+        campaign.missions.reserve_exact(257);
+        assert!(!campaign.missions.is_empty());
+        let missions = campaign.missions.as_ptr();
+        let mission_capacity = campaign.missions.capacity();
 
         let mut assets = LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles);
@@ -971,7 +975,8 @@ mod tests {
             Err(failure) => failure,
         };
         assert!(matches!(error, EngineError::ProfileSpriteLoadFailed { .. }));
-        assert_eq!(returned.missions.as_ptr(), missions_ptr);
+        assert_eq!(returned.missions.as_ptr(), missions);
+        assert_eq!(returned.missions.capacity(), mission_capacity);
         assert_eq!(returned.current_mission_idx, Some(0));
     }
 

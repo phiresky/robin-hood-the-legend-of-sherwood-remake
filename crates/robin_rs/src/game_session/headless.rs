@@ -40,9 +40,9 @@ pub(super) struct HeadlessMission {
 
 /// Why the headless driver requested an outer-session exit.
 ///
-/// Campaign ownership remains in `run_mission_headless`; this value only
-/// supplies the required restore context without centralizing exit policy in
-/// the deterministic runtime.
+/// Campaign return ownership remains in `bootstrap::BuiltHeadlessMission`'s
+/// private lease; this value only supplies the required restore context
+/// without centralizing exit policy in the deterministic runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum HeadlessFrameExit {
     Mission,
@@ -66,7 +66,45 @@ pub(super) struct HeadlessFrameResult {
     pub(super) paused: bool,
 }
 
+/// Terminal result selected by the true-headless driver. The exit reason is
+/// retained until the outer owner returns the campaign lease.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HeadlessMissionOutcome {
+    pub(super) code: GameCode,
+    pub(super) exit: HeadlessFrameExit,
+}
+
 impl HeadlessMission {
+    /// Run the complete true-headless mission without constructing graphical,
+    /// input-device, menu, or native-audio shims.
+    pub(super) async fn run(
+        &mut self,
+        args: &crate::main_entry::CliArgs,
+    ) -> HeadlessMissionOutcome {
+        loop {
+            let frame_result = self.run_frame(args);
+            match frame_result.outcome {
+                FrameOutcome::Exit(code) => {
+                    return HeadlessMissionOutcome {
+                        code,
+                        exit: frame_result
+                            .exit
+                            .expect("runtime exit must have a campaign finalization context"),
+                    };
+                }
+                FrameOutcome::Continue { sleep_ms } if frame_result.paused => {
+                    crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
+                }
+                FrameOutcome::Continue { sleep_ms: 0 } => {
+                    crate::window::yield_to_runtime().await;
+                }
+                FrameOutcome::Continue { sleep_ms } => {
+                    crate::window::sleep_ms(u64::from(sleep_ms)).await;
+                }
+            }
+        }
+    }
+
     /// Run one complete true-headless frame.
     ///
     /// The method is deliberately a short ordered list of the headless

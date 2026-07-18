@@ -441,6 +441,8 @@ fn q_aff1_native_get_return(dst: u16) -> Quad {
 
 const TMP1: u16 = 0xC004;
 const TMP2: u16 = 0xC008;
+const TMP3: u16 = 0xC00C;
+const TMP4: u16 = 0xC010;
 
 /// Build an SCB with two classes:
 ///  - `OuterCaller::FilterAIEvent(prototype, source, event)` invokes
@@ -695,6 +697,75 @@ fn build_nested_entity_mutation_scb() -> ScbFile {
         q_native_param(TMP1),
         q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
         q_aff1_native_get_return(TMP0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+
+    scb
+}
+
+/// Variant where the outer callback adds a canonical AI repulsive point and
+/// passes its generated id through `PrototypeFilterEvent`; the nested callback
+/// deletes that same point before the outer VM resumes.
+fn build_nested_ai_global_mutation_scb() -> ScbFile {
+    let mut scb = build_nested_scb();
+
+    let outer = scb
+        .classes
+        .iter_mut()
+        .find(|class| class.class_name == "OuterCaller")
+        .expect("nested fixture has OuterCaller");
+    let outer_filter = outer
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "FilterAIEvent")
+        .expect("OuterCaller has FilterAIEvent");
+    outer_filter.size_of_temporary = 20;
+    outer.quads.truncate(outer_filter.address as usize);
+    outer.quads.extend([
+        q_begin_function(0, 5),
+        q_aff1_get_param(TMP0, 0),
+        q_aff0_iconstant(
+            TMP1,
+            crate::natives::GameHost::location_handle_from_index(0),
+        ),
+        q_aff0_iconstant(TMP2, 10.0_f32.to_bits() as i32),
+        q_aff0_iconstant(TMP3, 20.0_f32.to_bits() as i32),
+        q_aff0_iconstant(TMP4, 0),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_param(TMP4),
+        q_native_call(crate::natives::NativeFn::AddRepulsivePoint as u32),
+        q_aff1_native_get_return(TMP4),
+        q_aff1_get_param(TMP1, 4),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_param(TMP4),
+        q_native_call(crate::natives::NativeFn::PrototypeFilterEvent as u32),
+        q_aff1_native_get_return(TMP0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+
+    let inner = scb
+        .classes
+        .iter_mut()
+        .find(|class| class.class_name == "InnerTarget")
+        .expect("nested fixture has InnerTarget");
+    let inner_filter = inner
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "FilterAIEvent")
+        .expect("InnerTarget has FilterAIEvent");
+    inner_filter.size_of_temporary = 4;
+    inner.quads.truncate(inner_filter.address as usize);
+    inner.quads.extend([
+        q_begin_function(0, 1),
+        q_aff1_get_param(TMP0, 4),
+        q_native_param(TMP0),
+        q_native_call(crate::natives::NativeFn::DeleteRepulsivePoint as u32),
+        q_aff0_iconstant(TMP0, 42),
         q_return_val(TMP0),
         q_end_function(),
     ]);
@@ -1056,6 +1127,58 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
             .expect("prototype is an NPC")
             .custom_values[3],
         77
+    );
+}
+
+#[test]
+fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
+    let mut script = MissionScript::from_scb(build_nested_ai_global_mutation_scb())
+        .expect("nested AI-global SCB builds");
+    let mut script_domains = crate::engine::ScriptDomains::default();
+    let outer_handle = 1;
+    let prototype_handle = 2;
+    assert!(script.bind_actor(
+        outer_handle,
+        "OuterCaller",
+        &mut script_domains,
+        crate::natives::NativeQueryViews::default()
+    ));
+    assert!(script.bind_actor(
+        prototype_handle,
+        "InnerTarget",
+        &mut script_domains,
+        crate::natives::NativeQueryViews::default()
+    ));
+
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.scripts.mission = Some(script);
+    let mut assets = LevelAssets::new();
+    assets.script_location_count = 1;
+    assets.script_point_count = 1;
+    assets.script_location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+    assets.script_location_layers = std::sync::Arc::new(vec![2]);
+    assets.script_location_sectors = std::sync::Arc::new(vec![44]);
+    engine.attach_script_bindings(&assets);
+
+    let result = engine
+        .with_script_session(&assets, |script, script_domains, queries| {
+            script.call_actor_function(
+                outer_handle,
+                "FilterAIEvent",
+                &[prototype_handle, 0, 0],
+                script_domains,
+                queries,
+            )
+        })
+        .expect("mission script remains installed")
+        .expect("nested AI-global dispatch runs cleanly");
+
+    assert_eq!(result, 42);
+    assert_eq!(engine.ai.global.next_repulsive_point_id, 2);
+    assert!(
+        engine.ai.global.repulsive_points.is_empty(),
+        "the nested callback must delete the point added to canonical AI state before outer resume"
     );
 }
 

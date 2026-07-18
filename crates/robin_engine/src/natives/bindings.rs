@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::coordinates::MapBBox;
-use crate::fast_find_grid::LevelGrid;
 use crate::level_data::RawHikingPath;
 use crate::profiles::ProfileManager;
 use crate::sight_obstacle::SharedSightObstacles;
@@ -15,7 +13,6 @@ use crate::sight_obstacle::SharedSightObstacles;
 pub struct AttachedScriptBindings {
     pub profile_manager: Arc<ProfileManager>,
     pub hiking_paths: Arc<Vec<RawHikingPath>>,
-    pub level_grid: Arc<LevelGrid>,
     pub sight_obstacles: SharedSightObstacles,
     pub script_location_count: usize,
     pub script_point_count: usize,
@@ -61,10 +58,6 @@ impl<'a> ScriptBindings<'a> {
         Self {
             attached: AttachedScriptBindings::empty_ref(),
         }
-    }
-
-    pub fn map_bbox(self) -> MapBBox {
-        self.attached.level_grid.map_bbox
     }
 }
 
