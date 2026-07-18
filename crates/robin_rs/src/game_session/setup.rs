@@ -226,8 +226,9 @@ fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
 /// Load mission-specific sound banks and switch to mission music.
 ///
 /// Loads the FX / menu / exclamation caches, populates the music pool
-/// from the mission profile, and switches the mixer to mission mode
-/// right after the loading screen closes.  Pure host-side work — reads
+/// from the mission profile, and switches the mixer to mission mode after
+/// required script startup and before the loading screen closes. Pure
+/// host-side work — reads
 /// profile/sound metadata off the engine but does not mutate it.
 pub(super) fn setup_mission_audio(
     host: &mut Host,
@@ -428,8 +429,8 @@ pub(super) fn setup_mission_audio(
             location == MissionLocation::Sherwood,
             &engine.sound_sim().sources,
         );
-        // Switch from menu music to mission music after the loading
-        // screen closes.  SetMode(Mission) halts the menu stream and
+        // Switch from menu music to mission music during the final loading
+        // stage. SetMode(Mission) halts the menu stream and
         // re-raises load_music so mission music starts from the pool.
         host.sound.set_mode(SoundMode::Mission, backend);
     }
@@ -528,6 +529,133 @@ fn populate_sound_duration_tables(
 pub(super) struct LoadedInteractiveResources {
     pub(super) level_descriptors: Option<assets_res_descr::LevelDescriptors>,
     pub(super) hud_fonts: Option<HudFonts>,
+}
+
+/// Process-only resources acquired before the deterministic engine is built.
+///
+/// The text and interface archives provide both construction metadata and the
+/// later interactive frontend caches. The optional backend owns the native
+/// audio device. None of these values belongs in an engine snapshot.
+pub(super) struct MissionProcessResources {
+    pub(super) text: ResourceManager,
+    pub(super) cursor: ResourceManager,
+    pub(super) audio_backend: Option<KiraAudioBackend>,
+}
+
+/// Engine-construction resources for true headless mode. This owner contains
+/// no renderer, input device, HUD, menu, font, or native audio backend.
+pub(super) struct HeadlessEngineResources {
+    pub(super) text: ResourceManager,
+    cursor: ResourceManager,
+}
+
+impl HeadlessEngineResources {
+    pub(super) fn load(host: &Host) -> Self {
+        let mut text = ResourceManager::new();
+        if let Err(error) =
+            text.attach_or_from_shipping("Data/Text/Level.res", host.shipping.as_deref())
+        {
+            tracing::warn!("Failed to load text resource file: {error}");
+        }
+
+        let mut cursor = ResourceManager::new();
+        if let Err(error) =
+            cursor.attach_or_from_shipping("Data/Interface/DEFAULT.RES", host.shipping.as_deref())
+        {
+            tracing::warn!("Failed to load cursor resource file: {error}");
+        }
+        Self { text, cursor }
+    }
+
+    pub(super) fn engine_setup_resources(
+        &mut self,
+        host: &mut Host,
+    ) -> (
+        Option<engine_api::GroundMarkSpriteData>,
+        Vec<u16>,
+        Option<engine_api::MinimapWidgetSetup>,
+    ) {
+        let ground_mark_sprite = extract_ground_mark_sprite_data(&mut self.cursor);
+        if let Some(data) = ground_mark_sprite.as_ref() {
+            host.install_trajectory_ground_mark_sprite(data);
+        }
+        (
+            ground_mark_sprite,
+            extract_titbit_row_frame_counts(&mut self.cursor),
+            extract_minimap_widget_setup(&mut self.cursor),
+        )
+    }
+}
+
+impl MissionProcessResources {
+    pub(super) fn load(host: &mut Host, game: &Game) -> Self {
+        let audio_backend = init_audio_backend(host, game);
+
+        let mut text = ResourceManager::new();
+        if let Err(error) =
+            text.attach_or_from_shipping("Data/Text/Level.res", host.shipping.as_deref())
+        {
+            tracing::warn!("Failed to load text resource file: {error}");
+        }
+
+        let mut cursor = ResourceManager::new();
+        if let Err(error) =
+            cursor.attach_or_from_shipping("Data/Interface/DEFAULT.RES", host.shipping.as_deref())
+        {
+            tracing::warn!("Failed to load cursor resource file: {error}");
+        }
+
+        Self {
+            text,
+            cursor,
+            audio_backend,
+        }
+    }
+
+    pub(super) fn engine_setup_resources(
+        &mut self,
+        host: &mut Host,
+    ) -> (
+        Option<engine_api::GroundMarkSpriteData>,
+        Vec<u16>,
+        Option<engine_api::MinimapWidgetSetup>,
+    ) {
+        let ground_mark_sprite = extract_ground_mark_sprite_data(&mut self.cursor);
+        if let Some(data) = ground_mark_sprite.as_ref() {
+            host.install_trajectory_ground_mark_sprite(data);
+        }
+        (
+            ground_mark_sprite,
+            extract_titbit_row_frame_counts(&mut self.cursor),
+            extract_minimap_widget_setup(&mut self.cursor),
+        )
+    }
+
+    pub(super) fn resolve_short_briefings(
+        &mut self,
+        level_descriptors: Option<&assets_res_descr::LevelDescriptors>,
+    ) -> std::collections::HashMap<u32, String> {
+        let Some(descriptor) = level_descriptors else {
+            return std::collections::HashMap::new();
+        };
+        let table_id = descriptor.short_briefing.text_table_id;
+        match self.text.get_string_count(table_id) {
+            Ok(count) => (0..count)
+                .filter_map(|index| {
+                    self.text
+                        .get_string(table_id, index)
+                        .ok()
+                        .map(|text| (index as u32, text.to_string()))
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(
+                    "Short-briefing text table {table_id} unavailable in Level.res: {error}"
+                );
+                std::collections::HashMap::new()
+            }
+        }
+    }
 }
 
 /// Pre-decode the background map + minimap and attach the interface /
