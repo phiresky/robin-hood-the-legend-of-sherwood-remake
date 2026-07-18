@@ -1902,7 +1902,6 @@ pub async fn run_rust_game(
             &replay_args,
         )
         .await;
-        campaign = outcome.campaign;
         outcome.result?;
         return Ok(0);
     }
@@ -1922,7 +1921,6 @@ pub async fn run_rust_game(
             args,
         )
         .await;
-        campaign = outcome.campaign;
         outcome.result?;
         return Ok(0);
     }
@@ -1955,7 +1953,6 @@ pub async fn run_rust_game(
             args,
         )
         .await;
-        campaign = outcome.campaign;
         outcome.result?;
         return Ok(0);
     }
@@ -1981,7 +1978,6 @@ pub async fn run_rust_game(
             args,
         )
         .await;
-        campaign = outcome.campaign;
         outcome.result?;
         return Ok(0);
     }
@@ -2032,7 +2028,6 @@ pub async fn run_rust_game(
                         args,
                     )
                     .await;
-                    campaign = outcome.campaign;
                     outcome.result?;
                     return Ok(0);
                 } else {

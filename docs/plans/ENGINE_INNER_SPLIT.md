@@ -631,6 +631,10 @@ remain immediate; the ten phase trace is identical.
 
 ### PR 7: finish runtime bindings and required campaign
 
+Status: implemented. The live mission domain owns a concrete `Campaign`,
+snapshot decoding requires or migrates one before constructing `EngineInner`,
+and mission teardown consumes the engine to return the same allocation.
+
 Depends on the GameHost mirror-removal work.
 
 Files:

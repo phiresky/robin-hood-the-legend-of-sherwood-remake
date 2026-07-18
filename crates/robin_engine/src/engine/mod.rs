@@ -360,7 +360,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
         let idx = usize::from(pc_data.list_index);
-        let campaign = Some(&self.mission_domain.campaign)?;
+        let campaign = &self.mission_domain.campaign;
         let Some(desc) = campaign.characters.get(idx) else {
             tracing::warn!(
                 "PC status index {} out of range for profile {}",
@@ -386,7 +386,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<&crate::campaign::PcDescription> {
         let idx = self.pc_description_index_for_pc_data(pc_data)?;
-        Some(&self.mission_domain.campaign)?.characters.get(idx)
+        self.mission_domain.campaign.characters.get(idx)
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
@@ -400,18 +400,16 @@ impl EngineInner {
         self.migrate_legacy_script_custom_values();
     }
 
-    /// Create a new engine instance.
-    ///
-    /// Replicates the state setup of the original engine constructor.
-    /// Subsystem creation is deferred to stubs.
-    ///
-    /// `pub(crate)` — downstream crates construct through [`Engine::new`]
-    /// (the facade wrapper), never by reaching in here.
+    /// Test fixture constructor. Production construction always supplies the
+    /// concrete campaign through [`Self::new_with_campaign`].
     #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::new_with_campaign(crate::campaign::Campaign::default())
     }
 
+    /// Create the deterministic kernel for a live mission. Downstream crates
+    /// construct through the [`Engine`] facade, so every production path must
+    /// supply the campaign up front.
     pub(crate) fn new_with_campaign(campaign: crate::campaign::Campaign) -> Self {
         // Engine starts with canonical seat 0. This is not "the local
         // player"; every peer has the same seat table, and joined peers
@@ -436,12 +434,6 @@ impl EngineInner {
         }
     }
 
-    /// Create the deterministic kernel for a live mission.
-    ///
-    /// Bare `EngineInner::new` remains available inside this crate for focused
-    /// subsystem tests and snapshot migration, but the public [`Engine`]
-    /// facade always enters through this constructor so a tick-capable engine
-    /// cannot begin life without its campaign.
     /// Post-load initialization: scripts, AI, animation preloading.
     ///
     /// Called from `Engine::new` after level loading is complete.
@@ -599,7 +591,7 @@ impl EngineInner {
 
     /// Get the current mission's type from the campaign, if available.
     pub fn mission_type(&self, profiles: &crate::profiles::ProfileManager) -> Option<MissionType> {
-        let campaign = Some(&self.mission_domain.campaign)?;
+        let campaign = &self.mission_domain.campaign;
         let idx = campaign.current_mission_idx?;
         Some(campaign.missions.get(idx)?.profile(profiles).mission_type)
     }
@@ -2918,7 +2910,7 @@ impl EngineInner {
 
     /// `true` when the current mission is the Sherwood (HQ) hideout.
     pub fn is_sherwood(&self, profiles: &crate::profiles::ProfileManager) -> bool {
-        Some(&self.mission_domain.campaign).is_some_and(|c| self.is_sherwood_mission(c, profiles))
+        self.is_sherwood_mission(&self.mission_domain.campaign, profiles)
     }
 
     /// Build a fresh `Order` (via `alloc_order_id` for the id) and push
@@ -3245,10 +3237,7 @@ impl EngineInner {
         &mut self,
         profiles: &crate::profiles::ProfileManager,
     ) {
-        let Some(campaign) = Some(&self.mission_domain.campaign) else {
-            tracing::warn!("convert_selected_peasants_to_blazons: no campaign");
-            return;
-        };
+        let campaign = &self.mission_domain.campaign;
         let number_to_convert =
             campaign.get_number_of_peasants_to_convert_to_blazons(profiles) as usize;
         let quotation = {
@@ -3302,8 +3291,7 @@ impl EngineInner {
                 crate::sim_rng::RngSite::PeasantReservistSurvival,
                 0..LIFEPOINTS_PC_X2,
             ) as i32;
-            let campaign =
-                Some(&mut self.mission_domain.campaign).expect("campaign vanished mid-loop");
+            let campaign = &mut self.mission_domain.campaign;
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
             } else {
@@ -3316,13 +3304,12 @@ impl EngineInner {
         }
 
         // Reset the mission team.
-        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
-            campaign.reset_mission_team();
-            // Credit `floor(number_to_convert / quotation)` blazons.
-            if quotation != 0 {
-                let credited = (number_to_convert as i32) / (quotation as i32);
-                campaign.add_value(crate::campaign::CampaignValue::Blazon, credited);
-            }
+        let campaign = &mut self.mission_domain.campaign;
+        campaign.reset_mission_team();
+        // Credit `floor(number_to_convert / quotation)` blazons.
+        if quotation != 0 {
+            let credited = (number_to_convert as i32) / (quotation as i32);
+            campaign.add_value(crate::campaign::CampaignValue::Blazon, credited);
         }
     }
 
@@ -3464,10 +3451,7 @@ impl EngineInner {
     /// to the per-mission added-score counter.  Other campaign values
     /// have no extra side effects.
     pub fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
-        if false {
-            return;
-        }
-        Some(&mut self.mission_domain.campaign).unwrap().values[name] += amount;
+        self.mission_domain.campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_domain.mission_stat,
             &mut self.feedback.pending_side_effects,
@@ -3482,11 +3466,8 @@ impl EngineInner {
     /// than the old one (and the universal frame counter has advanced
     /// past 0).
     pub fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
-        if false {
-            return;
-        }
-        let old = Some(&self.mission_domain.campaign).unwrap().values[name];
-        Some(&mut self.mission_domain.campaign).unwrap().values[name] = value;
+        let old = self.mission_domain.campaign.values[name];
+        self.mission_domain.campaign.values[name] = value;
         Self::apply_value_set_side_effects(
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
@@ -3536,7 +3517,8 @@ impl EngineInner {
         }
     }
 
-    /// Currently-owned campaign.  `None` outside of a mission.
+    /// Currently-owned campaign. Live engines always return `Some`; the
+    /// optional facade remains until downstream read-only APIs are consolidated.
     pub fn campaign(&self) -> Option<&crate::campaign::Campaign> {
         Some(&self.mission_domain.campaign)
     }

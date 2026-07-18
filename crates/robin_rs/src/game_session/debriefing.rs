@@ -46,7 +46,7 @@ pub(super) fn final_debriefing_outcome_from_replay(
 /// campaign already has no remaining ARES.
 ///
 /// Returns `Some(Quit)` only after the blocking debriefing has closed. The
-/// caller still owns campaign restoration and must finish the mission lease.
+/// caller still owns the mission and must consume it to recover the campaign.
 pub(super) async fn run_lost_sherwood_gate(
     window: &mut GameWindow,
     host: &Host,

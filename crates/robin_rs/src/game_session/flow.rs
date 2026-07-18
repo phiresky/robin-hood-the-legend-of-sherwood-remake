@@ -36,8 +36,8 @@ impl FrameControl {
 }
 /// Existing mission exit decision propagated to the session wrapper.
 ///
-/// This is deliberately only control flow. The outer campaign lease finalizes
-/// every exit after the frame phase which selected it has completed.
+/// This is deliberately only control flow. Consuming mission finalization
+/// returns the engine-owned campaign after the selecting phase completes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct MissionExit {
     code: GameCode,

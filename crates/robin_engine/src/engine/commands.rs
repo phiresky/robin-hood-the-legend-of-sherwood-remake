@@ -3658,7 +3658,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -3715,7 +3715,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {

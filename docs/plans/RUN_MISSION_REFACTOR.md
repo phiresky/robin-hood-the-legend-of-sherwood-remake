@@ -481,6 +481,10 @@ Tests/invariants:
 
 ### PR 6: Centralize operation/save/exit and campaign return
 
+Status: implemented. Mission builders accept `Campaign` by value, all
+controlled setup/runtime outcomes return it in `MissionOutcome`, and the outer
+session returns it in `SessionOutcome` without a borrowed placeholder slot.
+
 Files:
 
 - new `crates/robin_rs/src/game_session/flow.rs`

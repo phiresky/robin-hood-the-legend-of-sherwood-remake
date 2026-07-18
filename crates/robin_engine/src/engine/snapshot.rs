@@ -177,7 +177,10 @@ impl Serialize for EngineInner {
             &self.world.static_sight_obstacle_active,
         )?;
         snapshot.serialize_field("mobile_elements", &self.world.mobile_elements)?;
-        snapshot.serialize_field("campaign", &self.mission_domain.campaign)?;
+        // Preserve the historical Option discriminant in positional bincode
+        // snapshots while the live owner remains non-optional. Human-readable
+        // JSON still serializes `Some(Campaign)` as the same campaign object.
+        snapshot.serialize_field("campaign", &Some(&self.mission_domain.campaign))?;
         snapshot.serialize_field("script_domains", &Some(&self.script_domains))?;
         snapshot.end()
     }
@@ -190,6 +193,12 @@ impl<'de> Deserialize<'de> for EngineInner {
     {
         let snapshot = FlatEngineSnapshot::deserialize(deserializer)?;
         let mut mission_script = snapshot.mission_script;
+        let campaign = snapshot.campaign.or_else(|| {
+            mission_script
+                .as_mut()
+                .and_then(|script| script.legacy_custom_values.as_mut())
+                .and_then(|legacy| legacy.parked_campaign.take())
+        });
         let legacy_script_domains = mission_script
             .as_mut()
             .and_then(super::MissionScript::take_legacy_script_domains);
@@ -299,7 +308,7 @@ impl<'de> Deserialize<'de> for EngineInner {
                 short_briefings: snapshot.short_briefings,
                 mission_stat: snapshot.mission_stat,
                 dead_pc: snapshot.dead_pc,
-                campaign: snapshot.campaign.ok_or_else(|| {
+                campaign: campaign.ok_or_else(|| {
                     serde::de::Error::custom("Engine snapshot has no active campaign")
                 })?,
             },

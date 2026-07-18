@@ -1224,7 +1224,7 @@ impl EngineInner {
     /// state outside of a mission.  Matches the "don't fabricate data"
     /// project rule — failing loudly is better than silently no-opping.
     fn campaign_mut_or_panic(&mut self) -> &mut crate::campaign::Campaign {
-        Some(&mut self.mission_domain.campaign).expect("console: no active campaign to mutate")
+        &mut self.mission_domain.campaign
     }
 }
 
@@ -1344,7 +1344,7 @@ mod tests {
     fn engine_with_campaign() -> (EngineInner, DevState) {
         let dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.mission_domain.campaign = Some(Campaign::new());
+        engine.mission_domain.campaign = Campaign::new();
         (engine, dev)
     }
 

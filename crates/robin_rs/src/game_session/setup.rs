@@ -1321,8 +1321,8 @@ pub(super) fn load_level_and_sprite_bank(
     // hand it off to the engine.
     game.initialize_for_mission(&campaign, &assets.profile_manager);
 
-    // Construct the engine with campaign install + level load folded
-    // in.  The old `Engine::new(w, h)` + `install_campaign` +
+    // Construct the engine with campaign ownership + level load folded
+    // in.  The old split constructor followed by
     // `initialize_from_campaign` + `initialize` sequence collapses to
     // this single call.  Mission script was already loaded inside
     // `load_level()` → `load_mission_script()` so the level loader

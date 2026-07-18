@@ -625,11 +625,10 @@ impl Game {
     /// `process_operation` at different points in the frame.
     pub fn finalize_mission(
         &mut self,
-        engine: &mut Engine,
+        mut engine: Engine,
         assets: &engine_api::LevelAssets,
-        campaign: &mut Campaign,
         callbacks: &mut dyn GameCallbacks,
-    ) -> Option<GameCode> {
+    ) -> (Option<GameCode>, Campaign) {
         // The engine already owns the one required mission campaign. Apply
         // quit updates to that exact allocation, then return it to the test
         // harness's outer owner. Installing the separate placeholder here
@@ -646,10 +645,9 @@ impl Game {
                 difficulty: self.global_options.sim_config().difficulty,
             },
         );
-        *campaign = engine
-            .take_campaign()
-            .expect("finalize_mission: engine campaign is missing after quit updates");
-        self.process_operation(campaign, &assets.profile_manager, callbacks)
+        let mut campaign = engine.into_campaign();
+        let result = self.process_operation(&mut campaign, &assets.profile_manager, callbacks);
+        (result, campaign)
     }
 
     // ── Hourglass / engine tick ─────────────────────────────────────
@@ -1181,10 +1179,9 @@ mod tests {
             ..Default::default()
         });
 
-        let mut campaign = Campaign::default();
         let mut cb = StubCallbacks::default();
 
-        game.finalize_mission(&mut engine, &assets, &mut campaign, &mut cb);
+        let (_result, campaign) = game.finalize_mission(engine, &assets, &mut cb);
 
         assert_eq!(
             campaign.get_value(CampaignValue::Ransom),

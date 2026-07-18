@@ -9635,7 +9635,7 @@ mod drop_ammo_merge_tests {
         };
         desc.status.set_ammo(Action::Bow, bow_ammo);
         campaign.characters.push(desc);
-        engine.mission_domain.campaign = Some(campaign);
+        engine.mission_domain.campaign = campaign;
 
         let mut element = ElementData {
             kind: ElementKind::ActorPc,

@@ -1120,7 +1120,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::new());
+    engine.mission_domain.campaign = Campaign::new();
 
     for _ in 0..25 {
         let result = engine
@@ -1134,8 +1134,6 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
         engine
             .mission_domain
             .campaign
-            .as_ref()
-            .unwrap()
             .get_value(CampaignValue::MissionLength),
         1
     );
@@ -1151,7 +1149,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
 
     let mut campaign = Campaign::new();
     campaign.set_value(CampaignValue::MissionLength, 7);
-    engine.mission_domain.campaign = Some(campaign);
+    engine.mission_domain.campaign = campaign;
 
     engine
         .feedback
@@ -1192,8 +1190,6 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
             engine
                 .mission_domain
                 .campaign
-                .as_ref()
-                .unwrap()
                 .get_value(CampaignValue::MissionLength),
             7
         );
@@ -1452,7 +1448,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
     };
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
@@ -2182,7 +2178,7 @@ fn mission_stat_resets_on_new_mission() {
     let mut assets = LevelAssets::new();
     let mut pending = PendingLevelData::default();
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.mission_domain.mission_stat.add_collected_money(500);
     engine.mission_domain.short_briefings.add(42, true);
 
@@ -2223,7 +2219,7 @@ fn resize_snaps_zoom() {
 fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100; // past frame 0 → jingle gate open
 
     engine.add_campaign_value(CampaignValue::Ransom, 250);
@@ -2232,8 +2228,6 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
         engine
             .mission_domain
             .campaign
-            .as_ref()
-            .unwrap()
             .get_value(CampaignValue::Ransom),
         crate::campaign::INITIAL_RANSOM + 250
     );
@@ -2251,7 +2245,7 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
 #[test]
 fn add_campaign_value_score_credits_mission_stat() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Score, 750);
@@ -2260,8 +2254,6 @@ fn add_campaign_value_score_credits_mission_stat() {
         engine
             .mission_domain
             .campaign
-            .as_ref()
-            .unwrap()
             .get_value(CampaignValue::Score),
         750
     );
@@ -2273,9 +2265,9 @@ fn add_campaign_value_score_credits_mission_stat() {
 #[test]
 fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100;
-    Some(&mut engine.mission_domain.campaign).unwrap().values[CampaignValue::Ransom] = 500;
+    engine.mission_domain.campaign.values[CampaignValue::Ransom] = 500;
     engine.mission_domain.mission_stat.collected_money = 200;
 
     // A purse throw (`combat.rs:2433`) issues a negative delta.
@@ -2285,8 +2277,6 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
         engine
             .mission_domain
             .campaign
-            .as_ref()
-            .unwrap()
             .get_value(CampaignValue::Ransom),
         400
     );
@@ -2301,7 +2291,7 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
     // The `frame_counter > 0` gate ensures the pre-mission seed
     // (initial ransom = 100) doesn't sound a coin chime.
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 0;
 
     engine.add_campaign_value(CampaignValue::Ransom, 100);
@@ -2314,9 +2304,9 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
 fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 50;
-    Some(&mut engine.mission_domain.campaign).unwrap().values[CampaignValue::Ransom] = 200;
+    engine.mission_domain.campaign.values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
     engine.set_campaign_value(CampaignValue::Ransom, 100);
@@ -2339,7 +2329,7 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
 #[test]
 fn add_campaign_value_amulets_has_no_side_effects() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Campaign::default();
     engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Amulets, 3);
@@ -2348,8 +2338,6 @@ fn add_campaign_value_amulets_has_no_side_effects() {
         engine
             .mission_domain
             .campaign
-            .as_ref()
-            .unwrap()
             .get_value(CampaignValue::Amulets),
         3
     );
@@ -7385,7 +7373,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     let mission_script = MissionScript::from_scb(scb).expect("from_scb");
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(mission_script);
 
     let paths = vec![

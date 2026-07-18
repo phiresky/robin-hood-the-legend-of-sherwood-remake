@@ -40,23 +40,10 @@ pub(super) struct HeadlessMission {
 }
 
 /// Why the headless driver requested an outer-session exit.
-///
-/// Campaign return ownership remains in `bootstrap::BuiltHeadlessMission`'s
-/// private lease; this value only supplies the required restore context
-/// without centralizing exit policy in the deterministic runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum HeadlessFrameExit {
     Mission,
     ReplayComplete,
-}
-
-impl HeadlessFrameExit {
-    pub(super) const fn campaign_restore_context(self) -> &'static str {
-        match self {
-            Self::Mission => "headless mission exit",
-            Self::ReplayComplete => "headless replay completion",
-        }
-    }
 }
 
 /// Result of one complete true-headless host iteration.
@@ -67,8 +54,7 @@ pub(super) struct HeadlessFrameResult {
     pub(super) paused: bool,
 }
 
-/// Terminal result selected by the true-headless driver. The exit reason is
-/// retained until the outer owner returns the campaign lease.
+/// Terminal result selected by the true-headless driver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HeadlessMissionOutcome {
     pub(super) code: GameCode,

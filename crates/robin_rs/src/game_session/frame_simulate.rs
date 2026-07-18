@@ -568,8 +568,8 @@ impl InteractiveFrameSimulation {
             // Apply quit-mission updates (stat sync, coma reset,
             // score bonuses, warcrime recruitment, blazon
             // consumption) before showing the debriefing so it
-            // displays correct stats.  The engine internally
-            // takes/restores its owned campaign.
+            // displays correct stats. The command mutates the campaign in
+            // place inside the engine's required mission domain.
             dispatch_local_command(
                 host,
                 &mut manager.engine,
