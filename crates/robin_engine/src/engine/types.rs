@@ -1200,6 +1200,11 @@ struct CompatibleGameHost {
     /// authority again.
     #[serde(rename = "ai_global")]
     _legacy_ai_global: Option<crate::ai::AiGlobalState>,
+    /// Runtime grid parked on pre-Wave-9C GameHost snapshots. The canonical
+    /// grid already serialized on EngineInner, so this compatibility-only
+    /// payload is consumed and discarded during normalization.
+    #[serde(rename = "fast_grid")]
+    _legacy_fast_grid: Option<crate::fast_find_grid::FastFindGrid>,
     campaign: Option<crate::campaign::Campaign>,
     campaign_values: Option<BTreeMap<i32, i32>>,
     npc_values: Option<LegacyNpcValues>,
@@ -2349,16 +2354,11 @@ impl MissionScript {
     }
 
     /// Legacy transfer primitive used by the engine's `ScriptSession` for the
-    /// not-yet-migrated entity and grid owners. AI-global state, campaign, and
-    /// mission statistics remain in `EngineInner` and are borrowed explicitly
-    /// by `NativeContext`.
-    pub(crate) fn swap_engine_state(
-        &mut self,
-        entities: &mut crate::entities::Entities,
-        fast_grid: &mut crate::fast_find_grid::FastFindGrid,
-    ) {
+    /// sole not-yet-migrated owner: entities. AI-global state, the fast grid,
+    /// campaign, and mission statistics stay in `EngineInner` and are borrowed
+    /// explicitly by `NativeContext`.
+    pub(crate) fn swap_engine_state(&mut self, entities: &mut crate::entities::Entities) {
         entities.swap_slots_with(&mut self.game_host.entities);
-        std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
     }
 
     /// Call the script's `Hourglass` function (once per game-second).

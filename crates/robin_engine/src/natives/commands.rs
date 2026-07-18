@@ -92,11 +92,6 @@ pub enum EngineCommand {
     /// into `pending_side_effects.pending_mark_pc_ids` for the host to
     /// pick up this frame.
     MarkPc { actor_handle: i32 },
-    /// Toggle the door's clickable polygon sector in the fast grid.
-    /// The native arm can't reach into `fast_grid.sector_active`
-    /// directly, so the engine-side handler finds the sector whose
-    /// `door_index` matches and calls `set_sector_active`.
-    ActivateDoorMouseSector { door_handle: i32, active: bool },
     /// Fire a scripted `MakeNoise`: broadcast a one-shot noise from a
     /// location so nearby NPCs react.  `layer` is the noise's world
     /// layer; volume is derived from the noise type using the

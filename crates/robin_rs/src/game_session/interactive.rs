@@ -8,7 +8,10 @@
 use super::modal_state::ActiveModal;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
-use super::setup::MissionSprites;
+use super::setup::{
+    LoadedInteractiveResources, MissionProcessResources, MissionSprites, load_mission_sprites,
+    setup_input_and_camera,
+};
 use super::tick::tick_audio;
 use crate::Host;
 use crate::audio_backend::KiraAudioBackend;
@@ -32,6 +35,8 @@ use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker};
 use robin_assets::res_descr::LevelDescriptors;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::engine_manager::EngineManager;
+use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::profiles::MissionLocation;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -197,6 +202,212 @@ pub(super) struct MissionPresentation {
     pub(super) sprites: MissionSprites,
 }
 
+/// Renderer settings resolved before the loading screen is created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MissionRendererConfig {
+    pub(super) scale_mode: TextureScaleMode,
+    pub(super) shader_preset: String,
+}
+
+/// Renderer-only stage. This value can only be constructed after the loading
+/// screen owner has been consumed, making the GPU ownership handoff explicit.
+pub(super) struct InteractiveRendererAssembly {
+    renderer: Renderer,
+}
+
+impl InteractiveRendererAssembly {
+    pub(super) fn new_after_loading_screen(
+        window: &mut crate::window::GameWindow,
+        config: MissionRendererConfig,
+    ) -> Self {
+        let render_w = window.width as u16;
+        let render_h = window.height as u16;
+        window.set_logical_size(u32::from(render_w), u32::from(render_h));
+        let mut renderer = Renderer::new(window, render_w, render_h, config.scale_mode);
+        renderer.set_shader_preset(config.shader_preset);
+        Self { renderer }
+    }
+
+    /// Upload the predecoded map resources before any HUD/input frontend is
+    /// assembled. Engine dimensions were already established during level
+    /// construction; this stage only transfers host presentation data.
+    pub(super) fn upload_maps(
+        &mut self,
+        engine: &robin_engine::engine::Engine,
+        host: &mut Host,
+        background: Option<robin_engine::engine::level_loading::PreDecodedBackground>,
+        minimap: Option<robin_engine::engine::level_loading::PreDecodedMinimap>,
+    ) {
+        if let Some(decoded) = background {
+            crate::level_loading_host::apply_background_map(
+                engine,
+                host,
+                &mut self.renderer,
+                decoded,
+            );
+        }
+        if let Some(map) = minimap.map(|decoded| {
+            crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded)
+        }) {
+            host.engine_display.setup_minimap_map(
+                map.hit_mask,
+                map.map_size,
+                map.saved_position,
+                f32::from(self.renderer.screen_width()),
+                f32::from(self.renderer.screen_height()),
+            );
+        }
+    }
+
+    /// Consume pre-loop process resources into the complete frontend assembly
+    /// needed by the lost-Sherwood gate. HUD trackers are intentionally added
+    /// only after that gate and campaign-entry setup have succeeded.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn assemble_process_frontend(
+        mut self,
+        window: &mut crate::window::GameWindow,
+        host: &mut Host,
+        game: &Game,
+        engine: &mut robin_engine::engine::Engine,
+        assets: &robin_engine::engine::LevelAssets,
+        process: MissionProcessResources,
+        decoded: LoadedInteractiveResources,
+        short_briefing_strings: HashMap<u32, String>,
+        args: &crate::main_entry::CliArgs,
+        mission_idx: usize,
+        location: MissionLocation,
+    ) -> InteractiveFrontendAssembly {
+        let MissionProcessResources {
+            mut text,
+            mut cursor,
+            audio_backend,
+        } = process;
+        let sprites = load_mission_sprites(
+            engine,
+            host,
+            assets,
+            &mut self.renderer,
+            &mut cursor,
+            &mut text,
+        );
+        let sample_loader = crate::audio_backend::create_sample_loader(std::path::PathBuf::from(
+            &game.global_options.sound_directory,
+        ));
+        let sound_rng = fastrand::Rng::new();
+        let (threaded_input, input_translator) = setup_input_and_camera(
+            engine,
+            host,
+            assets,
+            args,
+            window.width,
+            window.height,
+            mission_idx,
+        );
+        window.grab_mouse(true);
+
+        let menu = IngameMenuResources::new(&mut self.renderer, host.shipping.as_deref());
+        if menu.is_none() {
+            tracing::error!(
+                "In-game menu resources unavailable — pause actions require a successful reload"
+            );
+        }
+
+        InteractiveFrontendAssembly {
+            input: MissionInput::new(threaded_input, input_translator),
+            audio: MissionAudio::new(audio_backend, sample_loader, sound_rng),
+            resources: MissionResources {
+                text,
+                cursor,
+                level_descriptors: decoded.level_descriptors,
+                hud_fonts: decoded.hud_fonts,
+                short_briefing_strings,
+                menu,
+            },
+            ui: MissionUi::new(location != MissionLocation::Sherwood),
+            renderer: self.renderer,
+            sprites,
+            is_sherwood: game.is_sherwood,
+        }
+    }
+}
+
+/// Frontend state complete enough to drive the blocking pre-loop campaign
+/// gate, but not yet promoted to a running mission.
+pub(super) struct InteractiveFrontendAssembly {
+    input: MissionInput,
+    audio: MissionAudio,
+    pub(super) resources: MissionResources,
+    ui: MissionUi,
+    pub(super) renderer: Renderer,
+    pub(super) sprites: MissionSprites,
+    pub(super) is_sherwood: bool,
+}
+
+impl InteractiveFrontendAssembly {
+    /// Add mission HUD ownership only after the lost-campaign gate and
+    /// restart/Sherwood entry setup have completed.
+    pub(super) fn finish(self, width: u32, height: u32) -> InteractiveFrontend {
+        let Self {
+            input,
+            audio,
+            resources,
+            ui,
+            mut renderer,
+            sprites,
+            ..
+        } = self;
+        let mut cursor = resources.cursor;
+
+        let sherwood_sprites = SherwoodButtonSprites::load(&mut cursor, &mut renderer);
+        let sherwood_layout = SherwoodHudLayout::for_resolution(width, height, &sherwood_sprites);
+        let zoom_sprites = ZoomButtonSprites::load(&mut cursor, &mut renderer);
+        let zoom_layout = ZoomHudLayout::for_resolution(width, height, &zoom_sprites);
+        let corner_sprites = CornerButtonSprites::load(&mut cursor, &mut renderer);
+        let corner_layout = CornerHudLayout::for_resolution(
+            renderer.screen_width() as u32,
+            renderer.screen_height() as u32,
+            &corner_sprites,
+        );
+        let stature_sprites = StatureSprites::load(&mut cursor, &mut renderer);
+        let stature_layout = StatureHudLayout::for_resolution(
+            renderer.screen_width() as u32,
+            renderer.screen_height() as u32,
+            &stature_sprites,
+        );
+        let resources = MissionResources {
+            cursor,
+            ..resources
+        };
+
+        InteractiveFrontend {
+            input,
+            audio,
+            resources,
+            ui,
+            hud: MissionHud {
+                sherwood_enable: SherwoodButtonEnable::pre_commit(),
+                sherwood_sprites,
+                sherwood_layout,
+                zoom_sprites,
+                zoom_layout,
+                zoom_tooltip: ZoomTooltipTracker::new(),
+                corner_sprites,
+                corner_layout,
+                corner_tooltip: CornerTooltipTracker::new(),
+                stature_sprites,
+                stature_layout,
+                requirements_tooltip: RequirementsTooltipTracker::new(),
+                blazon_tooltip: BlazonTooltipTracker::new(),
+                stature_tooltip: StatureTooltipTracker::new(),
+                sherwood_tooltip: SherwoodTooltipTracker::new(),
+                pc_action_tooltip: PcActionTooltipTracker::new(),
+                last_cursor_id: crate::resource_ids::RHMOUSE_DEFAULT,
+            },
+            presentation: MissionPresentation { renderer, sprites },
+        }
+    }
+}
+
 /// Copy-only inputs for one short-lived render view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct RenderViewState {
@@ -276,8 +487,9 @@ impl MissionPresentation {
 
 /// Top-level owner for the native-only half of an interactive mission.
 ///
-/// It intentionally has no frame-loop method: callbacks, the window/event
-/// pump, and frame phase ordering remain in `run_mission`.
+/// Frame ordering is implemented on [`InteractiveMission`] in `flow`; this
+/// component owns only mission-lifetime frontend state and never stores the
+/// borrowed window, callbacks, profile manager, or CLI services.
 pub(super) struct InteractiveFrontend {
     pub(super) input: MissionInput,
     pub(super) audio: MissionAudio,

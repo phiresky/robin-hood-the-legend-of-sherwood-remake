@@ -927,7 +927,10 @@ mod tests {
             ..crate::mission::Mission::default()
         });
         campaign.current_mission_idx = Some(0);
-        let missions_ptr = campaign.missions.as_ptr();
+        campaign.missions.reserve_exact(257);
+        assert!(!campaign.missions.is_empty());
+        let missions = campaign.missions.as_ptr();
+        let mission_capacity = campaign.missions.capacity();
 
         let mut assets = LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles);
@@ -972,7 +975,8 @@ mod tests {
             Err(failure) => failure,
         };
         assert!(matches!(error, EngineError::ProfileSpriteLoadFailed { .. }));
-        assert_eq!(returned.missions.as_ptr(), missions_ptr);
+        assert_eq!(returned.missions.as_ptr(), missions);
+        assert_eq!(returned.missions.capacity(), mission_capacity);
         assert_eq!(returned.current_mission_idx, Some(0));
     }
 

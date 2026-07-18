@@ -13,7 +13,6 @@ use super::*;
 pub(super) struct MissionServices<'a> {
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
-    pub(super) campaign: &'a mut Campaign,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
     pub(super) args: &'a crate::main_entry::CliArgs,
 }
@@ -228,7 +227,7 @@ impl InteractiveMission {
 
     /// Apply multiplayer ingress and capture the deterministic pre-command
     /// snapshot before any interactive input mutates the engine.
-    fn begin_interactive_frame(&mut self, args: &crate::main_entry::CliArgs) -> FrameStart {
+    fn begin_interactive_frame(&mut self) -> FrameStart {
         let InteractiveMission { runtime, frontend } = self;
         let MissionRuntime {
             world,
@@ -381,11 +380,9 @@ impl InteractiveMission {
         // Refresh the host-cached back-to-front entity draw order from
         // the current engine state.  Consumed by this frame's input
         // handlers (hit-test via `find_focusable_entity`), render loop,
-        // and titbit Z flush.  Headless replay has no hit-test/render
-        // consumer, so skip the sort there.
-        if !args.headless {
-            host.draw_order = manager.engine.compute_display_order();
-        }
+        // and titbit Z flush. This is the interactive-only driver; true
+        // headless construction never reaches this presentation stage.
+        host.draw_order = manager.engine.compute_display_order();
 
         // Enter the shared runtime's input phase. This captures the
         // rollback/rewind snapshots and replay state hash at the "start of
@@ -417,7 +414,6 @@ impl InteractiveMission {
         state: FramePresentationState,
     ) {
         let callbacks = &mut *services.callbacks;
-        let campaign_ref = &mut *services.campaign;
         let args = services.args;
         let InteractiveMission { runtime, frontend } = self;
         let MissionRuntime {
@@ -493,18 +489,12 @@ impl InteractiveMission {
         // inside `perform_hourglass` so rollback replay re-runs the
         // same mutations. `last_skip_render` carries the
         // fast-forward "skip this frame" decision back to the host.
-        // `--headless` forces the render block off for the entire
-        // mission — same gate as the in-game fast-forward
-        // `host.skip_render` toggle, just sticky.
         // File-backed map exports need normal simulation/PostInitialize frames,
         // not intermediate window presentation. Their requested full-map
         // screenshot is rendered once immediately after the target frame.
         let warming_up_map_export = args.mission_start_map_output.is_some()
             && manager.sim_frame <= args.mission_start_map_frame;
-        let draw_result = if host.skip_render
-            || args.headless
-            || modal_rendered_this_frame
-            || warming_up_map_export
+        let draw_result = if host.skip_render || modal_rendered_this_frame || warming_up_map_export
         {
             1
         } else {
@@ -539,7 +529,10 @@ impl InteractiveMission {
                     display_info_elapsed_secs:
                         <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
                             callbacks,
-                            campaign_ref,
+                            manager
+                                .engine
+                                .campaign()
+                                .expect("interactive mission time requires engine campaign"),
                         ),
                 },
             );
@@ -664,13 +657,11 @@ impl InteractiveMission {
     ) -> Result<FramePreparation, String> {
         let window = &mut *services.window;
         let callbacks = &mut *services.callbacks;
-        let campaign_ref = &mut *services.campaign;
         let profiles = services.profiles;
-        let args = services.args;
         let FrameStart {
             mut frame,
             mut mp_clock_pause,
-        } = self.begin_interactive_frame(args);
+        } = self.begin_interactive_frame();
         let modal_rendered_this_frame = false;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
@@ -847,7 +838,6 @@ impl InteractiveMission {
             &events,
             &hud.sherwood_layout,
             &mut hud.sherwood_enable,
-            args.headless,
         )
         .await
         {
@@ -1659,7 +1649,6 @@ impl InteractiveMission {
             .as_ref()
             .is_some_and(|request| request.writes_save_payload())
             && !host.skip_render
-            && !args.headless
             && !modal_rendered_this_frame
         {
             pre_render_engine_setup(manager, host, assets.as_ref(), &mut presentation.renderer);
@@ -1689,7 +1678,10 @@ impl InteractiveMission {
                     display_info_elapsed_secs:
                         <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
                             callbacks,
-                            campaign_ref,
+                            manager
+                                .engine
+                                .campaign()
+                                .expect("save thumbnail requires engine campaign"),
                         ),
                 },
             );
@@ -2150,7 +2142,7 @@ impl InteractiveMission {
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
         // headless auto-dismiss path while retaining normal graphical ticks.
-        let auto_dismiss_modals = args.headless || args.mission_start_map_output.is_some();
+        let auto_dismiss_modals = args.mission_start_map_output.is_some();
         let InteractiveMission { runtime, frontend } = self;
         let MissionRuntime {
             world,
@@ -3085,7 +3077,7 @@ async fn pace_interactive_frame(
     // other host timers don't starve.
     let frame_end_ms = crate::window::process_uptime_ms();
     let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
-    let target = if args.fast_forward || args.headless {
+    let target = if args.fast_forward {
         0
     } else if manager.engine.is_fast_forward() {
         1
@@ -3100,7 +3092,6 @@ async fn pace_interactive_frame(
     let host_deadline_ms = if host.net.is_some()
         && host.local_seat != engine_player_command::PlayerId::HOST
         && !args.fast_forward
-        && !args.headless
     {
         host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
     } else {
@@ -3110,7 +3101,7 @@ async fn pace_interactive_frame(
         frame_end_ms,
         FramePacing {
             fast_forward_requested: args.fast_forward,
-            headless: args.headless,
+            headless: false,
             engine_fast_forward: manager.engine.is_fast_forward(),
             slow_motion: host.slow_motion,
             host_deadline_ms,

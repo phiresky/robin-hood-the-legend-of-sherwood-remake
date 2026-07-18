@@ -3,7 +3,10 @@
 //! confirm the side-effects landed on the host.
 
 use mlua::Lua;
-use robin_engine::natives::{EngineCommand, GameHost, ObjectiveChange, ScriptState};
+use robin_engine::natives::{
+    EngineCommand, GameHost, NativeFastGridCapability, NativeQueryViews, ObjectiveChange,
+    ScriptState,
+};
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 
 fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
@@ -391,6 +394,76 @@ fn host_pointer_and_capabilities_cleared_after_unwind() {
     let _: mlua::Result<()> = state.with_host(&mut host, &mut script_domains, |_lua: &Lua| {
         panic!("deliberate Lua host-scope panic")
     });
+}
+
+/// The erased canonical-grid capability must be scoped together with the other
+/// host pointers. The inline mutation remains on the exact grid allocation
+/// supplied by the caller, while a stale Lua invocation is denied after the
+/// scope returns an error. `HostAttachment` uses the same RAII cleanup path for
+/// normal return, error, and unwind.
+#[test]
+fn grid_capability_is_scoped_and_restored_after_lua_error() {
+    let (state, _dir) = fresh_state();
+    let mut host = GameHost::new();
+    let mut domains_json = serde_json::to_value(robin_engine::engine::ScriptDomains::default())
+        .expect("serialize script-domain fixture");
+    domains_json["interactables"]["doors"] =
+        serde_json::json!([robin_engine::gate::Door::default()]);
+    let mut script_domains = serde_json::from_value(domains_json)
+        .expect("deserialize script-domain fixture with one door");
+    let mut script_state = ScriptState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    fast_grid.add_sector(
+        robin_engine::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: robin_engine::coordinates::MapBBox::new(),
+            sector_type: robin_engine::sector::SectorType::DOOR,
+            layer: 0,
+            sector_number: robin_engine::sector::SectorNumber::new(1),
+            door_index: Some(0),
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        },
+        0,
+    );
+    let door = GameHost::door_handle_from_index(0);
+    let capability = NativeFastGridCapability::new(&mut fast_grid);
+    let queries = NativeQueryViews::default().with_fast_grid_capability(&capability);
+    let result: mlua::Result<()> = state.with_host_state_and_bindings(
+        &mut host,
+        &mut script_state,
+        &mut script_domains,
+        robin_engine::natives::AttachedScriptBindings::empty_ref(),
+        queries,
+        |lua: &Lua| {
+            lua.load(format!("ActivateDoorMouseSector(false, {door})"))
+                .exec()?;
+            Err(mlua::Error::RuntimeError(
+                "deliberate Lua host-scope error".into(),
+            ))
+        },
+    );
+    assert!(result.is_err(), "Lua host-scope error must propagate");
+    drop(capability);
+
+    assert!(
+        !fast_grid.is_sector_active(0),
+        "synchronous mutation must remain on the caller's canonical grid"
+    );
+    let stale = state
+        .lua()
+        .load(format!("ActivateDoorMouseSector(true, {door})"))
+        .exec()
+        .expect_err("Lua grid native retained a stale HostPtr after unwind");
+    assert!(stale.to_string().contains("no GameHost attached"));
 }
 
 /// Reject a nested attachment before it can replace the outer scope's raw
