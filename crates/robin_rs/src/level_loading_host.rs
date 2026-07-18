@@ -200,13 +200,18 @@ pub fn apply_background_map(
         decoded.height
     );
 
-    // Upload each mask's static binary alpha once. Masked draws sample a
-    // pre-sprite scene snapshot, avoiding per-blit texture uploads while
-    // preserving dynamic building patches beneath actors.
+    // Upload each mask's static binary alpha once. Masked draws rasterize it
+    // into stencil so occluded sprite fragments never overwrite the scene.
     renderer.clear_mask_alpha_cache();
     let mask_count = engine.fast_grid().level.masks.len();
     for (idx, mask) in engine.fast_grid().level.masks.iter().enumerate() {
-        renderer.upload_mask_alpha(idx as u32, &mask.bitmap, mask.width, mask.height);
+        assert!(
+            renderer.upload_mask_alpha(idx as u32, &mask.bitmap, mask.width, mask.height),
+            "invalid sprite mask {idx}: {}x{} bitmap has {} bytes",
+            mask.width,
+            mask.height,
+            mask.bitmap.len()
+        );
     }
     if mask_count > 0 {
         tracing::debug!("Uploaded {} mask alpha textures", mask_count);

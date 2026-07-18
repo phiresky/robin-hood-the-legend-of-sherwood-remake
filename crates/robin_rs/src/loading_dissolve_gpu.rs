@@ -35,6 +35,7 @@ pub(crate) fn build_pipeline(
     bgl_loading_dissolve: &wgpu::BindGroupLayout,
     output_format: wgpu::TextureFormat,
     quad_vertex_stride: u64,
+    depth_stencil_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("loading_dissolve.wgsl"),
@@ -86,7 +87,13 @@ pub(crate) fn build_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: depth_stencil_format,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,

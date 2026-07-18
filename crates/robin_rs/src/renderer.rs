@@ -92,15 +92,13 @@ fn outline_cache_key(bank_id: u32, variant: SpriteVariant, shadow_color: u16) ->
     }
 }
 
-/// Per-mask static GPU state. The mask's binary `bitmap` is uploaded
-/// once at level load as a single-channel R8 texture; per-frame draws
-/// pair it with a pre-sprite scene snapshot in a 2-texture
-/// bind group (`bgl_mask_overlay`) and let `shaders/mask_overlay.wgsl`
-/// restore the occluded pixels in the fragment stage.
+/// Per-mask static GPU state. The binary bitmap is uploaded once as R8 and
+/// rasterized into the stencil buffer immediately before a masked sprite.
 struct MaskAlpha {
-    /// Held alive for `view`'s lifetime; not touched directly on draws.
+    /// Held alive for the bind group's lifetime.
     _texture: wgpu::Texture,
-    view: wgpu::TextureView,
+    _view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
 }
 
 struct BackgroundTexture {
@@ -190,11 +188,6 @@ enum TextureRef {
     /// this queue run, then feeds that snapshot to the RGB565 alpha
     /// shader.
     FramebufferAlpha,
-    /// Queue-only pass boundary used by sprite occlusion. Before the
-    /// following sprite is drawn, pass 1 copies the composited render target
-    /// into `alpha_source_texture`; mask overlays then restore that exact
-    /// pre-sprite scene instead of sampling the immutable level background.
-    SceneSnapshot,
     /// View-cone overlay span. Uses the white texture bind group only to
     /// satisfy the shared quad layout; `fs_view_cone_gradient` reads the
     /// interpolated alpha from `uv.x` and the alert colour from `tint.rgb`.
@@ -202,11 +195,12 @@ enum TextureRef {
     /// One of the per-frame texture views queued by sprite / surface /
     /// mask draws — index into `Renderer::frame_textures`.
     Frame(u32),
-    /// Sprite-occlusion mask overlay. Bind group at
-    /// `frame_texture_bgs[idx]` is the 2-texture
-    /// `(mask_alpha, bg_color, sampler)` layout — must route through
-    /// `mask_overlay_pipeline`, not the regular quad pipeline.
-    MaskOverlayFrame(u32),
+    /// Regular textured quad rejected wherever stencil is non-zero.
+    MaskedFrame(u32),
+    /// Static building mask rasterized into stencil with reference one.
+    MaskAlpha(u32),
+    /// Solid quad that resets the sprite's stencil region to zero.
+    StencilClear,
     /// Loading-screen initial/final/mask dissolve. Bind group at
     /// `frame_texture_bgs[idx]` uses `bgl_loading_dissolve`.
     LoadingDissolveFrame(u32),
@@ -258,9 +252,8 @@ pub struct Renderer {
     gpu_phase_active: bool,
     /// Sprite-frame cache (decompressed sprite GPU textures).
     sprite_cache: SpriteTextureCache,
-    /// Per-mask occlusion alpha textures (R8). Built once per level
-    /// from `RuntimeMask::bitmap`, never re-uploaded per blit — the
-    /// `mask_overlay` pipeline samples a pre-sprite scene snapshot.
+    /// Per-mask occlusion alpha textures (R8), built once per level and
+    /// rasterized into stencil for each affected sprite.
     mask_alpha_cache: HashMap<u32, MaskAlpha>,
     /// Level background map as a persistent immutable GPU texture.
     background_texture: Option<BackgroundTexture>,
@@ -291,6 +284,9 @@ pub struct Renderer {
     /// logical resolution survives whatever shape the WM hands us.
     render_target_texture: wgpu::Texture,
     render_target_view: wgpu::TextureView,
+    /// Transient stencil attachment used to reject masked sprite fragments.
+    _sprite_stencil_texture: wgpu::Texture,
+    sprite_stencil_view: wgpu::TextureView,
     /// Bind group for sampling `render_target_view` in the second
     /// pass (blit to swapchain). Rebuilt on `resize`.
     render_target_bg: wgpu::BindGroup,
@@ -310,10 +306,6 @@ pub struct Renderer {
     /// Bind-group layout for `(texture, sampler)` (group 1 in
     /// `shaders/quad.wgsl`).
     bgl_tex: wgpu::BindGroupLayout,
-    /// Bind-group layout for `(mask_alpha, scene_color, sampler)`
-    /// (group 1 in `shaders/mask_overlay.wgsl`). Mask overlay draws
-    /// build a fresh bind group per call against `alpha_source_view`.
-    bgl_mask_overlay: wgpu::BindGroupLayout,
     /// Cached bind groups for textures we re-use every frame.
     white_bg: wgpu::BindGroup,
     /// Pass-1 (logical-size) screen uniform (group 0 in `shaders/quad.wgsl`).
@@ -330,6 +322,9 @@ pub struct Renderer {
     /// Per-blend-mode RenderPipeline targeting the offscreen RT
     /// (`Rgba8UnormSrgb`), keyed by `blend_index()`.
     pipelines: [Option<wgpu::RenderPipeline>; 4],
+    /// Matching blend pipelines which reject fragments where the
+    /// sprite-occlusion stencil is non-zero.
+    masked_pipelines: [Option<wgpu::RenderPipeline>; 4],
     /// One pipeline targeting the swapchain format, used by the
     /// final letterboxed RT-to-swapchain blit.
     blit_pipeline: wgpu::RenderPipeline,
@@ -343,12 +338,9 @@ pub struct Renderer {
     /// Pipeline for `TextureRef::ViewConeGradient` —
     /// `fs_view_cone_gradient` in `shaders/quad.wgsl`.
     view_cone_pipeline: wgpu::RenderPipeline,
-    /// Pipeline for `TextureRef::MaskOverlayFrame` —
-    /// `shaders/mask_overlay.wgsl`, samples the static mask alpha and
-    /// the live bg texture, outputs premultiplied bg colour through
-    /// `BlendMode::Blend` so the building edges anti-alias against
-    /// the sprite underneath.
-    mask_overlay_pipeline: wgpu::RenderPipeline,
+    /// Color-write-free pipeline that writes sampled building masks into
+    /// stencil and clears them again by drawing the white texture.
+    mask_stencil_pipeline: wgpu::RenderPipeline,
     /// Pipeline for `TextureRef::LoadingDissolveFrame` —
     /// `shaders/loading_dissolve.wgsl`, samples initial/final/mask images.
     loading_dissolve_pipeline: wgpu::RenderPipeline,
@@ -433,46 +425,78 @@ fn make_alpha_source(
     (texture, view, bind_group)
 }
 
-fn make_mask_overlay_bg(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    mask_view: &wgpu::TextureView,
-    bg_view: &wgpu::TextureView,
-    sampler: &wgpu::Sampler,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("mask overlay bg"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(mask_view),
+const SPRITE_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+
+fn sprite_stencil_state(
+    compare: wgpu::CompareFunction,
+    pass_op: wgpu::StencilOperation,
+) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: SPRITE_STENCIL_FORMAT,
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::Always),
+        stencil: wgpu::StencilState {
+            front: wgpu::StencilFaceState {
+                compare,
+                fail_op: wgpu::StencilOperation::Keep,
+                depth_fail_op: wgpu::StencilOperation::Keep,
+                pass_op,
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(bg_view),
+            back: wgpu::StencilFaceState {
+                compare,
+                fail_op: wgpu::StencilOperation::Keep,
+                depth_fail_op: wgpu::StencilOperation::Keep,
+                pass_op,
             },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
+            read_mask: 0xFF,
+            write_mask: if pass_op == wgpu::StencilOperation::Replace {
+                0xFF
+            } else {
+                0
             },
-        ],
-    })
+        },
+        bias: wgpu::DepthBiasState::default(),
+    }
 }
 
-fn build_mask_overlay_pipeline(
+fn make_sprite_stencil_texture(
+    device: &wgpu::Device,
+    width: u16,
+    height: u16,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sprite occlusion stencil"),
+        size: wgpu::Extent3d {
+            width: width as u32,
+            height: height as u32,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: SPRITE_STENCIL_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn build_mask_stencil_pipeline(
     device: &wgpu::Device,
     bgl_screen: &wgpu::BindGroupLayout,
-    bgl_mask_overlay: &wgpu::BindGroupLayout,
+    bgl_tex: &wgpu::BindGroupLayout,
     output_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("mask_overlay.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/mask_overlay.wgsl").into()),
+        label: Some("sprite_mask_stencil.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(
+            include_str!("../shaders/sprite_mask_stencil.wgsl").into(),
+        ),
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("mask overlay layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_mask_overlay)],
+        label: Some("sprite mask stencil layout"),
+        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
         immediate_size: 0,
     });
     let vertex_buffers = [wgpu::VertexBufferLayout {
@@ -497,7 +521,7 @@ fn build_mask_overlay_pipeline(
         ],
     }];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/mask_overlay"),
+        label: Some("quad/sprite_mask_stencil"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: &module,
@@ -510,13 +534,16 @@ fn build_mask_overlay_pipeline(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: output_format,
-                blend: BlendMode::Blend.to_wgpu(),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend: None,
+                write_mask: wgpu::ColorWrites::empty(),
             })],
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: Some(sprite_stencil_state(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Replace,
+        )),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -528,6 +555,8 @@ fn build_quad_pipelines(
     bgl_screen: &wgpu::BindGroupLayout,
     bgl_tex: &wgpu::BindGroupLayout,
     output_format: wgpu::TextureFormat,
+    stencil_attachment: bool,
+    masked: bool,
 ) -> [Option<wgpu::RenderPipeline>; 4] {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("quad.wgsl"),
@@ -561,12 +590,13 @@ fn build_quad_pipelines(
     }];
 
     let mut out: [Option<wgpu::RenderPipeline>; 4] = [None, None, None, None];
-    for &(blend, idx, label) in &[
-        (BlendMode::None, 0usize, "quad/none"),
-        (BlendMode::Blend, 1, "quad/blend"),
-        (BlendMode::Add, 2, "quad/add"),
-        (BlendMode::Mod, 3, "quad/mod"),
+    for &(blend, idx, normal_label, masked_label) in &[
+        (BlendMode::None, 0usize, "quad/none", "quad/masked_none"),
+        (BlendMode::Blend, 1, "quad/blend", "quad/masked_blend"),
+        (BlendMode::Add, 2, "quad/add", "quad/masked_add"),
+        (BlendMode::Mod, 3, "quad/mod", "quad/masked_mod"),
     ] {
+        let label = if masked { masked_label } else { normal_label };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
@@ -587,7 +617,19 @@ fn build_quad_pipelines(
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: if masked {
+                Some(sprite_stencil_state(
+                    wgpu::CompareFunction::Equal,
+                    wgpu::StencilOperation::Keep,
+                ))
+            } else if stencil_attachment {
+                Some(sprite_stencil_state(
+                    wgpu::CompareFunction::Always,
+                    wgpu::StencilOperation::Keep,
+                ))
+            } else {
+                None
+            },
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
@@ -604,6 +646,16 @@ fn blend_index(b: BlendMode) -> usize {
         BlendMode::Blend => 1,
         BlendMode::Add => 2,
         BlendMode::Mod => 3,
+    }
+}
+
+fn mark_draws_stencil_tested(draws: &mut [QueuedDraw]) {
+    for draw in draws {
+        draw.tex = match draw.tex {
+            TextureRef::Frame(index) => TextureRef::MaskedFrame(index),
+            TextureRef::MaskedFrame(index) => TextureRef::MaskedFrame(index),
+            _ => panic!("non-textured draw queued inside a sprite mask region"),
+        };
     }
 }
 
@@ -668,7 +720,10 @@ fn build_colorize_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: Some(sprite_stencil_state(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Keep,
+        )),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -733,7 +788,10 @@ fn build_bg_alpha_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: Some(sprite_stencil_state(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Keep,
+        )),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -798,7 +856,10 @@ fn build_view_cone_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        depth_stencil: Some(sprite_stencil_state(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Keep,
+        )),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -918,39 +979,6 @@ impl Renderer {
                     },
                 ],
             });
-        let bgl_mask_overlay =
-            gpu.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("mask overlay bgl"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
         let bgl_loading_dissolve =
             crate::loading_dissolve_gpu::create_bind_group_layout(&gpu.device);
 
@@ -1000,12 +1028,27 @@ impl Renderer {
             &bgl_screen,
             &bgl_tex,
             wgpu::TextureFormat::Rgba8UnormSrgb,
+            true,
+            false,
         );
-        let blit_pipeline =
-            build_quad_pipelines(&gpu.device, &bgl_screen, &bgl_tex, gpu.surface_format)
-                [blend_index(BlendMode::None)]
-            .clone()
-            .expect("blit pipeline");
+        let masked_pipelines = build_quad_pipelines(
+            &gpu.device,
+            &bgl_screen,
+            &bgl_tex,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            true,
+            true,
+        );
+        let blit_pipeline = build_quad_pipelines(
+            &gpu.device,
+            &bgl_screen,
+            &bgl_tex,
+            gpu.surface_format,
+            false,
+            false,
+        )[blend_index(BlendMode::None)]
+        .clone()
+        .expect("blit pipeline");
         let colorize_pipeline = build_colorize_pipeline(
             &gpu.device,
             &bgl_screen,
@@ -1024,10 +1067,10 @@ impl Renderer {
             &bgl_tex,
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
-        let mask_overlay_pipeline = build_mask_overlay_pipeline(
+        let mask_stencil_pipeline = build_mask_stencil_pipeline(
             &gpu.device,
             &bgl_screen,
-            &bgl_mask_overlay,
+            &bgl_tex,
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         let loading_dissolve_pipeline = crate::loading_dissolve_gpu::build_pipeline(
@@ -1036,6 +1079,7 @@ impl Renderer {
             &bgl_loading_dissolve,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             std::mem::size_of::<QuadVertex>() as u64,
+            SPRITE_STENCIL_FORMAT,
         );
 
         // Offscreen render target at logical size.
@@ -1059,6 +1103,8 @@ impl Renderer {
         });
         let render_target_view =
             render_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (sprite_stencil_texture, sprite_stencil_view) =
+            make_sprite_stencil_texture(&gpu.device, width, height);
         let render_target_bg = make_tex_bg(
             &gpu.device,
             &bgl_tex,
@@ -1092,6 +1138,8 @@ impl Renderer {
             surface_config,
             render_target_texture,
             render_target_view,
+            _sprite_stencil_texture: sprite_stencil_texture,
+            sprite_stencil_view,
             render_target_bg,
             alpha_source_texture,
             alpha_source_view,
@@ -1100,13 +1148,12 @@ impl Renderer {
             colorize_pipeline,
             bg_alpha_pipeline,
             view_cone_pipeline,
-            mask_overlay_pipeline,
+            mask_stencil_pipeline,
             loading_dissolve_pipeline,
             bgl_loading_dissolve,
             sampler,
             _white_view: white_view,
             bgl_tex,
-            bgl_mask_overlay,
             white_bg,
             screen_uniform,
             screen_bg,
@@ -1115,6 +1162,7 @@ impl Renderer {
             vertex_buffer: None,
             vertex_capacity: 0,
             pipelines,
+            masked_pipelines,
             queued: Vec::new(),
             frame_texture_bgs: Vec::new(),
             font_atlas_cache: HashMap::new(),
@@ -1718,76 +1766,38 @@ impl Renderer {
         );
     }
 
-    fn copy_rt_region_to_alpha_source(&self, encoder: &mut wgpu::CommandEncoder, rect: Rect) {
-        let left = rect.left().max(0).min(self.width as i32);
-        let top = rect.top().max(0).min(self.height as i32);
-        let right = rect.right().max(0).min(self.width as i32);
-        let bottom = rect.bottom().max(0).min(self.height as i32);
-        if left >= right || top >= bottom {
-            return;
-        }
-        let origin = wgpu::Origin3d {
-            x: left as u32,
-            y: top as u32,
-            z: 0,
-        };
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.render_target_texture,
-                mip_level: 0,
-                origin,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.alpha_source_texture,
-                mip_level: 0,
-                origin,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: (right - left) as u32,
-                height: (bottom - top) as u32,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-
     /// Encode pass 1: queued draws → offscreen render target. Caller
     /// owns the encoder so it can either follow up with pass 2
     /// (`present`) or with a `copy_texture_to_buffer` (screenshot
     /// readback).
     fn encode_pass1_to_rt(&self, encoder: &mut wgpu::CommandEncoder) {
-        let mut cursor = 0;
-        let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
-        let mut framebuffer_alpha_snapshotted = false;
+        let first_framebuffer_alpha = self
+            .queued
+            .iter()
+            .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
+        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
+            self.encode_pass1_range_to_rt(
+                encoder,
+                0,
+                self.queued.len(),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            );
+            return;
+        };
 
-        loop {
-            let boundary = self.queued[cursor..].iter().position(|draw| {
-                matches!(draw.tex, TextureRef::SceneSnapshot)
-                    || (!framebuffer_alpha_snapshotted
-                        && matches!(draw.tex, TextureRef::FramebufferAlpha))
-            });
-            let Some(relative_boundary) = boundary else {
-                self.encode_pass1_range_to_rt(encoder, cursor, self.queued.len(), load);
-                break;
-            };
-            let boundary = cursor + relative_boundary;
-            self.encode_pass1_range_to_rt(encoder, cursor, boundary, load);
-            load = wgpu::LoadOp::Load;
-
-            match self.queued[boundary].tex {
-                TextureRef::SceneSnapshot => {
-                    self.copy_rt_region_to_alpha_source(encoder, self.queued[boundary].dst);
-                    cursor = boundary + 1;
-                }
-                TextureRef::FramebufferAlpha => {
-                    self.copy_rt_to_alpha_source(encoder);
-                    framebuffer_alpha_snapshotted = true;
-                    cursor = boundary;
-                }
-                _ => unreachable!("pass-1 boundary predicate returned a non-boundary draw"),
-            }
-        }
+        self.encode_pass1_range_to_rt(
+            encoder,
+            0,
+            first_framebuffer_alpha,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+        self.copy_rt_to_alpha_source(encoder);
+        self.encode_pass1_range_to_rt(
+            encoder,
+            first_framebuffer_alpha,
+            self.queued.len(),
+            wgpu::LoadOp::Load,
+        );
     }
 
     fn encode_pass1_range_to_rt(
@@ -1811,7 +1821,14 @@ impl Renderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.sprite_stencil_view,
+                depth_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+            }),
             occlusion_query_set: None,
             timestamp_writes: None,
             multiview_mask: None,
@@ -1831,7 +1848,6 @@ impl Renderer {
         let mut last_frame_idx: Option<u32> = None;
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
-                TextureRef::SceneSnapshot => continue,
                 TextureRef::ColorizeFromFrozen => {
                     if last_pipeline_kind != Some("colorize") {
                         pass.set_pipeline(&self.colorize_pipeline);
@@ -1853,11 +1869,31 @@ impl Renderer {
                         last_blend = None;
                     }
                 }
-                TextureRef::MaskOverlayFrame(_) => {
-                    if last_pipeline_kind != Some("mask_overlay") {
-                        pass.set_pipeline(&self.mask_overlay_pipeline);
-                        last_pipeline_kind = Some("mask_overlay");
+                TextureRef::MaskAlpha(_) | TextureRef::StencilClear => {
+                    if last_pipeline_kind != Some("mask_stencil") {
+                        pass.set_pipeline(&self.mask_stencil_pipeline);
+                        last_pipeline_kind = Some("mask_stencil");
                         last_blend = None;
+                    }
+                    pass.set_stencil_reference(if matches!(d.tex, TextureRef::MaskAlpha(_)) {
+                        1
+                    } else {
+                        0
+                    });
+                }
+                TextureRef::MaskedFrame(_) => {
+                    let bidx = blend_index(d.blend);
+                    let need_rebind_pipe =
+                        last_pipeline_kind != Some("masked_quad") || last_blend != Some(bidx);
+                    if need_rebind_pipe {
+                        if let Some(p) = self.masked_pipelines[bidx].as_ref() {
+                            pass.set_pipeline(p);
+                            pass.set_stencil_reference(0);
+                            last_pipeline_kind = Some("masked_quad");
+                            last_blend = Some(bidx);
+                        } else {
+                            continue;
+                        }
                     }
                 }
                 TextureRef::LoadingDissolveFrame(_) => {
@@ -1883,23 +1919,24 @@ impl Renderer {
                 }
             }
             let need_rebind_tex = match d.tex {
-                TextureRef::SceneSnapshot => continue,
                 TextureRef::White => last_tex != Some("white"),
                 TextureRef::FrozenScene => last_tex != Some("frozen"),
                 TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
                 TextureRef::FramebufferAlpha => last_tex != Some("alpha_source"),
                 TextureRef::ViewConeGradient => last_tex != Some("white"),
-                TextureRef::Frame(idx) => last_tex != Some("frame") || last_frame_idx != Some(idx),
-                TextureRef::MaskOverlayFrame(idx) => {
-                    last_tex != Some("mask_overlay") || last_frame_idx != Some(idx)
+                TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
+                    last_tex != Some("frame") || last_frame_idx != Some(idx)
                 }
+                TextureRef::MaskAlpha(idx) => {
+                    last_tex != Some("mask_alpha") || last_frame_idx != Some(idx)
+                }
+                TextureRef::StencilClear => last_tex != Some("white"),
                 TextureRef::LoadingDissolveFrame(idx) => {
                     last_tex != Some("loading_dissolve") || last_frame_idx != Some(idx)
                 }
             };
             if need_rebind_tex {
                 match d.tex {
-                    TextureRef::SceneSnapshot => continue,
                     TextureRef::White => {
                         pass.set_bind_group(1, &self.white_bg, &[]);
                         last_tex = Some("white");
@@ -1924,7 +1961,7 @@ impl Renderer {
                         last_tex = Some("white");
                         last_frame_idx = None;
                     }
-                    TextureRef::Frame(idx) => {
+                    TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
                         if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
                             pass.set_bind_group(1, bg, &[]);
                             last_tex = Some("frame");
@@ -1933,14 +1970,18 @@ impl Renderer {
                             continue;
                         }
                     }
-                    TextureRef::MaskOverlayFrame(idx) => {
-                        if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
-                            pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("mask_overlay");
-                            last_frame_idx = Some(idx);
-                        } else {
-                            continue;
-                        }
+                    TextureRef::MaskAlpha(idx) => {
+                        let mask = self.mask_alpha_cache.get(&idx).unwrap_or_else(|| {
+                            panic!("missing uploaded sprite mask {idx} during rendering")
+                        });
+                        pass.set_bind_group(1, &mask.bind_group, &[]);
+                        last_tex = Some("mask_alpha");
+                        last_frame_idx = Some(idx);
+                    }
+                    TextureRef::StencilClear => {
+                        pass.set_bind_group(1, &self.white_bg, &[]);
+                        last_tex = Some("white");
+                        last_frame_idx = None;
                     }
                     TextureRef::LoadingDissolveFrame(idx) => {
                         if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
@@ -2260,6 +2301,10 @@ impl Renderer {
         });
         self.render_target_view = rt.create_view(&wgpu::TextureViewDescriptor::default());
         self.render_target_texture = rt;
+        let (sprite_stencil_texture, sprite_stencil_view) =
+            make_sprite_stencil_texture(&self.gpu.device, width, height);
+        self._sprite_stencil_texture = sprite_stencil_texture;
+        self.sprite_stencil_view = sprite_stencil_view;
         self.render_target_bg = make_tex_bg(
             &self.gpu.device,
             &self.bgl_tex,
@@ -2822,10 +2867,9 @@ impl Renderer {
         Some((outline_w as u16, h))
     }
 
-    /// Upload the static binary alpha for a sprite-occlusion mask. Built
-    /// once after the background loads and reused for the life of the
-    /// level. The composited scene beneath each masked sprite is sampled
-    /// from a render-target snapshot, so patch decals remain intact.
+    /// Upload the static binary alpha for a sprite-occlusion mask. It is
+    /// rasterized into stencil for each affected sprite, matching the
+    /// original engine's temporary-sprite transparency operation.
     pub fn upload_mask_alpha(
         &mut self,
         mask_index: u32,
@@ -2882,84 +2926,87 @@ impl Renderer {
             },
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = make_tex_bg(
+            &self.gpu.device,
+            &self.bgl_tex,
+            &view,
+            &self.sampler,
+            "sprite mask alpha bg",
+        );
         self.mask_alpha_cache.insert(
             mask_index,
             MaskAlpha {
                 _texture: tex,
-                view,
+                _view: view,
+                bind_group,
             },
         );
         true
     }
 
-    /// Return a stable insertion point immediately before the next queued
-    /// sprite draw. If that sprite needs occlusion masks, pass the checkpoint
-    /// to [`Self::insert_scene_snapshot`] after resolving the mask list.
+    /// Return a stable insertion point immediately before the next sprite or
+    /// ground-mark draw that may need building occlusion.
     pub(crate) fn draw_queue_checkpoint(&self) -> usize {
         self.queued.len()
     }
 
-    /// Insert a pass boundary before an already-queued masked sprite. Pass 1
-    /// snapshots the scene at this exact point so mask overlays reveal the
-    /// previously composited scene, including dynamic building patches.
-    pub(crate) fn insert_scene_snapshot(&mut self, checkpoint: usize, rect: Rect) {
+    /// Apply the union of `masks` to draws queued since `checkpoint`.
+    ///
+    /// Each mask is written into stencil, the affected draws are switched to
+    /// stencil-tested pipelines, and the clipped sprite rectangle is cleared
+    /// afterward. Masked fragments therefore never touch the framebuffer,
+    /// exactly like the original temporary-sprite masking path.
+    pub(crate) fn mask_queued_draws(
+        &mut self,
+        checkpoint: usize,
+        masks: &[(u32, Rect)],
+        clip_rect: Rect,
+    ) {
         assert!(
             checkpoint <= self.queued.len(),
-            "scene snapshot checkpoint {checkpoint} exceeds draw queue length {}",
+            "sprite mask checkpoint {checkpoint} exceeds draw queue length {}",
             self.queued.len()
         );
-        self.queued.insert(
-            checkpoint,
-            QueuedDraw {
-                dst: rect,
-                corners: None,
-                uv: [0.0, 0.0, 0.0, 0.0],
-                tint: [0.0; 4],
-                tex: TextureRef::SceneSnapshot,
-                blend: BlendMode::None,
-            },
+        if masks.is_empty() {
+            return;
+        }
+        assert!(
+            checkpoint < self.queued.len(),
+            "sprite masks require at least one queued draw"
         );
-    }
 
-    /// Queue an occlusion mask clipped to the sprite/marker rectangle
-    /// currently being masked. The caller must insert a scene snapshot before
-    /// the masked draw so this restores the exact pixels that preceded it.
-    pub fn render_cached_mask_clipped(
-        &mut self,
-        mask_index: u32,
-        mask_rect: Rect,
-        clip_rect: Rect,
-    ) -> bool {
-        let Some((vis_dst, vis_uv)) = clip_dst_to_uv(mask_rect, clip_rect) else {
-            return true;
-        };
-        let mask_view = match self.mask_alpha_cache.get(&mask_index) {
-            Some(e) => e.view.clone(),
-            None => return false,
-        };
-        let scene_uv_tint = [
-            mask_rect.x as f32 / self.width as f32,
-            mask_rect.y as f32 / self.height as f32,
-            mask_rect.w as f32 / self.width as f32,
-            mask_rect.h as f32 / self.height as f32,
-        ];
-        let bind_group = make_mask_overlay_bg(
-            &self.gpu.device,
-            &self.bgl_mask_overlay,
-            &mask_view,
-            &self.alpha_source_view,
-            &self.sampler,
-        );
-        let tex_idx = self.queue_cached_bg(bind_group);
+        let mut stencil_draws = Vec::with_capacity(masks.len());
+        for &(mask_index, mask_rect) in masks {
+            assert!(
+                self.mask_alpha_cache.contains_key(&mask_index),
+                "sprite mask {mask_index} was not uploaded"
+            );
+            let Some((dst, uv)) = clip_dst_to_uv(mask_rect, clip_rect) else {
+                continue;
+            };
+            stencil_draws.push(QueuedDraw {
+                dst,
+                corners: None,
+                uv,
+                tint: [1.0; 4],
+                tex: TextureRef::MaskAlpha(mask_index),
+                blend: BlendMode::None,
+            });
+        }
+        if stencil_draws.is_empty() {
+            return;
+        }
+
+        mark_draws_stencil_tested(&mut self.queued[checkpoint..]);
+        self.queued.splice(checkpoint..checkpoint, stencil_draws);
         self.queued.push(QueuedDraw {
-            dst: vis_dst,
+            dst: clip_rect,
             corners: None,
-            uv: vis_uv,
-            tint: scene_uv_tint,
-            tex: TextureRef::MaskOverlayFrame(tex_idx),
-            blend: BlendMode::Blend,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0; 4],
+            tex: TextureRef::StencilClear,
+            blend: BlendMode::None,
         });
-        true
     }
 
     /// Queue a cached sprite as an alpha-blended GPU overlay quad.
@@ -4080,6 +4127,35 @@ mod upload_counter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued_frame(index: u32) -> QueuedDraw {
+        QueuedDraw {
+            dst: Rect::new(0, 0, 1, 1),
+            corners: None,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0; 4],
+            tex: TextureRef::Frame(index),
+            blend: BlendMode::Blend,
+        }
+    }
+
+    #[test]
+    fn sprite_mask_marks_every_component_draw_for_stencil_testing() {
+        let mut draws = [queued_frame(7), queued_frame(11)];
+
+        mark_draws_stencil_tested(&mut draws);
+
+        assert!(matches!(draws[0].tex, TextureRef::MaskedFrame(7)));
+        assert!(matches!(draws[1].tex, TextureRef::MaskedFrame(11)));
+    }
+
+    #[test]
+    #[should_panic(expected = "non-textured draw queued inside a sprite mask region")]
+    fn sprite_mask_rejects_unexpected_draw_kinds() {
+        let mut draw = queued_frame(7);
+        draw.tex = TextureRef::White;
+        mark_draws_stencil_tested(std::slice::from_mut(&mut draw));
+    }
 
     #[test]
     fn rgba_upload_bakes_raw_and_arno_shadow_pixels_to_black_alpha() {

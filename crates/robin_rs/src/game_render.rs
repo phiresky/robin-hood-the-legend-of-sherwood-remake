@@ -963,8 +963,18 @@ fn render_character_masks_clipped(
     if mask_indices.is_empty() {
         return;
     }
-    renderer.insert_scene_snapshot(draw_checkpoint, clip_rect);
-    for mask_idx in mask_indices {
+    let screen_masks = sprite_screen_masks(engine, &mask_indices, view, zoom);
+    renderer.mask_queued_draws(draw_checkpoint, &screen_masks, clip_rect);
+}
+
+fn sprite_screen_masks(
+    engine: &Engine,
+    mask_indices: &[engine_mask::MaskIndex],
+    view: engine_coordinates::MapPoint,
+    zoom: f32,
+) -> Vec<(u32, Rect)> {
+    let mut screen_masks = Vec::with_capacity(mask_indices.len());
+    for &mask_idx in mask_indices {
         let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
         let mask_screen_x = ((mask.bbox.x_min() - view.x) * zoom).round() as i32;
         let mask_screen_y = ((mask.bbox.y_min() - view.y) * zoom).round() as i32;
@@ -974,7 +984,36 @@ fn render_character_masks_clipped(
             continue;
         }
         let mask_rect = Rect::new(mask_screen_x, mask_screen_y, mask_screen_w, mask_screen_h);
-        renderer.render_cached_mask_clipped(u32::from(mask_idx), mask_rect, clip_rect);
+        screen_masks.push((u32::from(mask_idx), mask_rect));
+    }
+    screen_masks
+}
+
+#[allow(clippy::too_many_arguments)]
+fn applicable_sprite_masks(
+    engine: &Engine,
+    assets: &LevelAssets,
+    actor_layer: u16,
+    sprite_world_bbox: &engine_coordinates::MapBBox,
+    actor_position: engine_coordinates::MapPoint,
+    projectile_position: engine_coordinates::WorldPoint3D,
+    use_projectile_path: bool,
+    is_flying_human: bool,
+) -> Vec<engine_mask::MaskIndex> {
+    if use_projectile_path {
+        engine.fast_grid().get_masks_applied_to_projectile(
+            engine.fast_grid().level.special_layer,
+            sprite_world_bbox,
+            projectile_position,
+            is_flying_human,
+            engine.sight_obstacles(assets),
+        )
+    } else {
+        engine.fast_grid().get_masks_applied_to_character(
+            actor_layer,
+            sprite_world_bbox,
+            actor_position,
+        )
     }
 }
 
@@ -1165,7 +1204,26 @@ pub(crate) fn render_entities_gpu(
             let dst_y = ((sprite_y - view.y) * zoom) as i32;
 
             let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
-            let sprite_draw_checkpoint = renderer.draw_queue_checkpoint();
+            let kind = entity.kind();
+            let actor_layer = elem.layer();
+            let is_flying_human = elem.posture == Posture::Flying;
+            let hidden_outline_rgb = if host.input.draw_hidden {
+                // Ground objects always use Hidden; actors retain their active
+                // targeting/parrying outline just like the original path.
+                let color_565 = if matches!(
+                    kind,
+                    crate::element::ElementKind::ObjectBonus
+                        | crate::element::ElementKind::ObjectOther
+                        | crate::element::ElementKind::ObjectScroll
+                ) {
+                    elem.outline_colors[OutlineColorName::Hidden as usize]
+                } else {
+                    elem.active_outline_color()
+                };
+                (color_565 != 0).then(|| rgb565_to_rgb8(color_565))
+            } else {
+                None
+            };
 
             // Cheat-teleport hulk-rebuild fade.  When
             // `teleport_counter > 0`, the PC is rendered TWICE: first
@@ -1197,6 +1255,7 @@ pub(crate) fn render_entities_gpu(
                 let ghost_dst_x = ((ghost_x - view.x) * zoom) as i32;
                 let ghost_dst_y = ((ghost_y - view.y) * zoom) as i32;
                 let ghost_rect = Rect::new(ghost_dst_x, ghost_dst_y, sw as u32, sh as u32);
+                let ghost_draw_checkpoint = renderer.draw_queue_checkpoint();
                 renderer.render_cached_sprite_alpha(
                     bank_id,
                     variant,
@@ -1205,7 +1264,54 @@ pub(crate) fn render_entities_gpu(
                     ghost_rect,
                     old_alpha,
                 );
+                let ghost_world_bbox = engine_coordinates::MapBBox::from_coords(
+                    ghost_x,
+                    ghost_y,
+                    ghost_x + sw as f32,
+                    ghost_y + sh as f32,
+                );
+                let current_world = elem.position();
+                let ghost_world = engine_coordinates::WorldPoint3D::new(
+                    before.x,
+                    before.y + current_world.z,
+                    current_world.z,
+                );
+                let ghost_mask_indices = applicable_sprite_masks(
+                    engine,
+                    assets,
+                    actor_layer,
+                    &ghost_world_bbox,
+                    before,
+                    ghost_world,
+                    is_flying_human,
+                    is_flying_human,
+                );
+                let ghost_screen_masks =
+                    sprite_screen_masks(engine, &ghost_mask_indices, view, zoom);
+                renderer.mask_queued_draws(ghost_draw_checkpoint, &ghost_screen_masks, ghost_rect);
+                if let Some(rgb) = hidden_outline_rgb {
+                    for &(mask_idx, mask_rect) in &ghost_screen_masks {
+                        let mask = &engine.fast_grid().level.masks[mask_idx as usize];
+                        renderer.render_hidden_mask_outline(
+                            &host.frame_holder,
+                            bank_id,
+                            variant,
+                            shadow_color,
+                            &mask.bitmap,
+                            mask.width,
+                            mask.height,
+                            mask_rect,
+                            ghost_rect,
+                            rgb,
+                        );
+                    }
+                }
             }
+
+            // The teleport ghost above is masked independently at its old
+            // position; this checkpoint applies current-position masks only
+            // to the appearing sprite.
+            let sprite_draw_checkpoint = renderer.draw_queue_checkpoint();
 
             // When the GoldenEye cheat is on, every PC sprite is
             // composited at 50% alpha (~128/255 in 8-bit).  Teleport
@@ -1252,7 +1358,6 @@ pub(crate) fn render_entities_gpu(
                 sprite_x + sw as f32,
                 sprite_y + sh as f32,
             );
-            let actor_layer = elem.layer();
             let actor_position = engine_coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
             // `get_masks_applied_to_character` and
@@ -1264,12 +1369,10 @@ pub(crate) fn render_entities_gpu(
             // / `ObjectNet`) use the projectile masking category so
             // they route through the projectile polyline + 3D
             // altitude test, not the character polyline.
-            let kind = entity.kind();
             // The mask pass is gated on `has_valid_box_for_masking`.
             // FX / target overlays never set the flag, so they render
             // without building-mask occlusion.  Flying humans use the
             // original projectile/flying-human mask path.
-            let is_flying_human = elem.posture == Posture::Flying;
             if !kind.has_valid_box_for_masking() && !is_flying_human {
                 // Nothing more to do: sprite is drawn, no mask pass.
                 continue;
@@ -1278,67 +1381,27 @@ pub(crate) fn render_entities_gpu(
             let projectile_mask_position =
                 transition_crenel_climb_up_mask_position(entity, engine, assets)
                     .unwrap_or_else(|| elem.position());
-            let mask_indices = if use_projectile_path {
-                // Pass the special layer (not the actor layer) for
-                // projectile masking, since projectile masks live on
-                // the synthetic top-of-all-layers special layer.
-                engine.fast_grid().get_masks_applied_to_projectile(
-                    engine.fast_grid().level.special_layer,
-                    &sprite_world_bbox,
-                    projectile_mask_position,
-                    is_flying_human, // is_human — bottom-plane test
-                    engine.sight_obstacles(assets),
-                )
-            } else {
-                engine.fast_grid().get_masks_applied_to_character(
-                    actor_layer,
-                    &sprite_world_bbox,
-                    actor_position,
-                )
-            };
-            if !mask_indices.is_empty() {
-                renderer.insert_scene_snapshot(sprite_draw_checkpoint, dst_rect);
-            }
+            let mask_indices = applicable_sprite_masks(
+                engine,
+                assets,
+                actor_layer,
+                &sprite_world_bbox,
+                actor_position,
+                projectile_mask_position,
+                use_projectile_path,
+                is_flying_human,
+            );
             // When `draw_hidden` is on, the original mutates the
             // temporary sprite surface per mask: masked pixels become
             // transparent, except horizontal transparent/body edges
-            // become the actor's outline colour. The background mask
-            // pass below does the transparency part; the hidden
-            // outline pass restores those edge pixels.
-            let draw_hidden = host.input.draw_hidden;
-            let hidden_outline_rgb = if draw_hidden {
-                // Objects/bonuses hardcode the Hidden outline color
-                // regardless of any "current outline" state — there is
-                // no targeting concept on a ground-lying object.
-                // Actors (PCs, NPCs) use the active outline so their
-                // target/striking/parrying tints render correctly.
-                let color_565 = if matches!(
-                    kind,
-                    crate::element::ElementKind::ObjectBonus
-                        | crate::element::ElementKind::ObjectOther
-                        | crate::element::ElementKind::ObjectScroll
-                ) {
-                    elem.outline_colors[OutlineColorName::Hidden as usize]
-                } else {
-                    elem.active_outline_color()
-                };
-                (color_565 != 0).then(|| rgb565_to_rgb8(color_565))
-            } else {
-                None
-            };
-            for &mask_idx in &mask_indices {
-                let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
-                let mask_screen_x = ((mask.bbox.x_min() - view.x) * zoom).round() as i32;
-                let mask_screen_y = ((mask.bbox.y_min() - view.y) * zoom).round() as i32;
-                let mask_screen_w = (mask.width as f32 * zoom).round() as u32;
-                let mask_screen_h = (mask.height as f32 * zoom).round() as u32;
-                if mask_screen_w == 0 || mask_screen_h == 0 {
-                    continue;
-                }
-                let mask_rect =
-                    Rect::new(mask_screen_x, mask_screen_y, mask_screen_w, mask_screen_h);
-                renderer.render_cached_mask_clipped(u32::from(mask_idx), mask_rect, dst_rect);
+            // become the actor's outline colour. Stencil rejection does the
+            // transparency part; the hidden outline pass restores those edge
+            // pixels.
+            let screen_masks = sprite_screen_masks(engine, &mask_indices, view, zoom);
+            renderer.mask_queued_draws(sprite_draw_checkpoint, &screen_masks, dst_rect);
 
+            for &(mask_idx, mask_rect) in &screen_masks {
+                let mask = &engine.fast_grid().level.masks[mask_idx as usize];
                 if let Some(rgb) = hidden_outline_rgb {
                     renderer.render_hidden_mask_outline(
                         &host.frame_holder,
