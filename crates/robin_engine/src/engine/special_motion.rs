@@ -129,7 +129,7 @@ impl EngineInner {
         active_door_pass: Option<ActiveDoorPass>,
         context: &'static str,
     ) {
-        let order_id = self.alloc_order_id();
+        let order_id = self.orders.allocate_order_id();
         let mut order = Order::new(action, destination.x, destination.y, order_id);
         order.reverse = reverse;
         order.compute_direction = compute_direction;

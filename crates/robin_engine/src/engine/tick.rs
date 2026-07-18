@@ -1,6 +1,6 @@
 //! Main per-frame update tick (`perform_hourglass`).
 
-use super::movement::MovePathOutcome;
+use super::movement::{CompletedPathWork, MovePathOutcome, MovementContext};
 use super::*;
 use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
@@ -100,6 +100,92 @@ pub(super) enum HourglassPhase {
     GameplaySystems,
     Sequences,
     DeferredEffectsEnd,
+}
+
+/// Transient ordered work owned by the sequence phase.
+///
+/// The context owns no simulation state and cannot reach `EngineInner`.
+/// Sequence-manager mutation is borrowed only at the two ordering barriers:
+/// initial `Hourglass` collection and the after-action synchronous splice.
+/// Keeping those operations here makes the same-call front-of-queue rule
+/// explicit without inventing a deferred gameplay queue.
+struct SequencePhase {
+    initial_actions: Vec<crate::sequence::SequenceAction>,
+    actions: std::collections::VecDeque<crate::sequence::SequenceAction>,
+}
+
+impl SequencePhase {
+    fn begin(orders: &mut OrderRuntime) -> Self {
+        Self {
+            initial_actions: orders.sequence_manager.hourglass(),
+            actions: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn initial_actions(&self) -> &[crate::sequence::SequenceAction] {
+        &self.initial_actions
+    }
+
+    fn begin_dispatch(&mut self) {
+        debug_assert!(self.actions.is_empty());
+        self.actions = std::mem::take(&mut self.initial_actions).into();
+    }
+
+    fn pop_action(&mut self) -> Option<crate::sequence::SequenceAction> {
+        self.actions.pop_front()
+    }
+
+    /// Splice newly registered synchronous work before every older action,
+    /// preserving the manager's registration order.
+    fn splice_synchronous_actions(&mut self, orders: &mut OrderRuntime) {
+        let pending = orders.sequence_manager.take_pending_synchronous_actions();
+        for action in pending.into_iter().rev() {
+            self.actions.push_front(action);
+        }
+    }
+}
+
+#[cfg(test)]
+mod sequence_phase_context_tests {
+    use super::*;
+
+    #[test]
+    fn synchronous_successor_is_spliced_before_older_hourglass_work() {
+        let older = crate::sequence::SequenceAction::EngineCommand {
+            sequence_id: crate::sequence::SequenceId(900),
+            element_index: 0,
+        };
+        let mut phase = SequencePhase {
+            initial_actions: vec![older],
+            actions: std::collections::VecDeque::new(),
+        };
+        phase.begin_dispatch();
+
+        let mut orders = OrderRuntime::new();
+        let mut sequence = crate::sequence::Sequence::new();
+        let mut immediate = crate::sequence::SequenceElement::new(1, Command::Wait, None);
+        immediate.priority = crate::sequence::SequencePriority::Wait;
+        sequence.append_element(immediate);
+        let synchronous_sequence = orders.sequence_manager.launch_sequence(sequence);
+
+        phase.splice_synchronous_actions(&mut orders);
+
+        assert!(matches!(
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::EngineCommand {
+                sequence_id,
+                element_index: 0,
+            }) if sequence_id == synchronous_sequence
+        ));
+        assert!(matches!(
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::EngineCommand {
+                sequence_id: crate::sequence::SequenceId(900),
+                element_index: 0,
+            })
+        ));
+        assert!(phase.pop_action().is_none());
+    }
 }
 
 #[cfg(test)]
@@ -1420,7 +1506,54 @@ impl EngineInner {
     fn hourglass_phase_paths(&mut self, assets: &LevelAssets) {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
-        self.process_next_path_request(assets);
+        let completed = MovementContext::new(
+            self.control.frame_counter,
+            &mut self.world,
+            &mut self.orders,
+        )
+        .take_completed();
+        match completed {
+            Some(CompletedPathWork::Ready { request, waypoints }) => {
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(request.seq_id, request.elem_idx)
+                {
+                    element.command = crate::element::Command::MoveOk;
+                }
+                let _ = self.finish_move_path(request, waypoints);
+            }
+            Some(CompletedPathWork::Failed(request)) => {
+                tracing::warn!(
+                    actor = ?request.owner,
+                    seq_id = ?request.seq_id,
+                    elem_idx = request.elem_idx,
+                    src_x = request.source.x,
+                    src_y = request.source.y,
+                    dst_x = request.dest.x,
+                    dst_y = request.dest.y,
+                    layer = request.layer,
+                    sector = request.sector,
+                    "path scheduling barrier: pathfind FAILED",
+                );
+                self.orders
+                    .failed_path_requests
+                    .push(super::movement::FailedPathRequest {
+                        owner: request.owner,
+                        seq_id: request.seq_id,
+                        elem_idx: request.elem_idx,
+                        first_fail_frame: self.control.frame_counter,
+                    });
+            }
+            None => {}
+        }
+
+        MovementContext::new(
+            self.control.frame_counter,
+            &mut self.world,
+            &mut self.orders,
+        )
+        .start_next(assets);
 
         // ── Failed-path retry ────────────────────────────────────
         // Move / Seek elements whose pathfind failed on a previous
@@ -1430,7 +1563,40 @@ impl EngineInner {
         // fire `HERO_UNABLE_TO_DO_SOMETHING` for PCs.  Runs before the
         // hourglass dispatch so same-tick failures & retries both age
         // correctly.
-        self.process_failed_path_timeouts(assets);
+        let expired = MovementContext::new(
+            self.control.frame_counter,
+            &mut self.world,
+            &mut self.orders,
+        )
+        .take_expired_failures();
+        for expired in expired {
+            let request = expired.request;
+            if expired.owner_is_pc {
+                self.hero_speaking(
+                    assets,
+                    request.owner,
+                    crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                );
+            }
+
+            if let Some(element) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(request.seq_id, request.elem_idx)
+            {
+                element.command = crate::element::Command::MoveOk;
+            }
+            self.orders
+                .sequence_manager
+                .element_impossible(request.seq_id, request.elem_idx);
+            tracing::debug!(
+                actor = ?request.owner,
+                seq_id = ?request.seq_id,
+                elem_idx = request.elem_idx,
+                age = expired.age,
+                "failed_path: 100-frame timeout expired — marking Impossible",
+            );
+        }
 
         // Original `CheckForCollision` follows ProcessPathRequests. Its only
         // implemented response is a human standing inside a non-stopped
@@ -1475,7 +1641,7 @@ impl EngineInner {
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements and dispatch actions.
         // We collect actions and process them here in two passes.
-        let actions = self.orders.sequence_manager.hourglass();
+        let mut phase = SequencePhase::begin(&mut self.orders);
 
         // First pass: extract Move command data (to avoid borrow conflicts).
         // (owner, seq_id, elem_idx, destination, layer, action_animation)
@@ -1500,7 +1666,7 @@ impl EngineInner {
             crate::sequence::SequenceId,
             usize,
         )> = std::collections::HashSet::new();
-        for action in &actions {
+        for action in phase.initial_actions() {
             if let crate::sequence::SequenceAction::InstructOwner {
                 owner,
                 sequence_id,
@@ -1534,7 +1700,7 @@ impl EngineInner {
             }
         }
 
-        for action in &actions {
+        for action in phase.initial_actions() {
             if let crate::sequence::SequenceAction::InstructOwner {
                 owner,
                 sequence_id,
@@ -1878,9 +2044,8 @@ impl EngineInner {
         // front of the action queue, so they fire before the next
         // non-immediate action in the batch rather than waiting for
         // the next `Hourglass()`.
-        let mut actions: std::collections::VecDeque<crate::sequence::SequenceAction> =
-            actions.into();
-        while let Some(action) = actions.pop_front() {
+        phase.begin_dispatch();
+        while let Some(action) = phase.pop_action() {
             match action {
                 crate::sequence::SequenceAction::InstructOwner {
                     owner,
@@ -2796,7 +2961,7 @@ impl EngineInner {
                                             ot: crate::order::OrderType,
                                             x: f32,
                                             y: f32| {
-                                    let id = engine.alloc_order_id();
+                                    let id = engine.orders.allocate_order_id();
                                     let mut order = crate::order::Order::new(ot, x, y, id);
                                     order.compute_direction = false;
                                     engine
@@ -2994,7 +3159,7 @@ impl EngineInner {
                                 continue;
                             }
                             if posture_after != crate::element::Posture::Crouched {
-                                let id = self.alloc_order_id();
+                                let id = self.orders.allocate_order_id();
                                 let mut order = crate::order::Order::new(
                                     crate::order::OrderType::TransitionCrouchingDown,
                                     0.0,
@@ -3006,7 +3171,7 @@ impl EngineInner {
                                     .sequence_manager
                                     .push_order_on(seq_id, elem_idx, order);
                             }
-                            let id = self.alloc_order_id();
+                            let id = self.orders.allocate_order_id();
                             let mut order = crate::order::Order::new(
                                 crate::order::OrderType::HidingBehindShield,
                                 0.0,
@@ -3081,7 +3246,7 @@ impl EngineInner {
                                 crate::order::OrderType::StrikingDownSword,
                                 tx,
                                 ty,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             )
                             .with_antagonist(target);
                             order.compute_direction = false;
@@ -3296,7 +3461,7 @@ impl EngineInner {
                                 crate::order::OrderType::Provoking,
                                 0.0,
                                 0.0,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             );
                             order.compute_direction = false;
                             self.orders
@@ -3432,7 +3597,7 @@ impl EngineInner {
                                 crate::order::OrderType::WakingUp,
                                 target_pos.x,
                                 target_pos.y,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             )
                             .with_antagonist(target_id);
                             order.compute_direction = false;
@@ -4800,7 +4965,7 @@ impl EngineInner {
                                 order_type,
                                 0.0,
                                 0.0,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             );
                             order.compute_direction = false;
                             self.orders
@@ -5146,7 +5311,7 @@ impl EngineInner {
                                     anim_ot,
                                     0.0,
                                     0.0,
-                                    self.alloc_order_id(),
+                                    self.orders.allocate_order_id(),
                                 );
                                 order.compute_direction = false;
                                 // Per-arm completion semantics for
@@ -5209,7 +5374,7 @@ impl EngineInner {
                             // flag is dead today, but keeping it
                             // honest leaves the contract intact if a
                             // future order-type wires movement.
-                            let id = self.alloc_order_id();
+                            let id = self.orders.allocate_order_id();
                             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
                             order.compute_direction = false;
                             self.orders
@@ -5241,7 +5406,7 @@ impl EngineInner {
                             // sequence element — these are one- and
                             // two-order transition arms.
                             let push = |engine: &mut EngineInner, ot: crate::order::OrderType| {
-                                let id = engine.alloc_order_id();
+                                let id = engine.orders.allocate_order_id();
                                 let mut order = crate::order::Order::new(ot, 0.0, 0.0, id);
                                 order.compute_direction = false;
                                 engine
@@ -5440,7 +5605,7 @@ impl EngineInner {
                                 order_type,
                                 0.0,
                                 0.0,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             );
                             if let Some(a) = antagonist {
                                 order = order.with_antagonist(a);
@@ -5512,7 +5677,7 @@ impl EngineInner {
                                 anim_type,
                                 0.0,
                                 0.0,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             )
                             .with_completion(
                                 crate::order::OrderCompletion::UnlockDoor { door_id: id },
@@ -5646,8 +5811,12 @@ impl EngineInner {
                                 continue;
                             };
                             if owner_entity.is_human() {
-                                let mut order =
-                                    crate::order::Order::new(anim, 0.0, 0.0, self.alloc_order_id());
+                                let mut order = crate::order::Order::new(
+                                    anim,
+                                    0.0,
+                                    0.0,
+                                    self.orders.allocate_order_id(),
+                                );
                                 order.compute_direction = false;
                                 self.orders
                                     .sequence_manager
@@ -5766,7 +5935,7 @@ impl EngineInner {
                                 anim_type,
                                 0.0,
                                 0.0,
-                                self.alloc_order_id(),
+                                self.orders.allocate_order_id(),
                             )
                             .with_antagonist(target_id);
                             self.orders
@@ -5836,13 +6005,7 @@ impl EngineInner {
             // immediate command or complete a level whose successor is WAIT.
             // Splice that ordered registration stream onto the FRONT so the
             // re-entrant work fires before the next older action in the batch.
-            let pending = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            for action in pending.into_iter().rev() {
-                actions.push_front(action);
-            }
+            phase.splice_synchronous_actions(&mut self.orders);
         }
 
         // ── Dispatch deferred ProcessMessage from sequence SendMessage ──
@@ -6767,8 +6930,12 @@ impl EngineInner {
             // `compute_direction = false` on the transition
             // order — direction is preserved so the soldier
             // finishes facing the same way it was leaning.
-            let mut order =
-                crate::order::Order::new(transition.animation, 0.0, 0.0, self.alloc_order_id());
+            let mut order = crate::order::Order::new(
+                transition.animation,
+                0.0,
+                0.0,
+                self.orders.allocate_order_id(),
+            );
             order.compute_direction = false;
             if let Some((seq_id, elem_idx)) = dispatching {
                 self.orders
@@ -7248,7 +7415,7 @@ impl EngineInner {
                 crate::order::OrderType::GettingFreeFromWasp,
                 0.0,
                 0.0,
-                self.alloc_order_id(),
+                self.orders.allocate_order_id(),
             )
             .with_completion(crate::order::OrderCompletion::WaspStruggleCycle { cycles_remaining });
             self.orders

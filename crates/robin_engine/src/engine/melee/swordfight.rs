@@ -1023,7 +1023,7 @@ impl EngineInner {
             }
         }
         for (me, ot, antagonist) in launches {
-            let id = self.alloc_order_id();
+            let id = self.orders.allocate_order_id();
             // The raising-sword order carries the antagonist
             // (opponent).
             let order = crate::order::Order::new(ot, 0.0, 0.0, id).with_antagonist(antagonist);
@@ -1138,7 +1138,7 @@ impl EngineInner {
                     None
                 };
                 if let Some(ot) = pending_order {
-                    let id = self.alloc_order_id();
+                    let id = self.orders.allocate_order_id();
                     self.launch_single_order_sequence_stamped(
                         *opp_id,
                         Command::QuitSwordfight,
@@ -1247,7 +1247,7 @@ impl EngineInner {
             None
         };
         if let Some(ot) = pending_order_self {
-            let id = self.alloc_order_id();
+            let id = self.orders.allocate_order_id();
             self.launch_single_order_sequence_stamped(
                 entity_id,
                 Command::QuitSwordfight,
