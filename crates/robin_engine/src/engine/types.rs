@@ -1122,7 +1122,7 @@ pub struct MissionScript {
     legacy_script_domains: Option<LegacyScriptDomains>,
 }
 
-const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 5;
+const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 6;
 
 #[derive(Serialize)]
 struct MissionScriptSnapshotRef<'a> {
@@ -1194,6 +1194,12 @@ struct MissionScriptSnapshot {
 struct CompatibleGameHost {
     #[serde(flatten)]
     current: GameHost,
+    /// Deserialize-only parked mirror from pre-Wave-9B saves. Legal legacy
+    /// snapshots stored the live value in `EngineInner::ai_global`; the host
+    /// copy was only the default parking value and must never become runtime
+    /// authority again.
+    #[serde(rename = "ai_global")]
+    _legacy_ai_global: Option<crate::ai::AiGlobalState>,
     campaign: Option<crate::campaign::Campaign>,
     campaign_values: Option<BTreeMap<i32, i32>>,
     npc_values: Option<LegacyNpcValues>,
@@ -1424,7 +1430,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                     )
                 })?
             }
-            Some(2 | 3 | 4 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
+            Some(2 | 3 | 4 | 5 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
                 let state = snapshot.state.ok_or_else(|| {
                     serde::de::Error::custom(
                         "versioned MissionScript snapshot is missing ScriptState",
@@ -2343,16 +2349,15 @@ impl MissionScript {
     }
 
     /// Legacy transfer primitive used by the engine's `ScriptSession` for the
-    /// not-yet-migrated owners. Campaign and mission statistics remain in
-    /// `EngineInner` and are borrowed explicitly by `NativeContext`.
+    /// not-yet-migrated entity and grid owners. AI-global state, campaign, and
+    /// mission statistics remain in `EngineInner` and are borrowed explicitly
+    /// by `NativeContext`.
     pub(crate) fn swap_engine_state(
         &mut self,
         entities: &mut crate::entities::Entities,
-        ai_global: &mut crate::ai::AiGlobalState,
         fast_grid: &mut crate::fast_find_grid::FastFindGrid,
     ) {
         entities.swap_slots_with(&mut self.game_host.entities);
-        std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
     }
 
@@ -2479,9 +2484,9 @@ impl MissionScript {
     /// this handle outside of a script event is fine for queued
     /// commands (the engine drains them next tick) but bypasses
     /// the engine's own `swap_engine_state` synchronisation, so
-    /// reads of entities/AI/fast-grid only see the post-tick
-    /// swap-in state — call it inside a script-event window where
-    /// the engine has just installed live state on the host.
+    /// reads of entities/fast-grid only see the parked adapter state.
+    /// AI-global state is never present here; live native dispatch receives it
+    /// through `NativeContext`. Call this only inside a script-event window.
     pub fn game_host_mut(&mut self) -> Option<&mut GameHost> {
         Some(&mut self.game_host)
     }

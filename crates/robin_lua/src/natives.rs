@@ -9,9 +9,9 @@
 //! ## Host pointer plumbing
 //!
 //! `mlua` requires registered functions to be `'static`, but the
-//! `GameHost` we mutate lives on the engine and has a lifetime tied
-//! to the current event call. We stash a raw pointer to it in Lua's
-//! app-data ([`HostPtr`]) for the duration of one event:
+//! `GameHost` adapter and borrowed canonical capabilities live on the engine
+//! with lifetimes tied to the current event call. We stash their erased view
+//! in Lua's app-data ([`HostPtr`]) for the duration of one event:
 //!
 //! ```ignore
 //! state.lua().set_app_data(HostPtr::new(host));
@@ -57,6 +57,9 @@ pub(crate) struct HostPtr {
     script_domains: Cell<*mut ScriptDomains>,
     bindings: Cell<*const AttachedScriptBindings>,
     queries: Cell<NativeQueryViews<'static>>,
+    /// Guards against accidentally rebuilding the erased view without the
+    /// canonical AI capability while plumbing Lua-only helpers.
+    has_ai_global_capability: bool,
 }
 
 // SAFETY: `HostPtr` is only accessed from the thread that called
@@ -77,8 +80,9 @@ impl HostPtr {
         // before that scope returns, so none of the references carried by
         // NativeQueryViews can outlive their owners. Keeping the opaque view
         // intact is important: rebuilding it from its public query accessors
-        // would silently discard hidden capabilities such as the borrowed
-        // campaign and mission-stat owners.
+        // would silently discard hidden capabilities such as the borrowed AI,
+        // campaign, and mission-stat owners.
+        let has_ai_global_capability = queries.has_ai_global_capability();
         let queries = unsafe {
             std::mem::transmute::<NativeQueryViews<'_>, NativeQueryViews<'static>>(queries)
         };
@@ -88,6 +92,7 @@ impl HostPtr {
             script_domains: Cell::new(script_domains),
             bindings: Cell::new(bindings),
             queries: Cell::new(queries),
+            has_ai_global_capability,
         }
     }
 
@@ -143,11 +148,17 @@ impl HostPtr {
         // SAFETY: new erased this view's lifetime only for the enclosing
         // with_host scope. Rebind the copied view to this short borrow so it
         // cannot escape through the Lua native adapter.
-        unsafe {
+        let queries = unsafe {
             std::mem::transmute::<NativeQueryViews<'static>, NativeQueryViews<'_>>(
                 self.queries.get(),
             )
-        }
+        };
+        assert_eq!(
+            queries.has_ai_global_capability(),
+            self.has_ai_global_capability,
+            "robin_lua: scoped AI-global capability changed while HostPtr was attached"
+        );
+        queries
     }
 }
 
