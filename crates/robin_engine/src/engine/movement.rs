@@ -4638,6 +4638,81 @@ impl EngineInner {
                     .position_iface
                     .is_goal_reached(&self.world.fast_grid, None);
 
+            // C++ `RHSprite::PerformMotion` always applies the animation's
+            // movement through `UpdatePositionAntiCollision` *before*
+            // calling `IsGoalReached`. The Rust port used to accept the
+            // final-distance / seek-tolerance arrival here first, snapping
+            // or stopping without ever consulting nearby actors. Several
+            // combatants converging on close combat positions could
+            // therefore stack on the final approach tick.
+            //
+            // Preserve the existing arrival handling when the direct step
+            // is unobstructed. If anti-collision deflects or blocks it,
+            // commit that step and leave the movement active so arrival is
+            // reconsidered from the separated position next tick.
+            let ordinary_arrival = dist <= speed || tolerance_arrival || order_tolerance_arrival;
+            if ordinary_arrival
+                && !line_snap_arrival
+                && !movement_goal_reached
+                && dist > f32::EPSILON
+                && elem.sprite.position_iface.is_anti_collision_on()
+            {
+                let nx = dx / dist;
+                let ny = dy / dist;
+                let naive_dx = nx * speed;
+                let naive_dy = ny * speed;
+                let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                let (move_box, half_diagonal) = {
+                    let pi = &elem.sprite.position_iface;
+                    (*pi.get_move_box(), pi.get_half_diagonal())
+                };
+                if let Some(mover_snapshot) =
+                    anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                {
+                    let (step_x, step_y, deviated) = {
+                        let pi = &mut elem.sprite.position_iface;
+                        let mut state = super::anti_collision::AntiCollisionState {
+                            pi,
+                            move_box,
+                            half_diagonal,
+                            goal_map,
+                        };
+                        let (step_x, step_y) = super::anti_collision::apply_anti_collision_step(
+                            mover_snapshot,
+                            anti_snapshots.as_slice(),
+                            &self.ai.global.repulsive_points,
+                            Some(&self.world.fast_grid),
+                            Some(&mut state),
+                            nx,
+                            ny,
+                            speed,
+                            true,
+                        );
+                        (step_x, step_y, state.pi.deviated)
+                    };
+                    let deflected = deviated
+                        || (step_x - naive_dx).abs() > 0.001
+                        || (step_y - naive_dy).abs() > 0.001;
+                    if deflected {
+                        let mut new_position = elem.position_map();
+                        new_position.x += step_x;
+                        new_position.y += step_y;
+                        elem.set_position_map(new_position);
+                        if let Some(snapshot) = anti_snapshots
+                            .get_mut(actor_id)
+                            .and_then(|slot| slot.as_mut())
+                        {
+                            super::anti_collision::sync_snapshot_after_move(
+                                snapshot,
+                                new_position,
+                                MapVec::new(step_x, step_y),
+                            );
+                        }
+                        continue;
+                    }
+                }
+            }
+
             if dist <= speed
                 || movement_goal_reached
                 || line_snap_arrival
@@ -5015,24 +5090,11 @@ impl EngineInner {
                     .and_then(|slot| slot.as_mut())
                 {
                     let new_pos = MapPoint::new(new_pos_x, new_pos_y);
-                    snap.position_map = new_pos;
-                    if let Some(rp) = snap.repulsive_point.as_mut() {
-                        rp.position = new_pos;
-                    }
-                    for rp in snap.extra_repulsive_points.iter_mut() {
-                        // Animal front/back points are offsets from
-                        // the torso along facing direction — rebuild
-                        // them from the post-move torso.  For humans
-                        // this loop is empty so the branch is cheap.
-                        rp.position.x += dx_step;
-                        rp.position.y += dy_step;
-                    }
-                    for rl in snap.repulsive_lines.iter_mut() {
-                        rl.a.x += dx_step;
-                        rl.a.y += dy_step;
-                        rl.b.x += dx_step;
-                        rl.b.y += dy_step;
-                    }
+                    super::anti_collision::sync_snapshot_after_move(
+                        snap,
+                        new_pos,
+                        MapVec::new(dx_step, dy_step),
+                    );
                 }
             }
 

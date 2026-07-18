@@ -126,6 +126,30 @@ pub fn snapshot_all(
     snapshots
 }
 
+/// Update a cached actor snapshot after its movement step is committed.
+/// Later actors in the same serial movement pass must see the moved
+/// footprint, including animal offset points and body lines.
+pub fn sync_snapshot_after_move(
+    snapshot: &mut ActorSnapshot,
+    new_position: MapPoint,
+    movement: MapVec,
+) {
+    snapshot.position_map = new_position;
+    if let Some(point) = snapshot.repulsive_point.as_mut() {
+        point.position = new_position;
+    }
+    for point in &mut snapshot.extra_repulsive_points {
+        point.position.x += movement.x;
+        point.position.y += movement.y;
+    }
+    for line in &mut snapshot.repulsive_lines {
+        line.a.x += movement.x;
+        line.a.y += movement.y;
+        line.b.x += movement.x;
+        line.b.y += movement.y;
+    }
+}
+
 /// Filter static (Lua-authored) repulsive points by the mover's
 /// layer, element kind, and bounding box.  The point list lives on
 /// `EngineInner::ai_global.repulsive_points` since the Lua
