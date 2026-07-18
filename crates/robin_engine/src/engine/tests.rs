@@ -2546,6 +2546,89 @@ fn sort_for_minimap_priority_order() {
 }
 
 #[test]
+fn swordfight_los_ignores_crossing_motion_line() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+    use crate::fast_find_grid::GridLine;
+
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    engine.world.fast_grid.size_map(4, 4);
+    engine.world.fast_grid.allocate_layers(1);
+    engine.world.fast_grid.add_line(
+        GridLine::new(
+            MapPoint::new(115.0, 50.0),
+            MapPoint::new(115.0, 150.0),
+            true,
+        ),
+        0,
+    );
+
+    let make_fighter = |x| {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position(WorldPoint3D {
+            x,
+            y: 100.0,
+            z: 0.0,
+        });
+        Entity::Soldier(ActorSoldier {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        })
+    };
+    let left_id = engine.add_entity(make_fighter(100.0));
+    let right_id = engine.add_entity(make_fighter(130.0));
+
+    for (fighter_id, opponent_id) in [(left_id, right_id), (right_id, left_id)] {
+        let fighter = engine.world.entities.get_mut(fighter_id).unwrap();
+        fighter.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+        fighter
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(opponent_id);
+    }
+
+    assert!(
+        engine
+            .world
+            .fast_grid
+            .impact_intersection_ratio(MapPoint::new(100.0, 100.0), MapPoint::new(130.0, 100.0), 0,)
+            .is_some(),
+        "fixture must contain a movement barrier between the fighters"
+    );
+
+    engine.tick_evaluate_swordfight(&assets);
+
+    assert_eq!(
+        engine
+            .get_entity(left_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .opponents,
+        vec![right_id]
+    );
+    assert_eq!(
+        engine
+            .get_entity(right_id)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .opponents,
+        vec![left_id]
+    );
+}
+
+#[test]
 fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};

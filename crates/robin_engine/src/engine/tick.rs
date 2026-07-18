@@ -588,7 +588,7 @@ impl EngineInner {
 
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on
-        // SDL_mixer playback-completion events: for each scheduled
+        // Audio-backend playback-completion events: for each scheduled
         // source whose sim-frame deadline has arrived, `Single` sources
         // flip to `active = false` and `Volatile` sources are deleted
         // from the manager.  `Delayed` / `Looped` never land in

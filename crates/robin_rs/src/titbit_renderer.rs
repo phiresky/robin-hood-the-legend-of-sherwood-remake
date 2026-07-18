@@ -3,11 +3,10 @@
 //! Loads all sprite rows from `Data/Interface/DEFAULT.RES` at startup,
 //! converts each frame to an ARGB8888 GPU texture with shadow alpha
 //! pre-baked, then in the GPU phase iterates `engine.titbit_manager()
-//! .titbits()` and renders each one via `Canvas::copy`.
+//! .titbits()` and queues each one as a textured GPU draw.
 //!
-//! Built entirely on the safe `sdl3::render` API: textures are owned
-//! `sdl3::render::Texture<'a>` values whose lifetime is tied to a
-//! `TextureCreator`.  No raw `SDL_*` pointers are exposed.
+//! Sprite frames are uploaded through the wgpu renderer and cached by surface
+//! id; this module owns only the game-facing row/frame metadata.
 //!
 //! The data side (`TitbitManager`, `TitbitInfo`, lifecycle) lives in
 //! `crate::titbit`.
@@ -876,7 +875,7 @@ fn load_row(
 /// For each input pixel:
 /// - Equal to `transparent` → alpha 0 (skipped)
 /// - In `SolidWithShadow`, equal to `shadow_color` → multiply-darken: black tint with
-///   `alpha = shadow_level * 255 / 100`, so SDL blend yields
+///   `alpha = shadow_level * 255 / 100`, so GPU blending yields
 ///   `dst * (1 - shadow_level/100)` (the MMX shadow path; see
 ///   `Renderer::ensure_sprite_cached`).
 /// - In blue-channel mode, the source blue component becomes the alpha map,
@@ -902,7 +901,7 @@ fn rgb565_to_argb8888(
         let (b, g, r, a) = if transparent_pixel {
             (0, 0, 0, 0)
         } else if alpha_mode == TitbitAlphaMode::SolidWithShadow && px == shadow_color {
-            // Black tint so SDL blend collapses to pure multiply-darken.
+            // Black tint so the blend collapses to pure multiply-darken.
             (0, 0, 0, shadow_alpha)
         } else {
             let alpha = match alpha_mode {

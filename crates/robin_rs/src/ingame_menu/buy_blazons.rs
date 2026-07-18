@@ -177,7 +177,7 @@ pub async fn show_buy_blazons(
     let message = compose_message(resources, ransom, blazon_price);
 
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     // Keyboard focus index: 0 = Buy, 1 = Quit.  Tab / Left / Right
     // cycle between them and Enter activates whichever is focused.

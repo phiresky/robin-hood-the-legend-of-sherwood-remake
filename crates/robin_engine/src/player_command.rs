@@ -1,7 +1,7 @@
 //! Serializable player commands for the replay / rollback pipeline.
 //!
 //! Every sim-affecting player action flows through [`PlayerCommand`].
-//! The game session resolves raw SDL input against read-only engine
+//! The game session resolves raw platform input against read-only engine
 //! state to produce fully-resolved commands, then feeds them to
 //! [`EngineInner::apply_commands`].  The input system never holds `&mut EngineInner`.
 //!

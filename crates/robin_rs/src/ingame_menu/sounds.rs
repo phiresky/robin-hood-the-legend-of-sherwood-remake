@@ -242,7 +242,7 @@ pub async fn show_sounds(
     let mut done = false;
     let mut accepted = false;
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
     // Per-widget noise-tracking state. Kept alive across frames so
     // repeat events in the same widget state stay silent; resets on
     // state change.

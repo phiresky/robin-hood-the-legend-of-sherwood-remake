@@ -53,8 +53,7 @@ pub struct Profiler {
     filename: String,
 }
 
-/// A function pointer the host can supply so we can read `SDL_GetTicks()`
-/// without linking SDL from this crate.
+/// A function pointer the host can supply for a monotonic millisecond clock.
 static GET_TICKS: Mutex<Option<extern "C" fn() -> u32>> = Mutex::new(None);
 
 /// Read current tick count via the registered callback, or return 0.

@@ -7,13 +7,13 @@
 //! preview of the selected existing slot, and Load/Save, Delete, and
 //! Cancel buttons.
 //!
-//! Character input is driven by SDL3's text-input subsystem: `SDL_StartTextInput`
-//! is enabled for the lifetime of a Save-mode picker so that IME composition,
+//! Character input is driven by winit's text-input subsystem. IME state is
+//! reset when a Save-mode picker opens so that composition,
 //! dead keys, and non-ASCII keyboard layouts all work. Non-character keys
 //! (Backspace, Enter, Escape, arrows) are still handled off `KeyDown`.
 //!
 //! In Save mode the name-entry state is owned by a `WidgetInputField`,
-//! kept in `SelectedEditable` the whole time the modal is up. SDL
+//! kept in `SelectedEditable` the whole time the modal is up. Committed
 //! text-input events feed straight into the widget's caret-aware insert
 //! path; Backspace routes through `WidgetInputField::backspace` so the
 //! caret and edit buffer stay in sync with no local bookkeeping.
@@ -180,7 +180,7 @@ pub async fn show_save_load(
     let mut scroll_offset: usize = 0;
 
     // Name-entry state lives on a `WidgetInputField` kept in
-    // `SelectedEditable` for the duration of the Save-mode dialog. SDL
+    // `SelectedEditable` for the duration of the Save-mode dialog. Committed
     // text input flows straight into the widget's caret-aware insert
     // path each frame. The widget is resynced via `set_text` whenever
     // the list selection changes — empty when the "< New Save >"
@@ -202,7 +202,7 @@ pub async fn show_save_load(
     }
     let mut caret_timer: u32 = 0;
 
-    // Enable SDL text input for the lifetime of a Save-mode picker so
+    // Reset IME state when opening a Save-mode picker so
     // IME composition and non-ASCII layouts work. Load mode stays quiet.
     if mode == SaveLoadMode::Save {
         crate::window::start_text_input();
@@ -215,7 +215,7 @@ pub async fn show_save_load(
     let mut thumb_cache: Option<ThumbnailCache> = None;
 
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     // Stub keyboard fed into the input-field widget so its special-key
     // branches (Backspace / Delete / Left / Right / Home / End / Tab /
@@ -360,8 +360,8 @@ pub async fn show_save_load(
                     caret_timer = 0;
                 }
                 // Row selection + double-click activation fire on the
-                // release edge. Double-click detection uses SDL3's
-                // native counter, tracked for us on MouseDown/MouseUp by
+                // release edge. Double-click detection uses the window layer's
+                // counter, tracked for us on MouseDown/MouseUp by
                 // `ModalInputState::update_from_event` above.
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);

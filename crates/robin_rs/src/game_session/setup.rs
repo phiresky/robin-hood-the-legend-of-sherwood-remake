@@ -1,9 +1,10 @@
 //! Mission-startup helpers extracted from `game_session`:
 //! audio bank loading, sound-duration tables, level/sprite-bank
-//! initialization, sprite renderer setup, and the SDL audio backend
+//! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
 use crate::Host;
+use crate::audio_backend::KiraAudioBackend;
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -22,7 +23,6 @@ use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_ids;
 use crate::resource_manager::ResourceManager;
 use crate::sbfile::SbFile;
-use crate::sdl_audio::SdlMixerBackend;
 use crate::sound::{NUM_CHANNELS, SoundMode};
 use crate::sound_config::SoundConfig;
 use crate::titbit::SpriteRow;
@@ -231,14 +231,14 @@ fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
 /// profile/sound metadata off the engine but does not mutate it.
 pub(super) fn setup_mission_audio(
     host: &mut Host,
-    backend: Option<&mut SdlMixerBackend>,
+    backend: Option<&mut KiraAudioBackend>,
     engine: &Engine,
     assets: &mut LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     location: MissionLocation,
     sound_dir: &str,
 ) {
-    let loader = crate::sdl_audio::create_sample_loader(std::path::PathBuf::from(sound_dir));
+    let loader = crate::audio_backend::create_sample_loader(std::path::PathBuf::from(sound_dir));
 
     // Load FX bank.
     {
@@ -534,9 +534,9 @@ pub(super) struct LoadedInteractiveResources {
 /// text resource files while the loading screen is still visible.
 ///
 /// Second progress-closure scope (the first one was dropped at the end
-/// of the CPU-only loading block, so audio setup could borrow
-/// `window.sdl`).  The closure must be dropped before we close the
-/// loading screen and hand `window.canvas` to the game renderer.
+/// of the CPU-only loading block, so audio setup could borrow the window).
+/// The closure must be dropped before we close the loading screen and hand
+/// the GPU context to the game renderer.
 ///
 /// Runs the slow CPU work *before* closing the loading screen:
 ///  - bzip2-decompress `.map` / `.min` + mask composition
@@ -1468,16 +1468,16 @@ pub(super) fn setup_input_and_camera(
     (threaded_input, input_translator)
 }
 
-/// Initialize the SDL-mixer audio backend and switch the host sound
+/// Initialize the Kira audio backend and switch the host sound
 /// manager into `SoundMode::Menu` so menu music plays during the
 /// loading screen.
-pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<SdlMixerBackend> {
+pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAudioBackend> {
     if !game.global_options.sound_enabled {
         tracing::info!("sound disabled via `-NOSOUND`; skipping audio backend init");
         return None;
     }
     let mut audio_backend =
-        match SdlMixerBackend::new(&game.global_options.sound_directory, NUM_CHANNELS) {
+        match KiraAudioBackend::new(&game.global_options.sound_directory, NUM_CHANNELS) {
             Ok(backend) => Some(backend),
             Err(e) => {
                 tracing::warn!("Failed to initialize audio: {}. Sound disabled.", e);

@@ -11,6 +11,7 @@ use super::{
 };
 use crate::Host;
 use crate::app_effect::{AppEffect, SoundMode};
+use crate::audio_backend::KiraAudioBackend;
 use crate::campaign::Campaign;
 use crate::campaign_map::{self, CampaignMapChoice};
 use crate::corner_hud::CornerButton;
@@ -34,7 +35,6 @@ use crate::player_profile::PlayerProfileManager;
 use crate::profiles::Action;
 use crate::renderer::Renderer;
 use crate::resource_manager::ResourceManager;
-use crate::sdl_audio::SdlMixerBackend;
 use crate::sherwood_hud::{
     SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
 };
@@ -134,7 +134,7 @@ pub(super) fn handle_mouse_input(
                     host.input.left_mouse_start_screen =
                         engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
                     // When `next_left_double_is_simple` is set, the
-                    // next left-click is demoted to simple even if SDL
+                    // next left-click is demoted to simple even if the window
                     // reports a double-click.  Set by the multi-select
                     // path so a box-select doesn't accidentally chain
                     // into the double-click repeat path.
@@ -827,7 +827,7 @@ pub(super) fn handle_mouse_input(
                             let mut swallow_click = false;
                             if host.input.ignore_next_left_click {
                                 host.input.ignore_next_left_click = false;
-                                // The next SDL double-click is
+                                // The next platform double-click is
                                 // already demoted at MouseDown via the
                                 // `next_left_double_is_simple` flag, so
                                 // there's nothing extra to do here.
@@ -1062,7 +1062,7 @@ pub(super) async fn handle_pause_menu_events(
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
     input_translator: &mut InputTranslator,
@@ -1251,7 +1251,7 @@ pub(super) async fn handle_pause_menu_events(
                     menu.reset_after_side_menu();
                     let sw = renderer.screen_width() as i32;
                     let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_sdl(event_pump, sw, sh);
+                    menu.seed_mouse_from_window(event_pump, sw, sh);
                 }
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
@@ -1313,7 +1313,7 @@ pub(super) async fn handle_pause_menu_events(
                     menu.reset_after_side_menu();
                     let sw = renderer.screen_width() as i32;
                     let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_sdl(event_pump, sw, sh);
+                    menu.seed_mouse_from_window(event_pump, sw, sh);
                 }
             }
             PauseMenuOutcome::Restart => {
@@ -1347,7 +1347,7 @@ pub(super) async fn handle_pause_menu_events(
                     menu.reset_after_side_menu();
                     let sw = renderer.screen_width() as i32;
                     let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_sdl(event_pump, sw, sh);
+                    menu.seed_mouse_from_window(event_pump, sw, sh);
                 }
             }
         }

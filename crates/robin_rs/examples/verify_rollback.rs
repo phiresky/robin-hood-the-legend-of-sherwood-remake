@@ -5,7 +5,7 @@
 //! replayed state matches the live state.
 //!
 //! This exercises the same `state_hash` + `perform_hourglass` path
-//! the in-game rollback checker uses, but without SDL / input / UI
+//! the in-game rollback checker uses, but without rendering, input, or UI
 //! so it can run non-interactively from CI.
 //!
 //! Usage:

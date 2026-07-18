@@ -722,7 +722,7 @@ impl InteractiveMission {
         } else {
             window.poll_events()
         };
-        input.threaded.feed_sdl_events(&events);
+        input.threaded.feed_events(&events);
 
         let rewind_active = handle_hold_to_rewind(
             manager,
@@ -1057,7 +1057,7 @@ impl InteractiveMission {
             ks.contains(&KeyCode::AltLeft) || ks.contains(&KeyCode::AltRight)
         };
         // Persist the alt state on `InputState` so subsystems that
-        // don't otherwise see the SDL modifier mask can read it.
+        // don't otherwise see the platform modifier state can read it.
         host.input.is_alt = alt_held;
 
         handle_console_overlay_events(

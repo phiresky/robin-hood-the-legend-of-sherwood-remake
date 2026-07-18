@@ -73,6 +73,7 @@ use tick::{
 
 use crate::Host;
 use crate::app_effect::{AppEffect, SoundMode};
+use crate::audio_backend;
 use crate::campaign::Campaign;
 use crate::corner_hud::{
     CornerButton, CornerButtonEnable, CornerButtonSprites, CornerHudLayout, CornerTooltipTracker,
@@ -106,7 +107,6 @@ use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
 use crate::resource_manager::ResourceManager;
 use crate::save_file::special_slots;
-use crate::sdl_audio::{self};
 use crate::sherwood_hud::{
     SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout, SherwoodTooltipTracker,
 };
@@ -650,11 +650,8 @@ pub(crate) async fn run_mission(
     .map_err(|error| error.to_string())?;
     // ── Loading screen ──
     // Show a sand-dissolve loading screen while initializing the mission.
-    // Uses its own Renderer at the .pak image resolution; SDL logical size
-    // scales it to fill the window. Dropped before the game Renderer is created.
-    //
-    // The TextureCreator must outlive the loading-screen Renderer; we hold it
-    // in a local that survives until the loading screen is dropped further down.
+    // Uses its own Renderer at the .pak image resolution; presentation scales
+    // it to fill the window. Dropped before the game Renderer is created.
 
     // Drain any pending WM resize events BEFORE creating the loading screen
     // renderer.  Without this, a window manager that snapped our requested
@@ -943,7 +940,7 @@ pub(crate) async fn run_mission(
     // `hud_fonts` (entity names, HP, action labels) was pre-loaded above,
     // with the loading screen still visible.
 
-    let sample_loader = sdl_audio::create_sample_loader(std::path::PathBuf::from(
+    let sample_loader = audio_backend::create_sample_loader(std::path::PathBuf::from(
         &game.global_options.sound_directory,
     ));
     let sound_rng = fastrand::Rng::new();

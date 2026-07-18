@@ -18,7 +18,7 @@ use robin_engine::engine::Engine;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::messenger as engine_messenger;
 
-/// Translate the per-frame SDL3 controller events into joystick
+/// Translate per-frame gilrs controller events into joystick
 /// state, then dispatch. The gamepad's in-flight state persists
 /// across frames — events are sparse (only changed axes/buttons
 /// report) — so we only mutate the fields each event touches.
@@ -34,12 +34,12 @@ pub(super) fn handle_gamepad_events(
 ) {
     // ── Gamepad event folding ──
     //
-    // Translate the per-frame SDL3 controller events into joystick
+    // Translate per-frame gilrs controller events into joystick
     // state, then dispatch. The gamepad's in-flight state persists
     // across frames — events are sparse (only changed axes/buttons
     // report) — so we only mutate the fields each event touches.
     //
-    // SDL3 delivers the D-pad as four separate buttons.  Latch the
+    // gilrs delivers the D-pad as four separate buttons.  Latch the
     // current D-pad button states after each event and fold them
     // into `povs[0]`.
     let mut dpad = [false; 4]; // [up, right, down, left]
@@ -77,7 +77,7 @@ pub(super) fn handle_gamepad_events(
                     dpad[slot] = *pressed;
                     host.gamepad
                         .apply_dpad_state(dpad[0], dpad[1], dpad[2], dpad[3]);
-                } else if let Some(idx) = gamepad::sdl_button_to_gamepad_index(*button) {
+                } else if let Some(idx) = gamepad::standard_button_to_gamepad_index(*button) {
                     host.gamepad.apply_button_event(idx, *pressed);
                 }
             }
@@ -211,7 +211,7 @@ pub(super) fn handle_hold_to_rewind(
 
 /// Handle the in-game console overlay's per-frame event dispatch:
 /// feed events through the console, drain auto-close / CAMPAIGN load
-/// requests, toggle SDL text input on visibility transitions.
+/// requests, reset text input state on visibility transitions.
 ///
 /// When visible, the console captures keyboard events so they
 /// don't leak into the game (typing "FREEZE" mustn't trigger
@@ -285,7 +285,7 @@ pub(super) fn handle_console_overlay_events(
         }
     }
     // Detect any visibility change (open via action below, close
-    // via Esc / `~` / auto-close) so we toggle SDL text input.
+    // via Esc / `~` / auto-close) so we reset text input state.
     let console_visible_now = console_overlay.is_visible();
     let display_console_pressed = kb_actions
         .iter()

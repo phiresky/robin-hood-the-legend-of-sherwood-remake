@@ -1,15 +1,14 @@
-//! Backend-independent graphics types replacing the SDL3 equivalents.
+//! Backend-independent graphics types used by the renderer and window layer.
 //!
-//! These are the types that the rest of the codebase passes around
-//! (colors, rects, blend modes, keys). They used to be re-exports from
-//! `sdl3::*`; now they're our own. The renderer/window backends
-//! consume them and translate as needed.
+//! These are the types that the rest of the codebase passes around: colors,
+//! rectangles, blend modes, and keys. The renderer/window backends consume
+//! them and translate as needed.
 
 // ---------------------------------------------------------------------
 // Color
 // ---------------------------------------------------------------------
 
-/// 8-bit RGBA color. Drop-in replacement for `sdl3::pixels::Color`.
+/// 8-bit RGBA color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Color {
     pub r: u8,
@@ -48,7 +47,7 @@ impl Color {
 // Rect
 // ---------------------------------------------------------------------
 
-/// Integer rectangle. Drop-in for `sdl3::rect::Rect`.
+/// Integer rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
@@ -102,8 +101,7 @@ impl Rect {
     }
 
     /// Hit-test a point against this rect (inclusive of the top-left
-    /// edge, exclusive of the bottom-right). Drop-in for SDL's
-    /// `Rect::contains_point`.
+    /// edge, exclusive of the bottom-right).
     #[inline]
     pub fn contains_point<P: Into<Point>>(&self, p: P) -> bool {
         let p = p.into();
@@ -134,8 +132,7 @@ impl Point {
 // Blend mode
 // ---------------------------------------------------------------------
 
-/// Drop-in for `sdl3::render::BlendMode`. Maps to `wgpu::BlendState`
-/// inside the renderer.
+/// Blend mode mapped to `wgpu::BlendState` inside the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlendMode {
     /// No blending — overwrites destination.
@@ -186,7 +183,7 @@ impl BlendMode {
 // Keycodes
 // ---------------------------------------------------------------------
 
-/// Game-relevant keycodes. Drop-in for `sdl3::keyboard::Keycode`.
+/// Game-relevant keycodes.
 ///
 /// The set is intentionally narrow — only the keys the menu / game
 /// layer actually inspects by name. Text input goes through the
@@ -240,8 +237,7 @@ pub enum Keycode {
 // Game events (re-exported from window)
 // ---------------------------------------------------------------------
 
-/// High-level events the game loop consumes. Used to come from SDL;
-/// now produced by the winit-based window in `crate::window`.
+/// High-level events produced by the winit-based window in `crate::window`.
 #[derive(Debug, Clone)]
 pub enum GameEvent {
     Quit,

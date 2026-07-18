@@ -29,7 +29,7 @@ pub struct SoundSimState {
     /// (`active = false` for Single, `sources.delete` for Volatile).
     /// Populated at activation time using the host-supplied
     /// `source_durations` table so rollback replay produces identical
-    /// `sources` state without depending on SDL_mixer's wall-clock
+    /// `sources` state without depending on the audio backend's wall-clock
     /// playback-completion events. Looped and Delayed sources are
     /// never scheduled here (Looped never finishes on its own; Delayed
     /// re-rolls its timer sim-side in `perform_hourglass`).

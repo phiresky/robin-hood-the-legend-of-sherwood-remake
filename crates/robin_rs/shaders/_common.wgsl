@@ -2,21 +2,16 @@
 // fragment shaders.  Prepended by build.rs to every other `.wgsl`
 // before naga compiles it — WGSL has no `#include`.
 //
-// The layout matches what SDL_GPU's default vertex shader produces
-// for `SDL_RenderTexture` / `canvas.copy`, which is what the built-in
-// `texture_advanced.frag` in SDL's tree consumes:
+// The layout matches the vertex output produced by `gpu_upscale.rs`:
 //
 //   PSInput {
 //     v_color : COLOR0       →  @location(0) vec4<f32>
 //     v_uv    : TEXCOORD0    →  @location(1) vec2<f32>
 //   };
 //
-// SDL_shadercross compiles HLSL `register(t0, space2)` / `register(s0,
-// space2)` to SPIR-V descriptor-set 2, bindings 0 (texture) and 1
-// (sampler); naga's WGSL → SPIR-V emits the same numbers when we
-// declare `@group(2) @binding(0)` / `@group(2) @binding(1)`.  Uniforms
-// pushed via `SDL_SetGPURenderStateFragmentUniforms(state, 0, &data,
-// len)` land in `register(b0, space3)` → `@group(3) @binding(0)`.
+// The upscale pipeline reserves groups 0 and 1 for the renderer's standard
+// layouts. Group 2 holds the source texture and sampler; group 3 holds the
+// frame uniforms.
 
 struct FsIn {
     @location(0) color: vec4<f32>,

@@ -2,7 +2,7 @@
 //!
 //! Shows the global [`PlayerProfileManager`] roster, lets the player
 //! pick an entry to set as active, create a new profile (name +
-//! difficulty), delete, or rename via a small modal backed by the SDL3
+//! difficulty), delete, or rename via a small modal backed by the winit
 //! text-input pipeline (IME composition, dead keys, non-ASCII
 //! keyboards).
 
@@ -103,7 +103,7 @@ pub(crate) async fn show_select_player(
     let mut selected: Option<usize> = profiles_snapshot().and_then(|(_, active)| active);
 
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     let mut frame = FrameWnd::default();
     frame.enabled = true;
@@ -198,7 +198,7 @@ pub(crate) async fn show_select_player(
                     }
                 }
                 // A double-click on a profile row commits that profile
-                // as active and closes the menu.  SDL3 reports the click
+                // as active and closes the menu. The window layer reports the click
                 // counter via the 4th tuple element of `MouseDown`.
                 GameEvent::MouseDown(x, y, 1, clicks) if clicks >= 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
@@ -698,7 +698,7 @@ async fn run_name_prompt(
     let mut caret_timer: u32 = 0;
     let mut difficulty = initial_difficulty.unwrap_or(DifficultyLevel::Medium);
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
     let empty_keyboard = UiKeyboard::default();
 
     crate::window::start_text_input();

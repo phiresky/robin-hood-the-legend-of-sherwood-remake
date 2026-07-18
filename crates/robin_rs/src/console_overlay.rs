@@ -2,17 +2,17 @@
 //! drawn over the live game.
 //!
 //! This is the player-facing UI for [`robin_engine::engine::Engine::run_console_command`].
-//! Toggling the overlay (default key: `~`) starts SDL text input, captures
+//! Toggling the overlay (default key: `~`) resets IME state, captures
 //! keystrokes, and dispatches Enter-terminated lines to the engine.
 //!
 //! The console is intentionally non-modal: the game keeps running
 //! underneath, so cheats execute against the live simulation and the
-//! player can watch the effect.  Uses SDL's native text-input events
+//! player can watch the effect. Uses winit's native text-input events
 //! rather than a hand-rolled physical-key-to-character translation table,
 //! which gives us correct keyboard layouts and IME for free.
 //!
 //! ## Features
-//! - Text input via SDL `TextInput` events
+//! - Text input via winit IME commit events
 //! - Backspace
 //! - Up/Down arrow command history navigation
 //! - Tab completion against the static console keyword table
@@ -193,7 +193,7 @@ impl ConsoleOverlay {
     }
 
     /// Toggle visibility.  Returns the new visibility so the caller can
-    /// start / stop SDL text input on the canvas.
+    /// reset text input state when the overlay visibility changes.
     pub fn toggle(&mut self) -> bool {
         self.visible = !self.visible;
         if !self.visible {
@@ -254,7 +254,7 @@ impl ConsoleOverlay {
                         }
                         // Reject the toggle key from leaking in as text
                         // — when the player presses `~` to open the
-                        // console, SDL fires both KeyDown and a
+                        // console, winit emits both KeyDown and a
                         // TextInput "`~`".  We swallow it so the
                         // input box doesn't open with a stray "~".
                         if c == '`' || c == '~' {

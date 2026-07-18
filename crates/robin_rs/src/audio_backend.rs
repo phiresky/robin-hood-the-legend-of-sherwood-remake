@@ -1,10 +1,4 @@
-//! Audio backend (kira).
-//!
-//! Replaces the old SDL3_mixer backend. The module name stays
-//! `sdl_audio` for source compatibility with the rest of the
-//! codebase — the type is still `SdlMixerBackend` so call sites
-//! constructing it don't need changes. New code should prefer
-//! `KiraAudioBackend` (a re-export of the same type).
+//! Audio backend built on Kira.
 //!
 //! Implements [`AudioBackend`](crate::sound::AudioBackend) on top of
 //! [`kira`]. SFX go through a pool of `StaticSoundData` handles played
@@ -39,10 +33,9 @@ type MusicHandle = StreamingSoundHandle<FromFileError>;
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 type MusicHandle = StaticSoundHandle;
 
-/// kira-backed audio backend. Name preserved from the SDL backend so
-/// existing call sites (`SdlMixerBackend::new(...)`) keep compiling.
+/// Kira-backed audio backend.
 #[cfg(feature = "audio")]
-pub struct SdlMixerBackend {
+pub struct KiraAudioBackend {
     manager: AudioManager,
     sound_dir: PathBuf,
     /// Cached `StaticSoundData` (decoded audio) keyed by file path.
@@ -72,7 +65,7 @@ pub struct SdlMixerBackend {
 }
 
 #[cfg(feature = "audio")]
-impl SdlMixerBackend {
+impl KiraAudioBackend {
     /// Construct a new audio backend.
     pub fn new(sound_dir: impl Into<PathBuf>, num_channels: u32) -> Result<Self, String> {
         let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
@@ -269,7 +262,7 @@ fn amplitude_to_decibels(amp: f32) -> kira::Decibels {
 }
 
 #[cfg(feature = "audio")]
-impl AudioBackend for SdlMixerBackend {
+impl AudioBackend for KiraAudioBackend {
     fn play_sound(&mut self, file_name: &str, looping: bool) -> Option<i32> {
         let data = self.load_sample(file_name)?;
         let data = if looping {
@@ -349,7 +342,7 @@ impl AudioBackend for SdlMixerBackend {
     }
 
     fn play_music(&mut self, path: &str, looping: bool) -> bool {
-        let full_path = SdlMixerBackend::resolve_music_path(path);
+        let full_path = KiraAudioBackend::resolve_music_path(path);
         #[cfg(not(target_arch = "wasm32"))]
         let data = match StreamingSoundData::from_file(&full_path) {
             Ok(data) => data,
@@ -532,17 +525,17 @@ impl AudioBackend for SdlMixerBackend {
 // don't need per-cfg plumbing.
 
 #[cfg(not(feature = "audio"))]
-pub struct SdlMixerBackend;
+pub struct KiraAudioBackend;
 
 #[cfg(not(feature = "audio"))]
-impl SdlMixerBackend {
+impl KiraAudioBackend {
     pub fn new(_sound_dir: impl Into<PathBuf>, _num_channels: u32) -> Result<Self, String> {
         Err("audio feature disabled in this build".to_string())
     }
 }
 
 #[cfg(not(feature = "audio"))]
-impl AudioBackend for SdlMixerBackend {
+impl AudioBackend for KiraAudioBackend {
     fn play_sound(&mut self, _file_name: &str, _looping: bool) -> Option<i32> {
         None
     }
@@ -581,11 +574,11 @@ impl AudioBackend for SdlMixerBackend {
     }
 }
 
-// ─── WAV / OGG duration utilities (preserved from the SDL backend) ───
+// ─── WAV / OGG duration utilities ───
 //
 // `sound_cache::SampleLoader` consumers want `(bytes, size, duration_ms)`
 // to drive the hourglass-expiry pipeline. These pure-bytes parsers don't
-// touch SDL/kira and stay verbatim.
+// touch the audio backend.
 
 pub fn wav_duration_ms(data: &[u8]) -> Option<u32> {
     if data.len() < 4 {
@@ -705,7 +698,7 @@ mod tests {
 
         let wav = temp.path().join("Lincoln_D.wav");
         assert_eq!(
-            SdlMixerBackend::resolve_music_path(wav.to_str().unwrap()),
+            KiraAudioBackend::resolve_music_path(wav.to_str().unwrap()),
             ogg
         );
     }

@@ -21,7 +21,7 @@
 //!   Sherwood once the player has picked a mission (so they can
 //!   back out).
 
-use crate::gfx_types::{Point, Rect as SdlRect};
+use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
@@ -34,7 +34,7 @@ use crate::resource_ids::{
 };
 use crate::resource_manager::ResourceManager;
 
-fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
         rect.x() as f32,
         rect.y() as f32,
@@ -196,10 +196,10 @@ impl SherwoodButtonEnable {
 /// Screen-space bounding boxes for the four Sherwood HUD buttons.
 #[derive(Debug, Clone, Copy)]
 pub struct SherwoodHudLayout {
-    pub display_campaign_map: SdlRect,
-    pub go_to_exit: SdlRect,
-    pub start_mission: SdlRect,
-    pub quit_mission: SdlRect,
+    pub display_campaign_map: ScreenRect,
+    pub go_to_exit: ScreenRect,
+    pub start_mission: ScreenRect,
+    pub quit_mission: ScreenRect,
 }
 
 impl SherwoodHudLayout {
@@ -246,10 +246,10 @@ impl SherwoodHudLayout {
             .unwrap_or((FALLBACK_TALL_W, FALLBACK_TALL_H));
 
         Self {
-            display_campaign_map: SdlRect::new(wide_x, wide_y, dcm_w as u32, dcm_h as u32),
-            go_to_exit: SdlRect::new(wide_x, wide_y, gte_w as u32, gte_h as u32),
-            start_mission: SdlRect::new(tall_x, start_y, sm_w as u32, sm_h as u32),
-            quit_mission: SdlRect::new(tall_x, quit_y, qm_w as u32, qm_h as u32),
+            display_campaign_map: ScreenRect::new(wide_x, wide_y, dcm_w as u32, dcm_h as u32),
+            go_to_exit: ScreenRect::new(wide_x, wide_y, gte_w as u32, gte_h as u32),
+            start_mission: ScreenRect::new(tall_x, start_y, sm_w as u32, sm_h as u32),
+            quit_mission: ScreenRect::new(tall_x, quit_y, qm_w as u32, qm_h as u32),
         }
     }
 
