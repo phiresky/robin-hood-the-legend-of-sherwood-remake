@@ -44,7 +44,11 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
     /// resume against the same borrowed campaign owners.
     fn dispatch<R>(
         &mut self,
-        callback: impl FnOnce(&mut MissionScript, crate::natives::NativeQueryViews<'_>) -> R,
+        callback: impl FnOnce(
+            &mut MissionScript,
+            &mut crate::engine::ScriptDomains,
+            crate::natives::NativeQueryViews<'_>,
+        ) -> R,
     ) -> R {
         assert!(!self.live_engine_state, "script session entered twice");
 
@@ -74,11 +78,10 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             &mut self.engine.world.entities,
             &mut self.engine.ai.global,
             &mut self.engine.world.fast_grid,
-            &mut self.engine.script_domains,
         );
         self.live_engine_state = true;
 
-        let result = callback(script, queries);
+        let result = callback(script, &mut self.engine.script_domains, queries);
 
         self.restore_live_engine_state();
         self.script
@@ -99,7 +102,6 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
                 &mut self.engine.world.entities,
                 &mut self.engine.ai.global,
                 &mut self.engine.world.fast_grid,
-                &mut self.engine.script_domains,
             );
         self.live_engine_state = false;
     }
@@ -141,7 +143,11 @@ impl EngineInner {
     pub(super) fn with_script_session<R>(
         &mut self,
         assets: &LevelAssets,
-        callback: impl FnOnce(&mut MissionScript, crate::natives::NativeQueryViews<'_>) -> R,
+        callback: impl FnOnce(
+            &mut MissionScript,
+            &mut crate::engine::ScriptDomains,
+            crate::natives::NativeQueryViews<'_>,
+        ) -> R,
     ) -> Option<R> {
         self.refresh_script_sight_bindings();
         let mut session = ScriptSession::begin(self, assets)?;
@@ -953,7 +959,7 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             // ── Phase 1: Per-actor Initialize ──
             // Each actor's script class gets a ScriptInstance that persists for the
             // actor's lifetime — the heap (member variables) survives across calls
@@ -963,7 +969,7 @@ impl EngineInner {
             // Initialize dispatch plumbing lives in `MissionScript::bind_actor`.
             let mut init_count = 0u32;
             for (handle, class_name) in &per_actor_scripts {
-                if script.bind_actor(*handle, class_name, queries) {
+                if script.bind_actor(*handle, class_name, script_domains, queries) {
                     init_count += 1;
                 }
             }
@@ -980,7 +986,7 @@ impl EngineInner {
             // `InitializeFromMissionStream`.
             let mut target_init_count = 0u32;
             for (handle, class_name) in &per_target_scripts {
-                if script.bind_target(*handle, class_name, queries) {
+                if script.bind_target(*handle, class_name, script_domains, queries) {
                     target_init_count += 1;
                 }
             }
@@ -997,7 +1003,7 @@ impl EngineInner {
             // on the bound class.
             let mut scroll_init_count = 0u32;
             for (handle, class_name) in &per_scroll_scripts {
-                if script.bind_scroll(*handle, class_name, queries) {
+                if script.bind_scroll(*handle, class_name, script_domains, queries) {
                     scroll_init_count += 1;
                 }
             }
@@ -1027,7 +1033,8 @@ impl EngineInner {
                     let Some(pid) = crate::ai::PathId::new(path_idx as u16) else {
                         continue;
                     };
-                    if script.bind_waypoint(pid, wp_idx as u8, class_name, queries) {
+                    if script.bind_waypoint(pid, wp_idx as u8, class_name, script_domains, queries)
+                    {
                         wp_init_count += 1;
                     }
                 }
@@ -1046,6 +1053,7 @@ impl EngineInner {
                 MissionScript::with_game_host_attached(
                     &mut script.game_host,
                     &mut script.state,
+                    script_domains,
                     &script.bindings,
                     queries,
                     frame,
@@ -1112,8 +1120,8 @@ impl EngineInner {
     /// Finalize the mission script (called on mission end).
     /// `abandoned` is true if the player quit/interrupted.
     pub(crate) fn finalize_mission_script(&mut self, assets: &LevelAssets, abandoned: bool) {
-        let _ = self.with_script_session(assets, |script, queries| {
-            if let Err(e) = script.finalize(abandoned, queries) {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
+            if let Err(e) = script.finalize(abandoned, script_domains, queries) {
                 tracing::warn!("Script Finalize failed: {e}");
             }
         });
@@ -1181,12 +1189,13 @@ impl EngineInner {
         }
 
         // Phase 2: Dispatch to scripts in collection order.
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for (handle, new_anim, old_anim) in &changes {
                 if let Err(e) = script.call_actor_function(
                     *handle,
                     "ActionChange",
                     &[*new_anim, *old_anim],
+                    script_domains,
                     queries,
                 ) {
                     tracing::warn!("ActionChange (handle {handle}): {e}");
@@ -1245,9 +1254,11 @@ impl EngineInner {
 
         // Phase 2: dispatch in scroll slot order. Per-scroll `Hourglass` is
         // distinct from the engine callback and passes the literal zero.
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for handle in &ready {
-                if let Err(e) = script.call_scroll_function(*handle, "Hourglass", &[0], queries) {
+                if let Err(e) =
+                    script.call_scroll_function(*handle, "Hourglass", &[0], script_domains, queries)
+                {
                     tracing::warn!("Scroll Hourglass (handle {handle}): {e}");
                 }
             }
@@ -1311,8 +1322,14 @@ impl EngineInner {
         // Step 3 — dispatch via the SetScrollExecutingScript bracket.
         let pc_handle = crate::natives::GameHost::actor_handle(pc_id);
         let result = self
-            .with_script_session(assets, |script, queries| {
-                script.call_scroll_function(handle, "IsTaken", &[pc_handle], queries)
+            .with_script_session(assets, |script, script_domains, queries| {
+                script.call_scroll_function(
+                    handle,
+                    "IsTaken",
+                    &[pc_handle],
+                    script_domains,
+                    queries,
+                )
             })
             .expect("bound scroll script disappeared before IsTaken dispatch");
 
@@ -1354,7 +1371,7 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             let mut init_count = 0u32;
             for (zone_idx, class_name) in classes {
                 let class_idx = match script.manager.find_class(&class_name) {
@@ -1380,6 +1397,7 @@ impl EngineInner {
                     MissionScript::with_game_host_attached(
                         &mut script.game_host,
                         &mut script.state,
+                        script_domains,
                         &script.bindings,
                         queries,
                         frame,
@@ -1569,10 +1587,15 @@ impl EngineInner {
         self.apply_zone_occupant_entries(&entries);
 
         // Phase 3: Dispatch EnterZone to zone scripts.
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for &(zone_idx, _, handle) in &entries {
-                if let Err(e) = script.call_zone_function(zone_idx, "EnterZone", &[handle], queries)
-                {
+                if let Err(e) = script.call_zone_function(
+                    zone_idx,
+                    "EnterZone",
+                    &[handle],
+                    script_domains,
+                    queries,
+                ) {
                     tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {e}");
                 }
             }
@@ -1698,16 +1721,26 @@ impl EngineInner {
 
         // Phase 3: Dispatch enters before exits, preserving the original
         // batch order used by this port.
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for &(zone_idx, _, handle) in &enter_events {
-                if let Err(e) = script.call_zone_function(zone_idx, "EnterZone", &[handle], queries)
-                {
+                if let Err(e) = script.call_zone_function(
+                    zone_idx,
+                    "EnterZone",
+                    &[handle],
+                    script_domains,
+                    queries,
+                ) {
                     tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {e}");
                 }
             }
             for &(zone_idx, _, handle) in &exit_events {
-                if let Err(e) = script.call_zone_function(zone_idx, "ExitZone", &[handle], queries)
-                {
+                if let Err(e) = script.call_zone_function(
+                    zone_idx,
+                    "ExitZone",
+                    &[handle],
+                    script_domains,
+                    queries,
+                ) {
                     tracing::warn!("Zone {zone_idx} ExitZone (actor {handle}): {e}");
                 }
             }
@@ -1905,13 +1938,14 @@ impl EngineInner {
         per_actor: &[(i32, i32, i32, i32)],
         engine_level: &[(i32, i32, i32)],
     ) {
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             // Per-actor ProcessMessage
             for &(handle, msg, arg1, arg2) in per_actor {
                 if let Err(e) = script.call_actor_function(
                     handle,
                     "ProcessMessage",
                     &[msg, arg1, arg2],
+                    script_domains,
                     queries,
                 ) {
                     tracing::warn!("Sequence ProcessMessage (actor {handle}, msg {msg}): {e}");
@@ -1929,6 +1963,7 @@ impl EngineInner {
                         MissionScript::with_game_host_attached(
                             &mut script.game_host,
                             &mut script.state,
+                            script_domains,
                             &script.bindings,
                             queries,
                             frame,
@@ -1978,11 +2013,15 @@ impl EngineInner {
         if calls.is_empty() {
             return;
         }
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for &(target_handle, pc_handle, fn_name) in calls {
-                if let Err(e) =
-                    script.call_target_function(target_handle, fn_name, &[pc_handle], queries)
-                {
+                if let Err(e) = script.call_target_function(
+                    target_handle,
+                    fn_name,
+                    &[pc_handle],
+                    script_domains,
+                    queries,
+                ) {
                     tracing::warn!("{fn_name} (target {target_handle}): {e}");
                 }
             }
@@ -2058,8 +2097,14 @@ impl EngineInner {
         }
 
         let result = self
-            .with_script_session(assets, |script, queries| {
-                script.call_actor_function(handle, "FilterAIEvent", &[source, code], queries)
+            .with_script_session(assets, |script, script_domains, queries| {
+                script.call_actor_function(
+                    handle,
+                    "FilterAIEvent",
+                    &[source, code],
+                    script_domains,
+                    queries,
+                )
             })
             .expect("checked mission-script presence above");
 
@@ -2194,13 +2239,14 @@ impl EngineInner {
             return;
         }
 
-        let _ = self.with_script_session(assets, |script, queries| {
+        let _ = self.with_script_session(assets, |script, script_domains, queries| {
             for (handle, source, code) in &notifications {
                 // Return value ignored — notification only.
                 let _ = script.call_actor_function(
                     *handle,
                     "FilterAIEvent",
                     &[*source, *code],
+                    script_domains,
                     queries,
                 );
             }
@@ -3192,7 +3238,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v4_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_v5_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3213,18 +3259,22 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v4 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize v5 MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 4);
+        assert_eq!(value["snapshot_version"], 5);
         assert!(value["game_host"].get("campaign").is_none());
         assert!(value["game_host"].get("mission_stat").is_none());
+        assert!(value["game_host"].get("engine_domains").is_none());
+        assert!(value["game_host"].get("script_this").is_none());
+        assert!(value["game_host"].get("current_scroll").is_none());
+        assert!(value["game_host"].get("nested_call_depth").is_none());
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v4 MissionScript");
+            serde_json::from_str(&json).expect("deserialize v5 MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3259,10 +3309,10 @@ mod script_context_tests {
     }
 
     #[test]
-    fn v3_parked_transient_game_host_values_are_ignored() {
+    fn v4_callframe_branch_parked_transient_game_host_values_are_ignored() {
         let script = empty_mission_script();
         let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(3);
+        snapshot["snapshot_version"] = serde_json::json!(4);
         snapshot["game_host"]["script_this"] = serde_json::json!(41);
         snapshot["game_host"]["current_scroll"] = serde_json::json!(17);
         snapshot["game_host"]["nested_call_depth"] = serde_json::json!(3);
@@ -3393,17 +3443,17 @@ mod script_context_tests {
     }
 
     #[test]
-    fn v3_game_host_parked_campaign_migrates_to_engine_owner() {
+    fn v4_campaign_branch_parked_campaign_migrates_to_engine_owner() {
         let script = empty_mission_script();
         let mut parked = crate::campaign::Campaign::default();
         parked.values[CampaignValue::Custom20] = 0x8b_20_26;
         let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(3);
+        snapshot["snapshot_version"] = serde_json::json!(4);
         snapshot["game_host"]["campaign"] =
             serde_json::to_value(&parked).expect("serialize legacy parked campaign");
 
         let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("decode v3 parked campaign");
+            serde_json::from_value(snapshot).expect("decode v4 parked campaign");
         let mut engine = EngineInner::new();
         assert!(engine.mission_domain.campaign.is_none());
         engine.scripts.mission = Some(decoded);
@@ -3478,7 +3528,7 @@ mod script_context_tests {
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
 
-        let _ = engine.with_script_session(&assets, |_script, _queries| ());
+        let _ = engine.with_script_session(&assets, |_script, _, _queries| ());
     }
 
     #[test]
@@ -3520,17 +3570,17 @@ mod script_context_tests {
         assert!(restored.script_domains.interactables.doors[0].locked_pc);
         assert_eq!(restored.script_domains.interactables.patches.len(), 1);
         assert!(restored.script_domains.interactables.patches[0].applied);
+        let game_host = &restored
+            .scripts
+            .mission
+            .as_ref()
+            .expect("mission script survives migration")
+            .game_host;
         assert!(
-            restored
-                .scripts
-                .mission
-                .as_ref()
-                .expect("mission script survives migration")
-                .game_host
-                .engine_domains
-                .interactables
-                .doors
-                .is_empty(),
+            serde_json::to_value(game_host)
+                .expect("serialize migrated GameHost")
+                .get("engine_domains")
+                .is_none(),
             "legacy storage must be consumed instead of retained as a mirror"
         );
     }
@@ -3582,16 +3632,17 @@ mod script_context_tests {
         assert!(ui.men_to_blazon_conversion_mode);
         assert_eq!(ui.blinking_blazons, 3);
         assert_eq!(ui.blink_expire_frame, 150);
+        let game_host = &restored
+            .scripts
+            .mission
+            .as_ref()
+            .expect("mission script survives migration")
+            .game_host;
         assert!(
-            restored
-                .scripts
-                .mission
-                .as_ref()
-                .expect("mission script survives migration")
-                .game_host
-                .engine_domains
-                .mission_ui
-                .is_default_for_legacy_merge(),
+            serde_json::to_value(game_host)
+                .expect("serialize migrated GameHost")
+                .get("engine_domains")
+                .is_none(),
             "legacy UI storage must be consumed instead of retained as a mirror"
         );
     }
@@ -3639,6 +3690,51 @@ mod script_context_tests {
     }
 
     #[test]
+    fn native_mutation_writes_the_canonical_script_domains_in_place() {
+        use crate::interp::{HostFunctions, NativeStack};
+        use crate::natives::NativeFn;
+
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+        engine.scripts.mission = Some(empty_mission_script());
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                locked_pc: true,
+                ..Default::default()
+            });
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        let canonical_domains = std::ptr::addr_of_mut!(engine.script_domains);
+        let door = crate::natives::GameHost::door_handle_from_index(0);
+
+        let result = engine.with_script_session(&assets, |script, script_domains, queries| {
+            assert_eq!(
+                std::ptr::from_mut(script_domains),
+                canonical_domains,
+                "the native capability must borrow EngineInner's allocation"
+            );
+            let mut stack = NativeStack::default();
+            stack.push_i32(door);
+            stack.push_i32(0);
+            let mut context = crate::natives::NativeContext::with_bindings(
+                &mut script.game_host,
+                &mut script.state,
+                script_domains,
+                &script.bindings,
+                queries,
+            );
+            HostFunctions::call(&mut context, NativeFn::SetDoorLockedPC as u32, &mut stack)
+                .expect_return("SetDoorLockedPC is synchronous")
+        });
+
+        assert_eq!(result, Some(0));
+        assert!(!engine.script_domains.interactables.doors[0].locked_pc);
+    }
+
+    #[test]
     #[should_panic(expected = "native dispatch requires live level attachments")]
     fn external_native_rejects_a_detached_live_script() {
         let mut engine = EngineInner::new();
@@ -3659,7 +3755,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let hash_before = robin_util::state_hash::compute(&engine);
 
-        let result = engine.with_script_session(&assets, |script, _| {
+        let result = engine.with_script_session(&assets, |script, _, _| {
             assert!(script.game_host.entities.is_empty());
             script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |script| {
                 assert_eq!(script.active_call_frame_count(), 1);
@@ -3686,7 +3782,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
 
         let result: Result<(), &'static str> = engine
-            .with_script_session(&assets, |script, _| {
+            .with_script_session(&assets, |script, _, _| {
                 script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |_| {
                     Err("simulated script error")
                 })
@@ -3715,6 +3811,10 @@ mod script_context_tests {
                 let script = engine.scripts.mission.as_ref().unwrap();
                 assert_eq!(script.active_call_frame_count(), 0);
                 assert_eq!(script.game_host.entities.len(), 1);
+                assert!(
+                    engine.script_domains.mission_ui.outline_display,
+                    "canonical domain mutation survives session unwind"
+                );
             }
         }
 
@@ -3727,7 +3827,8 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let _verify = VerifyRestoredOnUnwind(&engine);
 
-        let _ = engine.with_script_session(&assets, |script, _| {
+        let _ = engine.with_script_session(&assets, |script, script_domains, _| {
+            script_domains.mission_ui.outline_display = true;
             script.with_call_frame(
                 crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
                 |_| panic!("simulated script panic"),
@@ -3941,7 +4042,7 @@ impl EngineInner {
             return Err("no mission script loaded (no mission running)".into());
         }
 
-        self.with_script_session(assets, |script, queries| {
+        self.with_script_session(assets, |script, script_domains, queries| {
             let frame = this_actor.map_or_else(
                 crate::natives::ScriptCallFrame::default,
                 crate::natives::ScriptCallFrame::actor,
@@ -3956,6 +4057,7 @@ impl EngineInner {
                     let mut native_context = crate::natives::NativeContext::with_call_frame(
                         &mut script.game_host,
                         &mut script.state,
+                        script_domains,
                         &script.bindings,
                         queries,
                         frame,

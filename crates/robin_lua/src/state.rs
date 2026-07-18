@@ -43,6 +43,18 @@ use crate::natives::HostPtr;
 /// the script's view of `_G` so the sandbox doesn't freeze it.
 pub(crate) const SEQUENCE_CALLBACKS_KEY: &str = "robin_lua.sequence_callbacks";
 
+struct HostAttachment<'lua>(&'lua Lua);
+
+impl Drop for HostAttachment<'_> {
+    fn drop(&mut self) {
+        let removed = self.0.remove_app_data::<HostPtr>();
+        assert!(
+            removed.is_some(),
+            "Lua HostPtr attachment disappeared before its scope ended"
+        );
+    }
+}
+
 /// Errors produced while loading or driving a mission `.lua`.
 #[derive(Debug, thiserror::Error)]
 pub enum MissionLuaError {
@@ -149,10 +161,11 @@ impl MissionLuaState {
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         let mut script_state = ScriptState::default();
-        self.with_host_and_state(host, &mut script_state, f)
+        self.with_host_and_state(host, &mut script_state, script_domains, f)
     }
 
     /// Variant used by mission execution, where script-owned state must
@@ -161,11 +174,13 @@ impl MissionLuaState {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.with_host_state_and_bindings(
             host,
             script_state,
+            script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
             robin_engine::natives::NativeQueryViews::default(),
             f,
@@ -176,21 +191,25 @@ impl MissionLuaState {
         &self,
         host: &mut GameHost,
         script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
         queries: robin_engine::natives::NativeQueryViews<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
-        self.lua.set_app_data(HostPtr::new(
+        assert!(
+            self.lua.app_data_ref::<HostPtr>().is_none(),
+            "nested Lua host attachments are not supported"
+        );
+        let replaced = self.lua.set_app_data(HostPtr::new(
             host as *mut _,
             script_state as *mut _,
+            script_domains as *mut _,
             bindings as *const _,
             queries,
         ));
-        let result = f(&self.lua);
-        // Always remove, even on Err, so the next call starts
-        // clean. `remove_app_data` returns `Option<T>` — discard.
-        let _ = self.lua.remove_app_data::<HostPtr>();
-        result
+        debug_assert!(replaced.is_none());
+        let _attachment = HostAttachment(&self.lua);
+        f(&self.lua)
     }
 
     /// Load and execute the mission's `.lua` file. The path is

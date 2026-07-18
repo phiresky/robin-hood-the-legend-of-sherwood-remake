@@ -192,6 +192,7 @@ impl<'a> NativeQueryViews<'a> {
 pub struct NativeContext<'a> {
     pub(crate) game_host: &'a mut GameHost,
     pub(crate) script_state: &'a mut ScriptState,
+    pub(crate) script_domains: &'a mut crate::engine::ScriptDomains,
     pub(crate) bindings: ScriptBindings<'a>,
     pub(crate) queries: NativeQueryViews<'a>,
     pub(crate) campaign: Option<RefMut<'a, crate::campaign::Campaign>>,
@@ -200,10 +201,15 @@ pub struct NativeContext<'a> {
 }
 
 impl<'a> NativeContext<'a> {
-    pub fn new(game_host: &'a mut GameHost, script_state: &'a mut ScriptState) -> Self {
+    pub fn new(
+        game_host: &'a mut GameHost,
+        script_state: &'a mut ScriptState,
+        script_domains: &'a mut crate::engine::ScriptDomains,
+    ) -> Self {
         Self {
             game_host,
             script_state,
+            script_domains,
             bindings: ScriptBindings::empty(),
             queries: NativeQueryViews::default(),
             campaign: None,
@@ -215,6 +221,7 @@ impl<'a> NativeContext<'a> {
     pub fn with_bindings(
         game_host: &'a mut GameHost,
         script_state: &'a mut ScriptState,
+        script_domains: &'a mut crate::engine::ScriptDomains,
         bindings: &'a AttachedScriptBindings,
         queries: NativeQueryViews<'a>,
     ) -> Self {
@@ -227,6 +234,7 @@ impl<'a> NativeContext<'a> {
         Self {
             game_host,
             script_state,
+            script_domains,
             bindings: bindings.view(),
             queries,
             campaign,
@@ -238,6 +246,7 @@ impl<'a> NativeContext<'a> {
     pub fn with_call_frame(
         game_host: &'a mut GameHost,
         script_state: &'a mut ScriptState,
+        script_domains: &'a mut crate::engine::ScriptDomains,
         bindings: &'a AttachedScriptBindings,
         queries: NativeQueryViews<'a>,
         call_frame: ScriptCallFrame,
@@ -251,6 +260,7 @@ impl<'a> NativeContext<'a> {
         Self {
             game_host,
             script_state,
+            script_domains,
             bindings: bindings.view(),
             queries,
             campaign,
