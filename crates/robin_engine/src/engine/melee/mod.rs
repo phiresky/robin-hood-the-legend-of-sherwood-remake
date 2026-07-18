@@ -2110,6 +2110,7 @@ fn select_hit_fall_animation(
 // Submodules (extracted from the original melee.rs mega-file).
 mod damage;
 mod dispatch;
+pub(super) use dispatch::ShieldCommandContext;
 mod effects;
 mod evaluate;
 mod speech;

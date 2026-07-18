@@ -552,19 +552,76 @@ impl EngineInner {
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
     }
+}
 
-    // ─── Shield commands ────────────────────────────────────────────
+// ─── Shield commands ────────────────────────────────────────────────
+
+/// Shield command translation against only entity state, sequence state, and
+/// order-id allocation.
+///
+/// Original provenance: `RHElementActorHuman::Translate` in
+/// `RHelementactorhuman.cpp:2018-2054` appends each shield animation directly,
+/// while `RHElementActorPC::Translate` in `RHelementactorpc.cpp:3015-3071`
+/// synchronously launches a follow-up `SEEK` when an already-shielding PC gets
+/// a refreshed danger/protectee command. The follow-up is returned so the
+/// sequence-phase owner can launch it through the normal Instruct path before
+/// performing the after-action synchronous splice.
+pub(crate) struct ShieldCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl<'a> ShieldCommandContext<'a> {
+    pub(crate) fn new(
+        entities: &'a mut crate::entities::Entities,
+        sequence_manager: &'a mut crate::sequence::SequenceManager,
+        next_order_id: &'a mut u32,
+    ) -> Self {
+        Self {
+            entities,
+            sequence_manager,
+            next_order_id,
+        }
+    }
+
+    /// Dispatch one shield command and return an owned follow-up that must be
+    /// launched synchronously before the sequence phase splices pending work.
+    pub(crate) fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<crate::sequence::SequenceElement> {
+        match command {
+            Command::RaiseShield => self.dispatch_raise_shield(owner, seq_id, elem_idx),
+            Command::RaiseShieldInstantly => {
+                self.dispatch_raise_shield_instantly(owner, seq_id, elem_idx);
+                None
+            }
+            Command::LowerShield => {
+                self.dispatch_lower_shield(owner, seq_id, elem_idx);
+                None
+            }
+            Command::ParryShield => {
+                self.dispatch_parry_shield(owner, seq_id, elem_idx);
+                None
+            }
+            _ => unreachable!("non-shield command passed to shield command context"),
+        }
+    }
 
     /// Dispatch a RaiseShield command.
     ///
     /// If already holding shield, terminates immediately. Otherwise
     /// transitions to `HoldingShield` and queues the raising animation.
-    pub(crate) fn dispatch_raise_shield(
+    fn dispatch_raise_shield(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> Option<crate::sequence::SequenceElement> {
         // Read danger point for facing direction.
         // Supports both Interaction data (player-issued: antagonist
         // entity position) and Generic data (AI-issued: shield danger
@@ -576,14 +633,12 @@ impl EngineInner {
         // "already holding shield" actor still gets its danger point
         // and protection link refreshed by the new command.
         let (danger_pt, danger_pt3d, danger_layer, new_protected) = self
-            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| match &e.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => {
                     let pt = antagonist.and_then(|id| {
-                        self.world
-                            .entities
+                        self.entities
                             .get(id)
                             .map(|e| e.element_data().position_map())
                     });
@@ -624,7 +679,7 @@ impl EngineInner {
         // `sync_danger_point_titbits`).
         if let Some(pt3d) = danger_pt3d
             && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
-            && let Some(entity) = self.world.entities.get_mut(owner)
+            && let Some(entity) = self.entities.get_mut(owner)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.shield_danger_point = pt3d;
@@ -633,7 +688,9 @@ impl EngineInner {
         // Only call `SetShieldProtected` when the Generic property is
         // non-null.
         if let Some(prot) = new_protected {
-            self.set_shield_protected(owner, Some(prot));
+            if let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut) {
+                pc.shield_protected = Some(prot);
+            }
         }
 
         // Action-state branch.  If already shielding (HOLDING_SHIELD or
@@ -644,21 +701,22 @@ impl EngineInner {
         // tolerance 50 when the danger point is zero; tolerance 0 +
         // SEEK_SHIELD when a danger point is set.
         let action_state = self
-            .get_entity(owner)
+            .entities
+            .get(owner)
             .and_then(|e| e.actor_data())
             .map(|a| a.action_state);
         match action_state {
             Some(ActionState::HoldingShield) | Some(ActionState::MovingShield) => {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
                 let protected_now = self
-                    .get_entity(owner)
+                    .entities
+                    .get(owner)
                     .and_then(|e| e.pc_data())
                     .and_then(|pc| pc.shield_protected);
                 if let Some(target) = protected_now {
                     let danger_zero = self
-                        .get_entity(owner)
+                        .entities
+                        .get(owner)
                         .and_then(|e| e.pc_data())
                         .map(|pc| {
                             pc.shield_danger_point.x == 0.0
@@ -689,31 +747,27 @@ impl EngineInner {
                                 | crate::sequence::MoveFlags::SEEK_SHIELD;
                         }
                     }
-                    self.launch_element(seek);
+                    return Some(seek);
                 }
-                return;
+                return None;
             }
             Some(s) if s.is_sword() || s.is_bow() => {
                 // Defensive gate (must be Waiting / Alerted / holding
                 // shield): the transition machine should already have
                 // rejected this, but terminate cleanly if it slips
                 // through.
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
-                return;
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                return None;
             }
             None => {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                return;
+                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                return None;
             }
             _ => {} // Waiting, Bored, ParryingShield, etc. — proceed.
         }
 
         let mut started = false;
-        if let Some(entity) = self.world.entities.get_mut(owner) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             // Face toward danger point if available.  Sets the
             // direction *goal*; the per-tick `turn()` (in the
             // order-driven animation handler) interpolates toward it
@@ -750,62 +804,45 @@ impl EngineInner {
             // `engine/animation.rs` gates advance on TERMINATED only
             // so the side-effect `SetStates(Upright, HoldingShield)`
             // on Done doesn't also pop the order mid-play.
-            self.push_new_order(
-                seq_id,
-                elem_idx,
-                crate::order::OrderType::RaisingShield,
-                0.0,
-                0.0,
-            );
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.push_order(seq_id, elem_idx, crate::order::OrderType::RaisingShield);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
+        None
     }
 
     /// Dispatch a RaiseShieldInstantly command.
     ///
     /// Sets `HoldingShield` immediately without a raising animation.
-    pub(crate) fn dispatch_raise_shield_instantly(
+    fn dispatch_raise_shield_instantly(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        if let Some(entity) = self.world.entities.get_mut(owner) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
                 actor.clear_path();
             }
             entity.set_posture(Posture::Upright);
         }
-        self.push_new_order(
-            seq_id,
-            elem_idx,
-            crate::order::OrderType::WaitingShield,
-            0.0,
-            0.0,
-        );
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::WaitingShield);
+        self.sequence_manager.element_terminated(seq_id, elem_idx);
     }
 
     /// Dispatch a LowerShield command.
     ///
     /// Transitions out of shield state to `Waiting` with a lowering animation.
-    pub(crate) fn dispatch_lower_shield(
+    fn dispatch_lower_shield(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(entity) = self.world.entities.get_mut(owner)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
             && actor.action_state.is_shield()
         {
@@ -826,34 +863,24 @@ impl EngineInner {
             // `dispatch_arm_completion` entry gates advance on
             // TERMINATED only so Done fires the action-state flip
             // without retiring the order.
-            self.push_new_order(
-                seq_id,
-                elem_idx,
-                crate::order::OrderType::LoweringShield,
-                0.0,
-                0.0,
-            );
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
     }
 
     /// Dispatch a ParryShield command.
     ///
     /// Transitions to `ParryingShield` from a shield-holding state.
-    pub(crate) fn dispatch_parry_shield(
+    fn dispatch_parry_shield(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(entity) = self.world.entities.get_mut(owner)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Requires the actor to currently be holding the shield.
@@ -871,23 +898,33 @@ impl EngineInner {
             // entry gates advance on TERMINATED only so the parry
             // sprite plays all the way through before the side-effect
             // handler returns to HoldingShield.
-            self.push_new_order(
-                seq_id,
-                elem_idx,
-                crate::order::OrderType::ParryingShield,
-                0.0,
-                0.0,
-            );
-            self.orders
-                .sequence_manager
-                .element_in_progress(seq_id, elem_idx);
+            self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
     }
 
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        // TODO(parity): all four original shield translators set
+        // `bComputeDirection = false` (`RHelementactorhuman.cpp:2018-2054`).
+        // Preserve the pre-split Rust `push_new_order` default here until the
+        // animation-facing consequences can be checked independently.
+        self.sequence_manager.push_order_on(
+            seq_id,
+            elem_idx,
+            crate::order::Order::new(order_type, 0.0, 0.0, id),
+        );
+    }
+}
+
+impl EngineInner {
     // ─── Receive damage dispatch ────────────────────────────────────
 
     /// Dispatch a receive-damage command from the sequence system.
