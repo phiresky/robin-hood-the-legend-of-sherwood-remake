@@ -61,7 +61,7 @@ mod tests;
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
 pub(crate) use context::{NativeAiGlobalCapability, NativeCampaignCapabilities};
-pub use context::{NativeContext, NativeQueryViews, ScriptCallFrame};
+pub use context::{NativeContext, NativeFastGridCapability, NativeQueryViews, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
@@ -124,14 +124,16 @@ pub struct GameHost {
     /// If true, print each call to stderr as it happens.
     pub verbose: bool,
     /// Deferred commands for the engine to process after script execution.
+    ///
+    /// This queue is transient even though `GameHost` remains serializable:
+    /// `EngineInner::sync_game_host_post_script` drains it before the engine
+    /// reaches a legal snapshot boundary. Consequently removed command
+    /// variants do not need a deserialize-only compatibility representation;
+    /// a snapshot containing an in-flight command was never legal.
     pub commands: Vec<EngineCommand>,
     /// Entity storage, swapped in from EngineInner before script execution
     /// and swapped back out after.  Empty when no script is running.
     pub entities: Vec<Option<Entity>>,
-    /// FastFindGrid state, swapped in from EngineInner before script execution.
-    /// Script-native visibility must use the same `FastFindGrid::is_reachable`
-    /// path as engine AI, not a separate obstacle scan.
-    pub fast_grid: crate::fast_find_grid::FastFindGrid,
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
     pub production_registrations: Vec<(i32, i32, i32)>,
@@ -168,17 +170,11 @@ pub struct GameHost {
 /// hazard if a script accidentally creates a true cycle.
 pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
 
-/// Cached subset of sector properties needed by record-time gate
-/// expansion in [`NativeContext::append_move_to_sequence`]. Same data as
-/// the runtime `EngineInner::sector_is_building` / `is_ladder_lift`
-/// helpers expose, but keyed off `GameHost`-owned data so the natives
-/// layer doesn't need a back-reference to the engine.
 impl GameHost {
     pub fn new() -> Self {
         Self {
             verbose: false,
             entities: Vec::new(),
-            fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             commands: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
@@ -190,7 +186,7 @@ impl GameHost {
         }
     }
 
-    /// Drain all queued engine commands. Called by the engine after script execution.
+    /// Drain all queued engine commands before the next legal snapshot boundary.
     pub fn drain_commands(&mut self) -> Vec<EngineCommand> {
         std::mem::take(&mut self.commands)
     }
@@ -589,8 +585,8 @@ impl NativeContext<'_> {
     }
 
     fn sector_kind(&self, sector: u16) -> Option<&crate::fast_find_grid::GridSector> {
-        self.bindings
-            .level_grid
+        self.fast_grid()
+            .level
             .sectors
             .iter()
             .find(|candidate| u16::from(candidate.sector_number) == sector)
@@ -650,9 +646,9 @@ impl NativeContext<'_> {
     /// Side effects (seed `ASSERT_POSITION` against the source sector,
     /// choose move-after-last-door, raise `TO_JUMP` until past the
     /// first jump gate, lockpick short-circuit, `SEEK` building-interior
-    /// trailing MOVE) are driven from the data swapped onto `GameHost`
-    /// at level load (`doors`, `sector_kinds`, `entities` for the
-    /// actor's auth/lockpick lookup).
+    /// trailing MOVE) are driven from the live engine domains and canonical
+    /// fast grid (`doors`, sector geometry, and the actor's auth/lockpick
+    /// lookup).
     ///
     /// `victim` is the SEEK target, passed straight through onto the
     /// trailing MOVE element's `element` field.
@@ -1340,16 +1336,15 @@ impl NativeContext<'_> {
     /// panics if no edge is reached (shouldn't happen for a valid
     /// inside point and non-zero direction vector).
     fn compute_border_point(&self, inside: (f32, f32), direction: i16) -> ((f32, f32), (f32, f32)) {
-        compute_border_point_bbox(self.bindings.map_bbox(), inside, direction)
+        compute_border_point_bbox(self.fast_grid().level.map_bbox, inside, direction)
     }
 }
 
 /// Compute the map-edge "border" point reached by walking from
 /// `inside` in the opposite of `direction`, and an "outside" point
 /// a small margin further so the actor's sprite box sits entirely
-/// off the map.  Standalone version of [`GameHost::compute_border_point`]
-/// so level-load code (which does not hold a `GameHost`) can share the
-/// same computation.
+/// off the map. Standalone version of the native helper so level-load code
+/// can share the same computation.
 pub(crate) fn compute_border_point_bbox(
     map_bbox: MapBBox,
     inside: (f32, f32),
@@ -5521,7 +5516,7 @@ impl NativeContext<'_> {
                         .and_then(|idx| idx.checked_sub(self.bindings.script_point_count));
                     if let Some(zi) = zone_idx
                         && let Some(&grid_idx) = self.bindings.script_zone_grid_indices.get(zi)
-                        && let Some(zone) = self.bindings.level_grid.sectors.get(grid_idx as usize)
+                        && let Some(zone) = self.fast_grid().level.sectors.get(grid_idx as usize)
                         && let Some(entity) = self.get_entity(actor)
                     {
                         let ed = entity.element_data();
@@ -5984,7 +5979,7 @@ impl NativeContext<'_> {
                         view_forward,
                         real_half_aperture,
                         is_night_or_fog,
-                        &self.fast_grid.level,
+                        &self.fast_grid().level,
                         sight_obstacle_list,
                         target_obstacle,
                     );
@@ -6013,7 +6008,7 @@ impl NativeContext<'_> {
                         viewer_eye_z: viewer_eye_3d.z,
                         target_eye_z: tgt_detection_3d.z,
                         sight_obstacles: sight_obstacle_list,
-                        fast_grid: &self.fast_grid,
+                        fast_grid: self.fast_grid(),
                         layer: npc_layer,
                         target_unconscious: tgt_unconscious,
                         target_passing_door: tgt_passing_door,
@@ -7676,13 +7671,25 @@ impl NativeContext<'_> {
                         );
                         return 0;
                     }
-                    // The clickable polygon lives in `fast_grid.sector_active`;
-                    // queue an engine-side flip so script calls actually
-                    // disable the click region.
-                    self.commands.push(EngineCommand::ActivateDoorMouseSector {
-                        door_handle: door_h,
-                        active: active != 0,
-                    });
+                    // `original-code/RHScript.cpp` calls the singleton grid's
+                    // `SetActive` inline. Keep the click-sector change visible
+                    // to nested dispatch and later natives in this callback.
+                    let door_idx = Self::door_index(door_h)
+                        .expect("validated door handle lost its encoded index")
+                        as u32;
+                    let sector_idx = self
+                        .fast_grid()
+                        .level
+                        .sectors
+                        .iter()
+                        .position(|sector| sector.door_index == Some(door_idx))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ActivateDoorMouseSector: door {door_h} requires a registered fast-grid click sector"
+                            )
+                        });
+                    self.fast_grid_mut()
+                        .set_sector_active(sector_idx as u32, active != 0);
                     0
                 }
 

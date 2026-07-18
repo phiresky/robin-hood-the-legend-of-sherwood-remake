@@ -34,6 +34,33 @@ impl NativeAiGlobalAccess for NativeAiGlobalCapability<'_> {
     }
 }
 
+/// Canonical runtime fast-grid owner borrowed for one script session.
+///
+/// The `RefCell` sequences individual VM resumes, including synchronous
+/// nested dispatch. The grid itself never leaves `EngineInner`, so native
+/// reads and mutations always address the engine's exact allocation.
+pub struct NativeFastGridCapability<'a> {
+    fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
+}
+
+trait NativeFastGridAccess {
+    fn fast_grid(&self) -> RefMut<'_, crate::fast_find_grid::FastFindGrid>;
+}
+
+impl<'a> NativeFastGridCapability<'a> {
+    pub fn new(fast_grid: &'a mut crate::fast_find_grid::FastFindGrid) -> Self {
+        Self {
+            fast_grid: RefCell::new(fast_grid),
+        }
+    }
+}
+
+impl NativeFastGridAccess for NativeFastGridCapability<'_> {
+    fn fast_grid(&self) -> RefMut<'_, crate::fast_find_grid::FastFindGrid> {
+        RefMut::map(self.fast_grid.borrow_mut(), |fast_grid| &mut **fast_grid)
+    }
+}
+
 /// Canonical mutable campaign owners borrowed for one script session.
 ///
 /// The cells only sequence short-lived VM resumes. A [`NativeContext`] holds
@@ -124,6 +151,9 @@ impl ScriptCallFrame {
 ///
 /// These owners stay in `EngineInner`; unlike the former `GameHost` fields,
 /// this view cannot be serialized, refreshed, or observed after the callback.
+/// Capability references are intentionally opaque fields on one copyable
+/// carrier so later ownership lanes can fold them into a single bundled
+/// session view without changing native call sites or Lua's scoped transport.
 #[derive(Clone, Copy, Default)]
 pub struct NativeQueryViews<'a> {
     sequence_manager: Option<&'a crate::sequence::SequenceManager>,
@@ -133,6 +163,7 @@ pub struct NativeQueryViews<'a> {
     frame_counter: Option<&'a u32>,
     ai_global_capability: Option<&'a dyn NativeAiGlobalAccess>,
     campaign_capabilities: Option<&'a dyn NativeCampaignAccess>,
+    fast_grid_capability: Option<&'a dyn NativeFastGridAccess>,
 }
 
 impl<'a> NativeQueryViews<'a> {
@@ -151,6 +182,7 @@ impl<'a> NativeQueryViews<'a> {
             frame_counter: Some(frame_counter),
             ai_global_capability: None,
             campaign_capabilities: None,
+            fast_grid_capability: None,
         }
     }
 
@@ -172,6 +204,17 @@ impl<'a> NativeQueryViews<'a> {
         campaign: &'a dyn NativeCampaignAccess,
     ) -> Self {
         self.campaign_capabilities = Some(campaign);
+        self
+    }
+
+    /// Attach the canonical runtime grid for the duration of this script
+    /// session. Public for the Lua adapter, which must carry the same scoped
+    /// capability through its `'static` callback shims without cloning it.
+    pub fn with_fast_grid_capability(
+        mut self,
+        fast_grid: &'a NativeFastGridCapability<'_>,
+    ) -> Self {
+        self.fast_grid_capability = Some(fast_grid);
         self
     }
 
@@ -241,6 +284,7 @@ pub struct NativeContext<'a> {
     pub(crate) ai_global: Option<RefMut<'a, crate::ai::AiGlobalState>>,
     pub(crate) campaign: Option<RefMut<'a, crate::campaign::Campaign>>,
     pub(crate) mission_stat: Option<RefMut<'a, crate::mission_stat::MissionStat>>,
+    fast_grid: Option<RefMut<'a, crate::fast_find_grid::FastFindGrid>>,
     pub(crate) call_frame: ScriptCallFrame,
 }
 
@@ -259,6 +303,7 @@ impl<'a> NativeContext<'a> {
             ai_global: None,
             campaign: None,
             mission_stat: None,
+            fast_grid: None,
             call_frame: ScriptCallFrame::default(),
         }
     }
@@ -279,6 +324,9 @@ impl<'a> NativeContext<'a> {
         let mission_stat = queries
             .campaign_capabilities
             .map(NativeCampaignAccess::mission_stat);
+        let fast_grid = queries
+            .fast_grid_capability
+            .map(NativeFastGridAccess::fast_grid);
         Self {
             game_host,
             script_state,
@@ -288,6 +336,7 @@ impl<'a> NativeContext<'a> {
             ai_global,
             campaign,
             mission_stat,
+            fast_grid,
             call_frame: ScriptCallFrame::default(),
         }
     }
@@ -309,6 +358,9 @@ impl<'a> NativeContext<'a> {
         let mission_stat = queries
             .campaign_capabilities
             .map(NativeCampaignAccess::mission_stat);
+        let fast_grid = queries
+            .fast_grid_capability
+            .map(NativeFastGridAccess::fast_grid);
         Self {
             game_host,
             script_state,
@@ -318,6 +370,7 @@ impl<'a> NativeContext<'a> {
             ai_global,
             campaign,
             mission_stat,
+            fast_grid,
             call_frame,
         }
     }
@@ -348,6 +401,18 @@ impl<'a> NativeContext<'a> {
         self.ai_global
             .as_deref_mut()
             .expect("script native requires the live canonical AiGlobalState capability")
+    }
+
+    pub(crate) fn fast_grid(&self) -> &crate::fast_find_grid::FastFindGrid {
+        self.fast_grid
+            .as_deref()
+            .expect("script native requires the canonical runtime FastFindGrid capability")
+    }
+
+    pub(crate) fn fast_grid_mut(&mut self) -> &mut crate::fast_find_grid::FastFindGrid {
+        self.fast_grid
+            .as_deref_mut()
+            .expect("script native requires the canonical runtime FastFindGrid capability")
     }
 
     // Associated functions do not participate in deref method lookup. Keep

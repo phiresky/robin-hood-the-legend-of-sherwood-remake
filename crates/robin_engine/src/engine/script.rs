@@ -11,9 +11,9 @@ use crate::profiles::{MissionLocation, MissionProfile};
 ///
 /// The mission script is temporarily removed from `EngineInner`, which gives
 /// the session exclusive ownership while the legacy GameHost adapter leases
-/// the remaining canonical entity/grid fields. AI-global state, campaign, and
-/// mission statistics stay in `EngineInner` and are borrowed by each native
-/// resume. This is not serializable
+/// the remaining canonical entity field. AI-global state, the fast grid,
+/// campaign, and mission statistics stay in `EngineInner` and are borrowed by
+/// each native resume. This is not serializable
 /// or hashable: legal snapshots only exist after the exact script and engine
 /// state have been restored to their canonical owners.
 ///
@@ -40,8 +40,8 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
     }
 
     /// Run one ordered callback batch while GameHost temporarily owns the
-    /// remaining canonical entity/grid fields. Nested `PendingNestedCall`
-    /// yields resume against the same borrowed canonical owners.
+    /// remaining canonical entity field. Nested `PendingNestedCall`
+    /// yields resume against the same borrowed canonical capabilities.
     fn dispatch<R>(
         &mut self,
         callback: impl FnOnce(
@@ -64,6 +64,8 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
         );
         let ai_global_capability =
             crate::natives::NativeAiGlobalCapability::new(&mut self.engine.ai.global);
+        let fast_grid_capability =
+            crate::natives::NativeFastGridCapability::new(&mut self.engine.world.fast_grid);
         let queries = crate::natives::NativeQueryViews::new(
             &self.engine.orders.sequence_manager,
             &self.engine.players.seats[0].selection,
@@ -72,15 +74,13 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             &self.engine.control.frame_counter,
         )
         .with_ai_global_capability(&ai_global_capability)
-        .with_campaign_capabilities(&campaign_capabilities);
+        .with_campaign_capabilities(&campaign_capabilities)
+        .with_fast_grid_capability(&fast_grid_capability);
         let script = self
             .script
             .as_mut()
             .expect("script session lost its leased mission script");
-        script.swap_engine_state(
-            &mut self.engine.world.entities,
-            &mut self.engine.world.fast_grid,
-        );
+        script.swap_engine_state(&mut self.engine.world.entities);
         self.live_engine_state = true;
 
         let result = callback(script, &mut self.engine.script_domains, queries);
@@ -100,10 +100,7 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
         self.script
             .as_mut()
             .expect("script session lost its leased mission script")
-            .swap_engine_state(
-                &mut self.engine.world.entities,
-                &mut self.engine.world.fast_grid,
-            );
+            .swap_engine_state(&mut self.engine.world.entities);
         self.live_engine_state = false;
     }
 
@@ -2999,38 +2996,6 @@ impl EngineInner {
                 EngineCommand::HeroSpeak { pc_id, expression } => {
                     self.hero_speaking(assets, pc_id, expression);
                 }
-                EngineCommand::ActivateDoorMouseSector {
-                    door_handle,
-                    active,
-                } => {
-                    // Flip the door's clickable polygon sector active
-                    // state for hit-testing.  The register pass at
-                    // `level_loading.rs:L4980` stores the door's
-                    // `door_index` on each grid sector; we scan for a
-                    // matching sector and drive `set_sector_active`.
-                    let Some(door_idx) = crate::natives::GameHost::door_index(door_handle) else {
-                        tracing::warn!(
-                            "ActivateDoorMouseSector: invalid door handle {door_handle}"
-                        );
-                        continue;
-                    };
-                    let target = door_idx as u32;
-                    let sector_idx = self
-                        .world
-                        .fast_grid
-                        .level
-                        .sectors
-                        .iter()
-                        .position(|s| s.door_index == Some(target))
-                        .map(|i| i as u32);
-                    if let Some(idx) = sector_idx {
-                        self.world.fast_grid.set_sector_active(idx, active);
-                    } else {
-                        tracing::warn!(
-                            "ActivateDoorMouseSector: no grid sector registered for door {door_handle}"
-                        );
-                    }
-                }
                 EngineCommand::MakeNoise {
                     noise_type,
                     x,
@@ -3266,7 +3231,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v6_snapshot_omits_ai_mirror_and_reattaches_program() {
+    fn mission_script_v6_snapshot_omits_runtime_mirrors_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3300,6 +3265,7 @@ mod script_context_tests {
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
+        assert!(value["game_host"].get("fast_grid").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
@@ -3370,6 +3336,49 @@ mod script_context_tests {
         let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
         assert_eq!(normalized["snapshot_version"], 6);
         assert!(normalized["game_host"].get("ai_global").is_none());
+    }
+
+    #[test]
+    fn v5_parked_fast_grid_is_deserialize_only() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(5);
+        snapshot["game_host"]["fast_grid"] =
+            serde_json::to_value(crate::fast_find_grid::FastFindGrid::default())
+                .expect("serialize legacy parked fast grid");
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("accept Wave-9C legacy save shape");
+        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
+        assert_eq!(normalized["snapshot_version"], 6);
+        assert!(normalized["game_host"].get("fast_grid").is_none());
+    }
+
+    #[test]
+    fn legal_snapshot_boundary_follows_engine_command_drain() {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(empty_mission_script());
+        engine
+            .scripts
+            .mission
+            .as_mut()
+            .expect("installed mission script")
+            .game_host
+            .commands
+            .push(crate::natives::EngineCommand::DisplayMap { show: true });
+
+        engine.sync_game_host_post_script(&LevelAssets::new());
+
+        let snapshot = serde_json::to_value(engine).expect("serialize legal engine snapshot");
+        assert_eq!(
+            snapshot["mission_script"]["game_host"]["commands"],
+            serde_json::json!([]),
+            "legal snapshots must not contain in-flight native engine commands"
+        );
+        assert!(
+            !snapshot.to_string().contains("ActivateDoorMouseSector"),
+            "the removed pre-Wave-9C queued grid command has no legal snapshot payload"
+        );
     }
 
     #[test]
@@ -3834,6 +3843,82 @@ mod script_context_tests {
     }
 
     #[test]
+    fn grid_native_borrows_and_mutates_engine_inner_exact_allocation() {
+        use crate::interp::{HostFunctions, NativeStack};
+        use crate::natives::NativeFn;
+
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+        engine.scripts.mission = Some(empty_mission_script());
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door::default());
+        engine.world.fast_grid.add_sector(
+            crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::DOOR,
+                layer: 0,
+                sector_number: crate::sector::SectorNumber::new(1),
+                door_index: Some(0),
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            },
+            0,
+        );
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        let canonical_grid = std::ptr::addr_of_mut!(engine.world.fast_grid);
+        let door = crate::natives::GameHost::door_handle_from_index(0);
+
+        let result = engine.with_script_session(&assets, |script, script_domains, queries| {
+            let mut context = crate::natives::NativeContext::with_bindings(
+                &mut script.game_host,
+                &mut script.state,
+                script_domains,
+                &script.bindings,
+                queries,
+            );
+            assert_eq!(
+                std::ptr::from_ref(context.fast_grid()),
+                canonical_grid.cast_const(),
+                "native grid capability must address EngineInner's allocation"
+            );
+            let mut stack = NativeStack::default();
+            stack.push_i32(0);
+            stack.push_i32(door);
+            HostFunctions::call(
+                &mut context,
+                NativeFn::ActivateDoorMouseSector as u32,
+                &mut stack,
+            )
+            .expect_return("ActivateDoorMouseSector is synchronous");
+            assert!(
+                !context.fast_grid().is_sector_active(0),
+                "grid mutation must be visible before the script callback returns"
+            );
+        });
+
+        assert_eq!(result, Some(()));
+        assert!(!engine.world.fast_grid.is_sector_active(0));
+        assert_eq!(
+            std::ptr::addr_of!(engine.world.fast_grid),
+            canonical_grid.cast_const(),
+            "the canonical grid allocation must never move through GameHost"
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "native dispatch requires live level attachments")]
     fn external_native_rejects_a_detached_live_script() {
         let mut engine = EngineInner::new();
@@ -3918,6 +4003,10 @@ mod script_context_tests {
                     engine.ai.global.golden_eye_mode,
                     "canonical AI-global mutation survives session unwind"
                 );
+                assert!(
+                    engine.world.fast_grid.sector_type_overlay.contains_key(&7),
+                    "canonical fast-grid mutation survives session unwind"
+                );
             }
         }
 
@@ -3941,6 +4030,9 @@ mod script_context_tests {
                     queries,
                 );
                 context.ai_global_mut().golden_eye_mode = true;
+                context
+                    .fast_grid_mut()
+                    .or_sector_type_overlay(7, crate::sector::SectorType::SHADOW);
             }
             script.with_call_frame(
                 crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
