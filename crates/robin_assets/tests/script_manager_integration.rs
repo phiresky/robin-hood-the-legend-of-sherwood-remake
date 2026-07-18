@@ -188,10 +188,11 @@ fn static_area_shared_between_instances() {
 
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut inst = mgr.create_instance("Test").unwrap();
 
     {
-        let mut context = NativeContext::new(&mut host, &mut script_state);
+        let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
         let _ = inst
             .call_function_with_host(&mut mgr, "SetGlobal42", &mut context)
             .unwrap();
@@ -217,7 +218,8 @@ fn native_calls_through_instance() {
     let mut inst = mgr.create_instance("Test").unwrap();
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
-    let mut context = NativeContext::new(&mut host, &mut script_state);
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
 
     let result = inst
         .call_function_with_host(&mut mgr, "Go", &mut context)
@@ -295,6 +297,7 @@ fn demo_script_via_manager() {
 
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
     // Run PutActorInBuilding (addr 0, the first function).
     // It won't do much with stub natives, but shouldn't crash.
@@ -307,7 +310,7 @@ fn demo_script_via_manager() {
 
     // Just verify we can call without panicking.
     // Most functions need real engine state, so errors are expected.
-    let mut context = NativeContext::new(&mut host, &mut script_state);
+    let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
     let _ = inst.call_function_with_host(&mut mgr, &first_fn, &mut context);
 }
 

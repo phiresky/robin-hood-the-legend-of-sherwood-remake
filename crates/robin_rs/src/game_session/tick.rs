@@ -189,7 +189,7 @@ pub(super) fn drain_steps(
         match step.kind {
             crate::http_server::StepKind::Forward { n } => {
                 let start = manager.sim_frame;
-                let (advanced, dismissed_during) = run_forward_ticks(
+                let result = run_forward_ticks(
                     manager,
                     host,
                     assets,
@@ -200,7 +200,6 @@ pub(super) fn drain_steps(
                     replay_player,
                     n,
                 );
-                modals_dismissed += dismissed_during;
                 // Stepping bypasses the checker's begin_frame/end_frame
                 // pairing, so its ring buffer is now stale relative to
                 // the advanced engine.  Clear it — the checker resumes
@@ -208,13 +207,19 @@ pub(super) fn drain_steps(
                 if let Some(checker) = rollback_checker.as_mut() {
                     checker.reset();
                 }
-                step.respond_ok(serde_json::json!({
-                    "direction": "forward",
-                    "from_frame": start,
-                    "frame": manager.sim_frame,
-                    "advanced": advanced,
-                    "modals_dismissed": modals_dismissed,
-                }));
+                match result {
+                    Ok((advanced, dismissed_during)) => {
+                        modals_dismissed += dismissed_during;
+                        step.respond_ok(serde_json::json!({
+                            "direction": "forward",
+                            "from_frame": start,
+                            "frame": manager.sim_frame,
+                            "advanced": advanced,
+                            "modals_dismissed": modals_dismissed,
+                        }));
+                    }
+                    Err(error) => step.respond_err(error),
+                }
             }
             crate::http_server::StepKind::Back { n } => {
                 let Some(target) = manager.sim_frame.checked_sub(n) else {
@@ -241,7 +246,7 @@ pub(super) fn drain_steps(
                     Ordering::Equal => Ok("noop"),
                     Ordering::Greater => {
                         let delta = target - from;
-                        let (advanced, dismissed_during) = run_forward_ticks(
+                        match run_forward_ticks(
                             manager,
                             host,
                             assets,
@@ -251,14 +256,18 @@ pub(super) fn drain_steps(
                             rollback_checker,
                             replay_player,
                             delta,
-                        );
-                        modals_dismissed += dismissed_during;
-                        if advanced < delta {
-                            Err(format!(
-                                "advanced {advanced} of {delta} frames before stepping stopped"
-                            ))
-                        } else {
-                            Ok("forward")
+                        ) {
+                            Ok((advanced, dismissed_during)) => {
+                                modals_dismissed += dismissed_during;
+                                if advanced < delta {
+                                    Err(format!(
+                                        "advanced {advanced} of {delta} frames before stepping stopped"
+                                    ))
+                                } else {
+                                    Ok("forward")
+                                }
+                            }
+                            Err(error) => Err(error),
                         }
                     }
                     Ordering::Less => {
@@ -325,12 +334,33 @@ pub(super) fn run_forward_ticks(
     rollback_checker: &mut Option<RollbackChecker>,
     replay_player: &mut Option<ReplayPlayer>,
     n: u32,
-) -> (u32, usize) {
+) -> Result<(u32, usize), String> {
     let engine = &mut manager.engine;
     let sim_frame = &mut manager.sim_frame;
     let start = *sim_frame;
     let mut dismissed = 0usize;
     for _ in 0..n {
+        let frame = *sim_frame;
+        let buffered_cmds = if frame < rewind_buffer.next_record_frame() {
+            let Some(recorded) = rewind_buffer.commands_for(frame) else {
+                return Err(format!(
+                    "cannot step frame {frame}: rewind command history starts at frame {}",
+                    rewind_buffer.oldest_cmd_frame()
+                ));
+            };
+            Some(recorded.to_vec())
+        } else {
+            None
+        };
+
+        // HTTP stepping can advance multiple ticks inside one host frame,
+        // so each tick needs its own pre-tick checkpoints. The outer mission
+        // frame only opened the first one.
+        rewind_buffer.begin_frame(frame, engine, assets);
+        if let Some(checker) = rollback_checker.as_mut() {
+            checker.begin_frame(frame, engine);
+        }
+
         let mut frame_cmds: Vec<PlayerInput> = Vec::new();
         if let Some(player) = replay_player.as_mut()
             && !player.is_finished()
@@ -345,13 +375,18 @@ pub(super) fn run_forward_ticks(
                 }
                 frame_cmds.push(cmd.clone());
             }
-            engine.apply_commands(
-                &mut host.engine_display,
-                &mut host.input,
-                assets,
-                &frame_cmds,
-            );
+        } else if let Some(buffered_cmds) = buffered_cmds.as_ref() {
+            // Seeking forward across a previously simulated span reuses the
+            // commands already owned by the rewind buffer. Re-recording the
+            // same span would append older checkpoints after newer ones.
+            frame_cmds.clone_from(buffered_cmds);
         }
+        engine.apply_commands(
+            &mut host.engine_display,
+            &mut host.input,
+            assets,
+            &frame_cmds,
+        );
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
@@ -363,7 +398,9 @@ pub(super) fn run_forward_ticks(
         if let Some(checker) = rollback_checker.as_mut() {
             checker.end_frame(host, frame_cmds.clone(), engine);
         }
-        rewind_buffer.end_frame(frame_cmds);
+        if buffered_cmds.is_none() {
+            rewind_buffer.end_frame(frame_cmds);
+        }
         *sim_frame += 1;
 
         // If the tick queued any modal, drop it silently and keep
@@ -375,7 +412,7 @@ pub(super) fn run_forward_ticks(
             dismissed += dismiss_pending_modals(host);
         }
     }
-    (*sim_frame - start, dismissed)
+    Ok((*sim_frame - start, dismissed))
 }
 
 /// Rewind to `target`, restoring rollback state from the rewind
@@ -460,4 +497,61 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
     host.pending_sherwood_report = false;
     host.pending_mission_state_popup = false;
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::campaign::Campaign;
+    use crate::player_command::PlayerId;
+
+    #[test]
+    fn forward_scrub_reuses_recorded_span_without_appending_an_old_checkpoint() {
+        let mut assets = engine_api::LevelAssets::new();
+        let engine = engine_api::Engine::new_for_test_with_level_size(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+            4096.0,
+            4096.0,
+        )
+        .expect("fixture engine");
+        let mut rewind_buffer = RewindBuffer::new();
+
+        // Model the state that triggered the timeline scrub crash: command
+        // history through frame 425, followed by a seek back to frame 250.
+        // The engine need not advance here because this test exercises the
+        // history ownership contract, not deterministic replay itself.
+        for frame in 0..=425 {
+            rewind_buffer.begin_frame(frame, &engine, &assets);
+            rewind_buffer.end_frame(Vec::new());
+        }
+        assert_eq!(rewind_buffer.next_record_frame(), 426);
+
+        let mut manager = engine_manager_api::EngineManager::new(engine, PlayerId::HOST);
+        manager.sim_frame = 250;
+        let mut host = Host::default();
+        let mut dev = engine_api::DevState::default();
+        let mut game = Game::default();
+        let mut rollback_checker = None;
+        let mut replay_player = None;
+
+        let (advanced, _) = run_forward_ticks(
+            &mut manager,
+            &mut host,
+            &assets,
+            &mut dev,
+            &mut game,
+            &mut rewind_buffer,
+            &mut rollback_checker,
+            &mut replay_player,
+            1,
+        )
+        .expect("forward scrub should reuse frame 250");
+
+        assert_eq!(advanced, 1);
+        assert_eq!(manager.sim_frame, 251);
+        assert_eq!(rewind_buffer.next_record_frame(), 426);
+    }
 }

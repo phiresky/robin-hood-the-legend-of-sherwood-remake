@@ -45,7 +45,7 @@ A list of which additional features we have added, which ones we might still wan
   - `GET /screenshot` — PNG capture of the next rendered frame, with debug
     overlay flags and optional resize/hide-UI query params.
   - `POST /native` — `{op, args, this?}` invokes one native; per-call
-    optional `this` overrides `GameHost::script_this` for the dispatch.
+    optional `this` sets the transient `ThisActor` receiver for the dispatch.
   - `POST /batch` — array of native calls executed back-to-back on
     one tick; useful for `Start`/`Record*`/`Thanx` recording sessions.
   - `POST /console` — invoke a debug-console cheat (`HIGHLANDER`,

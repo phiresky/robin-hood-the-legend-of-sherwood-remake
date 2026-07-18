@@ -8,22 +8,6 @@
 //! this module captures the *architecture*: the data structures, control
 //! flow, and state transitions.
 
-/// Borrow the canonical read-only subsystems needed by one native resume.
-/// Field-level expansion lets Rust keep the five mutable script-state leases
-/// disjoint from these views.
-macro_rules! native_query_views {
-    ($engine:expr) => {{
-        $engine.scripts.assert_native_attachments_ready();
-        crate::natives::NativeQueryViews::new(
-            &$engine.orders.sequence_manager,
-            &$engine.players.seats[0].selection,
-            &$engine.feedback.sound_sim.sources,
-            &$engine.world.weather,
-            &$engine.control.frame_counter,
-        )
-    }};
-}
-
 mod ai;
 mod ale;
 mod animation;
@@ -66,6 +50,8 @@ mod snapshot;
 mod soldier_helpers;
 mod special_motion;
 pub(crate) mod state;
+#[doc(hidden)]
+pub use state::ScriptDomains;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
@@ -3499,7 +3485,9 @@ impl EngineInner {
         script.post_initialized = true;
 
         let result = self
-            .with_script_session(assets, |script, queries| script.post_initialize(queries))
+            .with_script_session(assets, |script, script_domains, queries| {
+                script.post_initialize(script_domains, queries)
+            })
             .expect("PostInitialize mission script disappeared before dispatch");
 
         if let Err(e) = result {

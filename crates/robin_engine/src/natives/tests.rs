@@ -37,17 +37,17 @@ fn call_native_return(index: u32, args: &[i32]) -> Vec<crate::vm::Instruction> {
 
 fn run_native(index: u32, args: &[i32]) -> StopReason {
     let prog = call_native_return(index, args);
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     vm.run(&prog)
 }
 
-fn seed_zone(host: &mut GameHost, zone_idx: usize, handles: &[i32]) {
-    host.engine_domains
+fn seed_zone(host: &mut BoundGameHost, zone_idx: usize, handles: &[i32]) {
+    host.script_domains
         .zones
         .scripts
         .resize_with(zone_idx + 1, crate::sector::ScriptSectorData::new);
-    host.engine_domains.zones.scripts[zone_idx].occupant_indices = handles
+    host.script_domains.zones.scripts[zone_idx].occupant_indices = handles
         .iter()
         .map(|handle| {
             crate::entity_id::EntityId::Civilian(crate::entity_id::CivilianId(
@@ -57,21 +57,20 @@ fn seed_zone(host: &mut GameHost, zone_idx: usize, handles: &[i32]) {
         .collect();
 }
 
-fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
-    <GameHost as HostFunctions>::call(host, native as u32, stack)
-        .expect_return("non-nested native test")
+fn call_host_native(host: &mut BoundGameHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
+    HostFunctions::call(host, native as u32, stack).expect_return("non-nested native test")
 }
 
 fn call_host_native_with_queries(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     native: NativeFn,
     stack: &mut NativeStack,
     queries: NativeQueryViews<'_>,
 ) -> i32 {
-    let mut state = ScriptState::default();
     let mut context = NativeContext::with_bindings(
-        host,
-        &mut state,
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
         queries,
     );
@@ -80,14 +79,18 @@ fn call_host_native_with_queries(
 }
 
 fn call_bound_host_native(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     bindings: &AttachedScriptBindings,
     native: NativeFn,
     stack: &mut NativeStack,
 ) -> i32 {
-    let mut state = ScriptState::default();
-    let mut context =
-        NativeContext::with_bindings(host, &mut state, bindings, NativeQueryViews::default());
+    let mut context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        bindings,
+        NativeQueryViews::default(),
+    );
     <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native test")
 }
@@ -102,7 +105,9 @@ fn with_campaign_context<R>(
     let capabilities = NativeCampaignCapabilities::new(campaign, mission_stat);
     let queries = NativeQueryViews::default().with_campaign_capabilities(&capabilities);
     let mut state = ScriptState::default();
-    let mut context = NativeContext::with_bindings(host, &mut state, bindings, queries);
+    let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut context =
+        NativeContext::with_bindings(host, &mut state, &mut script_domains, bindings, queries);
     f(&mut context)
 }
 
@@ -128,6 +133,7 @@ fn call_campaign_native(
 struct CampaignGameHost {
     host: GameHost,
     state: ScriptState,
+    script_domains: crate::engine::ScriptDomains,
     campaign: crate::campaign::Campaign,
     mission_stat: crate::mission_stat::MissionStat,
 }
@@ -140,6 +146,7 @@ impl HostFunctions for CampaignGameHost {
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
+            &mut self.script_domains,
             AttachedScriptBindings::empty_ref(),
             queries,
         )
@@ -150,7 +157,52 @@ impl HostFunctions for CampaignGameHost {
 struct BoundGameHost {
     host: GameHost,
     state: ScriptState,
+    script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
+}
+
+impl BoundGameHost {
+    fn new() -> Self {
+        Self {
+            host: GameHost::new(),
+            state: ScriptState::default(),
+            script_domains: crate::engine::ScriptDomains::default(),
+            bindings: AttachedScriptBindings::default(),
+        }
+    }
+
+    fn door_index_for_goal_sector(
+        &self,
+        goal_sector: u16,
+        goal: (f32, f32),
+    ) -> Option<crate::gate::DoorIndex> {
+        self.script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .find_map(|(idx, door)| {
+                let matches_endpoint =
+                    door.sector_out == goal_sector || door.sector_in == goal_sector;
+                let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+                (matches_endpoint || matches_click_sector)
+                    .then_some(crate::gate::DoorIndex(idx as u32))
+            })
+    }
+}
+
+impl std::ops::Deref for BoundGameHost {
+    type Target = GameHost;
+
+    fn deref(&self) -> &Self::Target {
+        &self.host
+    }
+}
+
+impl std::ops::DerefMut for BoundGameHost {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.host
+    }
 }
 
 impl HostFunctions for BoundGameHost {
@@ -158,6 +210,7 @@ impl HostFunctions for BoundGameHost {
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
+            &mut self.script_domains,
             &self.bindings,
             NativeQueryViews::default(),
         )
@@ -168,7 +221,7 @@ impl HostFunctions for BoundGameHost {
 /// Run a native and return the queued deferred commands for inspection.
 fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCommand>) {
     let prog = call_native_return(index, args);
-    let mut vm = Vm::new().with_host(GameHost::new());
+    let mut vm = Vm::new().with_host(BoundGameHost::new());
     let stop = vm.run(&prog);
     let mut host = vm.take_host();
     (stop, std::mem::take(&mut host.deferred_commands))
@@ -234,7 +287,7 @@ fn globals_init_set_get() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(200));
 }
@@ -255,7 +308,7 @@ fn stub_returns_zero_and_logs() {
         Aff1NativeGetReturn { sym: TMP4 },
         ReturnVal { sym: TMP4 },
     ];
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(0));
 }
@@ -270,13 +323,13 @@ fn name_lookup() {
 
 #[test]
 fn npc_custom_values_round_trip_through_json() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let mut npc = native_test_soldier();
     npc.npc_data_mut().unwrap().custom_values[7] = 456;
     host.entities.push(Some(npc));
 
-    serde_json::to_value(&host).expect("save/rollback JSON value");
-    let json = serde_json::to_string(&host).expect("serialize GameHost");
+    serde_json::to_value(&*host).expect("save/rollback JSON value");
+    let json = serde_json::to_string(&*host).expect("serialize GameHost");
     let decoded: GameHost = serde_json::from_str(&json).expect("deserialize GameHost");
 
     assert_eq!(
@@ -292,9 +345,9 @@ fn npc_custom_values_round_trip_through_json() {
 
 #[test]
 fn npc_custom_values_participate_in_state_hash() {
-    let mut baseline = GameHost::new();
-    let mut same = GameHost::new();
-    let mut changed = GameHost::new();
+    let mut baseline = BoundGameHost::new();
+    let mut same = BoundGameHost::new();
+    let mut changed = BoundGameHost::new();
     for (host, value) in [(&mut baseline, 456), (&mut same, 456), (&mut changed, 457)] {
         let mut npc = native_test_soldier();
         npc.npc_data_mut().unwrap().custom_values[7] = value;
@@ -302,25 +355,25 @@ fn npc_custom_values_participate_in_state_hash() {
     }
 
     assert_eq!(
-        robin_util::state_hash::compute(&baseline),
-        robin_util::state_hash::compute(&same)
+        robin_util::state_hash::compute(&*baseline),
+        robin_util::state_hash::compute(&*same)
     );
     assert_ne!(
-        robin_util::state_hash::compute(&baseline),
-        robin_util::state_hash::compute(&changed)
+        robin_util::state_hash::compute(&*baseline),
+        robin_util::state_hash::compute(&*changed)
     );
 }
 
 #[test]
 fn door_sector_goal_resolves_click_polygon_door_index() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let mut door = Door {
         active: true,
         click_polygon: vec![(10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0)],
         ..Default::default()
     };
     door.rebuild_click_bbox();
-    host.engine_domains.interactables.doors.push(door);
+    host.script_domains.interactables.doors.push(door);
 
     assert_eq!(
         host.door_index_for_goal_sector(99, (20.0, 20.0)),
@@ -330,8 +383,8 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
 
 #[test]
 fn door_mutation_is_visible_to_later_native_in_same_callback() {
-    let mut host = GameHost::new();
-    host.engine_domains.interactables.doors.push(Door {
+    let mut host = BoundGameHost::new();
+    host.script_domains.interactables.doors.push(Door {
         active: false,
         locked_pc: true,
         ..Default::default()
@@ -353,15 +406,15 @@ fn door_mutation_is_visible_to_later_native_in_same_callback() {
         0
     );
     assert!(
-        host.engine_domains.interactables.doors[0].active,
+        host.script_domains.interactables.doors[0].active,
         "the Original activates a door when script unlocks it"
     );
 }
 
 #[test]
 fn patch_mutation_is_visible_to_later_native_in_same_callback() {
-    let mut host = GameHost::new();
-    host.engine_domains.interactables.patches.push(Patch {
+    let mut host = BoundGameHost::new();
+    host.script_domains.interactables.patches.push(Patch {
         active: true,
         initially_active: true,
         ..Default::default()
@@ -390,7 +443,7 @@ fn patch_mutation_is_visible_to_later_native_in_same_callback() {
 
 #[test]
 fn mission_ui_mutations_are_visible_in_same_callback() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
 
     let mut set_outline = NativeStack::default();
     set_outline.push_i32(1);
@@ -406,7 +459,7 @@ fn mission_ui_mutations_are_visible_in_same_callback() {
         ),
         1
     );
-    assert!(host.engine_domains.mission_ui.outline_display);
+    assert!(host.script_domains.mission_ui.outline_display);
     assert!(matches!(
         host.commands.as_slice(),
         [EngineCommand::SetOutlineDisplay { display: true }]
@@ -420,7 +473,7 @@ fn mission_ui_mutations_are_visible_in_same_callback() {
         ),
         0
     );
-    assert!(host.engine_domains.mission_ui.force_check);
+    assert!(host.script_domains.mission_ui.force_check);
 }
 
 // --- Sequence manager ---
@@ -454,7 +507,7 @@ fn then_outside_recording_returns_zero() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(0));
 }
@@ -686,7 +739,7 @@ fn nowhere_returns_zero() {
 
 #[test]
 fn get_distance_with_positions() {
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let bindings = AttachedScriptBindings {
         script_location_count: 2,
         script_point_count: 2,
@@ -700,11 +753,7 @@ fn get_distance_with_positions() {
             GameHost::location_handle_from_index(1),
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
-        host,
-        state: ScriptState::default(),
-        bindings,
-    }));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost { bindings, ..host }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(50)); // sqrt(30²+40²)=50
 }
 
@@ -715,10 +764,10 @@ fn get_distance_invalid_handle() {
 
 #[test]
 fn is_inside_building_specific() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let building = GameHost::building_handle_from_index(2);
-    host.engine_domains
+    host.script_domains
         .buildings
         .actor_building
         .insert(actor, building);
@@ -729,9 +778,9 @@ fn is_inside_building_specific() {
 
 #[test]
 fn is_inside_building_wrong() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.engine_domains
+    host.script_domains
         .buildings
         .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
@@ -742,9 +791,9 @@ fn is_inside_building_wrong() {
 
 #[test]
 fn is_inside_building_null_checks_any() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.engine_domains
+    host.script_domains
         .buildings
         .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
@@ -756,7 +805,7 @@ fn is_inside_building_null_checks_any() {
 
 #[test]
 fn is_inside_building_not_in_any() {
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let prog = call_native_return(98, &[GameHost::actor_handle_from_index(4), 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
@@ -764,7 +813,7 @@ fn is_inside_building_not_in_any() {
 
 #[test]
 fn is_inside_zone() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
     seed_zone(
@@ -783,7 +832,7 @@ fn is_inside_zone() {
 
 #[test]
 fn is_inside_zone_not_present() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
     seed_zone(
@@ -805,7 +854,7 @@ fn actors_in_sector() {
     // handles via `is_script_sector_handle` (sector handles live in
     // `script_point_count < loc <= script_location_count`), so seed
     // counts so loc=2 is a valid sector handle.
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let bindings = AttachedScriptBindings {
         script_point_count: 1,
         script_location_count: 2,
@@ -823,15 +872,11 @@ fn actors_in_sector() {
     );
 
     let prog = call_native_return(204, &[loc]);
-    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
-        host,
-        state: ScriptState::default(),
-        bindings,
-    }));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost { bindings, ..host }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(3));
 
     // Re-add occupants since vm takes ownership
-    let mut host2 = GameHost::new();
+    let mut host2 = BoundGameHost::new();
     let bindings2 = AttachedScriptBindings {
         script_point_count: 1,
         script_location_count: 2,
@@ -848,9 +893,8 @@ fn actors_in_sector() {
     );
     let prog2 = call_native_return(205, &[loc, 1]);
     let mut vm2 = Vm::new().with_host(Box::new(BoundGameHost {
-        host: host2,
-        state: ScriptState::default(),
         bindings: bindings2,
+        ..host2
     }));
     assert_eq!(
         vm2.run(&prog2),
@@ -860,7 +904,7 @@ fn actors_in_sector() {
 
 #[test]
 fn compute_location_between() {
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     let bindings = AttachedScriptBindings {
         script_location_count: 2,
         script_point_count: 2,
@@ -878,11 +922,7 @@ fn compute_location_between() {
             lambda_bits,
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
-        host,
-        state: ScriptState::default(),
-        bindings,
-    }));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost { bindings, ..host }));
     // Should return a handle >= 3 (first computed location)
     match vm.run(&prog) {
         StopReason::ReturnedValue(handle) => {
@@ -894,7 +934,7 @@ fn compute_location_between() {
 
 #[test]
 fn are_all_pcs_inside() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
@@ -915,7 +955,7 @@ fn are_all_pcs_inside() {
 
 #[test]
 fn are_all_pcs_inside_not_all() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
@@ -931,7 +971,7 @@ fn are_all_pcs_inside_not_all() {
 
 #[test]
 fn register_production_sector() {
-    let host = GameHost::new();
+    let host = BoundGameHost::new();
     // RegisterAsProductionSector(type=0, loc=3, speed=10)
     let prog = call_native_return(199, &[0, 3, 10]);
     let mut vm = Vm::new().with_host(Box::new(host));
@@ -967,6 +1007,7 @@ fn campaign_values_set_get() {
     let host = CampaignGameHost {
         host: GameHost::new(),
         state: ScriptState::default(),
+        script_domains: crate::engine::ScriptDomains::default(),
         campaign: crate::campaign::Campaign::default(),
         mission_stat: crate::mission_stat::MissionStat::default(),
     };
@@ -1012,7 +1053,7 @@ fn npc_values_set_then_get_from_canonical_entity() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities.push(Some(native_test_soldier()));
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(77));
@@ -1079,7 +1120,7 @@ fn custom_values_are_isolated_between_script_hosts() {
 
 #[test]
 fn deferred_selection_is_visible_to_later_natives_in_the_same_callback() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
     let actor = GameHost::actor_handle_from_index(0);
@@ -1116,7 +1157,7 @@ fn deferred_selection_is_visible_to_later_natives_in_the_same_callback() {
 
 #[test]
 fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let sequences = crate::sequence::SequenceManager::new();
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     sounds.sources_push_some(crate::sound_source::SoundSource::default());
@@ -1159,7 +1200,7 @@ fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
 fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
     let pc_handle = GameHost::actor_handle(pc_id);
-    let mut pc_host = GameHost::new();
+    let mut pc_host = BoundGameHost::new();
     pc_host
         .entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
@@ -1191,7 +1232,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         crate::order::OrderType::RunningUpright as i32
     );
 
-    let mut npc_host = GameHost::new();
+    let mut npc_host = BoundGameHost::new();
     npc_host.entities.push(Some(native_test_soldier()));
     let mut emoticon = NativeStack::default();
     emoticon.push_i32(GameHost::actor_handle_from_index(0));
@@ -1246,8 +1287,8 @@ fn canonical_query_views_are_isolated_between_engine_instances() {
         &second_weather,
         &second_frame,
     );
-    let mut first_host = GameHost::new();
-    let mut second_host = GameHost::new();
+    let mut first_host = BoundGameHost::new();
+    let mut second_host = BoundGameHost::new();
 
     assert_eq!(
         call_host_native_with_queries(
@@ -1287,7 +1328,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
         object.insert(field.into(), old_value);
     }
 
-    let mut restored: GameHost =
+    let restored: GameHost =
         serde_json::from_value(value).expect("unknown legacy mirror fields are ignored");
     let saved_again = serde_json::to_value(&restored).expect("re-serialize GameHost");
     for field in [
@@ -1312,7 +1353,10 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
     let frame = 4;
     assert_eq!(
         call_host_native_with_queries(
-            &mut restored,
+            &mut BoundGameHost {
+                host: restored,
+                ..BoundGameHost::new()
+            },
             NativeFn::GetNumberOfSelectedPCs,
             &mut NativeStack::default(),
             NativeQueryViews::new(&sequences, &selection, &sounds, &weather, &frame),
@@ -1325,7 +1369,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
 #[test]
 fn animation_state_write_is_immediately_visible_from_canonical_entity() {
     let actor = GameHost::actor_handle_from_index(0);
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
             element: crate::element::ElementData {
@@ -1482,9 +1526,11 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame)
         .with_campaign_capabilities(&capabilities);
     let mut state = ScriptState::default();
+    let mut script_domains = crate::engine::ScriptDomains::default();
     let mut context = NativeContext::with_bindings(
         &mut host,
         &mut state,
+        &mut script_domains,
         AttachedScriptBindings::empty_ref(),
         queries,
     );
@@ -1568,7 +1614,7 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
 fn persistent_property_test_host(
     with_campaign: bool,
 ) -> (
-    GameHost,
+    BoundGameHost,
     AttachedScriptBindings,
     Option<crate::campaign::Campaign>,
     i32,
@@ -1581,7 +1627,7 @@ fn persistent_property_test_host(
         action_max_ammo: [12, 6, 6],
         ..Default::default()
     });
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     let bindings = AttachedScriptBindings {
         profile_manager: std::sync::Arc::new(profiles),
         ..Default::default()
@@ -1619,7 +1665,7 @@ fn persistent_property_test_host(
 }
 
 fn call_set_persistent_property(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     bindings: &AttachedScriptBindings,
     actor: i32,
     prop: i32,
@@ -1633,7 +1679,7 @@ fn call_set_persistent_property(
 }
 
 fn call_get_persistent_property(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     bindings: &AttachedScriptBindings,
     actor: i32,
     prop: i32,
@@ -1802,7 +1848,7 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
 }
 
 fn native_sees(
-    host: &mut GameHost,
+    host: &mut BoundGameHost,
     weather: &crate::engine::WeatherState,
     npc_index: usize,
     target_index: usize,
@@ -1821,7 +1867,7 @@ fn native_sees(
     )
 }
 
-fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHost {
+fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundGameHost {
     let mut npc = native_test_soldier();
     npc.element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::ZERO);
@@ -1841,7 +1887,7 @@ fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHos
     pc.element_data_mut().set_position_map(target);
     pc.element_data_mut().posture = Posture::Upright;
 
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(npc), Some(pc)];
     host
 }
@@ -1929,7 +1975,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
     assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
 }
 
-fn set_experiences_test_host() -> (GameHost, crate::campaign::Campaign, i32) {
+fn set_experiences_test_host() -> (BoundGameHost, crate::campaign::Campaign, i32) {
     let actor = GameHost::actor_handle_from_index(0);
     let profile_idx = crate::profiles::CharacterProfileIdx(0);
     let mut status = crate::pc_status::PcStatus::default();
@@ -1949,7 +1995,7 @@ fn set_experiences_test_host() -> (GameHost, crate::campaign::Campaign, i32) {
         status,
     });
 
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
     (host, campaign, actor)
 }
@@ -2012,7 +2058,7 @@ fn set_experiences_capacities_persist_with_campaign_description() {
 
 #[test]
 fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
@@ -2030,7 +2076,7 @@ fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
 
 #[test]
 fn is_action_available_rejects_out_of_range_slot() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
@@ -2045,7 +2091,7 @@ fn is_action_available_rejects_out_of_range_slot() {
 
 #[test]
 fn is_action_available_reads_persistent_and_temp_slot_masks() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(native_test_pc(
         vec![false, true, false],
         vec![false, false, true],
@@ -2079,7 +2125,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
 
 #[test]
 fn add_as_subordinate_requests_patrol_reinit() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities = vec![Some(native_test_soldier()), Some(native_test_soldier())];
 
     let mut stack = NativeStack::default();
