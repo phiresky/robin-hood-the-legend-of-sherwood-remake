@@ -77,6 +77,14 @@ mod tests {
 
     fn get_location(bindings: &AttachedScriptBindings, index: i32) -> i32 {
         let mut host = GameHost::new();
+        let mut entities = crate::entities::Entities::new();
+        let mut ai_global = crate::ai::AiGlobalState::default();
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let capabilities = crate::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut state = ScriptState::default();
         let mut script_domains = crate::engine::ScriptDomains::default();
         let mut stack = NativeStack::default();
@@ -86,7 +94,7 @@ mod tests {
             &mut state,
             &mut script_domains,
             bindings,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         );
         HostFunctions::call(&mut context, NativeFn::GetLocationScript as u32, &mut stack)
             .expect_return("GetLocationScript is synchronous")

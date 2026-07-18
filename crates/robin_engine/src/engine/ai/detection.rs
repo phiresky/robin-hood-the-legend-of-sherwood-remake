@@ -708,14 +708,14 @@ impl EngineInner {
             }
         }
         if !listenable_calls.is_empty() {
-            let _ = self.with_script_session(assets, |script, script_domains, queries| {
+            let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
                 for (target_handle, pc_handle) in listenable_calls {
                     if let Err(e) = script.call_target_function(
                         target_handle,
                         "ActivatedByListenable",
                         &[pc_handle],
                         script_domains,
-                        queries,
+                        capabilities,
                     ) {
                         tracing::warn!("ActivatedByListenable (target {target_handle}): {e}");
                     }

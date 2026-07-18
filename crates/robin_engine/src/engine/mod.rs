@@ -3386,12 +3386,9 @@ impl EngineInner {
     }
 
     /// Mutable access to the script host — the `GameHost` that sits on
-    /// the VM's transient call-adapter field.  Mutations here do not affect
-    /// rollback determinism, but crate-external callers must take care
-    /// to only call from script-event sites (right after a
-    /// `swap_engine_state` swap-in, before the swap-out), since the
-    /// host's view of entity/fast-grid state is only live during that window.
-    /// Canonical AI-global state is borrowed separately by `NativeContext`.
+    /// the VM's transient call-adapter field. Canonical entity, AI, and
+    /// fast-grid state is never stored here; script event sites attach one
+    /// [`crate::natives::NativeSessionCapabilities`] bundle while dispatching.
     ///
     /// Exposed `pub` so the host crate's Lua scripting layer
     /// (`robin_rs::lua_session`) can drive custom-mission Lua events
@@ -3474,8 +3471,8 @@ impl EngineInner {
         script.post_initialized = true;
 
         let result = self
-            .with_script_session(assets, |script, script_domains, queries| {
-                script.post_initialize(script_domains, queries)
+            .with_script_session(assets, |script, script_domains, capabilities| {
+                script.post_initialize(script_domains, capabilities)
             })
             .expect("PostInitialize mission script disappeared before dispatch");
 

@@ -293,6 +293,7 @@ impl LuaSession {
         host: &mut GameHost,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
+        capabilities: &robin_engine::natives::NativeSessionCapabilities<'_>,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
@@ -301,7 +302,7 @@ impl LuaSession {
             script_state,
             script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
-            robin_engine::natives::NativeQueryViews::default(),
+            capabilities,
             event_name,
             args,
         )
@@ -313,7 +314,7 @@ impl LuaSession {
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
-        queries: robin_engine::natives::NativeQueryViews<'_>,
+        capabilities: &robin_engine::natives::NativeSessionCapabilities<'_>,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
@@ -322,7 +323,7 @@ impl LuaSession {
             script_state,
             script_domains,
             bindings,
-            queries,
+            capabilities,
             |lua| {
                 let globals = lua.globals();
                 let v: mlua::Value = globals.get(event_name)?;
@@ -390,11 +391,12 @@ impl LuaSession {
             &mut ScriptState,
             &mut robin_engine::engine::ScriptDomains,
             &robin_engine::natives::AttachedScriptBindings,
-            robin_engine::natives::NativeQueryViews<'_>,
+            &robin_engine::natives::NativeSessionCapabilities<'_>,
         )>,
         initialization_seed: i32,
     ) -> Result<(), SpellforgeSessionError> {
-        let Some((host, script_state, script_domains, bindings, queries)) = native_parts else {
+        let Some((host, script_state, script_domains, bindings, capabilities)) = native_parts
+        else {
             return Err(SpellforgeSessionError::MissingGameHost {
                 mission: self.mission_basename.clone(),
                 event: "Initialize",
@@ -409,7 +411,7 @@ impl LuaSession {
                 script_state,
                 script_domains,
                 bindings,
-                queries,
+                capabilities,
                 event,
                 args,
             )
@@ -667,6 +669,14 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut entities = robin_engine::entities::Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut script_state = ScriptState::default();
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let valid_cases = [
@@ -683,6 +693,7 @@ mod tests {
                         &mut host,
                         &mut script_state,
                         &mut script_domains,
+                        &capabilities,
                         event,
                         &[],
                     )
@@ -694,8 +705,9 @@ mod tests {
         assert!(matches!(
             session.run_event(
                 &mut host,
-                &mut script_state,
-                &mut script_domains,
+                        &mut script_state,
+                        &mut script_domains,
+                        &capabilities,
                 "BadReturn",
                 &[],
             ),
@@ -707,6 +719,7 @@ mod tests {
                 &mut host,
                 &mut script_state,
                 &mut script_domains,
+                &capabilities,
                 "WideIntegerReturn",
                 &[],
             ),
@@ -727,6 +740,14 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut entities = robin_engine::entities::Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut script_state = ScriptState::default();
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
@@ -735,6 +756,7 @@ mod tests {
                 &mut host,
                 &mut script_state,
                 &mut script_domains,
+                &capabilities,
                 "Fails",
                 &[],
             )
@@ -757,6 +779,14 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut entities = robin_engine::entities::Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut script_state = ScriptState::default();
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let bindings = robin_engine::natives::AttachedScriptBindings::default();
@@ -769,7 +799,7 @@ mod tests {
                         &mut script_state,
                         &mut script_domains,
                         &bindings,
-                        robin_engine::natives::NativeQueryViews::default(),
+                        &capabilities,
                     )),
                     123,
                 )
@@ -936,6 +966,14 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut entities = robin_engine::entities::Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut script_state = ScriptState::default();
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let bindings = robin_engine::natives::AttachedScriptBindings::default();
@@ -947,7 +985,7 @@ mod tests {
                         &mut script_state,
                         &mut script_domains,
                         &bindings,
-                        robin_engine::natives::NativeQueryViews::default(),
+                        &capabilities,
                     )),
                     0,
                 )

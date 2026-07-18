@@ -6,7 +6,7 @@
 mod support;
 
 use robin_assets::scb;
-use robin_engine::natives::{GameHost, NativeContext, ScriptState};
+use robin_engine::natives::{GameHost, NativeContext, NativeSessionCapabilities, ScriptState};
 use robin_engine::script_manager::{ScriptError, ScriptManager};
 use support::{data_directory, data_file};
 
@@ -189,10 +189,20 @@ fn static_area_shared_between_instances() {
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut entities = robin_engine::entities::Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut inst = mgr.create_instance("Test").unwrap();
 
     {
-        let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
+        let mut context = NativeContext::new(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &capabilities,
+        );
         let _ = inst
             .call_function_with_host(&mut mgr, "SetGlobal42", &mut context)
             .unwrap();
@@ -219,7 +229,17 @@ fn native_calls_through_instance() {
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
-    let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
+    let mut entities = robin_engine::entities::Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+    let mut context = NativeContext::new(
+        &mut host,
+        &mut script_state,
+        &mut script_domains,
+        &capabilities,
+    );
 
     let result = inst
         .call_function_with_host(&mut mgr, "Go", &mut context)
@@ -298,6 +318,11 @@ fn demo_script_via_manager() {
     let mut host = GameHost::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut entities = robin_engine::entities::Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
 
     // Run PutActorInBuilding (addr 0, the first function).
     // It won't do much with stub natives, but shouldn't crash.
@@ -310,7 +335,12 @@ fn demo_script_via_manager() {
 
     // Just verify we can call without panicking.
     // Most functions need real engine state, so errors are expected.
-    let mut context = NativeContext::new(&mut host, &mut script_state, &mut script_domains);
+    let mut context = NativeContext::new(
+        &mut host,
+        &mut script_state,
+        &mut script_domains,
+        &capabilities,
+    );
     let _ = inst.call_function_with_host(&mut mgr, &first_fn, &mut context);
 }
 

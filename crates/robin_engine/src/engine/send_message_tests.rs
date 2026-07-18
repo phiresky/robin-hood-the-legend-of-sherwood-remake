@@ -136,6 +136,11 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
     let handle = GameHost::actor_handle(receiver);
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut engine.world.entities,
+        &mut engine.ai.global,
+        &mut engine.world.fast_grid,
+    );
     assert!(
         engine
             .scripts
@@ -146,7 +151,7 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
                 handle,
                 "MessageReceiver",
                 &mut engine.script_domains,
-                crate::natives::NativeQueryViews::default(),
+                &capabilities,
             )
     );
     (engine, receiver, handle)

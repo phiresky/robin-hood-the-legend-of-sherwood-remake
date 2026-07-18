@@ -485,9 +485,8 @@ impl Engine {
     /// so the host's Lua scripting layer (`robin_rs::lua_session`)
     /// can drive custom-mission Lua events against the same
     /// `GameHost` the `.scb` VM uses. Only safe to call from
-    /// script-event windows (right after `swap_engine_state`
-    /// installs the entity/grid adapter, before swap-out); AI-global state is
-    /// passed through the accompanying `NativeQueryViews` capability. See
+    /// script-event windows while the engine's canonical native capabilities
+    /// are attached — see the doc on
     /// [`EngineInner::mission_script_game_host_mut`].
     pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
         self.inner.mission_script_game_host_mut()
@@ -509,7 +508,7 @@ impl Engine {
                 &mut crate::natives::ScriptState,
                 &mut crate::engine::ScriptDomains,
                 &crate::natives::AttachedScriptBindings,
-                crate::natives::NativeQueryViews<'_>,
+                &crate::natives::NativeSessionCapabilities<'_>,
             )>,
         ) -> R,
     ) -> R {
@@ -518,13 +517,13 @@ impl Engine {
                 return f(None);
             }
             inner
-                .with_script_session(assets, |script, script_domains, queries| {
+                .with_script_session(assets, |script, script_domains, capabilities| {
                     f(Some((
                         &mut script.game_host,
                         &mut script.state,
                         script_domains,
                         &script.bindings,
-                        queries,
+                        capabilities,
                     )))
                 })
                 .expect("mission script disappeared while opening the Lua script session")

@@ -3,9 +3,9 @@
 //! confirm the side-effects landed on the host.
 
 use mlua::Lua;
+use robin_engine::entities::Entities;
 use robin_engine::natives::{
-    EngineCommand, GameHost, NativeFastGridCapability, NativeQueryViews, ObjectiveChange,
-    ScriptState,
+    EngineCommand, GameHost, NativeSessionCapabilities, ObjectiveChange, ScriptState,
 };
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 
@@ -16,11 +16,116 @@ fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
     (state, dir)
 }
 
+fn test_soldier() -> robin_engine::element::Entity {
+    robin_engine::element::Entity::Soldier(robin_engine::element::ActorSoldier {
+        element: robin_engine::element::ElementData {
+            kind: robin_engine::element::ElementKind::ActorSoldier,
+            ..Default::default()
+        },
+        actor: robin_engine::element::ActorData::default(),
+        human: robin_engine::element::HumanData::default(),
+        npc: robin_engine::element::NpcData {
+            ai_brain: robin_engine::element::AiBrain::Enemy(Box::new(
+                robin_engine::ai_enemy::EnemyAi::new(0),
+            )),
+            ..Default::default()
+        },
+        soldier: robin_engine::element::SoldierData::default(),
+    })
+}
+
+#[test]
+fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
+    let (state, _dir) = fresh_state();
+    let mut host = GameHost::new();
+    let mut entities = Entities::from_legacy_slots(vec![Some(test_soldier())]);
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    std::sync::Arc::make_mut(&mut fast_grid.level).sectors.push(
+        robin_engine::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: robin_engine::coordinates::MapBBox::default(),
+            sector_type: robin_engine::sector::SectorType::DOOR,
+            layer: 0,
+            sector_number: robin_engine::sector::SectorNumber::default(),
+            door_index: Some(0),
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        },
+    );
+    fast_grid.sector_active.push(true);
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+    let mut domains_value =
+        serde_json::to_value(robin_engine::engine::ScriptDomains::default()).unwrap();
+    domains_value["interactables"]["doors"] =
+        serde_json::to_value(vec![robin_engine::gate::Door::default()]).unwrap();
+    let mut script_domains = serde_json::from_value(domains_value).unwrap();
+    let bindings = robin_engine::natives::AttachedScriptBindings {
+        script_location_count: 1,
+        script_point_count: 1,
+        location_positions: std::sync::Arc::new(vec![(12.0, 34.0)]),
+        location_layers: std::sync::Arc::new(vec![2]),
+        location_sectors: std::sync::Arc::new(vec![3]),
+        ..Default::default()
+    };
+    let mut script_state = ScriptState::default();
+    let actor = GameHost::actor_handle_from_index(0);
+    let point = GameHost::location_handle_from_index(0);
+    let door = GameHost::door_handle_from_index(0);
+
+    state
+        .with_host_state_and_bindings(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &bindings,
+            &capabilities,
+            |lua: &Lua| {
+                let value: i32 = lua
+                    .load(format!(
+                        "SetCustomNPCValue({actor}, 3, 77); AddRepulsivePoint({point}, 5, 4, 3); ActivateDoorMouseSector(false, {door}); return GetCustomNPCValue({actor}, 3)"
+                    ))
+                    .eval()?;
+                assert_eq!(value, 77);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+    drop(capabilities);
+    assert_eq!(
+        entities
+            .get_legacy_slot(0)
+            .expect("soldier remains canonical")
+            .1
+            .npc_data()
+            .expect("entity remains an NPC")
+            .custom_values[3],
+        77
+    );
+    assert_eq!(ai_global.repulsive_points.len(), 1);
+    assert!(!fast_grid.is_sector_active(0));
+}
+
 /// `InitGlobal(0, 42)` from Lua must land in `GameHost::globals`.
 #[test]
 fn engine_native_called_from_lua_writes_host_state() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
@@ -28,6 +133,7 @@ fn engine_native_called_from_lua_writes_host_state() {
             &mut host,
             &mut script_state,
             &mut script_domains,
+            &capabilities,
             |lua: &Lua| lua.load("InitGlobal(0, 42)").exec(),
         )
         .unwrap();
@@ -40,17 +146,27 @@ fn engine_native_called_from_lua_writes_host_state() {
 fn start_then_thanx_round_trips() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
-            let start_ret: bool = lua.load("return Start()").eval()?;
-            assert!(start_ret);
-            // `Thanx` on an empty recording returns 0 with a
-            // warning — engine semantics preserved.
-            let thanx_ret: bool = lua.load("return Thanx()").eval()?;
-            assert!(!thanx_ret);
-            Ok(())
-        })
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                let start_ret: bool = lua.load("return Start()").eval()?;
+                assert!(start_ret);
+                // `Thanx` on an empty recording returns 0 with a
+                // warning — engine semantics preserved.
+                let thanx_ret: bool = lua.load("return Thanx()").eval()?;
+                assert!(!thanx_ret);
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -61,6 +177,11 @@ fn start_then_thanx_round_trips() {
 fn spellforge_alias_opens_recording() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
@@ -68,6 +189,7 @@ fn spellforge_alias_opens_recording() {
             &mut host,
             &mut script_state,
             &mut script_domains,
+            &capabilities,
             |lua: &Lua| lua.load("StartSequence()").exec(),
         )
         .unwrap();
@@ -83,6 +205,11 @@ fn spellforge_alias_opens_recording() {
 fn get_actor_name_lookup() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     std::sync::Arc::make_mut(&mut bindings.lua_names)
@@ -96,7 +223,7 @@ fn get_actor_name_lookup() {
             &mut script_state,
             &mut script_domains,
             &bindings,
-            robin_engine::natives::NativeQueryViews::default(),
+            &capabilities,
             |lua: &Lua| {
                 let hit: i32 = lua.load("return GetActor('RobinHood')").eval()?;
                 assert_eq!(hit, 7);
@@ -118,6 +245,11 @@ fn get_actor_name_lookup() {
 fn get_all_actors_dumps_table() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     let names = std::sync::Arc::make_mut(&mut bindings.lua_names);
@@ -131,7 +263,7 @@ fn get_all_actors_dumps_table() {
             &mut script_state,
             &mut script_domains,
             &bindings,
-            robin_engine::natives::NativeQueryViews::default(),
+            &capabilities,
             |lua: &Lua| {
                 let alice: i32 = lua.load("return GetAllActors().Alice").eval()?;
                 let bob: i32 = lua.load("return GetAllActors().Bob").eval()?;
@@ -150,12 +282,22 @@ fn get_all_actors_dumps_table() {
 fn add_and_complete_objective_queue_changes() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
-            lua.load("AddObjective(7, true); CompleteObjective(7)")
-                .exec()
-        })
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                lua.load("AddObjective(7, true); CompleteObjective(7)")
+                    .exec()
+            },
+        )
         .unwrap();
     assert_eq!(host.pending_objective_changes.len(), 2);
     assert!(matches!(
@@ -178,13 +320,23 @@ fn add_and_complete_objective_queue_changes() {
 fn is_actor_out_of_action_callable() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
-            let r: bool = lua.load("return IsActorOutOfAction(99)").eval()?;
-            assert!(!r);
-            Ok(())
-        })
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                let r: bool = lua.load("return IsActorOutOfAction(99)").eval()?;
+                assert!(!r);
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -217,6 +369,11 @@ fn native_abi_is_signature_driven() {
     for (source, expected_return_type, expected_command) in cases {
         let (state, _dir) = fresh_state();
         let mut host = GameHost::new();
+        let mut entities = Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities =
+            NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         state
@@ -224,6 +381,7 @@ fn native_abi_is_signature_driven() {
                 &mut host,
                 &mut script_state,
                 &mut script_domains,
+                &capabilities,
                 |lua: &Lua| {
                     let return_type: String = lua
                         .load(format!("return type((function() {source} end)())"))
@@ -267,22 +425,32 @@ fn invalid_native_arguments_are_typed_errors() {
 
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
-            for (source, expected_message) in cases {
-                let err = lua.load(source).exec().expect_err(source);
-                assert!(
-                    err.to_string().contains(expected_message),
-                    "{source}: unexpected error: {err}"
-                );
-                assert!(
-                    contains_native_abi_error(&err),
-                    "{source}: NativeAbiError was erased: {err}"
-                );
-            }
-            Ok(())
-        })
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                for (source, expected_message) in cases {
+                    let err = lua.load(source).exec().expect_err(source);
+                    assert!(
+                        err.to_string().contains(expected_message),
+                        "{source}: unexpected error: {err}"
+                    );
+                    assert!(
+                        contains_native_abi_error(&err),
+                        "{source}: NativeAbiError was erased: {err}"
+                    );
+                }
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -302,28 +470,38 @@ fn contains_native_abi_error(error: &mlua::Error) -> bool {
 fn sequence_call_registers_callback() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |lua: &Lua| {
-            // A SequenceCall must happen inside a recording — open
-            // one first so the engine doesn't reject the queued
-            // SendMessage.
-            lua.load("StartSequence(); SequenceCall(function() return 1 end)")
-                .exec()?;
-            // Counter advanced past 10_000 → exactly one callback
-            // was registered. Read through the registry directly —
-            // the table is intentionally hidden from `_G`.
-            let callbacks: mlua::Table =
-                lua.named_registry_value("robin_lua.sequence_callbacks")?;
-            let stash_id: i32 = callbacks.get("__next_id")?;
-            assert_eq!(stash_id, 10_001);
-            let kind = callbacks
-                .get::<mlua::Value>(10_000_i32)?
-                .type_name()
-                .to_string();
-            assert_eq!(kind, "function");
-            Ok(())
-        })
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                // A SequenceCall must happen inside a recording — open
+                // one first so the engine doesn't reject the queued
+                // SendMessage.
+                lua.load("StartSequence(); SequenceCall(function() return 1 end)")
+                    .exec()?;
+                // Counter advanced past 10_000 → exactly one callback
+                // was registered. Read through the registry directly —
+                // the table is intentionally hidden from `_G`.
+                let callbacks: mlua::Table =
+                    lua.named_registry_value("robin_lua.sequence_callbacks")?;
+                let stash_id: i32 = callbacks.get("__next_id")?;
+                assert_eq!(stash_id, 10_001);
+                let kind = callbacks
+                    .get::<mlua::Value>(10_000_i32)?
+                    .type_name()
+                    .to_string();
+                assert_eq!(kind, "function");
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -345,9 +523,19 @@ fn no_host_attached_errors() {
 fn host_pointer_cleared_after_scope() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
-        .with_host(&mut host, &mut script_domains, |_lua: &Lua| Ok(()))
+        .with_host(
+            &mut host,
+            &mut script_domains,
+            &capabilities,
+            |_lua: &Lua| Ok(()),
+        )
         .unwrap();
     let err = state.lua().load("InitGlobal(0, 1)").exec().unwrap_err();
     assert!(err.to_string().contains("no GameHost attached"));
@@ -358,112 +546,23 @@ fn host_pointer_cleared_after_scope() {
 fn host_pointer_cleared_after_error() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut entities = Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
-    let result: mlua::Result<()> = state.with_host(&mut host, &mut script_domains, |_lua: &Lua| {
-        Err(mlua::Error::RuntimeError("deliberate error".into()))
-    });
+    let result: mlua::Result<()> = state.with_host(
+        &mut host,
+        &mut script_domains,
+        &capabilities,
+        |_lua: &Lua| Err(mlua::Error::RuntimeError("deliberate error".into())),
+    );
     assert!(result.is_err());
 
     let err = state.lua().load("InitGlobal(0, 1)").exec().unwrap_err();
     assert!(err.to_string().contains("no GameHost attached"));
-}
-
-/// Panic unwinding must run the same attachment guard so the erased canonical
-/// capabilities cannot be reached by a later Lua call.
-#[test]
-#[should_panic(expected = "deliberate Lua host-scope panic")]
-fn host_pointer_and_capabilities_cleared_after_unwind() {
-    struct VerifyDetachedOnUnwind<'a>(&'a MissionLuaState);
-
-    impl Drop for VerifyDetachedOnUnwind<'_> {
-        fn drop(&mut self) {
-            let err =
-                self.0.lua().load("InitGlobal(0, 1)").exec().expect_err(
-                    "Lua host capabilities must be detached before outer unwind cleanup",
-                );
-            assert!(err.to_string().contains("no GameHost attached"));
-        }
-    }
-
-    let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
-    let mut script_domains = robin_engine::engine::ScriptDomains::default();
-    let _verify = VerifyDetachedOnUnwind(&state);
-
-    let _: mlua::Result<()> = state.with_host(&mut host, &mut script_domains, |_lua: &Lua| {
-        panic!("deliberate Lua host-scope panic")
-    });
-}
-
-/// The erased canonical-grid capability must be scoped together with the other
-/// host pointers. The inline mutation remains on the exact grid allocation
-/// supplied by the caller, while a stale Lua invocation is denied after the
-/// scope returns an error. `HostAttachment` uses the same RAII cleanup path for
-/// normal return, error, and unwind.
-#[test]
-fn grid_capability_is_scoped_and_restored_after_lua_error() {
-    let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
-    let mut domains_json = serde_json::to_value(robin_engine::engine::ScriptDomains::default())
-        .expect("serialize script-domain fixture");
-    domains_json["interactables"]["doors"] =
-        serde_json::json!([robin_engine::gate::Door::default()]);
-    let mut script_domains = serde_json::from_value(domains_json)
-        .expect("deserialize script-domain fixture with one door");
-    let mut script_state = ScriptState::default();
-    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
-    fast_grid.add_sector(
-        robin_engine::fast_find_grid::GridSector {
-            points: Vec::new(),
-            bounding_box: robin_engine::coordinates::MapBBox::new(),
-            sector_type: robin_engine::sector::SectorType::DOOR,
-            layer: 0,
-            sector_number: robin_engine::sector::SectorNumber::new(1),
-            door_index: Some(0),
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        },
-        0,
-    );
-    let door = GameHost::door_handle_from_index(0);
-    let capability = NativeFastGridCapability::new(&mut fast_grid);
-    let queries = NativeQueryViews::default().with_fast_grid_capability(&capability);
-    let result: mlua::Result<()> = state.with_host_state_and_bindings(
-        &mut host,
-        &mut script_state,
-        &mut script_domains,
-        robin_engine::natives::AttachedScriptBindings::empty_ref(),
-        queries,
-        |lua: &Lua| {
-            lua.load(format!("ActivateDoorMouseSector(false, {door})"))
-                .exec()?;
-            Err(mlua::Error::RuntimeError(
-                "deliberate Lua host-scope error".into(),
-            ))
-        },
-    );
-    assert!(result.is_err(), "Lua host-scope error must propagate");
-    drop(capability);
-
-    assert!(
-        !fast_grid.is_sector_active(0),
-        "synchronous mutation must remain on the caller's canonical grid"
-    );
-    let stale = state
-        .lua()
-        .load(format!("ActivateDoorMouseSector(true, {door})"))
-        .exec()
-        .expect_err("Lua grid native retained a stale HostPtr after unwind");
-    assert!(stale.to_string().contains("no GameHost attached"));
 }
 
 /// Reject a nested attachment before it can replace the outer scope's raw
@@ -474,15 +573,31 @@ fn grid_capability_is_scoped_and_restored_after_lua_error() {
 fn nested_host_attachment_is_rejected_before_replacement() {
     let (state, _dir) = fresh_state();
     let mut outer_host = GameHost::new();
+    let mut outer_entities = Entities::new();
+    let mut outer_ai = robin_engine::ai::AiGlobalState::default();
+    let mut outer_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let outer_capabilities =
+        NativeSessionCapabilities::new(&mut outer_entities, &mut outer_ai, &mut outer_grid);
     let mut outer_domains = robin_engine::engine::ScriptDomains::default();
     let mut nested_host = GameHost::new();
+    let mut nested_entities = Entities::new();
+    let mut nested_ai = robin_engine::ai::AiGlobalState::default();
+    let mut nested_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let nested_capabilities =
+        NativeSessionCapabilities::new(&mut nested_entities, &mut nested_ai, &mut nested_grid);
     let mut nested_domains = robin_engine::engine::ScriptDomains::default();
 
     let _ = state.with_host(
         &mut outer_host,
         &mut outer_domains,
+        &outer_capabilities,
         |_lua: &Lua| -> mlua::Result<()> {
-            state.with_host(&mut nested_host, &mut nested_domains, |_lua: &Lua| Ok(()))?;
+            state.with_host(
+                &mut nested_host,
+                &mut nested_domains,
+                &nested_capabilities,
+                |_lua: &Lua| Ok(()),
+            )?;
             Ok(())
         },
     );

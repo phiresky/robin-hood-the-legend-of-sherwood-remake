@@ -9,10 +9,10 @@
 //! ## Host pointer plumbing
 //!
 //! `mlua` requires registered functions to be `'static`, but the
-//! `GameHost` and borrowed canonical capabilities we use have lifetimes tied
-//! to the current event call. We stash the adapter pointers plus an opaque
-//! scoped capability view in Lua's app-data ([`HostPtr`]) for the duration of
-//! one event:
+//! `GameHost` and [`NativeSessionCapabilities`] live on the engine and have
+//! lifetimes tied to the current event call. Lua app-data stores ordinary raw
+//! pointers plus exactly one lifetime-erased capability-bundle pointer in
+//! [`HostPtr`] for the duration of one event:
 //!
 //! ```ignore
 //! state.lua().set_app_data(HostPtr::new(host));
@@ -23,9 +23,10 @@
 //! The safety contract is **scoped access**: callers may only invoke
 //! Lua entry points wrapped in [`MissionLuaState::with_host`] (added
 //! by the event-dispatch layer in `engine/script.rs`), which
-//! guarantees the pointers and canonical fast-grid capability are live and
-//! exclusively borrowed. The RAII attachment removes all of them on success,
-//! Lua error, or Rust panic.
+//! guarantees every pointer is live and exclusively borrowed. The
+//! [`crate::state::HostAttachment`] guard removes the app-data on both success
+//! and error; registered shims recover the capability reference only for the
+//! synchronous native call and never let it escape to Lua or an upvalue.
 //!
 //! ## Alias table
 //!
@@ -41,14 +42,16 @@ use mlua::{Function, Lua, Table, Value};
 use robin_engine::engine::ScriptDomains;
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
-    AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeQueryViews,
-    NativeSignature, ScriptState,
+    AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn,
+    NativeSessionCapabilities, NativeSignature, ScriptState,
 };
 
 use crate::state::MissionLuaState;
 
-/// Type-erased pointer to the engine's [`GameHost`] for the
-/// duration of one Lua event invocation. See module docs for the
+/// Type-erased pointers attached for one Lua event invocation. The single
+/// `capabilities` pointer represents entities, AI, grid, campaign/stat, and
+/// immutable query views together; adding parallel erased owner pointers
+/// would break the one-session-bundle invariant. See module docs for the
 /// safety contract.
 ///
 /// Stored as Lua app data; closures retrieve it via
@@ -59,10 +62,7 @@ pub(crate) struct HostPtr {
     script_state: Cell<*mut ScriptState>,
     script_domains: Cell<*mut ScriptDomains>,
     bindings: Cell<*const AttachedScriptBindings>,
-    /// Includes the borrowed canonical AI and fast-grid capabilities. Its lifetime is
-    /// erased only while this HostPtr is installed and rebound to each shim's
-    /// short borrow by `query_views`.
-    scoped_views: Cell<NativeQueryViews<'static>>,
+    capabilities: Cell<*const ()>,
 }
 
 // SAFETY: `HostPtr` is only accessed from the thread that called
@@ -76,24 +76,19 @@ impl HostPtr {
         script_state: *mut ScriptState,
         script_domains: *mut ScriptDomains,
         bindings: *const AttachedScriptBindings,
-        queries: NativeQueryViews<'_>,
+        capabilities: &NativeSessionCapabilities<'_>,
     ) -> Self {
-        // SAFETY: HostPtr is installed only for the lexical
-        // MissionLuaState::with_host_state_and_bindings scope. It is removed
-        // before that scope returns, so none of the references carried by
-        // NativeQueryViews can outlive their owners. Keeping the opaque view
-        // intact is important: rebuilding it from its public query accessors
-        // would silently discard hidden capabilities such as the borrowed AI,
-        // grid, campaign, and mission-stat owners.
-        let scoped_views = unsafe {
-            std::mem::transmute::<NativeQueryViews<'_>, NativeQueryViews<'static>>(queries)
-        };
+        // SAFETY CONTRACT: the reference lifetime is erased only because
+        // HostAttachment removes this HostPtr before the enclosing
+        // with_host_state_and_bindings call returns. Native shims reborrow it
+        // synchronously and NativeContext retains only short RefMut guards and
+        // copied immutable query references, never this bundle reference.
         Self {
             host: Cell::new(host),
             script_state: Cell::new(script_state),
             script_domains: Cell::new(script_domains),
             bindings: Cell::new(bindings),
-            scoped_views: Cell::new(scoped_views),
+            capabilities: Cell::new(capabilities as *const _ as *const ()),
         }
     }
 
@@ -127,6 +122,15 @@ impl HostPtr {
         ptr
     }
 
+    fn capabilities_ptr(&self) -> *const () {
+        let ptr = self.capabilities.get();
+        assert!(
+            !ptr.is_null(),
+            "robin_lua: native invoked with no session capabilities attached"
+        );
+        ptr
+    }
+
     fn script_domains_ptr(&self) -> *mut ScriptDomains {
         let ptr = self.script_domains.get();
         assert!(
@@ -143,17 +147,6 @@ impl HostPtr {
             "robin_lua: native invoked with no ScriptBindings attached"
         );
         ptr
-    }
-
-    unsafe fn query_views(&self) -> NativeQueryViews<'_> {
-        // SAFETY: new erased this view's lifetime only for the enclosing
-        // with_host scope. Rebind the copied view to this short borrow so it
-        // cannot escape through the Lua native adapter.
-        unsafe {
-            std::mem::transmute::<NativeQueryViews<'static>, NativeQueryViews<'_>>(
-                self.scoped_views.get(),
-            )
-        }
     }
 }
 
@@ -443,12 +436,19 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // exclusively borrowed for the duration of `with_host`,
         // which is the only place this shim runs.
         let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
+        let capabilities: &NativeSessionCapabilities<'_> = unsafe {
+            &*(host_ptr.capabilities_ptr() as *const NativeSessionCapabilities<'_>)
+        };
         let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
         let script_domains: &mut ScriptDomains = unsafe { &mut *host_ptr.script_domains_ptr() };
         let bindings: &AttachedScriptBindings = unsafe { &*host_ptr.bindings_ptr() };
-        let queries = unsafe { host_ptr.query_views() };
-        let mut native_context =
-            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
+        let mut native_context = NativeContext::with_bindings(
+            host,
+            script_state,
+            script_domains,
+            bindings,
+            capabilities,
+        );
         let mut stack = NativeStack::default();
         // Push in argument order — the engine's `pop_i32()` pulls
         // them off in *reverse*, so the last arg ends up on top of
@@ -666,16 +666,18 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
         let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
+        let capabilities: &NativeSessionCapabilities<'_> =
+            unsafe { &*(capabilities_ptr(lua)? as *const NativeSessionCapabilities<'_>) };
         let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
         let script_domains: &mut ScriptDomains = unsafe { &mut *script_domains_ptr(lua)? };
         let bindings: &AttachedScriptBindings = unsafe { &*bindings_ptr(lua)? };
-        let queries = lua
-            .app_data_ref::<HostPtr>()
-            .ok_or_else(|| mlua::Error::RuntimeError("SequenceCall: no host attached".into()))?
-            .clone();
-        let queries = unsafe { queries.query_views() };
-        let mut native_context =
-            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
+        let mut native_context = NativeContext::with_bindings(
+            host,
+            script_state,
+            script_domains,
+            bindings,
+            capabilities,
+        );
         let mut stack = NativeStack::default();
         // RecordSendMessage(actor, message) pops `message` first
         // (top of stack), then `actor`. So push actor, then
@@ -707,6 +709,15 @@ fn host_ptr(lua: &Lua) -> mlua::Result<*mut GameHost> {
         mlua::Error::RuntimeError("robin_lua: native invoked with no GameHost attached".to_owned())
     })?;
     Ok(ptr.host_ptr())
+}
+
+fn capabilities_ptr(lua: &Lua) -> mlua::Result<*const ()> {
+    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "robin_lua: native invoked with no session capabilities attached".to_owned(),
+        )
+    })?;
+    Ok(ptr.capabilities_ptr())
 }
 
 fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {

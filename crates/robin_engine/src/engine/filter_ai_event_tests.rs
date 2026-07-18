@@ -241,18 +241,23 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     let sensitive_handle = crate::natives::GameHost::actor_handle(sensitive_id);
     let noov_handle = crate::natives::GameHost::actor_handle(noov_id);
 
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut engine.world.entities,
+        &mut engine.ai.global,
+        &mut engine.world.fast_grid,
+    );
     if let Some(ref mut s) = engine.scripts.mission {
         assert!(s.bind_actor(
             sensitive_handle,
             "SourceSensitive",
             &mut engine.script_domains,
-            crate::natives::NativeQueryViews::default()
+            &capabilities,
         ));
         assert!(s.bind_actor(
             noov_handle,
             "NoOverride",
             &mut engine.script_domains,
-            crate::natives::NativeQueryViews::default()
+            &capabilities,
         ));
     }
 
@@ -779,6 +784,7 @@ fn nested_callback_keeps_the_canonical_query_views() {
         build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::GetNumberOfSelectedPCs));
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
     let outer_handle = 11;
     let inner_handle = 22;
     let sequences = crate::sequence::SequenceManager::new();
@@ -790,10 +796,26 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 41;
-    let queries =
-        crate::natives::NativeQueryViews::new(&sequences, &selection, &sounds, &weather, &frame);
-    assert!(script.bind_actor(outer_handle, "OuterCaller", &mut script_domains, queries));
-    assert!(script.bind_actor(inner_handle, "InnerTarget", &mut script_domains, queries));
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    )
+    .with_queries(&sequences, &selection, &sounds, &weather, &frame);
+    assert!(script.bind_actor(
+        outer_handle,
+        "OuterCaller",
+        &mut script_domains,
+        &capabilities,
+    ));
+    assert!(script.bind_actor(
+        inner_handle,
+        "InnerTarget",
+        &mut script_domains,
+        &capabilities,
+    ));
 
     let result = script
         .call_actor_function(
@@ -801,7 +823,7 @@ fn nested_callback_keeps_the_canonical_query_views() {
             "FilterAIEvent",
             &[inner_handle, 0, 0],
             &mut script_domains,
-            queries,
+            &capabilities,
         )
         .expect("nested dispatch runs cleanly");
 
@@ -813,12 +835,20 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     let inner_handle = 22;
     assert!(script.bind_actor(
         inner_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -827,7 +857,7 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
             "FilterAIEvent",
             &[0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("direct actor callback runs cleanly");
 
@@ -844,12 +874,20 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
     let scb = build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::ThisScroll));
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     let scroll_handle = 23;
     assert!(script.bind_scroll(
         scroll_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -858,7 +896,7 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
             "FilterAIEvent",
             &[0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("scroll callback runs cleanly");
 
@@ -874,19 +912,27 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     let outer_handle = 11;
     let prototype_handle = 22;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -895,7 +941,7 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("nested prototype dispatch runs cleanly");
 
@@ -926,6 +972,14 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
 
     // Bind two synthetic actor instances.  Their entity handles don't
     // need to map to real engine entities — `call_actor_function`
@@ -937,13 +991,13 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         inner_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -952,7 +1006,7 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
             "FilterAIEvent",
             &[inner_handle, 0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("nested dispatch runs cleanly");
 
@@ -968,19 +1022,27 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     let mut script =
         MissionScript::from_scb(build_recursive_nested_scb()).expect("recursive SCB builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     let actor_a = 1;
     let actor_b = 2;
     assert!(script.bind_actor(
         actor_a,
         "RecursiveCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         actor_b,
         "RecursiveCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -989,7 +1051,7 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
             "FilterAIEvent",
             &[actor_b, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("recursive nested dispatch reaches the explicit limit");
 
@@ -1002,36 +1064,30 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
 
 #[test]
 fn script_session_preserves_nested_pending_call_resume_and_restoration() {
-    let mut script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
+    let script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
     let outer_handle = 1;
     let inner_handle = 2;
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        crate::natives::NativeQueryViews::default()
-    ));
-    assert!(script.bind_actor(
-        inner_handle,
-        "InnerTarget",
-        &mut script_domains,
-        crate::natives::NativeQueryViews::default()
-    ));
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
 
+    engine
+        .with_script_session(&assets, |script, script_domains, capabilities| {
+            assert!(script.bind_actor(outer_handle, "OuterCaller", script_domains, capabilities));
+            assert!(script.bind_actor(inner_handle, "InnerTarget", script_domains, capabilities));
+        })
+        .expect("mission script stays present");
+
     let result = engine
-        .with_script_session(&assets, |script, script_domains, queries| {
+        .with_script_session(&assets, |script, script_domains, capabilities| {
             script.call_actor_function(
                 outer_handle,
                 "FilterAIEvent",
                 &[inner_handle, 0, 0],
                 script_domains,
-                queries,
+                capabilities,
             )
         })
         .expect("mission script stays present")
@@ -1050,19 +1106,27 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let scb = build_nested_scb_with_default_inner();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     let outer_handle = 1;
     let prototype_handle = 2;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "DefaultInnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -1071,7 +1135,7 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("nested dispatch runs cleanly");
 
@@ -1088,21 +1152,28 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = crate::natives::GameHost::actor_handle_from_index(0);
     let prototype_handle = crate::natives::GameHost::actor_handle_from_index(1);
-    script.game_host.entities.extend([
+    let mut entity_store = crate::entities::Entities::from_legacy_slots(vec![
         Some(make_scripted_soldier("OuterCaller")),
         Some(make_scripted_soldier("InnerTarget")),
     ]);
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
 
     let result = script
@@ -1111,7 +1182,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
             "FilterAIEvent",
             &[prototype_handle, prototype_handle, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("nested dispatch runs cleanly");
 
@@ -1119,10 +1190,12 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
         result, 77,
         "the nested VM must read the entity mutation made before the outer VM yielded"
     );
+    drop(capabilities);
     assert_eq!(
-        script.game_host.entities[1]
-            .as_ref()
+        entity_store
+            .get_legacy_slot(1)
             .expect("prototype entity remains installed")
+            .1
             .npc_data()
             .expect("prototype is an NPC")
             .custom_values[3],
@@ -1137,18 +1210,27 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 1;
     let prototype_handle = 2;
+    let mut entities = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     assert!(script.bind_actor(
         prototype_handle,
         "InnerTarget",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
+    drop(capabilities);
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
@@ -1191,13 +1273,21 @@ fn prototype_filter_event_unbound_target_uses_original_allow_default() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
 
     let outer_handle = 1;
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default()
+        &capabilities,
     ));
     // Note: don't bind anyone for handle 99.
 
@@ -1207,7 +1297,7 @@ fn prototype_filter_event_unbound_target_uses_original_allow_default() {
             "FilterAIEvent",
             &[99, 0, 0],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("nested dispatch runs cleanly");
 
