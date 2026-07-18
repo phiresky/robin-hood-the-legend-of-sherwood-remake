@@ -40,7 +40,7 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    capture_save_thumbnail, capture_wide_map_to_path, drain_print_screen_request,
+    capture_save_thumbnail, capture_screenshot_to_path, drain_print_screen_request,
     drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
@@ -1131,19 +1131,21 @@ pub(crate) async fn run_mission(
     // The capture (clone) happens on the main thread; the expensive JSON
     // serialization + disk write is spawned on a background thread so the
     // game loop can start immediately (~9s saved in debug builds).
-    if !game.is_sherwood && args.mission_start_map_output.is_none() {
-        let campaign = engine
-            .campaign()
-            .expect("restart snapshot requires the engine campaign");
-        let mission_id = current_mission_id(campaign, &assets.profile_manager);
-        callbacks.save_manager.write_restart_save_background(
-            &mut host,
-            &game,
-            &engine,
-            mission_id,
-            Some(&assets.profile_manager),
-            None,
-        );
+    if !game.is_sherwood {
+        if args.mission_start_map_output.is_none() {
+            let campaign = engine
+                .campaign()
+                .expect("restart snapshot requires the engine campaign");
+            let mission_id = current_mission_id(campaign, &assets.profile_manager);
+            callbacks.save_manager.write_restart_save_background(
+                &mut host,
+                &game,
+                &engine,
+                mission_id,
+                Some(&assets.profile_manager),
+                None,
+            );
+        }
     } else {
         // Sherwood opens with the campaign-map overlay already raised
         // so the player can pick the next mission to deploy.  The

@@ -669,6 +669,7 @@ pub struct AppHandler {
     title: String,
     width: u32,
     height: u32,
+    visible: bool,
     /// Sender the handler pushes events into.
     events_tx: async_channel::Sender<HostMsg>,
     cmd_rx: async_channel::Receiver<HostCmd>,
@@ -754,6 +755,13 @@ impl AppHandler {
 }
 
 impl ApplicationHandler for AppHandler {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, (): ()) {
+        self.process_cmds();
+        if self.events_tx.is_closed() {
+            event_loop.exit();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(window) = &self.window {
             #[cfg(target_os = "android")]
@@ -784,6 +792,7 @@ impl ApplicationHandler for AppHandler {
         let attrs = winit::window::Window::default_attributes()
             .with_title(&self.title)
             .with_inner_size(PhysicalSize::new(self.width, self.height))
+            .with_visible(self.visible)
             .with_resizable(true);
 
         // On wasm we need to attach the canvas to the document.  On
@@ -1109,10 +1118,27 @@ where
     F: FnOnce(GameWindow) -> Fut + Send + 'static,
     Fut: Future<Output = i32> + 'static,
 {
+    run_with_game_visibility(title, width, height, true, game_main)
+}
+
+/// Run with a visible or hidden GPU-backed native window. Hidden mode still
+/// creates a render surface, unlike the engine's no-render `--headless` mode.
+pub fn run_with_game_visibility<F, Fut>(
+    title: &str,
+    width: u32,
+    height: u32,
+    visible: bool,
+    game_main: F,
+) -> Result<i32, String>
+where
+    F: FnOnce(GameWindow) -> Fut + Send + 'static,
+    Fut: Future<Output = i32> + 'static,
+{
     run_with_game_impl(
         title,
         width,
         height,
+        visible,
         game_main,
         #[cfg(target_os = "android")]
         None,
@@ -1131,13 +1157,14 @@ where
     F: FnOnce(GameWindow) -> Fut + Send + 'static,
     Fut: Future<Output = i32> + 'static,
 {
-    run_with_game_impl(title, width, height, game_main, Some(app))
+    run_with_game_impl(title, width, height, true, game_main, Some(app))
 }
 
 fn run_with_game_impl<F, Fut>(
     title: &str,
     width: u32,
     height: u32,
+    visible: bool,
     game_main: F,
     #[cfg(target_os = "android")] android_app: Option<
         winit::platform::android::activity::AndroidApp,
@@ -1165,6 +1192,7 @@ where
     // adapter / device) happens *async* on the game side so the
     // wasm executor can yield while `request_adapter` etc. resolve.
     let (window_tx, window_rx) = async_channel::unbounded::<Arc<Window>>();
+    let event_loop_proxy = event_loop.create_proxy();
 
     let on_ready: WindowReadyFn = Box::new(move |w: Arc<Window>| {
         let _ = window_tx.try_send(w);
@@ -1182,6 +1210,7 @@ where
         title: title.to_string(),
         width,
         height,
+        visible,
         events_tx,
         cmd_rx,
         on_window_ready: on_ready,
@@ -1232,6 +1261,7 @@ where
                     tracing::error!("wgpu init failed: {e}");
                     let _ = exit_code_tx.send(1);
                     let _ = cmd_tx_for_exit.try_send(HostCmd::Exit);
+                    let _ = event_loop_proxy.send_event(());
                     return;
                 }
             }
@@ -1264,6 +1294,7 @@ where
                     tracing::error!("wgpu init failed: {e}");
                     let _ = exit_code_tx.send(1);
                     let _ = cmd_tx_for_exit.try_send(HostCmd::Exit);
+                    let _ = event_loop_proxy.send_event(());
                     return;
                 }
             }
@@ -1272,6 +1303,7 @@ where
         tracing::info!("game future returned, exit_code={exit_code}");
         let _ = exit_code_tx.send(exit_code);
         let _ = cmd_tx_for_exit.try_send(HostCmd::Exit);
+        let _ = event_loop_proxy.send_event(());
     });
 
     // Run winit on the calling thread.

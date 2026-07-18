@@ -166,7 +166,9 @@ pub struct CliArgs {
     pub mission: Option<String>,
 
     /// Proto-level filename to use with `--mission`, like the original
-    /// launcher's `-PROTO`. Pass the base name without `.rhp`.
+    /// launcher's `-PROTO`. Pass the base name without `.rhp`. When omitted,
+    /// known missions use their profile mapping; unknown/custom missions use
+    /// the mission filename as the proto filename.
     #[arg(long, value_name = "PROTO", requires = "mission")]
     pub proto: Option<String>,
 
@@ -271,13 +273,19 @@ pub struct CliArgs {
     pub pending_lua_mission: Option<PendingLuaMission>,
 
     /// Internal one-shot render request used by the `render_mission_map`
-    /// example.  The mission session captures the complete level at its
-    /// initial post-`Initialize` state, writes it here, and exits before the
-    /// first simulation tick.  This is deliberately not a launcher flag:
+    /// example. The mission session captures the complete level through the
+    /// regular screenshot machinery, writes it here, and exits. This is
+    /// deliberately not a launcher flag:
     /// the Cargo example is the supported CLI for this specialized tool.
     #[clap(skip)]
     #[serde(skip)]
     pub mission_start_map_output: Option<std::path::PathBuf>,
+
+    /// Absolute simulation frame for `mission_start_map_output`. Frame zero is
+    /// the post-`Initialize`, pre-tick state.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mission_start_map_frame: u32,
 
     /// Apply the original `UBIQUITY` / `UNBLIP` reveal-all-NPCs cheat to
     /// the one-shot mission-start map before it is rendered.
@@ -334,6 +342,7 @@ impl Default for CliArgs {
             global_options: ApplicationContext::default(),
             pending_lua_mission: None,
             mission_start_map_output: None,
+            mission_start_map_frame: 0,
             mission_start_reveal_all: false,
         };
         install_global_options(&mut args);
@@ -1709,14 +1718,39 @@ fn force_mission_launch(
     let Some(mission_name) = args.mission.as_deref() else {
         return Ok(None);
     };
-    let proto_name = args.proto.as_deref().unwrap_or(mission_name);
+    let proto_name = args
+        .proto
+        .clone()
+        .or_else(|| {
+            profiles
+                .missions
+                .iter()
+                .find(|profile| profile.mission_filename.eq_ignore_ascii_case(mission_name))
+                .map(|profile| profile.proto_level_filename.clone())
+        })
+        .unwrap_or_else(|| mission_name.to_owned());
 
     tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
     campaign.reset(profiles_mut);
+    if args.mission_start_map_output.is_some() {
+        // A forced mission otherwise inherits Campaign::reset's Robin-only
+        // gang. That is not a valid start state for missions whose first
+        // CheckVictoryCondition expects the selectable beam-me team (the
+        // Leicester demo, for example, immediately reports defeat without
+        // RJMTF). Demo builds provide their exact original launcher team;
+        // retail exports make every standard PC available so each mission's
+        // authored beam-me slots can select the character types they need.
+        // TODO(export-team): accept a campaign save/team preset when callers
+        // need a particular player-selected retail lineup.
+        let export_pcs = detect_demo_mode()
+            .filter(|(demo_mission, _, _, _)| demo_mission.eq_ignore_ascii_case(mission_name))
+            .map_or("RJTSWMABC", |(_, _, pcs, _)| pcs);
+        campaign.create_gang_from_pcs(export_pcs, profiles_mut);
+    }
     let idx = campaign
-        .force_next_mission_by_name(profiles_mut, mission_name, proto_name, true)
+        .force_next_mission_by_name(profiles_mut, mission_name, &proto_name, true)
         .ok_or_else(|| {
             format!("--mission: failed to force mission `{mission_name}` with proto `{proto_name}`")
         })?;

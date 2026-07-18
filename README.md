@@ -224,9 +224,13 @@ Shipped as examples — built on demand with `cargo run --example <name>`:
     disasm_scb        — disassemble a compiled .scb mission script
     run_script        — run a mission script headlessly
     count_quads       — render diagnostics
-    render_mission_map — render a mission's frame-zero full map to PNG
+    render_mission_map — render a mission's full map at a chosen frame to PNG
     batch_run         — run many missions back-to-back (CI/regression)
     verify_rollback   — deterministic replay + state-hash verifier
+
+Render all retail missions (revealed NPCs, frame 10) into `mission-maps/`:
+
+    scripts/render_all_mission_maps.sh mission-maps 10 datadirs/fullgame_gog
 
 ## Game data
 

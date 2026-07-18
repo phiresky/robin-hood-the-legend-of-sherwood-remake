@@ -248,6 +248,7 @@ impl MissionPresentation {
             shift_held: state.shift_held,
             rewind_active: state.rewind_active,
             display_info_elapsed_secs: state.display_info_elapsed_secs,
+            draw_hud: true,
         }
     }
 

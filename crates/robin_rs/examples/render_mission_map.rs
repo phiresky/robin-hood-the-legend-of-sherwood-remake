@@ -2,13 +2,14 @@
 //!
 //! This is a CLI wrapper around the regular game loader and renderer: mission
 //! scripts, sprite resources, ambiance, masks, decals, and entities all use
-//! the same code paths as the game.  The capture happens after mission
-//! `Initialize`, before the first simulation tick and `PostInitialize`.
+//! the same code paths as the game. Frame zero is after mission `Initialize`,
+//! before the first simulation tick and `PostInitialize`; `--frame N` runs N
+//! normal game frames before capture.
 //!
 //! Usage:
-//!   ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
-//!     cargo run --example render_mission_map -- Dem_Lei_MP \
-//!       --proto leicester --reveal-all -o leicester.png
+//!   ROBINHOOD_DATA_DIR=datadirs/fullgame_gog \
+//!     cargo run --example render_mission_map -- S02_Lei_MP \
+//!       --frame 10 --reveal-all --headless -o "Save Scarlett.png"
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use std::ffi::OsString;
@@ -32,6 +33,11 @@ struct Args {
     #[arg(short, long, value_name = "PNG")]
     output: Option<PathBuf>,
 
+    /// Absolute simulation frame to capture. Zero is the pristine pre-tick
+    /// mission state.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    frame: u32,
+
     /// Reveal every blipped NPC before rendering, like the original
     /// `UBIQUITY` / `UNBLIP` cheat.
     #[arg(long, visible_alias = "unblip-all")]
@@ -41,6 +47,11 @@ struct Args {
     /// `ROBINHOOD_DATA_DIR`.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
+
+    /// Keep the required GPU-backed window hidden. Rendering still occurs for
+    /// the final offscreen screenshot.
+    #[arg(long)]
+    headless: bool,
 }
 
 fn main() -> ExitCode {
@@ -57,6 +68,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<i32, String> {
     let args = Args::parse();
+    let window_visible = !args.headless;
     let invocation_dir = std::env::current_dir()
         .map_err(|err| format!("failed to determine current directory: {err}"))?;
     let output = absolute_path(
@@ -89,13 +101,16 @@ fn run() -> Result<i32, String> {
     let mut game_args =
         robin_rs::main_entry::try_parse_cli_from(launcher_args).map_err(|err| err.to_string())?;
     game_args.mission_start_map_output = Some(output.clone());
+    game_args.mission_start_map_frame = args.frame;
     game_args.mission_start_reveal_all = args.reveal_all;
+    game_args.fast_forward = true;
 
     let (campaign, profiles, application_context) = robin_rs::main_entry::rust_init()?;
-    robin_rs::window::run_with_game(
+    robin_rs::window::run_with_game_visibility(
         "Robin Hood — mission map renderer",
         1024,
         768,
+        window_visible,
         move |mut window| async move {
             match robin_rs::main_entry::run_rust_game(
                 &mut window,
