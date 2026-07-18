@@ -55,7 +55,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Upscaling — shipped modes**. Options -> Graphics -> Scaling is wired
   through `crates/robin_rs/src/gpu_upscale.rs`, `shaders/*.wgsl`, and
   `build.rs`. Currently shipped in the UI: Nearest, PixelArt, Linear
-  (SDL-native), plus single-pass SDL_GPU shaders: **Sharp-Bilinear**,
+  via wgpu, plus single-pass WGSL shaders: **Sharp-Bilinear**,
   **Bicubic**, **Lanczos**, and **CUT3**, plus **RetroArch Shader** preset
   selection.
 
@@ -114,16 +114,12 @@ A list of which additional features we have added, which ones we might still wan
 - **Upscaling follow-ups**
   - **Scale2x / Scale3x / xBR-lv1** are implemented in `shaders/` and
     compiled into the binary but removed from `TextureScaleMode::ALL` because
-    they reproducibly GPU-reset inside `canvas.present()` on Mesa/RADV Vulkan.
-    Bicubic and Lanczos with the same binding layout / `num_samplers=1` work
+    they reproducibly GPU-reset during presentation on Mesa/RADV Vulkan.
+    Bicubic and Lanczos with the same texture/sampler binding layout work
     fine, so it is not the descriptor layout. Still unknown whether the
-    underlying bug is driver-specific, an SDL_GPU render-target-as-sampler
-    layout transition issue, or a specific SPIR-V instruction pattern our
-    shaders use. Re-add these modes once someone reproduces/fixes it.
-  - Backend coverage: SPIR-V only (Linux / Vulkan). Metal (MSL) and D3D12
-    (DXIL) still need a shader cross-compile pass; shader modes silently fall
-    back to Linear on those drivers. Either hand-port `.wgsl` to HLSL and build
-    via `sdl-shadercross`, or enable naga's `msl-out` / `hlsl-out` features.
+    underlying bug is driver-specific, a render-target-as-sampler layout
+    transition issue, or a specific shader instruction pattern. Re-add these
+    modes once someone reproduces and validates them with the wgpu backend.
   - Multi-pass shader runner candidates:
     **xBRZ**, **hqx**, **super-xbr**, **Anime4K v4**, **ScaleNX with artifact
     removal**, and CRT shaders (as a separate `TextureEffect` enum).
@@ -132,8 +128,8 @@ A list of which additional features we have added, which ones we might still wan
     - https://github.com/libretro/common-shaders
     - https://en.wikipedia.org/wiki/Pixel-art_scaling_algorithms
 
-- **Cursor visual effects**. The SDL3 cursor path currently draws hardware
-  cursors directly, so old software-cursor post-effects are not represented.
+- **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
+  sprite, but old software-cursor post-effects are not represented.
   Reintroduce only effects that have a visible gameplay hook:
   - **Quick-action recording pulse** — while recording a quick action, tint the
     cursor shadow with a pulsing green highlight so it is obvious that inputs
@@ -227,7 +223,7 @@ unless the project goals change.
   features. Add focused command-line tools instead if we need asset inspection
   or conversion.
 
-- **Software-renderer parity**. SDL/GPU rendering is the supported path.
+- **Software-renderer parity**. wgpu rendering is the supported path.
   Rebuilding a complete CPU renderer is not a feature goal.
 
 - **Unused platform abstraction layers**. Mobile, timing, and placeholder

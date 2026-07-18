@@ -26,7 +26,7 @@ codegen-backend = true
 #
 # We target plain `wasm32-unknown-unknown` and bind to the browser via
 # `wasm-bindgen` (winit + wgpu both support this directly).  No
-# emscripten, no SDL port, no pthreads — single-threaded.  The game's
+# emscripten, no native window-system port, no pthreads — single-threaded. The game's
 # imperative loop is async; on wasm it runs as a `spawn_local` future
 # on the main JS thread, while winit's `ApplicationHandler` also lives
 # on the main thread and forwards events through an `async_channel`.

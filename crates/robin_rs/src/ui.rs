@@ -1,7 +1,7 @@
 //! UI framework: keyboard state tracking, mouse cursor, renderers, layout,
 //! and the top-level UI manager.
 //!
-//! SDL / rendering calls are stubbed — actual blitting happens in the
+//! Low-level rendering calls are stubbed — actual blitting happens in the
 //! widget-specific drawing code (see `widget/` and `game_session`); this
 //! module is a serializable state + layout/event skeleton.
 
@@ -188,7 +188,7 @@ impl UiKeyboard {
 
     /// Refresh key states from the current raw keyboard state.
     ///
-    /// `current_time_ms` is a monotonic timestamp (e.g. `SDL_GetTicks()`).
+    /// `current_time_ms` is a monotonic timestamp.
     /// Returns `true` if the keyboard was already initialized (i.e. this
     /// is not the very first call).
     pub fn refresh(&mut self, keyboard_state: &KeyboardState, current_time_ms: u32) -> bool {
@@ -1597,7 +1597,7 @@ mod tests {
     fn keyboard_double_press_within_delay() {
         let mut kb = UiKeyboard::new(500); // 500ms double-press window
         // Use timestamps well past 0 so the initial last_key_press (0) is
-        // outside the double-press window — matches real SDL_GetTicks() usage.
+        // outside the double-press window — matches a real monotonic clock.
         kb.refresh(&make_keys(&[]), 10_000);
 
         // First press + release

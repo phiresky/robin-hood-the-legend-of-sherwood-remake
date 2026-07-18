@@ -1017,7 +1017,7 @@ fn entity_visual_map_position(entity: &Entity) -> MapPoint {
 /// Replaces `render_entities` for the GPU phase.  Each sprite frame is
 /// decompressed once and cached as an ARGB8888 GPU texture; subsequent
 /// frames with the same `(bank_id, variant, shadow_color)` key reuse the
-/// cached texture via `SDL_RenderCopy` (zero CPU decompression work).
+/// cached texture in a queued GPU draw (zero CPU decompression work).
 pub(crate) fn render_entities_gpu(
     host: &mut Host,
     engine: &Engine,
@@ -1541,9 +1541,8 @@ fn map_to_screen(host: &Host, point: engine_coordinates::MapPoint) -> (i32, i32)
 /// The selection-outline pass runs after all entity sprites are drawn
 /// so the outline is drawn ON TOP of entities and is never occluded.
 ///
-/// For each outlined entity the cached outline mask texture is tinted
-/// via `SDL_SetTextureColorMod` and alpha-modulated via
-/// `SDL_SetTextureAlphaMod` (for hulk fade animation).
+/// For each outlined entity, the cached outline mask texture is tinted and
+/// alpha-modulated by the GPU pipeline (for hulk fade animation).
 pub(crate) fn render_selection_outlines_gpu(
     host: &mut Host,
     engine: &Engine,
@@ -1602,7 +1601,7 @@ pub(crate) fn render_selection_outlines_gpu(
         // Alpha: focused/marked/action-marked force 100 (override any
         // in-flight fade); otherwise use `hulk_level` (40..=100) from
         // the fade state machine. The percentage (0-100) is converted
-        // to 0-255 for SDL.
+        // to the renderer's 0-255 alpha range.
         let alpha_pct = if is_focused || is_action_marked {
             100u16
         } else {
@@ -3348,7 +3347,7 @@ pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, rendere
     };
 
     // ── Compute screen-space corners via the unclamped transform;
-    //    SDL's line drawer clips off-screen pieces. ──
+    //    the GPU line renderer clips off-screen pieces. ──
     let a = host
         .viewport
         .map_to_screen_unclamped(engine_coordinates::MapPoint::new(

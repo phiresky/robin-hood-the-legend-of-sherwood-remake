@@ -3,6 +3,7 @@
 //! `start_/tick_/drain_pending_*` helpers that drive them.
 
 use crate::Host;
+use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -17,7 +18,6 @@ use crate::renderer::Renderer;
 use crate::replay::ReplayRecorder;
 use crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE;
 use crate::resource_manager::ResourceManager;
-use crate::sdl_audio::SdlMixerBackend;
 use crate::sherwood_stat::{ScoreInfo, SherwoodStat};
 use crate::sound_cache::SampleLoader;
 use crate::sound_config::SoundConfig;
@@ -247,7 +247,7 @@ fn tick_active_dialogue_batch(
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
 ) {
@@ -317,7 +317,7 @@ pub(super) async fn drain_pending_dialogues(
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
@@ -628,7 +628,7 @@ fn tick_active_popup_scroll_batch(
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
@@ -769,7 +769,7 @@ pub(super) fn tick_active_modal(
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
@@ -900,7 +900,7 @@ pub(super) async fn drain_pending_popup_scroll(
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     text_res: &mut ResourceManager,
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
@@ -1018,7 +1018,7 @@ pub(super) async fn drain_pending_sherwood_stat(
     cursor_renderer: &mut CursorRenderer,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
-    audio_backend: &mut Option<SdlMixerBackend>,
+    audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,

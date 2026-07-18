@@ -86,7 +86,7 @@ pub(crate) async fn show_credits(
         for event in event_pump.poll_events() {
             match event {
                 // The original dismisses only on left-click or Escape.
-                // SDL `Quit` is treated as an implicit ESC since the
+                // `Quit` is treated as an implicit ESC since the
                 // original game had no window-close path.
                 GameEvent::Quit
                 | GameEvent::KeyDown {

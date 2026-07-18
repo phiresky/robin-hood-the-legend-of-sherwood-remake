@@ -6,13 +6,13 @@
 //! the game is in-session or at the main menu — the dialog always writes
 //! back to the active player profile.
 
+use crate::audio_backend::{self, KiraAudioBackend};
 use crate::graphic_config::GraphicConfig;
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, show_options};
 use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
 use crate::player_profile::PlayerProfileManager;
 use crate::renderer::Renderer;
-use crate::sdl_audio::{self, SdlMixerBackend};
 use crate::sound::SoundManager;
 use crate::sound_config::SoundConfig;
 use robin_engine::engine as engine_api;
@@ -24,7 +24,7 @@ use robin_engine::engine as engine_api;
 /// global [`KeyConfigStore`] so the active and custom key-config slots
 /// persist across sessions.
 ///
-/// Spins up a short-lived [`SdlMixerBackend`] + [`SoundManager`] +
+/// Spins up a short-lived [`KiraAudioBackend`] + [`SoundManager`] +
 /// sample loader for the duration of the dialog so the Sounds
 /// sub-screen's volume sliders fire their slider-tick noises the same
 /// way the in-game Options dialog does. The audio lives only while the
@@ -80,7 +80,7 @@ pub(crate) async fn show_main_menu_options(
     // paths through `-SOUNDDIR` / `-MUSICDIR` flags, so this is best
     // effort — command-line overrides only affect session-time audio.
     let sound_dir = std::path::PathBuf::from("Data/Sounds");
-    let mut audio_backend = SdlMixerBackend::new(&sound_dir, crate::sound::NUM_CHANNELS).ok();
+    let mut audio_backend = KiraAudioBackend::new(&sound_dir, crate::sound::NUM_CHANNELS).ok();
     let mut sound_mgr = SoundManager::default();
     if let Some(ref mut backend) = audio_backend
         && let Err(e) = sound_mgr.initialize(backend, sound_cfg.sound_3d)
@@ -108,9 +108,9 @@ pub(crate) async fn show_main_menu_options(
             ),
         }
     }
-    let sample_loader = sdl_audio::create_sample_loader(sound_dir);
+    let sample_loader = audio_backend::create_sample_loader(sound_dir);
 
-    // Reborrow helper: turn `Option<&mut SdlMixerBackend>` into the
+    // Reborrow helper: turn `Option<&mut KiraAudioBackend>` into the
     // trait object form that `show_options` expects.  See the note in
     // `ingame_menu::sounds::show_sounds` — `Option<&mut dyn Trait>`
     // can't be shortened with `as_deref_mut` across the call boundary,
@@ -169,9 +169,8 @@ pub(crate) async fn show_main_menu_options(
             }
         }
     }
-    // `audio_backend` drops here: SdlMixerBackend::drop stops playback
-    // and releases the mixer context, so the next session can
-    // re-initialize cleanly.
+    // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
+    // releases its audio resources, so the next session can re-initialize.
 }
 
 /// Apply a resolution change coming out of the Graphics sub-menu to the

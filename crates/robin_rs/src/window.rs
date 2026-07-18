@@ -1350,7 +1350,7 @@ where
 // Text-input toggles (no-ops under winit).
 // ---------------------------------------------------------------------
 
-/// SDL-era IME helpers — winit delivers `GameEvent::TextInput` events
+/// IME helpers. Winit delivers `GameEvent::TextInput` events
 /// whether or not we've explicitly "started" it, so the start/stop
 /// pair is mostly bookkeeping.  `start_text_input` additionally clears
 /// any pending dead-key composition: when the player opens a text

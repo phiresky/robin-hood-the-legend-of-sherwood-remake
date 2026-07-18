@@ -114,7 +114,7 @@ impl MissionBootstrap {
 
     pub(super) fn prepare_audio(
         &mut self,
-        backend: Option<&mut crate::sdl_audio::SdlMixerBackend>,
+        backend: Option<&mut crate::audio_backend::KiraAudioBackend>,
         profiles: &ProfileManager,
     ) {
         assert!(

@@ -21,7 +21,7 @@
 //!   - QuickStart: enabled when any PC has slot 0 populated AND we're not
 //!     currently recording.
 
-use crate::gfx_types::{Point, Rect as SdlRect};
+use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::sprite as engine_sprite;
@@ -33,7 +33,7 @@ use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
 use crate::resource_manager::ResourceManager;
 
-fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
         rect.x() as f32,
         rect.y() as f32,
@@ -134,9 +134,9 @@ impl CornerButtonEnable {
 /// Screen-space bounding boxes for the three corner HUD buttons.
 #[derive(Debug, Clone, Copy)]
 pub struct CornerHudLayout {
-    pub clock: SdlRect,
-    pub sight: SdlRect,
-    pub quickstart: SdlRect,
+    pub clock: ScreenRect,
+    pub sight: ScreenRect,
+    pub quickstart: ScreenRect,
 }
 
 impl CornerHudLayout {
@@ -170,13 +170,13 @@ impl CornerHudLayout {
 
         Self {
             // Clock — `(width-60, 13)` relative to the panel frame origin.
-            clock: SdlRect::new(sw - 60, frame_origin_y + 13, clock_w as u32, clock_h as u32),
+            clock: ScreenRect::new(sw - 60, frame_origin_y + 13, clock_w as u32, clock_h as u32),
             // Sight — `(width-100, 0)` screen-absolute (top-right), not
             // panel-relative.
-            sight: SdlRect::new(sw - 100, 0, sight_w as u32, sight_h as u32),
+            sight: ScreenRect::new(sw - 100, 0, sight_w as u32, sight_h as u32),
             // QuickStart — `(width-29, -15)` relative to the panel frame
             // origin (so it sits *above* the panel proper).
-            quickstart: SdlRect::new(sw - 29, frame_origin_y - 15, qs_w as u32, qs_h as u32),
+            quickstart: ScreenRect::new(sw - 29, frame_origin_y - 15, qs_w as u32, qs_h as u32),
         }
     }
 

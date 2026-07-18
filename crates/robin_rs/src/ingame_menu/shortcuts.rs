@@ -140,7 +140,7 @@ pub async fn show_shortcuts(
     // path so all five buttons share one handler.
     let mut keyboard_button_activation: Option<u32> = None;
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
     let mut scroll_offset: usize = 0;
 
     // Row height from the default list font.

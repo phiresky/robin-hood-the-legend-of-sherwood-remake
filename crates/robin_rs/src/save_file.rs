@@ -431,7 +431,7 @@ pub struct GameSaveFile {
     /// carried across from the live engine by [`Engine::restore`].
     pub engine: Engine,
     /// Host-side sound manager state. Split from the engine because
-    /// `SoundManager` lives in robin_rs (wraps the SDL mixer), while
+    /// `SoundManager` lives in robin_rs (drives Kira), while
     /// the sim-state portion of sound is inside `EngineInner::sound_sim`.
     pub sound: SoundManager,
     /// Host-side persistent Game flags (campaign-map display state,

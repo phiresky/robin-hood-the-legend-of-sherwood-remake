@@ -32,7 +32,7 @@ Used to confirm the EngineManager + frame-0-skip + chokepoint refactor
 zero DESYNCs.
 
 **Driver flags:**
-- `--headless` — no SDL window/audio.  Both processes run pure sim.
+- `--headless` — skip rendering. Both processes run pure simulation.
 - `--fast-forward` — uncaps the frame rate so `/step-forward` returns
   immediately instead of waiting for wall-clock pacing.
 - `--start-paused` — sets `manual_pause` at boot.  Per-frame loop tick

@@ -140,7 +140,7 @@ impl YesNoModalState {
         focus.add_shortcut(ID_NO, KeyCode::Escape);
 
         let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_sdl(event_pump, transform);
+        input_state.seed_mouse_from_window(event_pump, transform);
         // UiKeyboard's first refresh only establishes its baseline. Do that
         // before polling so a key pressed on the modal's first visible frame
         // is not swallowed.

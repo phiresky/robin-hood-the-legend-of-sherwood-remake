@@ -229,7 +229,7 @@ pub async fn show_graphics(
     let mut done = false;
     let mut accepted = false;
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
 
     while !done {
         for event in event_pump.poll_events() {

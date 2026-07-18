@@ -18,6 +18,7 @@ use robin_engine::sprite::BBox;
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
 
+use crate::audio_backend::{self, KiraAudioBackend};
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
@@ -35,7 +36,6 @@ use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::savegame::SaveGameManager;
-use crate::sdl_audio::{self, SdlMixerBackend};
 use crate::sound::SoundManager;
 use crate::sound_config::SoundConfig;
 use crate::ui::UiState;
@@ -118,7 +118,7 @@ const PROFILE_INFO_BOX_X: i32 = 0;
 const PROFILE_INFO_BOX_W: i32 = 480;
 
 struct MainMenuAudio {
-    backend: SdlMixerBackend,
+    backend: KiraAudioBackend,
     sound: SoundManager,
     sample_loader: Box<SampleLoader>,
     noisy_tracker: widget_bridge::NoisyTracker,
@@ -130,7 +130,7 @@ impl MainMenuAudio {
         // command-line sound-directory overrides yet. Keep this in
         // lockstep with the existing main-menu options bootstrap.
         let sound_dir = std::path::PathBuf::from("Data/Sounds");
-        let mut backend = match SdlMixerBackend::new(&sound_dir, crate::sound::NUM_CHANNELS) {
+        let mut backend = match KiraAudioBackend::new(&sound_dir, crate::sound::NUM_CHANNELS) {
             Ok(backend) => backend,
             Err(e) => {
                 tracing::warn!("Main menu: failed to initialize audio: {e}");
@@ -163,7 +163,7 @@ impl MainMenuAudio {
         Some(Self {
             backend,
             sound,
-            sample_loader: sdl_audio::create_sample_loader(sound_dir),
+            sample_loader: audio_backend::create_sample_loader(sound_dir),
             noisy_tracker: widget_bridge::NoisyTracker::new(),
         })
     }

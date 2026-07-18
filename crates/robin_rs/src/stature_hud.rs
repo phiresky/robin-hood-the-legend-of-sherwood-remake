@@ -18,7 +18,7 @@
 //! host-side — the aggregate stature can shift any frame the selection
 //! or posture changes.
 
-use crate::gfx_types::{Point, Rect as SdlRect};
+use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::sprite as engine_sprite;
 
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
@@ -32,7 +32,7 @@ use crate::player_command::PlayerCommand;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::ResourceManager;
 
-fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
         rect.x() as f32,
         rect.y() as f32,
@@ -197,8 +197,8 @@ impl StatureFocusLatch {
 /// Screen-space bounding boxes for the two stature buttons.
 #[derive(Debug, Clone, Copy)]
 pub struct StatureHudLayout {
-    pub up: SdlRect,
-    pub down: SdlRect,
+    pub up: ScreenRect,
+    pub down: ScreenRect,
 }
 
 impl StatureHudLayout {
@@ -223,8 +223,8 @@ impl StatureHudLayout {
 
         // Up arrow at (1, -27) from the panel origin, down arrow at (0, 33).
         Self {
-            up: SdlRect::new(1, frame_origin_y - 27, up_w as u32, up_h as u32),
-            down: SdlRect::new(0, frame_origin_y + 33, down_w as u32, down_h as u32),
+            up: ScreenRect::new(1, frame_origin_y - 27, up_w as u32, up_h as u32),
+            down: ScreenRect::new(0, frame_origin_y + 33, down_w as u32, down_h as u32),
         }
     }
 

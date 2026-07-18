@@ -443,11 +443,8 @@ fn bytes_to_u16_pixels(data: &[u8]) -> Vec<u16> {
 /// uploaded loading-screen images.
 ///
 /// Created at the start of mission loading, dropped before the game renderer
-/// is constructed. The SDL logical-size mechanism scales the loading screen
-/// images to fill the window regardless of their native resolution.
-///
-/// The lifetime parameter `'r` matches the borrowed `TextureCreator` passed to
-/// [`Self::new`] — the inner `Renderer` keeps its cached textures tied to it.
+/// is constructed. The renderer scales the loading-screen images to fill the
+/// window regardless of their native resolution.
 pub struct LoadingScreenRenderer {
     state: LoadingScreen,
     renderer: Renderer,
@@ -584,9 +581,8 @@ impl LoadingScreenRenderer {
             "loading-screen mask must be RGB565"
         );
         let height_field = HeightField::from_rgb565(&mask_pixels, width as u32, height as u32);
-        // Create a renderer at the image's native resolution.
-        // SDL logical size handles aspect-correct scaling (letterbox) to the
-        // actual window.
+        // Create a renderer at the image's native resolution. Presentation
+        // handles aspect-correct scaling (letterbox) to the actual window.
         let mut renderer = Renderer::new(window, width, height, scale_mode);
         let loading_dissolve = renderer.create_loading_dissolve_textures(
             width as u32,
@@ -683,15 +679,15 @@ impl LoadingScreenRenderer {
         self.refresh();
     }
 
-    /// Drain pending SDL events (especially WM resizes) and snap the window
+    /// Drain pending window events (especially WM resizes) and snap the window
     /// to a supported 4:3 resolution.  Must be called periodically during
     /// long-running mission loads, otherwise resize events pile up in the
     /// queue and the canvas state goes stale.
     pub fn drain_events(&mut self, event_pump: &mut crate::window::GameWindow) {
         // GameWindow.poll_events handles resize internally now (it
         // reconfigures the wgpu surface on Resized), so the
-        // width/height out-params from the SDL-era split-borrow path
-        // are gone. We still need to scan for focus changes — when
+        // surface dimensions are updated there. We still need to scan for
+        // focus changes — when
         // the WM defocuses the game during a long load we stop
         // pushing frames until focus returns (`refresh` short-circuits
         // while `window_focused == false`).
@@ -797,7 +793,7 @@ impl LoadingScreenRenderer {
     /// Close and consume the loading screen, dropping the renderer.
     pub fn close(mut self) {
         self.state.close();
-        // Renderer is dropped here, freeing SDL surfaces/textures.
+        // Renderer is dropped here, freeing its GPU resources.
     }
 }
 

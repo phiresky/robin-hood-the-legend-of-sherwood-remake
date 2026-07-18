@@ -13,7 +13,7 @@
 //! fall back to the normal frame when a specific state frame is
 //! missing in the resource pack.
 
-use crate::gfx_types::{Point, Rect as SdlRect};
+use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::engine as engine_api;
 #[cfg(test)]
 use robin_engine::player_command::PlayerCommand;
@@ -27,7 +27,7 @@ use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids::{RHID_ZOOM_DOWN, RHID_ZOOM_UP};
 use crate::resource_manager::ResourceManager;
 
-fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
         rect.x() as f32,
         rect.y() as f32,
@@ -101,8 +101,8 @@ impl ZoomButtonEnable {
 /// Screen-space bounding boxes for the two zoom buttons.
 #[derive(Debug, Clone, Copy)]
 pub struct ZoomHudLayout {
-    pub zoom_up: SdlRect,
-    pub zoom_down: SdlRect,
+    pub zoom_up: ScreenRect,
+    pub zoom_down: ScreenRect,
 }
 
 impl ZoomHudLayout {
@@ -134,8 +134,8 @@ impl ZoomHudLayout {
             .unwrap_or((FALLBACK_W as u16, FALLBACK_H as u16));
 
         Self {
-            zoom_up: SdlRect::new(x, zoom_up_y, up_w as u32, up_h as u32),
-            zoom_down: SdlRect::new(x, zoom_down_y, down_w as u32, down_h as u32),
+            zoom_up: ScreenRect::new(x, zoom_up_y, up_w as u32, up_h as u32),
+            zoom_down: ScreenRect::new(x, zoom_down_y, down_w as u32, down_h as u32),
         }
     }
 

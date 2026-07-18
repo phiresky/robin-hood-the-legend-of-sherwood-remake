@@ -1,6 +1,6 @@
 //! Game-level draw manager for rendering primitives.
 //!
-//! Wraps the low-level SDL renderer and provides game-coordinate-aware
+//! Wraps the low-level GPU renderer and provides game-coordinate-aware
 //! drawing: view clipping, zoom-adjusted lines/ellipses/polygons, etc.
 //!
 //! Runtime primitives queue GPU overlay draws.

@@ -577,7 +577,7 @@ impl DebriefingPageState {
         }
 
         let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_sdl(event_pump, transform);
+        input_state.seed_mouse_from_window(event_pump, transform);
         Self {
             title,
             body,

@@ -20,7 +20,7 @@
 //! * `used_alpha ≤ 16`: `2 * (32 - used_alpha) ≥ 32`, so the scale
 //!   factor saturates at 32 and `dst * 32/32 = dst`.  The formula
 //!   collapses to `result = saturate(pattern_premul + dst)` — **exactly
-//!   SDL's `BlendMode::Add`** in RGB565.
+//!   additive GPU blending** in RGB565.
 //! * `used_alpha > 16`: the scale factor drops from 32 to 2,
 //!   progressively scaling the destination down as the source opacity
 //!   grows, which transitions from additive toward replacement at
@@ -35,7 +35,7 @@
 //! additive output, and even then it's confined to the three or four
 //! polyline samples at the very tip of the drag.
 //!
-//! So we use SDL's native additive blend and skip the CPU-side
+//! So we use native GPU additive blending and skip the CPU-side
 //! readback path entirely.
 //!
 //! The pattern shape, interpolation along the dominant axis between

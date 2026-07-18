@@ -1,6 +1,6 @@
 //! Focused owners for the native mission driver's process resources.
 //!
-//! These values deliberately do not implement serde. They own GPU, SDL,
+//! These values deliberately do not implement serde. They own GPU, window,
 //! input-device, resource-cache, and widget objects whose lifetime is one
 //! interactive process session; deterministic persistence remains in the
 //! engine snapshot owned by [`super::runtime::MissionWorld`].
@@ -11,6 +11,7 @@ use super::runtime::MissionRuntime;
 use super::setup::MissionSprites;
 use super::tick::tick_audio;
 use crate::Host;
+use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{CornerButtonSprites, CornerHudLayout, CornerTooltipTracker};
 use crate::game::Game;
@@ -21,7 +22,6 @@ use crate::input_translator::InputTranslator;
 use crate::menu::CampaignMapState;
 use crate::renderer::Renderer;
 use crate::resource_manager::ResourceManager;
-use crate::sdl_audio::SdlMixerBackend;
 use crate::sherwood_hud::{
     SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout, SherwoodTooltipTracker,
 };
@@ -78,14 +78,14 @@ impl MissionInput {
 
 /// Native audio device plus mission-lifetime sample source and RNG.
 pub(super) struct MissionAudio {
-    pub(super) backend: Option<SdlMixerBackend>,
+    pub(super) backend: Option<KiraAudioBackend>,
     pub(super) sample_loader: Box<SampleLoader>,
     pub(super) sound_rng: fastrand::Rng,
 }
 
 impl MissionAudio {
     pub(super) fn new(
-        backend: Option<SdlMixerBackend>,
+        backend: Option<KiraAudioBackend>,
         sample_loader: Box<SampleLoader>,
         sound_rng: fastrand::Rng,
     ) -> Self {

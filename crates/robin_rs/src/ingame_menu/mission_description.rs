@@ -218,7 +218,7 @@ pub async fn show_mission_description(
 
     // ── Event loop ──────────────────────────────────────────────
     let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_sdl(event_pump, transform);
+    input_state.seed_mouse_from_window(event_pump, transform);
     let mut tooltip = TooltipState::new();
     let mut blazon_tooltip = BlazonTooltipTracker::new();
 

@@ -3,7 +3,7 @@
 //! The original Windows code enumerated ACM (Audio Compression Manager)
 //! drivers to find the Microsoft ADPCM codec, re-enabling it if it was
 //! disabled. On non-Windows platforms the codec is handled in software
-//! (e.g. by SDL_mixer), so we unconditionally report it as available.
+//! by the audio backend, so we unconditionally report it as available.
 
 /// Returns `true` when an ADPCM codec is available for playback.
 ///

@@ -3593,7 +3593,7 @@ mod sound_completion_tests {
 /// fresh finish for the `Single` / `Volatile` ones.  Called from the
 /// `ResumeAll` dispatch so a script-triggered suspend/resume
 /// round-trip produces the same kind-specific termination the host
-/// used to drive via SDL_mixer playback completion.
+/// used to drive via audio-backend playback completion.
 fn schedule_source_finishes_for_all_active(
     sound_sim: &mut crate::sound::SoundSimState,
     durations: &super::SourceDurations,
