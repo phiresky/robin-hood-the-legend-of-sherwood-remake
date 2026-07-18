@@ -1094,20 +1094,18 @@ impl Sprite {
 
     /// Reattach level-owned script/conversion tables from the
     /// SpriteScriptor cache using the serialized profile cache keys.
-    pub fn attach_runtime_from_cache(&mut self, scriptor: &SpriteScriptor) -> Result<(), String> {
+    pub(crate) fn validate_runtime_cache(&self, scriptor: &SpriteScriptor) -> Result<(), String> {
         if !self.profile_cache_key.is_empty() {
-            let info = scriptor.get(&self.profile_cache_key).ok_or_else(|| {
+            scriptor.get(&self.profile_cache_key).ok_or_else(|| {
                 format!(
                     "sprite cache miss while attaching primary profile '{}'",
                     self.profile_cache_key
                 )
             })?;
-            self.scripts = info.scripts.clone();
-            self.conversion = info.conversion.clone();
         }
 
         if !self.alternate_profile_cache_key.is_empty() {
-            let info = scriptor
+            scriptor
                 .get(&self.alternate_profile_cache_key)
                 .ok_or_else(|| {
                     format!(
@@ -1115,14 +1113,9 @@ impl Sprite {
                         self.alternate_profile_cache_key
                     )
                 })?;
-            self.alternate_scripts = Some(info.scripts.clone());
-            self.alternate_conversion = Some(info.conversion.clone());
-        } else {
-            self.alternate_scripts = None;
-            self.alternate_conversion = None;
         }
 
-        if self.use_alternate_profile && self.alternate_conversion.is_none() {
+        if self.use_alternate_profile && self.alternate_profile_cache_key.is_empty() {
             return Err(format!(
                 "sprite '{}' is using alternate profile but has no alternate profile cache key",
                 self.frame_profile_name
@@ -1130,6 +1123,27 @@ impl Sprite {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn attach_preflighted_runtime_from_cache(&mut self, scriptor: &SpriteScriptor) {
+        if !self.profile_cache_key.is_empty() {
+            let info = scriptor
+                .get(&self.profile_cache_key)
+                .expect("primary sprite cache key was preflighted");
+            self.scripts = info.scripts.clone();
+            self.conversion = info.conversion.clone();
+        }
+
+        if !self.alternate_profile_cache_key.is_empty() {
+            let info = scriptor
+                .get(&self.alternate_profile_cache_key)
+                .expect("alternate sprite cache key was preflighted");
+            self.alternate_scripts = Some(info.scripts.clone());
+            self.alternate_conversion = Some(info.conversion.clone());
+        } else {
+            self.alternate_scripts = None;
+            self.alternate_conversion = None;
+        }
     }
 
     /// Store loaded sprite info into the primary or alternate slot.
@@ -1878,6 +1892,43 @@ const SNAKE_ANIM_PROBABILITY: u32 = 100;
 mod tests {
     use super::*;
 
+    #[test]
+    fn runtime_cache_preflight_checks_all_keys_without_mutating_sprite() {
+        let mut scriptor = crate::sprite_script::SpriteScriptor::new();
+        scriptor.insert(
+            "primary",
+            crate::sprite_script::SpriteInfo {
+                scripts: std::sync::Arc::new(vec![SpriteScript::default()]),
+                conversion: std::sync::Arc::new(vec![
+                    crate::sprite_script::UNMAPPED;
+                    crate::sprite_script::NONANIMATION_END
+                ]),
+                size: crate::coordinates::SpriteSize::new(1.0, 1.0),
+                center: crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+            },
+        );
+        let mut sprite = Sprite {
+            profile_cache_key: "primary".to_owned(),
+            alternate_profile_cache_key: "missing-alternate".to_owned(),
+            use_alternate_profile: true,
+            ..Sprite::default()
+        };
+        let scripts_before = sprite.scripts.clone();
+        let conversion_before = sprite.conversion.clone();
+
+        let error = sprite.validate_runtime_cache(&scriptor).unwrap_err();
+        assert!(error.contains("missing-alternate"));
+        assert!(std::sync::Arc::ptr_eq(&sprite.scripts, &scripts_before));
+        assert!(std::sync::Arc::ptr_eq(
+            &sprite.conversion,
+            &conversion_before
+        ));
+
+        sprite.alternate_profile_cache_key.clear();
+        let error = sprite.validate_runtime_cache(&scriptor).unwrap_err();
+        assert!(error.contains("using alternate profile"));
+    }
+
     fn make_test_sprite() -> Sprite {
         // Build the script set up front so the new
         // `Sprite::new(scripts, conversion)` constructor consumes them
@@ -2184,8 +2235,8 @@ mod tests {
         assert_eq!(back.current_frame, 3);
         assert_eq!(back.frame_count, 10);
         // Script tables are level-owned attachments and reset to the empty
-        // placeholder Arc until EngineInner::attach_level_assets reattaches
-        // them from serialized cache keys.
+        // placeholder Arc until the engine's preflighted snapshot attachment
+        // path restores them from serialized cache keys.
         assert!(back.scripts.is_empty());
     }
 

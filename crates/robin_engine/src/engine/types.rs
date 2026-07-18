@@ -723,6 +723,14 @@ pub struct LevelAssets {
     pub mission_script_programs: std::sync::Arc<
         std::collections::BTreeMap<String, std::sync::Arc<crate::script_manager::ScriptProgram>>,
     >,
+    /// Mission script identity selected during level construction. Snapshot
+    /// attachment validates this exact name instead of inferring identity from
+    /// whichever programs happen to be present in the asset cache.
+    pub mission_script_name: Option<String>,
+    /// Number of level-authored mobile elements. Their runtime state is
+    /// serialized, but dropping or inventing a whole mobile in a decoded
+    /// snapshot is incompatible with the loaded level.
+    pub mobile_element_count: usize,
     /// Spellforge name tables used by Lua-only native lookups. Vanilla
     /// missions leave this empty; like the other script bindings it is
     /// reattached rather than serialized with simulation state.
@@ -866,6 +874,8 @@ impl LevelAssets {
             profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
             bank_signature: 0,
             mission_script_programs: std::sync::Arc::new(std::collections::BTreeMap::new()),
+            mission_script_name: None,
+            mobile_element_count: 0,
             script_names: std::sync::Arc::new(crate::natives::ScriptNameBindings::default()),
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
@@ -1050,8 +1060,8 @@ pub struct MissionScript {
     /// engine state that has not yet moved to borrowed native capabilities.
     pub state: ScriptState,
     /// Immutable level-native capabilities. Snapshot decode intentionally
-    /// leaves this detached; [`Engine::attach_level_assets`] restores it
-    /// before the VM can resume.
+    /// leaves this detached; the engine's snapshot adoption/restore boundary
+    /// restores it from [`LevelAssets`] before the VM can resume.
     #[state_hash(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
     /// One-shot compatibility payload for saves written while campaign or

@@ -42,11 +42,47 @@ impl ScriptRuntime {
         self.native_attachments_ready = false;
     }
 
-    /// Attach the immutable script program and native capabilities belonging
-    /// to the currently loaded level. World arrays are copied into the
-    /// pre-existing shared binding adapter; they do not become script-owned
-    /// authoritative state.
-    pub(crate) fn attach_level_assets(
+    /// Validate the decoded script identity and immutable program lookup
+    /// without mutating the candidate runtime.
+    pub(crate) fn preflight_level_assets(&self, assets: &LevelAssets) -> Result<(), String> {
+        match (self.mission.as_ref(), assets.mission_script_name.as_deref()) {
+            (None, None) => return Ok(()),
+            (None, Some(expected)) => {
+                return Err(format!(
+                    "decoded snapshot omits loaded mission script '{expected}'"
+                ));
+            }
+            (Some(script), None) => {
+                return Err(format!(
+                    "decoded snapshot contains mission script '{}' but the loaded level has none",
+                    script.script_name
+                ));
+            }
+            (Some(script), Some(expected)) if script.script_name != expected => {
+                return Err(format!(
+                    "decoded snapshot mission script '{}' does not match loaded mission script '{expected}'",
+                    script.script_name
+                ));
+            }
+            (Some(script), Some(_)) => {
+                assets
+                    .mission_script_programs
+                    .get(&script.script_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "missing mission script program '{}' while attaching level assets",
+                            script.script_name
+                        )
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Attach the preflighted immutable program and native capabilities.
+    /// World arrays are copied into the shared binding adapter; they do not
+    /// become script-owned authoritative state.
+    pub(crate) fn attach_preflighted_level_assets(
         &mut self,
         assets: &LevelAssets,
         dynamic_sight_obstacles: &[crate::sight_obstacle::SightObstacle],
@@ -61,12 +97,7 @@ impl ScriptRuntime {
             let program = assets
                 .mission_script_programs
                 .get(&script.script_name)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing mission script program '{}' while attaching level assets",
-                        script.script_name
-                    )
-                });
+                .expect("mission script program was preflighted");
             script.attach_program(Arc::clone(program));
         }
 
@@ -137,28 +168,6 @@ impl ScriptRuntime {
                 Arc::new(dynamic_sight_obstacles.to_vec());
             script.bindings.sight_obstacles.static_active =
                 Arc::new(static_sight_obstacle_active.to_vec());
-        }
-    }
-
-    /// Reattach host-owned resources after replacing the live engine with a
-    /// decoded snapshot. The saved mutable VM remains authoritative; only
-    /// immutable resources come from the already-loaded engine.
-    pub(crate) fn reattach_from(&mut self, previous: &Self) {
-        match (self.mission.as_mut(), previous.mission.as_ref()) {
-            (Some(restored), Some(live)) => {
-                restored
-                    .manager
-                    .attach_program(live.manager.program.clone());
-                restored.bindings = live.bindings.clone();
-                self.native_attachments_ready = previous.native_attachments_ready;
-            }
-            (None, None) => self.native_attachments_ready = false,
-            (Some(_), None) => {
-                panic!("restored mission script has no live script attachment source")
-            }
-            (None, Some(_)) => {
-                panic!("restored snapshot unexpectedly omits the live mission script")
-            }
         }
     }
 

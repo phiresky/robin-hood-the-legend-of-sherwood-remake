@@ -44,30 +44,15 @@ impl WorldState {
 
     /// Reattach immutable level topology and sprite runtimes after decoding.
     ///
-    /// All indexed relationships are validated before the engine can tick.
-    /// Missing sprite runtimes and topology mismatches are invariant failures,
-    /// not opportunities to fabricate empty/default data.
-    pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets, script_zone_count: usize) {
+    /// The caller must first run `preflight_level_assets` across the
+    /// complete candidate; this phase is then infallible and mutation-only.
+    pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
         self.fast_grid.attach_level_grid(assets.level_grid.clone());
-        self.validate_level_attachments(assets, script_zone_count);
 
-        for (id, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.occupied_mut() {
             entity
                 .sprite_mut()
-                .attach_runtime_from_cache(&assets.sprite_scriptor)
-                .unwrap_or_else(|err| {
-                    let idx = id.index();
-                    panic!("failed to attach sprite runtime for entity {idx}: {err}")
-                });
-        }
-
-        for (mobile_index, mobile) in self.mobile_elements.iter().enumerate() {
-            for &sprite_id in &mobile.sprite_ids {
-                assert!(
-                    matches!(self.entities.get(sprite_id), Some(Entity::Fx(_))),
-                    "mobile {mobile_index} references missing or non-FX sprite entity {sprite_id}"
-                );
-            }
+                .attach_preflighted_runtime_from_cache(&assets.sprite_scriptor);
         }
     }
 
@@ -76,85 +61,71 @@ impl WorldState {
         assets: &LevelAssets,
         script_zone_count: usize,
     ) {
-        self.validate_pc_index();
-
-        assert_eq!(
-            script_zone_count,
-            assets.script_zone_grid_indices.len(),
-            "script-zone runtime length {} does not match level zone-index length {}",
-            script_zone_count,
-            assets.script_zone_grid_indices.len(),
-        );
-        for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
-            assert!(
-                (grid_idx as usize) < assets.level_grid.sectors.len(),
-                "script zone {zone_idx} references grid sector {grid_idx}, but the level has {} sectors",
-                assets.level_grid.sectors.len(),
-            );
-        }
-
-        assert_eq!(
-            self.static_sight_obstacle_active.len(),
-            assets.static_sight_obstacles.len(),
-            "static sight-obstacle runtime length {} does not match level obstacle length {}",
-            self.static_sight_obstacle_active.len(),
-            assets.static_sight_obstacles.len(),
-        );
-
-        self.validate_pathfinder_states(assets);
-        self.validate_fast_grid_indices();
-    }
-
-    pub(crate) fn validate_pc_index(&self) {
-        if let Err(detail) = self.validate_pc_index_inner() {
+        if let Err(detail) = self.preflight_level_assets(assets, script_zone_count) {
             panic!("{detail}");
         }
     }
 
-    /// Validate decoded state against the already-loaded world without
-    /// mutating either side. The caller can therefore reject a corrupt save
-    /// before replacing the live engine.
-    pub(crate) fn validate_snapshot_compatibility(&self, loaded: &Self) -> Result<(), String> {
+    pub(crate) fn preflight_level_assets(
+        &self,
+        assets: &LevelAssets,
+        script_zone_count: usize,
+    ) -> Result<(), String> {
         self.validate_pc_index_inner()?;
 
-        if self.static_sight_obstacle_active.len() != loaded.static_sight_obstacle_active.len() {
+        if script_zone_count != assets.script_zone_grid_indices.len() {
             return Err(format!(
-                "snapshot static sight-obstacle runtime length {} does not match loaded world length {}",
-                self.static_sight_obstacle_active.len(),
-                loaded.static_sight_obstacle_active.len(),
+                "script-zone runtime length {} does not match level zone-index length {}",
+                script_zone_count,
+                assets.script_zone_grid_indices.len(),
             ));
         }
-        if self.pathfinder.states.len() != loaded.pathfinder.states.len() {
-            return Err(format!(
-                "snapshot pathfinder state layer count {} does not match loaded world count {}",
-                self.pathfinder.states.len(),
-                loaded.pathfinder.states.len(),
-            ));
-        }
-        if self.mobile_elements.len() != loaded.mobile_elements.len() {
-            return Err(format!(
-                "snapshot mobile-element count {} does not match loaded world count {}",
-                self.mobile_elements.len(),
-                loaded.mobile_elements.len(),
-            ));
-        }
-        for (layer_idx, (snapshot, level)) in self
-            .pathfinder
-            .states
-            .iter()
-            .zip(&loaded.pathfinder.states)
-            .enumerate()
-        {
-            if snapshot.len() != level.len() {
+        for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
+            if (grid_idx as usize) >= assets.level_grid.sectors.len() {
                 return Err(format!(
-                    "snapshot pathfinder state area count for layer {layer_idx} is {} but loaded world has {}",
-                    snapshot.len(),
-                    level.len(),
+                    "script zone {zone_idx} references grid sector {grid_idx}, but the level has {} sectors",
+                    assets.level_grid.sectors.len(),
                 ));
             }
         }
 
-        self.validate_fast_grid_indices_against(loaded.fast_grid.level.sectors.len())
+        if self.static_sight_obstacle_active.len() != assets.static_sight_obstacles.len() {
+            return Err(format!(
+                "static sight-obstacle runtime length {} does not match level obstacle length {}",
+                self.static_sight_obstacle_active.len(),
+                assets.static_sight_obstacles.len(),
+            ));
+        }
+        if self.mobile_elements.len() != assets.mobile_element_count {
+            return Err(format!(
+                "snapshot mobile-element count {} does not match loaded level count {}",
+                self.mobile_elements.len(),
+                assets.mobile_element_count,
+            ));
+        }
+
+        self.validate_pathfinder_states_inner(assets)?;
+        self.validate_fast_grid_runtime_lengths(assets)?;
+        self.validate_fast_grid_indices_against(assets.level_grid.sectors.len())?;
+
+        for (id, entity) in self.entities.occupied() {
+            entity
+                .sprite()
+                .validate_runtime_cache(&assets.sprite_scriptor)
+                .map_err(|detail| {
+                    format!("entity {} sprite attachment failed: {detail}", id.index())
+                })?;
+        }
+        for (mobile_index, mobile) in self.mobile_elements.iter().enumerate() {
+            for &sprite_id in &mobile.sprite_ids {
+                if !matches!(self.entities.get(sprite_id), Some(Entity::Fx(_))) {
+                    return Err(format!(
+                        "mobile {mobile_index} references missing or non-FX sprite entity {sprite_id}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn validate_pc_index_inner(&self) -> Result<(), String> {
@@ -178,14 +149,14 @@ impl WorldState {
         Ok(())
     }
 
-    fn validate_pathfinder_states(&self, assets: &LevelAssets) {
-        assert_eq!(
-            self.pathfinder.states.len(),
-            assets.pathfinder_graph.states.len(),
-            "pathfinder state layer count {} does not match level graph layer count {}",
-            self.pathfinder.states.len(),
-            assets.pathfinder_graph.states.len(),
-        );
+    fn validate_pathfinder_states_inner(&self, assets: &LevelAssets) -> Result<(), String> {
+        if self.pathfinder.states.len() != assets.pathfinder_graph.states.len() {
+            return Err(format!(
+                "pathfinder state layer count {} does not match level graph layer count {}",
+                self.pathfinder.states.len(),
+                assets.pathfinder_graph.states.len(),
+            ));
+        }
         for (layer_idx, (runtime, level)) in self
             .pathfinder
             .states
@@ -193,22 +164,43 @@ impl WorldState {
             .zip(&assets.pathfinder_graph.states)
             .enumerate()
         {
-            assert_eq!(
-                runtime.len(),
-                level.len(),
-                "pathfinder state area count for layer {layer_idx} is {} but level graph has {}",
-                runtime.len(),
-                level.len(),
-            );
+            if runtime.len() != level.len() {
+                return Err(format!(
+                    "pathfinder state area count for layer {layer_idx} is {} but level graph has {}",
+                    runtime.len(),
+                    level.len(),
+                ));
+            }
         }
+        Ok(())
     }
 
-    fn validate_fast_grid_indices(&self) {
-        if let Err(detail) =
-            self.validate_fast_grid_indices_against(self.fast_grid.level.sectors.len())
-        {
-            panic!("{detail}");
+    fn validate_fast_grid_runtime_lengths(&self, assets: &LevelAssets) -> Result<(), String> {
+        let lengths = [
+            (
+                "line",
+                self.fast_grid.line_active.len(),
+                assets.level_grid.lines.len(),
+            ),
+            (
+                "sector",
+                self.fast_grid.sector_active.len(),
+                assets.level_grid.sectors.len(),
+            ),
+            (
+                "mask",
+                self.fast_grid.mask_active.len(),
+                assets.level_grid.masks.len(),
+            ),
+        ];
+        for (name, runtime_len, level_len) in lengths {
+            if runtime_len != level_len {
+                return Err(format!(
+                    "fast-grid {name} runtime length {runtime_len} does not match level {name}s {level_len}"
+                ));
+            }
         }
+        Ok(())
     }
 
     fn validate_fast_grid_indices_against(&self, sector_count: usize) -> Result<(), String> {
