@@ -45,10 +45,10 @@ pub fn new_frame_cursor() -> FrameCursor {
 /// GGPO-style netcode.
 pub const INPUT_DELAY_FRAMES: u32 = 2;
 
-/// Wire-format protocol version.  Bump on any breaking change to
-/// [`NetMsg`].  Both sides exchange this in the handshake; mismatches
-/// abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 6;
+/// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
+/// an engine snapshot carried by it. Both sides exchange this in the
+/// handshake; mismatches abort the connection.
+pub const NET_PROTOCOL_VERSION: u32 = 7;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;

@@ -3398,8 +3398,9 @@ impl EngineInner {
     /// `display_doors`.  The flag drives the door-outline render pass
     /// and the patch FX consumer.
     ///
-    /// `GameHost.patches` is not hashed, so this mutation is rollback-
-    /// safe; the helper exists to keep the wrapper invariant clean.
+    /// `Patch::display_doors` is explicitly excluded from serialization and
+    /// state hashing, so local cursor movement cannot perturb rollback or a
+    /// multiplayer peer's deterministic state.
     pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
         if let Some(_game_host) = self.mission_script_game_host_mut() {
             for patch in self.script_domains.interactables.patches.iter_mut() {
