@@ -3,12 +3,14 @@
 mod bootstrap;
 mod debriefing;
 mod dispatch;
+mod event_hud;
 mod flow;
 mod frame_prepare;
 mod frame_simulate;
 mod headless;
 mod input_handlers;
 mod interactive;
+mod live_gameplay;
 mod modal_state;
 mod mouse_input;
 mod multiplayer;
@@ -16,6 +18,7 @@ mod render;
 mod replay_init;
 mod runtime;
 mod setup;
+mod terminal_debriefing;
 mod tick;
 
 use bootstrap::{
