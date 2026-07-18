@@ -7,15 +7,17 @@ frame="${2:-0}"
 data_dir="${3:-${ROBINHOOD_DATA_DIR:-datadirs/fullgame_gog}}"
 mkdir -p -- "$output_dir"
 
-cargo build --example render_mission_map
-renderer="${CARGO_TARGET_DIR:-target}/debug/examples/render_mission_map"
+cargo build --example render_mission_map --release
+renderer="${CARGO_TARGET_DIR:-target}/release/examples/render_mission_map"
 
 while IFS='|' read -r mission name; do
-    "$renderer" "$mission" --frame "$frame" --reveal-all --headless --data-dir "$data_dir" \
-        --output "$output_dir/$name.png"
+    if ! "$renderer" "$mission" --frame "$frame" --reveal-all --headless \
+        --data-dir "$data_dir" --output "$output_dir/$name.png"; then
+        printf 'warning: skipping %s after renderer failure\n' "$name" >&2
+    fi
 done <<'MISSIONS'
-Sherwood|Sherwood Forest
 Emb01_FoA_EC|Ambush 1
+Sherwood|Sherwood Forest
 Emb02_FoC_MK|Ambush 2
 Emb03_FoC_MP|Ambush 3
 Emb04_FoA_MP|Ambush 4
