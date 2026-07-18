@@ -46,6 +46,52 @@ impl NativeCampaignAccess for NativeCampaignCapabilities<'_> {
     }
 }
 
+/// Transient receiver context for one script callback.
+///
+/// This mirrors the Original's separately bracketed `pScriptThis` and
+/// `RHElementScroll::pScrollExecutingScript` values. Frames are copied into a
+/// [`NativeContext`] for one VM resume, but are owned and stacked by
+/// `MissionScript`; they are never part of a mission snapshot or state hash.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScriptCallFrame {
+    script_this: i32,
+    current_scroll: i32,
+}
+
+impl ScriptCallFrame {
+    pub fn actor(script_this: i32) -> Self {
+        Self {
+            script_this,
+            current_scroll: 0,
+        }
+    }
+
+    pub fn scroll(current_scroll: i32) -> Self {
+        Self {
+            script_this: 0,
+            current_scroll,
+        }
+    }
+
+    pub fn with_script_this(mut self, script_this: i32) -> Self {
+        self.script_this = script_this;
+        self
+    }
+
+    pub fn with_current_scroll(mut self, current_scroll: i32) -> Self {
+        self.current_scroll = current_scroll;
+        self
+    }
+
+    pub fn script_this(self) -> i32 {
+        self.script_this
+    }
+
+    pub fn current_scroll(self) -> i32 {
+        self.current_scroll
+    }
+}
+
 /// Canonical read capabilities borrowed for exactly one VM resume.
 ///
 /// These owners stay in `EngineInner`; unlike the former `GameHost` fields,
@@ -150,6 +196,7 @@ pub struct NativeContext<'a> {
     pub(crate) queries: NativeQueryViews<'a>,
     pub(crate) campaign: Option<RefMut<'a, crate::campaign::Campaign>>,
     pub(crate) mission_stat: Option<RefMut<'a, crate::mission_stat::MissionStat>>,
+    pub(crate) call_frame: ScriptCallFrame,
 }
 
 impl<'a> NativeContext<'a> {
@@ -161,6 +208,7 @@ impl<'a> NativeContext<'a> {
             queries: NativeQueryViews::default(),
             campaign: None,
             mission_stat: None,
+            call_frame: ScriptCallFrame::default(),
         }
     }
 
@@ -183,6 +231,31 @@ impl<'a> NativeContext<'a> {
             queries,
             campaign,
             mission_stat,
+            call_frame: ScriptCallFrame::default(),
+        }
+    }
+
+    pub fn with_call_frame(
+        game_host: &'a mut GameHost,
+        script_state: &'a mut ScriptState,
+        bindings: &'a AttachedScriptBindings,
+        queries: NativeQueryViews<'a>,
+        call_frame: ScriptCallFrame,
+    ) -> Self {
+        let campaign = queries
+            .campaign_capabilities
+            .map(NativeCampaignAccess::campaign);
+        let mission_stat = queries
+            .campaign_capabilities
+            .map(NativeCampaignAccess::mission_stat);
+        Self {
+            game_host,
+            script_state,
+            bindings: bindings.view(),
+            queries,
+            campaign,
+            mission_stat,
+            call_frame,
         }
     }
 

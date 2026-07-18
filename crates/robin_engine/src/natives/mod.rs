@@ -61,7 +61,7 @@ mod tests;
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
 pub(crate) use context::NativeCampaignCapabilities;
-pub use context::{NativeContext, NativeQueryViews};
+pub use context::{NativeContext, NativeQueryViews, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
@@ -147,9 +147,6 @@ pub struct GameHost {
     #[state_hash(skip)]
     pub(crate) engine_domains: crate::engine::state::ScriptDomains,
 
-    /// Handle of the entity whose script is currently running.
-    pub script_this: i32,
-
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
     pub production_registrations: Vec<(i32, i32, i32)>,
@@ -167,8 +164,6 @@ pub struct GameHost {
     /// Set to true when a patch change requires background redraw.
     pub background_invalidated: bool,
 
-    /// Currently executing scroll entity handle (for ThisScroll). 0 = none.
-    pub current_scroll: i32,
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -178,14 +173,6 @@ pub struct GameHost {
     /// that don't use the objectives system (i.e. all vanilla missions
     /// — only Spellforge mods touch it).
     pub pending_objective_changes: Vec<ObjectiveChange>,
-
-    /// Recursion depth of the nested-script-call stack.  Each actor
-    /// script normally has its own VMCore (giving an implicit per-core
-    /// stack-depth limit); we cap explicitly (see
-    /// [`MAX_NESTED_CALL_DEPTH`]) so a script that recursively calls
-    /// back into itself via `PrototypeFilterEvent` doesn't blow the
-    /// host stack.
-    pub nested_call_depth: u8,
 }
 
 /// Maximum allowed depth of nested script calls (e.g. one
@@ -213,16 +200,13 @@ impl GameHost {
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             engine_domains: crate::engine::state::ScriptDomains::default(),
             commands: Vec::new(),
-            script_this: 0,
             production_registrations: Vec::new(),
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
             sound_commands: Vec::new(),
             background_invalidated: false,
-            current_scroll: 0,
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
-            nested_call_depth: 0,
         }
     }
 
@@ -4901,7 +4885,7 @@ impl NativeContext<'_> {
                 // --- entity type checks ---
                 // Original: original-code/RHScript.cpp, RHScript::ThisActor
                 // returns the callback's pScriptThis verbatim.
-                ThisActor => self.script_this,
+                ThisActor => self.call_frame.script_this(),
                 // Original: original-code/RHScript.cpp,
                 // RHScript::GetNumberOfActorsInEngine returns
                 // marrayElementsScript.Size().
@@ -7655,7 +7639,7 @@ impl NativeContext<'_> {
                 }
 
                 // --- scroll ---
-                ThisScroll => self.current_scroll,
+                ThisScroll => self.call_frame.current_scroll(),
                 GetScrollStatus => {
                     // Null → warn + 0; non-object or non-scroll →
                     // "not a scroll" warn + 0; scroll → its status.

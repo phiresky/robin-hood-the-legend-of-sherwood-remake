@@ -996,6 +996,40 @@ pub struct PendingJumpGate {
 
 // ─── Mission script ─────────────────────────────────────────────────
 
+/// Runtime-only stack of active script callback receivers.
+///
+/// The Original brackets its process-global script receiver around every
+/// dispatch. Keeping the equivalent values in a structural stack makes nested
+/// inheritance explicit and prevents callback state from leaking into saves.
+#[derive(Clone, Debug, Default)]
+struct ScriptCallStack {
+    frames: Vec<crate::natives::ScriptCallFrame>,
+}
+
+impl ScriptCallStack {
+    fn current(&self) -> crate::natives::ScriptCallFrame {
+        self.frames.last().copied().unwrap_or_default()
+    }
+
+    fn push(&mut self, frame: crate::natives::ScriptCallFrame) {
+        self.frames.push(frame);
+    }
+
+    fn pop(&mut self) -> crate::natives::ScriptCallFrame {
+        self.frames
+            .pop()
+            .expect("script call-frame stack underflow")
+    }
+
+    fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+}
+
 /// Wraps the script VM for a single mission level.
 ///
 /// Holds the `ScriptManager` (loaded `.scb` bytecode), the global
@@ -1031,6 +1065,10 @@ pub struct MissionScript {
     /// executing, so snapshots keep the real state instead of losing it
     /// behind `Vm::host`'s serde skip.
     pub game_host: GameHost,
+    /// Active callback receivers. This is runtime control state, excluded from
+    /// serialization and hashing; snapshots are rejected while it is nonempty.
+    #[state_hash(skip)]
+    call_stack: ScriptCallStack,
     pub instance: ScriptInstance,
     /// Per-actor script instances, keyed by actor script handle.
     ///
@@ -1108,6 +1146,11 @@ impl Serialize for MissionScript {
     where
         S: serde::Serializer,
     {
+        if !self.call_stack.is_empty() {
+            return Err(serde::ser::Error::custom(
+                "cannot snapshot MissionScript during an active script callback",
+            ));
+        }
         MissionScriptSnapshotRef {
             snapshot_version: MISSION_SCRIPT_SNAPSHOT_VERSION,
             script_name: &self.script_name,
@@ -1159,6 +1202,15 @@ struct CompatibleGameHost {
     computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
     recording: Option<crate::sequence::RecordingSession>,
     sequence_id: Option<i32>,
+    /// Pre-Wave-8C snapshots parked callback-only state on GameHost. Legal
+    /// snapshots were already restricted to callback boundaries, so these
+    /// values have no canonical state to migrate and are intentionally ignored.
+    #[serde(rename = "script_this")]
+    _script_this: Option<i32>,
+    #[serde(rename = "current_scroll")]
+    _current_scroll: Option<i32>,
+    #[serde(rename = "nested_call_depth")]
+    _nested_call_depth: Option<u8>,
     scroll_status: Option<BTreeMap<i32, i32>>,
     scroll_attachments: Option<BTreeMap<i32, i32>>,
     scroll_attachment_dirty: Option<std::collections::BTreeSet<i32>>,
@@ -1374,7 +1426,9 @@ impl<'de> Deserialize<'de> for MissionScript {
             }
             Some(2 | 3 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
                 let state = snapshot.state.ok_or_else(|| {
-                    serde::de::Error::custom("v2 MissionScript snapshot is missing ScriptState")
+                    serde::de::Error::custom(
+                        "versioned MissionScript snapshot is missing ScriptState",
+                    )
                 })?;
                 if let Some(legacy) = legacy_state
                     && serde_json::to_value(&legacy).map_err(serde::de::Error::custom)?
@@ -1425,6 +1479,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                 )
             },
             game_host: snapshot.game_host.current,
+            call_stack: ScriptCallStack::default(),
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
             zone_instances: snapshot.zone_instances,
@@ -1497,6 +1552,7 @@ impl MissionScript {
             bindings: crate::natives::AttachedScriptBindings::default(),
             legacy_custom_values: None,
             game_host: GameHost::new(),
+            call_stack: ScriptCallStack::default(),
             instance,
             actor_instances: BTreeMap::new(),
             zone_instances: BTreeMap::new(),
@@ -1519,15 +1575,56 @@ impl MissionScript {
         self.bindings = bindings;
     }
 
+    fn current_call_frame(&self) -> crate::natives::ScriptCallFrame {
+        self.call_stack.current()
+    }
+
+    /// Push one callback frame, run `f`, and restore the previous frame on
+    /// success, error returns, and panic unwinds.
+    pub(crate) fn with_call_frame<R>(
+        &mut self,
+        frame: crate::natives::ScriptCallFrame,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous_depth = self.call_stack.len();
+        self.call_stack.push(frame);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        let popped = self.call_stack.pop();
+        assert_eq!(popped, frame, "script call-frame stack order changed");
+        assert_eq!(
+            self.call_stack.len(),
+            previous_depth,
+            "script call-frame stack depth was not restored"
+        );
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_call_frame_count(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    pub(crate) fn assert_no_active_call_frames(&self) {
+        assert!(
+            self.call_stack.is_empty(),
+            "mission script crossed a session boundary with active call frames"
+        );
+    }
+
     pub(crate) fn with_game_host_attached<R>(
         game_host: &mut GameHost,
         state: &mut ScriptState,
         bindings: &crate::natives::AttachedScriptBindings,
         queries: crate::natives::NativeQueryViews<'_>,
+        call_frame: crate::natives::ScriptCallFrame,
         inst: &mut ScriptInstance,
         f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_>) -> R,
     ) -> R {
-        let mut context = NativeContext::with_bindings(game_host, state, bindings, queries);
+        let mut context =
+            NativeContext::with_call_frame(game_host, state, bindings, queries, call_frame);
         f(inst, &mut context)
     }
 
@@ -1599,44 +1696,49 @@ impl MissionScript {
         };
         let mut inst = self.manager.create_instance_idx(class_idx);
 
-        self.game_host.script_this = handle;
-        Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            &mut inst,
-            |inst, host| {
-                if inst.has_function(&self.manager, "Initialize") {
-                    match inst.call_function_limited_with_host(
-                        &mut self.manager,
-                        "Initialize",
-                        10_000,
-                        host,
-                    ) {
-                        Ok(ret) => {
-                            tracing::debug!(
-                                "{:?} Init {class_name} (handle {handle}) → {ret}",
+        let mut frame = self.current_call_frame().with_script_this(handle);
+        if kind == ScriptBindKind::Scroll {
+            frame = frame.with_current_scroll(handle);
+        }
+        self.with_call_frame(frame, |script| {
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                &mut inst,
+                |inst, host| {
+                    if inst.has_function(&script.manager, "Initialize") {
+                        match inst.call_function_limited_with_host(
+                            &mut script.manager,
+                            "Initialize",
+                            10_000,
+                            host,
+                        ) {
+                            Ok(ret) => {
+                                tracing::debug!(
+                                    "{:?} Init {class_name} (handle {handle}) → {ret}",
+                                    kind
+                                )
+                            }
+                            Err(crate::script_manager::ScriptError::Vm(
+                                crate::interp::StopReason::StepLimit,
+                            )) => tracing::debug!(
+                                "{:?} Init {class_name} (handle {handle}) hit step limit",
                                 kind
-                            )
-                        }
-                        Err(crate::script_manager::ScriptError::Vm(
-                            crate::interp::StopReason::StepLimit,
-                        )) => tracing::debug!(
-                            "{:?} Init {class_name} (handle {handle}) hit step limit",
-                            kind
-                        ),
-                        Err(e) => {
-                            tracing::warn!(
-                                "{:?} Init {class_name} (handle {handle}) failed: {e}",
-                                kind
-                            )
+                            ),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "{:?} Init {class_name} (handle {handle}) failed: {e}",
+                                    kind
+                                )
+                            }
                         }
                     }
-                }
-            },
-        );
-        self.game_host.script_this = 0;
+                },
+            );
+        });
 
         match kind {
             ScriptBindKind::Actor => {
@@ -1668,8 +1770,8 @@ impl MissionScript {
 
     /// Call a named function on a per-actor script instance.
     ///
-    /// Runs the actor instance with the shared `GameHost`, binds
-    /// `script_this` to the actor, and restores the previous receiver
+    /// Runs the actor instance with the shared `GameHost`, pushes a frame
+    /// binding `ThisActor` to the actor, and restores the caller frame
     /// afterwards.
     ///
     /// If the running script invokes a native that requests a nested
@@ -1714,13 +1816,29 @@ impl MissionScript {
             return Ok(0);
         }
 
-        // Save the previous receiver so ordinary calls bind to their target
-        // while PrototypeFilterEvent can explicitly preserve its caller's
-        // ThisActor, matching RHScript.cpp:6508-6535.
-        let saved_script_this = self.game_host.script_this;
+        // Ordinary actor calls bind to their target. PrototypeFilterEvent
+        // explicitly inherits its caller frame, matching RHScript.cpp:6508-6535.
+        let mut frame = self.current_call_frame();
         if script_this == crate::interp::NestedCallScriptThis::TargetActor {
-            self.game_host.script_this = handle;
+            frame = frame.with_script_this(handle);
         }
+
+        self.with_call_frame(frame, |script| {
+            script.call_actor_function_in_current_frame(handle, fn_name, params, queries)
+        })
+    }
+
+    fn call_actor_function_in_current_frame(
+        &mut self,
+        handle: i32,
+        fn_name: &str,
+        params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> Result<i32, String> {
+        let actor_inst = self
+            .actor_instances
+            .get_mut(&handle)
+            .expect("validated actor instance vanished before dispatch");
 
         // Push parameters.
         for &p in params {
@@ -1729,7 +1847,6 @@ impl MissionScript {
 
         // Set up frames + IP without yet running.
         if let Err(e) = actor_inst.begin_call(&self.manager, fn_name) {
-            self.game_host.script_this = saved_script_this;
             return Err(format!(
                 "Actor script {fn_name} (handle {handle}) failed: {e}"
             ));
@@ -1739,20 +1856,14 @@ impl MissionScript {
         // recursing into this same function.  The `resolve_nested_call`
         // helper takes ownership of the borrow on `actor_instances` so
         // we can call back into `&mut self`.
-        let result = self.run_actor_with_nested_resume(handle, fn_name, queries);
-
-        // Restore the saved `script_this`.
-        self.game_host.script_this = saved_script_this;
-
-        result
+        self.run_actor_with_nested_resume(handle, fn_name, queries)
     }
 
     /// Drive `actor_instances[handle]`'s VM until it returns or hits a
     /// non-recoverable stop.  On [`StopReason::PendingNestedCall`],
     /// dispatches the queued call (recursively through
-    /// [`MissionScript::call_actor_function`]) and resumes.  Caller
-    /// is responsible for the outer host transfer + script_this
-    /// management.
+    /// [`MissionScript::call_actor_function`]) and resumes. The surrounding
+    /// call-frame scope owns receiver restoration.
     fn run_actor_with_nested_resume(
         &mut self,
         handle: i32,
@@ -1765,11 +1876,12 @@ impl MissionScript {
                     .actor_instances
                     .get_mut(&handle)
                     .expect("actor instance vanished mid-run");
-                let mut context = NativeContext::with_bindings(
+                let mut context = NativeContext::with_call_frame(
                     &mut self.game_host,
                     &mut self.state,
                     &self.bindings,
                     queries,
+                    self.call_stack.current(),
                 );
                 actor_inst.resume_run_with_host(
                     &mut self.manager,
@@ -1811,9 +1923,9 @@ impl MissionScript {
         pc: crate::interp::PendingNestedCall,
         queries: crate::natives::NativeQueryViews<'_>,
     ) {
-        // Bump depth and check the recursion guard.
-        self.game_host.nested_call_depth = self.game_host.nested_call_depth.saturating_add(1);
-        let depth = self.game_host.nested_call_depth;
+        // The outer callback occupies the first stack slot, so the current
+        // length is exactly the prospective nested-call depth.
+        let depth = u8::try_from(self.call_stack.len()).unwrap_or(u8::MAX);
 
         let result = if depth > crate::natives::MAX_NESTED_CALL_DEPTH {
             // Cycle / runaway recursion — return the base-class default
@@ -1860,11 +1972,6 @@ impl MissionScript {
             }
         };
 
-        // Decrement depth.  The recursive `call_actor_function` will
-        // have left `script_this` at the outer-call value (it
-        // save/restores), so we don't touch it here.
-        self.game_host.nested_call_depth = self.game_host.nested_call_depth.saturating_sub(1);
-
         // Write the resolved return value into `native_return_value`
         // so the outer VM's next instruction (typically
         // `Aff1NativeGetReturn` for the original
@@ -1889,28 +1996,34 @@ impl MissionScript {
         params: &[i32],
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
-        let zone_inst = match self.zone_instances.get_mut(&zone_idx) {
-            Some(inst) => inst,
-            None => return Ok(0),
-        };
-
-        if !zone_inst.has_function(&self.manager, fn_name) {
+        if !self
+            .zone_instances
+            .get(&zone_idx)
+            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
+        {
             return Ok(0);
         }
-
-        let result = Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            zone_inst,
-            |zone_inst, host| {
-                for &p in params {
-                    zone_inst.push_param(p);
-                }
-                zone_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            },
-        );
+        let frame = self.current_call_frame();
+        let result = self.with_call_frame(frame, |script| {
+            let zone_inst = script
+                .zone_instances
+                .get_mut(&zone_idx)
+                .expect("validated zone instance vanished before dispatch");
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                zone_inst,
+                |zone_inst, host| {
+                    for &p in params {
+                        zone_inst.push_param(p);
+                    }
+                    zone_inst.call_function_with_host(&mut script.manager, fn_name, host)
+                },
+            )
+        });
 
         match result {
             Ok(v) => Ok(v),
@@ -1938,28 +2051,34 @@ impl MissionScript {
         params: &[i32],
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
-        let target_inst = match self.target_instances.get_mut(&target_handle) {
-            Some(inst) => inst,
-            None => return Ok(0),
-        };
-        if !target_inst.has_function(&self.manager, fn_name) {
+        if !self
+            .target_instances
+            .get(&target_handle)
+            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
+        {
             return Ok(0);
         }
-        self.game_host.script_this = target_handle;
-        let result = Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            target_inst,
-            |target_inst, host| {
-                for &p in params {
-                    target_inst.push_param(p);
-                }
-                target_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            },
-        );
-        self.game_host.script_this = 0;
+        let frame = self.current_call_frame().with_script_this(target_handle);
+        let result = self.with_call_frame(frame, |script| {
+            let target_inst = script
+                .target_instances
+                .get_mut(&target_handle)
+                .expect("validated target instance vanished before dispatch");
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                target_inst,
+                |target_inst, host| {
+                    for &p in params {
+                        target_inst.push_param(p);
+                    }
+                    target_inst.call_function_with_host(&mut script.manager, fn_name, host)
+                },
+            )
+        });
         match result {
             Ok(v) => Ok(v),
             Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
@@ -1974,12 +2093,9 @@ impl MissionScript {
 
     /// Call a named function on a per-scroll script instance.
     ///
-    /// Sets the executing-scroll bracket around every scroll-script
-    /// dispatch. `GameHost::current_scroll` is read by the `ThisScroll`
-    /// native; the host is transferred to the scroll's instance for the
-    /// call and restored after, and both `script_this` and
-    /// `current_scroll` are set to `scroll_handle` during the call and
-    /// cleared afterwards.
+    /// Pushes an executing-scroll frame around every scroll-script dispatch.
+    /// `ThisActor` and `ThisScroll` read that frame for every VM resume, and
+    /// the previous frame is restored structurally afterwards.
     ///
     /// Returns `Ok(0)` when the scroll has no bound script or the
     /// function doesn't exist on its class.
@@ -1990,30 +2106,37 @@ impl MissionScript {
         params: &[i32],
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
-        let scroll_inst = match self.scroll_instances.get_mut(&scroll_handle) {
-            Some(inst) => inst,
-            None => return Ok(0),
-        };
-        if !scroll_inst.has_function(&self.manager, fn_name) {
+        if !self
+            .scroll_instances
+            .get(&scroll_handle)
+            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
+        {
             return Ok(0);
         }
-        self.game_host.script_this = scroll_handle;
-        self.game_host.current_scroll = scroll_handle;
-        let result = Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            scroll_inst,
-            |scroll_inst, host| {
-                for &p in params {
-                    scroll_inst.push_param(p);
-                }
-                scroll_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            },
-        );
-        self.game_host.script_this = 0;
-        self.game_host.current_scroll = 0;
+        let frame = self
+            .current_call_frame()
+            .with_script_this(scroll_handle)
+            .with_current_scroll(scroll_handle);
+        let result = self.with_call_frame(frame, |script| {
+            let scroll_inst = script
+                .scroll_instances
+                .get_mut(&scroll_handle)
+                .expect("validated scroll instance vanished before dispatch");
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                scroll_inst,
+                |scroll_inst, host| {
+                    for &p in params {
+                        scroll_inst.push_param(p);
+                    }
+                    scroll_inst.call_function_with_host(&mut script.manager, fn_name, host)
+                },
+            )
+        });
         match result {
             Ok(v) => Ok(v),
             Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
@@ -2053,16 +2176,19 @@ impl MissionScript {
 
         // Waypoints aren't entities so no `script_this` is installed;
         // Initialize doesn't push an actor either (only ReachPoint does).
-        Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            &mut inst,
-            |inst, host| {
-                if inst.has_function(&self.manager, "Initialize") {
+        let frame = self.current_call_frame();
+        self.with_call_frame(frame, |script| {
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                &mut inst,
+                |inst, host| {
+                if inst.has_function(&script.manager, "Initialize") {
                     match inst.call_function_limited_with_host(
-                        &mut self.manager,
+                        &mut script.manager,
                         "Initialize",
                         10_000,
                         host,
@@ -2088,8 +2214,9 @@ impl MissionScript {
                         }
                     }
                 }
-            },
-        );
+                },
+            );
+        });
         self.waypoint_instances.insert((path_idx, wp_idx), inst);
         true
     }
@@ -2113,26 +2240,34 @@ impl MissionScript {
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let key = (path_idx, wp_idx);
-        let wp_inst = match self.waypoint_instances.get_mut(&key) {
-            Some(inst) => inst,
-            None => return Ok(0),
-        };
-        if !wp_inst.has_function(&self.manager, fn_name) {
+        if !self
+            .waypoint_instances
+            .get(&key)
+            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
+        {
             return Ok(0);
         }
-        let result = Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            wp_inst,
-            |wp_inst, host| {
-                for &p in params {
-                    wp_inst.push_param(p);
-                }
-                wp_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            },
-        );
+        let frame = self.current_call_frame();
+        let result = self.with_call_frame(frame, |script| {
+            let wp_inst = script
+                .waypoint_instances
+                .get_mut(&key)
+                .expect("validated waypoint instance vanished before dispatch");
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                wp_inst,
+                |wp_inst, host| {
+                    for &p in params {
+                        wp_inst.push_param(p);
+                    }
+                    wp_inst.call_function_with_host(&mut script.manager, fn_name, host)
+                },
+            )
+        });
         match result {
             Ok(v) => Ok(v),
             Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
@@ -2169,19 +2304,23 @@ impl MissionScript {
         game_seconds: u32,
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
-        Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            &mut self.instance,
-            |instance, host| {
-                instance.push_param(game_seconds as i32);
-                instance
-                    .call_function_with_host(&mut self.manager, "Hourglass", host)
-                    .map_err(|e| format!("Script Hourglass failed: {e}"))
-            },
-        )
+        let frame = crate::natives::ScriptCallFrame::default();
+        self.with_call_frame(frame, |script| {
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                &mut script.instance,
+                |instance, host| {
+                    instance.push_param(game_seconds as i32);
+                    instance
+                        .call_function_with_host(&mut script.manager, "Hourglass", host)
+                        .map_err(|e| format!("Script Hourglass failed: {e}"))
+                },
+            )
+        })
     }
 
     /// Call the script's `CheckVictoryCondition` function.
@@ -2192,19 +2331,23 @@ impl MissionScript {
         game_seconds: u32,
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
-        Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            &mut self.instance,
-            |instance, host| {
-                instance.push_param(game_seconds as i32);
-                instance
-                    .call_function_with_host(&mut self.manager, "CheckVictoryCondition", host)
-                    .map_err(|e| format!("Script CheckVictoryCondition failed: {e}"))
-            },
-        )
+        let frame = crate::natives::ScriptCallFrame::default();
+        self.with_call_frame(frame, |script| {
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                &mut script.instance,
+                |instance, host| {
+                    instance.push_param(game_seconds as i32);
+                    instance
+                        .call_function_with_host(&mut script.manager, "CheckVictoryCondition", host)
+                        .map_err(|e| format!("Script CheckVictoryCondition failed: {e}"))
+                },
+            )
+        })
     }
 
     /// Call the script's `Finalize` function.
@@ -2215,20 +2358,24 @@ impl MissionScript {
         abandoned: bool,
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<(), String> {
-        Self::with_game_host_attached(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            queries,
-            &mut self.instance,
-            |instance, host| {
-                instance.push_param(if abandoned { 1 } else { 0 });
-                instance
-                    .call_function_with_host(&mut self.manager, "Finalize", host)
-                    .map(|_| ())
-                    .map_err(|e| format!("Script Finalize failed: {e}"))
-            },
-        )
+        let frame = crate::natives::ScriptCallFrame::default();
+        self.with_call_frame(frame, |script| {
+            Self::with_game_host_attached(
+                &mut script.game_host,
+                &mut script.state,
+                &script.bindings,
+                queries,
+                frame,
+                &mut script.instance,
+                |instance, host| {
+                    instance.push_param(if abandoned { 1 } else { 0 });
+                    instance
+                        .call_function_with_host(&mut script.manager, "Finalize", host)
+                        .map(|_| ())
+                        .map_err(|e| format!("Script Finalize failed: {e}"))
+                },
+            )
+        })
     }
 
     /// Call the script's `PostInitialize` function, if it exists.
@@ -2237,19 +2384,23 @@ impl MissionScript {
         queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<(), String> {
         if self.instance.has_function(&self.manager, "PostInitialize") {
-            Self::with_game_host_attached(
-                &mut self.game_host,
-                &mut self.state,
-                &self.bindings,
-                queries,
-                &mut self.instance,
-                |instance, host| {
-                    instance
-                        .call_function_with_host(&mut self.manager, "PostInitialize", host)
-                        .map(|_| ())
-                        .map_err(|e| format!("Script PostInitialize failed: {e}"))
-                },
-            )?;
+            let frame = crate::natives::ScriptCallFrame::default();
+            self.with_call_frame(frame, |script| {
+                Self::with_game_host_attached(
+                    &mut script.game_host,
+                    &mut script.state,
+                    &script.bindings,
+                    queries,
+                    frame,
+                    &mut script.instance,
+                    |instance, host| {
+                        instance
+                            .call_function_with_host(&mut script.manager, "PostInitialize", host)
+                            .map(|_| ())
+                            .map_err(|e| format!("Script PostInitialize failed: {e}"))
+                    },
+                )
+            })?;
         }
         Ok(())
     }
