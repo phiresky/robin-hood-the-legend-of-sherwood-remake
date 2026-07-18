@@ -2772,7 +2772,10 @@ impl InteractiveMission {
                 &mut manager.engine,
                 &mut frame.commands,
                 &assets,
-                &PlayerCommand::ApplyQuitMissionUpdates { exit_code },
+                &PlayerCommand::ApplyQuitMissionUpdates {
+                    exit_code,
+                    difficulty: game.global_options.sim_config().difficulty,
+                },
             );
 
             // Show the mission state popup + debriefing synchronously

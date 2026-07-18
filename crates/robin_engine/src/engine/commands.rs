@@ -726,8 +726,11 @@ impl EngineInner {
             CampaignConvertSelectedPeasantsToBlazons => {
                 self.convert_selected_peasants_to_blazons(&assets.profile_manager);
             }
-            ApplyQuitMissionUpdates { exit_code } => {
-                self.apply_quit_mission_updates(assets, *exit_code);
+            ApplyQuitMissionUpdates {
+                exit_code,
+                difficulty,
+            } => {
+                self.apply_quit_mission_updates(assets, *exit_code, *difficulty);
             }
             QuitMissionRequested => {
                 // The flag to set depends on whether the mission is
