@@ -1003,11 +1003,16 @@ pub(crate) fn render_entities_gpu(
     // not render.  The flag defaults to `true` so the live datadir is
     // unaffected; it only bites when the user toggles it off in the
     // options menu.
-    let display_anim = PlayerProfileManager::global()
+    let (display_anim, apply_fog_to_all_sprites) = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
-        .map(|p| p.graphic_config.display_anim)
-        .unwrap_or(true);
+        .map(|p| {
+            (
+                p.graphic_config.display_anim,
+                p.graphic_config.apply_fog_to_all_sprites,
+            )
+        })
+        .unwrap_or((true, false));
 
     // Clone ids (cheap: `Vec<EntityId>` of u32s) so the iteration borrow
     // doesn't conflict with the `&mut host` we hand to `render_up_to`.
@@ -1025,7 +1030,7 @@ pub(crate) fn render_entities_gpu(
         if !entity.is_to_be_displayed(display_anim) {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity);
+        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
 
         // ── Interleave titbits that belong behind this entity ─────
         // Immediately before drawing each human entity, flush any
@@ -1517,6 +1522,11 @@ pub(crate) fn render_selection_outlines_gpu(
     let screen_h = host.viewport.screen_size.y as i32;
     let shadow_color = engine.weather().night_color;
     let shadow_level = host.frame_holder.global_shadow();
+    let apply_fog_to_all_sprites = PlayerProfileManager::global()
+        .as_ref()
+        .and_then(|mgr| mgr.get_active())
+        .map(|p| p.graphic_config.apply_fog_to_all_sprites)
+        .unwrap_or(false);
 
     // Clone ids (cheap) to sidestep borrow conflict with `&mut host`.
     let draw_order_ids = host.draw_order.ids.clone();
@@ -1528,7 +1538,7 @@ pub(crate) fn render_selection_outlines_gpu(
         if !entity.is_active() || entity.element_data().hidden_in_building {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity);
+        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
 
         let elem = entity.element_data();
 
@@ -2134,11 +2144,16 @@ where
     // unless `force_display` or `patch_index` overrides.  See
     // `render_entities_gpu` for the full gate; identical logic via
     // `Entity::is_to_be_displayed`.
-    let display_anim = PlayerProfileManager::global()
+    let (display_anim, apply_fog_to_all_sprites) = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
-        .map(|p| p.graphic_config.display_anim)
-        .unwrap_or(true);
+        .map(|p| {
+            (
+                p.graphic_config.display_anim,
+                p.graphic_config.apply_fog_to_all_sprites,
+            )
+        })
+        .unwrap_or((true, false));
 
     for entity_id in entity_ids {
         let entity = match engine.get_entity(entity_id) {
@@ -2151,7 +2166,7 @@ where
         if !entity.is_to_be_displayed(display_anim) {
             continue;
         }
-        let variant = engine.resolve_render_variant(entity);
+        let variant = engine.resolve_render_variant(entity, apply_fog_to_all_sprites);
 
         let elem = entity.element_data();
         let sprite = &elem.sprite;

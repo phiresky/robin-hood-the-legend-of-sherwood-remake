@@ -25,7 +25,7 @@ use super::resources::{
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 
-// Widget ID ranges: resolution 100..102, options 200..203, scaling 400..401, ok/cancel 300..301
+// Widget ID ranges: resolution 100..102, options 200..204, scaling 400.., ok/cancel 300..301
 const ID_RES_BASE: u32 = 100;
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
@@ -107,7 +107,7 @@ pub async fn show_graphics(
     ];
     align_on_first_widget(&mut res_layout, 2);
 
-    // ── Four option toggle buttons stacked from (30,250) ──────────
+    // ── Option toggle buttons stacked from (30,250) ───────────────
     let mut opt_layout = vec![
         super::layout::MenuButton {
             label: resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
@@ -135,6 +135,15 @@ pub async fn show_graphics(
         },
         super::layout::MenuButton {
             label: resources.menu_text.get(MT_STR_BCKGND_ANIMATIONS),
+            enabled: true,
+            x: 30,
+            y: 0,
+            w: field_w,
+            h: field_h,
+        },
+        super::layout::MenuButton {
+            // Rust extension; the original string table has no label for it.
+            label: "Fog-Tint All Sprites".to_string(),
             enabled: true,
             x: 30,
             y: 0,
@@ -322,7 +331,7 @@ pub async fn show_graphics(
                     apply_resolution(&mut working, (id - ID_RES_BASE) as usize);
                     dirty = true;
                 }
-                id if (ID_OPT_BASE..ID_OPT_BASE + 4).contains(&id) => {
+                id if (ID_OPT_BASE..ID_OPT_BASE + 5).contains(&id) => {
                     apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
                     dirty = true;
                 }
@@ -378,7 +387,7 @@ pub async fn show_graphics(
                 );
             }
         }
-        for i in 0..4u32 {
+        for i in 0..5u32 {
             if let Some(w) = frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
@@ -540,6 +549,7 @@ fn apply_option_toggle(config: &mut GraphicConfig, idx: usize) {
         1 => config.display_shadow = !config.display_shadow,
         2 => config.display_titbits = !config.display_titbits,
         3 => config.display_anim = !config.display_anim,
+        4 => config.apply_fog_to_all_sprites = !config.apply_fog_to_all_sprites,
         _ => {}
     }
 }
@@ -550,6 +560,7 @@ fn is_option_selected(config: &GraphicConfig, idx: usize) -> bool {
         1 => config.display_shadow,
         2 => config.display_titbits,
         3 => config.display_anim,
+        4 => config.apply_fog_to_all_sprites,
         _ => false,
     }
 }

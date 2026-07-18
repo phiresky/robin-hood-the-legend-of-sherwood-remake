@@ -33,6 +33,11 @@ pub struct GraphicConfig {
     /// RetroArch `.slangp` preset when `scale_mode == RetroArch`.
     #[serde(default = "default_shader_preset")]
     pub shader_preset: String,
+    /// Apply the generated fog sprite variant to every Day-based world
+    /// sprite that the original game leaves unfogged. Animation assets that
+    /// already contain ambiance-specific pixels are left untouched.
+    #[serde(default)]
+    pub apply_fog_to_all_sprites: bool,
 }
 
 /// Serializable texture scaling mode.
@@ -164,6 +169,7 @@ impl Default for GraphicConfig {
             hardware_cursor: true,
             scale_mode: TextureScaleMode::default(),
             shader_preset: default_shader_preset(),
+            apply_fog_to_all_sprites: true,
         }
     }
 }
@@ -201,6 +207,7 @@ mod tests {
         assert_eq!(cfg.resolution_y, 600.0);
         assert!(!cfg.fullscreen);
         assert!(cfg.hardware_cursor);
+        assert!(cfg.apply_fog_to_all_sprites);
     }
 
     #[test]
@@ -226,6 +233,7 @@ mod tests {
         let mut cfg = GraphicConfig::default();
         cfg.set_resolution(1280.0, 720.0);
         cfg.toggle_fullscreen();
+        cfg.apply_fog_to_all_sprites = true;
 
         let json = serde_json::to_string(&cfg).unwrap();
         let restored: GraphicConfig = serde_json::from_str(&json).unwrap();
@@ -234,6 +242,19 @@ mod tests {
         assert_eq!(restored.resolution_y, 720.0);
         assert!(restored.fullscreen);
         assert!(restored.hardware_cursor);
+        assert!(restored.apply_fog_to_all_sprites);
+    }
+
+    #[test]
+    fn old_profiles_default_to_original_fog_rendering() {
+        let mut json = serde_json::to_value(GraphicConfig::default()).unwrap();
+        json.as_object_mut()
+            .expect("graphics config serializes as an object")
+            .remove("apply_fog_to_all_sprites");
+
+        let restored: GraphicConfig = serde_json::from_value(json).unwrap();
+
+        assert!(!restored.apply_fog_to_all_sprites);
     }
 
     #[test]
