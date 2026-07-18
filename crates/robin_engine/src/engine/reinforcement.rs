@@ -49,18 +49,16 @@ impl EngineInner {
             tracing::warn!("REINFORCEMENT: no reinforcement doors on this level.");
             return;
         }
+        assert!(
+            self.scripts.mission.is_some(),
+            "queued reinforcement requires an installed mission script"
+        );
         let pick = crate::sim_rng::usize(crate::sim_rng::RngSite::ReinforcementDoor, 0..door_count);
         let door_index = self.ai.global.reinforcement_doors[pick].door_index;
 
-        // Snapshot door geometry — we'll drop the host borrow before
-        // touching entities / the campaign.
+        // Snapshot canonical door geometry before touching entities or the
+        // campaign.
         let door_snap = {
-            let Some(script) = self.scripts.mission.as_mut() else {
-                return;
-            };
-            let Some(_game_host) = script.game_host_mut() else {
-                return;
-            };
             let Some(door) = self
                 .script_domains
                 .interactables
@@ -382,4 +380,35 @@ struct DoorSnapshot {
     layer_out: u16,
     layer_in: u16,
     sector_out: u16,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "queued reinforcement requires an installed mission script")]
+    fn queued_reinforcement_rejects_missing_mission_script() {
+        let mut engine = EngineInner::new();
+        engine
+            .ai
+            .global
+            .reinforcement_doors
+            .push(crate::ai::ReinforcementDoorInfo {
+                position_in: crate::ai::Position {
+                    x: 0.0,
+                    y: 0.0,
+                    sector: None,
+                    level: 0,
+                },
+                door_index: crate::gate::DoorIndex(0),
+                point_out: MapPoint::new(0.0, 0.0),
+                point_mid: MapPoint::new(0.0, 0.0),
+                layer_out: 0,
+                sector_out: None,
+                point_in: MapPoint::new(0.0, 0.0),
+            });
+
+        engine.create_reinforcement(&LevelAssets::new(), None);
+    }
 }

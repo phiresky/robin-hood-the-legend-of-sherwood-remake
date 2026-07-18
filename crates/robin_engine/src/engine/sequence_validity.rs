@@ -591,9 +591,10 @@ impl EngineInner {
                 let Some(id) = door_id else {
                     return false;
                 };
-                let Some(_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) else {
-                    return false;
-                };
+                assert!(
+                    self.scripts.mission.is_some(),
+                    "UnlockDoor command validation requires an installed mission script"
+                );
                 self.script_domains
                     .interactables
                     .doors
@@ -1554,5 +1555,17 @@ mod tests {
                 "PC TAKE should still accept {object_type:?}"
             );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "UnlockDoor command validation requires an installed mission script")]
+    fn pc_unlock_door_rejects_missing_mission_script() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let actor = add_pc(&mut engine);
+        let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(actor));
+        element.set_property(Field::Door, FieldValue::DoorId(crate::gate::DoorIndex(0)));
+
+        engine.check_sequence_element_validity(&assets, actor, &element, true);
     }
 }

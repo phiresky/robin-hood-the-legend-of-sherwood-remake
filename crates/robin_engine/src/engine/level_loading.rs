@@ -2690,10 +2690,9 @@ impl EngineInner {
         // sprite pair.
         //
         // `force_visible` on the raw scroll is only used once during init
-        // (`if force_visible → SetStatus(Visible)`). The scroll status
-        // lives on `GameHost::scroll_status`, and the host isn't
-        // constructed until `load_mission_script` runs below. Collect
-        // the handles here and flush them afterwards.
+        // (`if force_visible → SetStatus(Visible)`). Collect the handles here
+        // and flush them after `load_mission_script` so native-visible scroll
+        // state still begins at the historical script boundary.
         let mut force_visible_scroll_ids: Vec<crate::element::EntityId> = Vec::new();
         // Reset the scroll-id → EntityId map (repopulated per-level).
         // Reserved capacity matches the PARC chunk count exactly.
@@ -2784,10 +2783,9 @@ impl EngineInner {
             let scroll_eid = self.add_entity(entity);
             assets.scroll_entity_ids.push(scroll_eid);
 
-            // `force_visible` flips status to Visible.  The scroll status
-            // lives on `GameHost::scroll_status`, keyed by actor handle.
-            // Capture ids here and flush them once the
-            // mission script (and its host) is loaded below.
+            // `force_visible` flips the canonical scroll-domain status to
+            // Visible. Capture ids here and flush them once the mission script
+            // is loaded below.
             if raw.force_visible {
                 force_visible_scroll_ids.push(scroll_eid);
             }
@@ -3741,9 +3739,7 @@ impl EngineInner {
             // The out-of-map sector is sentinel #-1.
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
             let mut installed = 0usize;
-            if let Some(script) = self.scripts.mission.as_mut()
-                && let Some(_game_host) = script.game_host_mut()
-            {
+            if self.scripts.mission.is_some() {
                 for raw in &tactic.reinforcement_points {
                     // The referenced sector must be motion+area.  We use
                     // a soft error so the load path doesn't bail on a
@@ -3819,6 +3815,11 @@ impl EngineInner {
                 if installed > 0 {
                     crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
                 }
+            } else {
+                tracing::warn!(
+                    "Skipping {} mission reinforcement point(s): mission script failed to load",
+                    tactic.reinforcement_points.len()
+                );
             }
             if installed > 0 {
                 tracing::debug!(
@@ -3831,7 +3832,7 @@ impl EngineInner {
         // The `consume_pending_motion_data` pass that produced these specs
         // ran before `populate_game_host_from_level` (so beam-me sector
         // checks see a populated grid), so the Door push has to happen
-        // here once `game_host` exists.  Rebuilds gate-link connectivity
+        // here once the mission script is installed. Rebuilds gate-link connectivity
         // last so the new jump gates (and any prior REIN doors above) are
         // routed through by `find_path_gates`.
         self.register_pending_jump_gates(pending);
@@ -3922,45 +3923,47 @@ impl EngineInner {
 
         // Cache door geometry for `FindDoorEnemyCouldBeBehind`, which
         // walks the door list owned by the building/sector graph.
-        let door_infos: Vec<crate::ai::DoorSeekInfo> = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-            .map(|_| {
-                self.script_domains
-                    .interactables
-                    .doors
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, door)| {
-                        // Cache the actor-independent portion of the exact
-                        // authorization used by FindDoorEnemyCouldBeBehind.
-                        // Live building capacity and rider state are applied
-                        // when the seek helper consumes this snapshot.
-                        let npc_villain_authorized_direct =
-                            crate::ai::cache_npc_villain_authorized_direct(door);
-                        crate::ai::DoorSeekInfo {
-                            door_index: crate::gate::DoorIndex(idx as u32),
-                            door_type: door.door_type,
-                            point_out: door.point_out,
-                            position_in: crate::ai::Position {
-                                x: door.point_in.x,
-                                y: door.point_in.y,
-                                sector: crate::position_interface::SectorHandle::new(u16::from(
-                                    door.sector_in,
-                                )),
-                                level: door.layer_in,
-                            },
-                            sector_out: u16::from(door.sector_out),
-                            sector_in: u16::from(door.sector_in),
-                            layer_out: door.layer_out,
-                            npc_villain_authorized_direct,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mission_loaded = self.scripts.mission.is_some();
+        if !mission_loaded {
+            tracing::warn!(
+                "Skipping door-derived AI caches because the mission script failed to load"
+            );
+        }
+        let door_infos: Vec<crate::ai::DoorSeekInfo> = if mission_loaded {
+            self.script_domains
+                .interactables
+                .doors
+                .iter()
+                .enumerate()
+                .map(|(idx, door)| {
+                    // Cache the actor-independent portion of the exact
+                    // authorization used by FindDoorEnemyCouldBeBehind.
+                    // Live building capacity and rider state are applied
+                    // when the seek helper consumes this snapshot.
+                    let npc_villain_authorized_direct =
+                        crate::ai::cache_npc_villain_authorized_direct(door);
+                    crate::ai::DoorSeekInfo {
+                        door_index: crate::gate::DoorIndex(idx as u32),
+                        door_type: door.door_type,
+                        point_out: door.point_out,
+                        position_in: crate::ai::Position {
+                            x: door.point_in.x,
+                            y: door.point_in.y,
+                            sector: crate::position_interface::SectorHandle::new(u16::from(
+                                door.sector_in,
+                            )),
+                            level: door.layer_in,
+                        },
+                        sector_out: u16::from(door.sector_out),
+                        sector_in: u16::from(door.sector_in),
+                        layer_out: door.layer_out,
+                        npc_villain_authorized_direct,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.ai.global.door_seek_infos = door_infos;
         tracing::debug!(
             "Cached {} door seek infos for FindDoorEnemyCouldBeBehind",
@@ -3968,39 +3971,35 @@ impl EngineInner {
         );
 
         // Populate reinforcement door info for MerryManForestCassos.
-        self.ai.global.reinforcement_doors = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-            .map(|_| {
-                self.script_domains
-                    .interactables
-                    .doors
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, d)| d.door_type == crate::gate::DoorType::Reinforcement)
-                    .map(|(idx, d)| crate::ai::ReinforcementDoorInfo {
-                        position_in: crate::ai::Position {
-                            x: d.point_in.x,
-                            y: d.point_in.y,
-                            sector: crate::position_interface::SectorHandle::new(u16::from(
-                                d.sector_in,
-                            )),
-                            level: d.layer_in,
-                        },
-                        door_index: crate::gate::DoorIndex(idx as u32),
-                        point_out: d.point_out,
-                        point_in: d.point_in,
-                        point_mid: d.point_mid,
-                        layer_out: d.layer_out,
-                        sector_out: crate::position_interface::SectorHandle::new(u16::from(
-                            d.sector_out,
+        self.ai.global.reinforcement_doors = if mission_loaded {
+            self.script_domains
+                .interactables
+                .doors
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| d.door_type == crate::gate::DoorType::Reinforcement)
+                .map(|(idx, d)| crate::ai::ReinforcementDoorInfo {
+                    position_in: crate::ai::Position {
+                        x: d.point_in.x,
+                        y: d.point_in.y,
+                        sector: crate::position_interface::SectorHandle::new(u16::from(
+                            d.sector_in,
                         )),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+                        level: d.layer_in,
+                    },
+                    door_index: crate::gate::DoorIndex(idx as u32),
+                    point_out: d.point_out,
+                    point_in: d.point_in,
+                    point_mid: d.point_mid,
+                    layer_out: d.layer_out,
+                    sector_out: crate::position_interface::SectorHandle::new(u16::from(
+                        d.sector_out,
+                    )),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         tracing::debug!(
             "Cached {} reinforcement doors for MerryManForestCassos",
             self.ai.global.reinforcement_doors.len(),
@@ -5156,7 +5155,7 @@ impl EngineInner {
     /// Drain constructor-local pending jump-gate specs and push each entry as a
     /// `Door` (gate_type=Jump) into `self.script_domains.interactables.doors`, then rebuild
     /// gate-link connectivity.  Must run after
-    /// `populate_game_host_from_level` so `game_host` exists, and after
+    /// `populate_game_host_from_level` so the canonical door table exists, and after
     /// every other proto/mission door has been registered so the
     /// gate-link rebuild sees the complete door table in one pass.
     pub(crate) fn register_pending_jump_gates(&mut self, pending: &mut PendingLevelData) {
@@ -5164,18 +5163,13 @@ impl EngineInner {
         if specs.is_empty() {
             return;
         }
-        let Some(_game_host) = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-        else {
+        if self.scripts.mission.is_none() {
             tracing::warn!(
-                "register_pending_jump_gates: no game_host — {} jump-gate Door(s) dropped",
+                "register_pending_jump_gates: no mission script — {} jump-gate Door(s) dropped",
                 specs.len(),
             );
             return;
-        };
+        }
         let count = specs.len();
         for spec in specs {
             self.script_domains
@@ -5221,14 +5215,13 @@ impl EngineInner {
         if refs.is_empty() {
             return;
         }
-        let Some(_game_host) = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-        else {
+        if self.scripts.mission.is_none() {
+            tracing::warn!(
+                "resolve_patch_mask_refs: {} patch mask record(s) dropped because the mission script failed to load",
+                refs.len()
+            );
             return;
-        };
+        }
         let mut missing_old = 0u32;
         let mut missing_new = 0u32;
         let mut missing_values: std::collections::BTreeSet<(u16, u16)> =
@@ -5292,36 +5285,26 @@ impl EngineInner {
     /// populates `sector_number_map`.  Doors themselves are loaded earlier
     /// by `populate_game_host_from_level`.
     pub(crate) fn populate_sector_gates_from_doors(&mut self) {
-        let door_count = self
-            .scripts
-            .mission
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .map(|_| self.script_domains.interactables.doors.len())
-            .unwrap_or(0);
+        if self.scripts.mission.is_none() {
+            tracing::warn!(
+                "populate_sector_gates_from_doors: skipped because the mission script failed to load"
+            );
+            return;
+        }
+        let door_count = self.script_domains.interactables.doors.len();
         if door_count == 0 {
             return;
         }
 
-        // Snapshot door endpoints so we can borrow `self.world.fast_grid` mutably
-        // without also holding a reference into the script host.
-        let endpoints: Vec<(u32, crate::sector::SectorNumber)> = {
-            let _game_host = self
-                .scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .expect("door_count > 0 implies game host present");
-            self.script_domains
-                .interactables
-                .doors
-                .iter()
-                .enumerate()
-                .flat_map(|(idx, door)| {
-                    [(idx as u32, door.sector_out), (idx as u32, door.sector_in)]
-                })
-                .collect()
-        };
+        // Snapshot door endpoints so the grid can be borrowed mutably below.
+        let endpoints: Vec<(u32, crate::sector::SectorNumber)> = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .flat_map(|(idx, door)| [(idx as u32, door.sector_out), (idx as u32, door.sector_in)])
+            .collect();
 
         let mut missing = 0u32;
         let mut missing_values: std::collections::BTreeSet<i16> = std::collections::BTreeSet::new();
@@ -5355,25 +5338,25 @@ impl EngineInner {
         }
     }
 
-    // ─── GameHost ↔ EngineInner wiring ─────────────────────────────────
+    // ─── Loaded level → canonical script domains ────────────────────────
 
-    /// Populate the script host with doors, patches, entity state and
-    /// PC authorisation bits from the loaded level data.  Called once,
-    /// right after the mission script is loaded.
+    /// Populate canonical doors, patches, building state and PC authorization
+    /// bits from the loaded level data. Called once, right after the mission
+    /// script is loaded.
+    // TODO(engine-cleanup): rename this legacy helper after references in the
+    // level-data types and gate documentation can move in one slice.
     fn populate_game_host_from_level(
         &mut self,
         assets: &LevelAssets,
         pending: &mut PendingLevelData,
         loaded: &crate::level_data::LoadedLevel,
     ) {
-        let script = match self.scripts.mission.as_mut() {
-            Some(s) => s,
-            None => return,
-        };
-        let _game_host = match script.game_host_mut() {
-            Some(h) => h,
-            None => return,
-        };
+        if self.scripts.mission.is_none() {
+            tracing::warn!(
+                "populate_game_host_from_level: canonical script domains were not populated because the mission script failed to load"
+            );
+            return;
+        }
 
         // ── Doors ──
         // Collect every RawDoor from buildings / standalone-door entries.
@@ -5632,13 +5615,13 @@ impl EngineInner {
         }
 
         tracing::info!(
-            "GameHost: populated {} doors from level data",
+            "Populated {} canonical doors from level data",
             self.script_domains.interactables.doors.len(),
         );
 
         // The legacy implementation lift sectors expose high/low exit points for
         // DetermineMovementAnimation. Populate the Rust cache after the
-        // GameHost door table is fully loaded; an earlier motion-sector pass
+        // The canonical door table is fully loaded; an earlier motion-sector pass
         // may run before these doors exist.
         for gs in &mut self.world.fast_grid.level_mut().sectors {
             if gs.sector_type.is_lift() || gs.lift_type.is_some() {
@@ -6018,7 +6001,7 @@ impl EngineInner {
         // ── Patch animation entities ──
         // Transfer the entity handle mapping computed during entity spawning.
         tracing::info!(
-            "GameHost: populated {} patches from level data ({} with FX entities)",
+            "Populated {} canonical patches from level data ({} with FX entities)",
             self.script_domains.interactables.patches.len(),
             assets
                 .patch_entity_handles
