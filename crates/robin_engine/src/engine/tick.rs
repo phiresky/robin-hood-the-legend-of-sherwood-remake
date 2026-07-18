@@ -634,6 +634,15 @@ impl EngineInner {
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(display, assets);
 
+        // `RHSequenceManager::Hourglass` runs before the anonymous-timer
+        // scan. If a deferred command terminates and advances its sequence
+        // to an immediate Timer, C++ executes that Timer re-entrantly, adds
+        // it to `mlistTimerElements`, and decrements it later in this same
+        // tick. Drain that immediate continuation here so Rust preserves the
+        // same launch-frame decrement. Waiting until DeferredEffectsEnd's
+        // final drain makes every such timer one frame late.
+        self.drain_pending_immediate_actions_sync(display, assets);
+
         trace_hourglass_phase(HourglassPhase::DeferredEffectsEnd);
         self.hourglass_phase_deferred_effects_end(display, assets, was_swordfighting);
 
