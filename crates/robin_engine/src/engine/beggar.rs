@@ -31,6 +31,32 @@ const BEGGAR_PROXIMITY: f32 = 70.0;
 /// Radius (MaxNorm, map units) for the near-coins toggle sweep.
 const NEAR_COINS_RADIUS: f32 = 100.0;
 
+/// Toggle nearby ground coins for the stealth-command transition without
+/// borrowing the rest of [`EngineInner`].
+pub(super) fn set_flags_of_near_coins_on_ground(
+    entities: &mut crate::entities::Entities,
+    pc_id: EntityId,
+    value: bool,
+) {
+    let Some(pc) = entities.get(pc_id) else {
+        return;
+    };
+    let pc_pos = pc.element_data().position_map();
+
+    for (_, entity) in entities.objects_mut() {
+        let pos = entity.element_data().position_map();
+        let dist = (pc_pos.x - pos.x).abs().max((pc_pos.y - pos.y).abs());
+        if dist >= NEAR_COINS_RADIUS {
+            continue;
+        }
+        if let Some(object) = entity.object_data_mut()
+            && object.object_type == ObjectType::Coin
+        {
+            object.belongs_to_beggar = value;
+        }
+    }
+}
+
 /// Civilian predicate: can this NPC toss a coin to `beggar_pc` right now?
 ///
 /// Reads: NPC's `has_given_money_to_beggar`, `got_the_beggar_trick`,
@@ -265,37 +291,6 @@ impl EngineInner {
                 continue;
             }
             self.bid_for_money(assets, pc_id);
-        }
-    }
-
-    /// Toggle `belongs_to_beggar` on every coin on the ground within
-    /// [`NEAR_COINS_RADIUS`] map units of `pc_id`.
-    ///
-    /// Called with `value=true` when the PC finishes the transition
-    /// into the beggar disguise, and with `value=false` on the
-    /// transition out — so residual coins from other sources briefly
-    /// join the beggar's "do-not-touch" pool and revert afterwards.
-    pub(crate) fn set_beggar_flags_of_near_coins_on_ground(
-        &mut self,
-        pc_id: EntityId,
-        value: bool,
-    ) {
-        let Some(pc) = self.get_entity(pc_id) else {
-            return;
-        };
-        let pc_pos = pc.element_data().position_map();
-
-        for (_, entity) in self.world.entities.objects_mut() {
-            let pos = entity.element_data().position_map();
-            let dist = (pc_pos.x - pos.x).abs().max((pc_pos.y - pos.y).abs());
-            if dist >= NEAR_COINS_RADIUS {
-                continue;
-            }
-            if let Some(obj) = entity.object_data_mut()
-                && obj.object_type == ObjectType::Coin
-            {
-                obj.belongs_to_beggar = value;
-            }
         }
     }
 }

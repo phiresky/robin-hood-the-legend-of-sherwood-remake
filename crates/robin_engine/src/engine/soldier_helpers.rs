@@ -1,14 +1,14 @@
 //! Soldier-specific helpers used by the engine, scripts, and cheats.
 //!
 //! Small soldier-actor methods that don't fit naturally into any of
-//! the larger modules — attentive-mode transitions, drunken-step
+//! the larger modules — attentive-mode requests, drunken-step
 //! perturbation, etc.
 
 use super::movement::GoalShape;
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
-use crate::element::{Command, Entity, EntityId, Posture};
+use crate::element::{Command, Entity, EntityId};
 use crate::order::OrderType;
 use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
 
@@ -60,96 +60,6 @@ impl EngineInner {
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
         {
             enemy.will_be_attentive = target;
-        }
-    }
-
-    /// Translate the body of an attentive-mode transition command during
-    /// sequence dispatch.  Returns `true` when the transition animation
-    /// was queued (caller should mark the sequence element in-progress
-    /// and let the animation-DONE handler terminate it); returns
-    /// `false` when the soldier snapped to the target flag (caller
-    /// should terminate the sequence element immediately).
-    ///
-    /// When the sequence's `posture_after_transition` is Upright and
-    /// the target flag differs from the current, start the transition
-    /// animation via `active_ai_anim`.  Otherwise snap the flag
-    /// immediately ("Consider as done").
-    pub(super) fn dispatch_attentive_transition(
-        &mut self,
-        owner: EntityId,
-        command: Command,
-        posture_after_transition: Posture,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> bool {
-        let target_attentive = matches!(command, Command::EnterAttentiveMode);
-        let anim = match command {
-            Command::EnterAttentiveMode => OrderType::TransitionWaitingUprightWaitingAlerted,
-            Command::LeaveAttentiveMode => OrderType::TransitionWaitingAlertedWaitingUpright,
-            Command::LeaveAttentiveModeOfficer => {
-                OrderType::TransitionWaitingAlertedWaitingUprightOfficer
-            }
-            _ => return false,
-        };
-
-        // LeaveAttentiveModeOfficer has no else branch — the officer
-        // salute-and-drop animation is pushed unconditionally.
-        if matches!(command, Command::LeaveAttentiveModeOfficer) {
-            self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
-            return true;
-        }
-
-        // Gate on the posture the actor will hold when the sequence completes.
-        let posture_upright_after = posture_after_transition == Posture::Upright;
-        let (currently_attentive, idle) = {
-            let Some(entity) = self.world.entities.get(owner) else {
-                return false;
-            };
-            let cur = entity.enemy_ai().is_some_and(|e| e.attentive);
-            // The soldier is considered idle when their current in-progress
-            // element is the low-priority wait element (no active action
-            // order driving the sprite).
-            let idle = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner)
-                .and_then(|(s, e)| self.orders.sequence_manager.get_element(s, e))
-                .map(|el| el.command == Command::Wait)
-                .unwrap_or(true);
-            (cur, idle)
-        };
-
-        let needs_change = currently_attentive != target_attentive;
-        let can_play_transition = posture_upright_after && idle && needs_change;
-
-        tracing::trace!(
-            owner = owner.index(),
-            ?command,
-            ?posture_after_transition,
-            posture_upright_after,
-            currently_attentive,
-            target_attentive,
-            needs_change,
-            idle,
-            can_play_transition,
-            "dispatch_attentive_transition"
-        );
-
-        if can_play_transition {
-            // Push the transition animation onto the attentive-mode
-            // sequence element so the animation driver picks it up via
-            // `current_order_for_actor`; the default `AdvanceElement`
-            // completion chains through `do_next_order` when the sprite
-            // finishes.
-            self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
-            true
-        } else {
-            if let Some(entity) = self.world.entities.get_mut(owner)
-                && let Some(enemy) = entity.enemy_ai_mut()
-            {
-                enemy.attentive = target_attentive;
-            }
-            false
         }
     }
 

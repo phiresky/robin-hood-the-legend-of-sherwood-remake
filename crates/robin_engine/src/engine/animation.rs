@@ -803,11 +803,11 @@ mod tests {
 /// pre-port bug where the alerted transition never fired and the
 /// port "snapped straight into AttackingReactiontime" with the flag
 /// stuck at `false`.  The transition now fires correctly via
-/// `set_soldier_attentive_mode` → `dispatch_attentive_transition`, so
+/// `set_soldier_attentive_mode` → sequence-phase attention dispatch, so
 /// the proxy is obsolete — and harmful, because it made
 /// sprite-substitution happen one frame *before* the transition
 /// animation started (the AI state flips synchronously inside
-/// `set_state(Attacking, …)`, a frame before `dispatch_attentive_transition`
+/// `set_state(Attacking, …)`, a frame before the attention context
 /// queues the animation).  That one-frame lead produced a visible
 /// pop: `WaitingUprightBored` → `TurningAlerted` (1 frame of
 /// "sword-drawn" pose) → `TransitionWaitingUprightBoredWaitingUpright`
