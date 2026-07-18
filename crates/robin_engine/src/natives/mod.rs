@@ -60,7 +60,7 @@ mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub(crate) use context::NativeCampaignCapabilities;
+pub(crate) use context::{NativeAiGlobalCapability, NativeCampaignCapabilities};
 pub use context::{NativeContext, NativeQueryViews, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
@@ -72,7 +72,7 @@ pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
+use crate::ai::{AiState, AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
@@ -128,8 +128,6 @@ pub struct GameHost {
     /// Entity storage, swapped in from EngineInner before script execution
     /// and swapped back out after.  Empty when no script is running.
     pub entities: Vec<Option<Entity>>,
-    /// Global AI state, swapped in from EngineInner before script execution.
-    pub ai_global: AiGlobalState,
     /// FastFindGrid state, swapped in from EngineInner before script execution.
     /// Script-native visibility must use the same `FastFindGrid::is_reachable`
     /// path as engine AI, not a separate obstacle scan.
@@ -180,7 +178,6 @@ impl GameHost {
         Self {
             verbose: false,
             entities: Vec::new(),
-            ai_global: AiGlobalState::default(),
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             commands: Vec::new(),
             production_registrations: Vec::new(),
@@ -5958,7 +5955,7 @@ impl NativeContext<'_> {
                     }
 
                     let view_forward = (view_direction[0], view_direction[1]);
-                    let golden_eye_mode = self.ai_global.golden_eye_mode;
+                    let golden_eye_mode = self.ai_global().golden_eye_mode;
                     let target_in_same_building =
                         viewer_in_building && tgt_building_sector == viewer_building_sector;
 
@@ -6051,7 +6048,7 @@ impl NativeContext<'_> {
                             "Script Error: Trying to enable the view cone of an element which is not a NPC."
                         );
                     }
-                    if self.ai_global.ezekiel_2517 {
+                    if self.ai_global().ezekiel_2517 {
                         // "Dies irae" cheat: 10000 HP info-priority
                         // damage on the target (asserts IsHuman).
                         if let Some(target) = self.actor_id(actor)
@@ -7163,26 +7160,26 @@ impl NativeContext<'_> {
                         level,
                         sector: crate::position_interface::SectorHandle::new(sector_num),
                     };
-                    let id = self.ai_global.next_repulsive_point_id;
-                    self.ai_global.next_repulsive_point_id += 1;
-                    self.ai_global
-                        .repulsive_points
-                        .push(crate::ai::RepulsivePoint {
-                            id,
-                            position,
-                            radius,
-                            action_radius,
-                            flags,
-                        });
+                    let ai_global = self.ai_global_mut();
+                    let id = ai_global.next_repulsive_point_id;
+                    ai_global.next_repulsive_point_id += 1;
+                    ai_global.repulsive_points.push(crate::ai::RepulsivePoint {
+                        id,
+                        position,
+                        radius,
+                        action_radius,
+                        flags,
+                    });
                     id
                 }
                 DeleteRepulsivePoint => {
                     // DeleteRepulsivePoint(int id) -> 0
                     // Removes a repulsive point by its ID.
                     let id = stack.pop_i32();
-                    let before = self.ai_global.repulsive_points.len();
-                    self.ai_global.repulsive_points.retain(|p| p.id != id);
-                    if self.ai_global.repulsive_points.len() == before {
+                    let ai_global = self.ai_global_mut();
+                    let before = ai_global.repulsive_points.len();
+                    ai_global.repulsive_points.retain(|p| p.id != id);
+                    if ai_global.repulsive_points.len() == before {
                         tracing::warn!("DeleteRepulsivePoint: no point with id {id}");
                     }
                     0

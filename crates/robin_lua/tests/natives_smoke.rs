@@ -366,6 +366,33 @@ fn host_pointer_cleared_after_error() {
     assert!(err.to_string().contains("no GameHost attached"));
 }
 
+/// Panic unwinding must run the same attachment guard so the erased canonical
+/// capabilities cannot be reached by a later Lua call.
+#[test]
+#[should_panic(expected = "deliberate Lua host-scope panic")]
+fn host_pointer_and_capabilities_cleared_after_unwind() {
+    struct VerifyDetachedOnUnwind<'a>(&'a MissionLuaState);
+
+    impl Drop for VerifyDetachedOnUnwind<'_> {
+        fn drop(&mut self) {
+            let err =
+                self.0.lua().load("InitGlobal(0, 1)").exec().expect_err(
+                    "Lua host capabilities must be detached before outer unwind cleanup",
+                );
+            assert!(err.to_string().contains("no GameHost attached"));
+        }
+    }
+
+    let (state, _dir) = fresh_state();
+    let mut host = GameHost::new();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let _verify = VerifyDetachedOnUnwind(&state);
+
+    let _: mlua::Result<()> = state.with_host(&mut host, &mut script_domains, |_lua: &Lua| {
+        panic!("deliberate Lua host-scope panic")
+    });
+}
+
 /// Reject a nested attachment before it can replace the outer scope's raw
 /// pointers. The workspace uses panic=abort for ordinary binaries, while the
 /// Rust test harness still recognizes an expected panic.

@@ -11,9 +11,9 @@ use crate::profiles::{MissionLocation, MissionProfile};
 ///
 /// The mission script is temporarily removed from `EngineInner`, which gives
 /// the session exclusive ownership while the legacy GameHost adapter leases
-/// the remaining canonical engine fields. Campaign and mission statistics
-/// stay in `EngineInner` and are borrowed by each native resume. This is not
-/// serializable
+/// the remaining canonical entity/grid fields. AI-global state, campaign, and
+/// mission statistics stay in `EngineInner` and are borrowed by each native
+/// resume. This is not serializable
 /// or hashable: legal snapshots only exist after the exact script and engine
 /// state have been restored to their canonical owners.
 ///
@@ -40,8 +40,8 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
     }
 
     /// Run one ordered callback batch while GameHost temporarily owns the
-    /// remaining canonical engine fields. Nested `PendingNestedCall` yields
-    /// resume against the same borrowed campaign owners.
+    /// remaining canonical entity/grid fields. Nested `PendingNestedCall`
+    /// yields resume against the same borrowed canonical owners.
     fn dispatch<R>(
         &mut self,
         callback: impl FnOnce(
@@ -62,6 +62,8 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             campaign,
             &mut self.engine.mission_domain.mission_stat,
         );
+        let ai_global_capability =
+            crate::natives::NativeAiGlobalCapability::new(&mut self.engine.ai.global);
         let queries = crate::natives::NativeQueryViews::new(
             &self.engine.orders.sequence_manager,
             &self.engine.players.seats[0].selection,
@@ -69,6 +71,7 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             &self.engine.world.weather,
             &self.engine.control.frame_counter,
         )
+        .with_ai_global_capability(&ai_global_capability)
         .with_campaign_capabilities(&campaign_capabilities);
         let script = self
             .script
@@ -76,7 +79,6 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             .expect("script session lost its leased mission script");
         script.swap_engine_state(
             &mut self.engine.world.entities,
-            &mut self.engine.ai.global,
             &mut self.engine.world.fast_grid,
         );
         self.live_engine_state = true;
@@ -100,7 +102,6 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             .expect("script session lost its leased mission script")
             .swap_engine_state(
                 &mut self.engine.world.entities,
-                &mut self.engine.ai.global,
                 &mut self.engine.world.fast_grid,
             );
         self.live_engine_state = false;
@@ -3265,7 +3266,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v5_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_v6_snapshot_omits_ai_mirror_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3286,9 +3287,10 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v5 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize v6 MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 5);
+        assert_eq!(value["snapshot_version"], 6);
+        assert!(value["game_host"].get("ai_global").is_none());
         assert!(value["game_host"].get("campaign").is_none());
         assert!(value["game_host"].get("mission_stat").is_none());
         assert!(value["game_host"].get("engine_domains").is_none());
@@ -3301,7 +3303,7 @@ mod script_context_tests {
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v5 MissionScript");
+            serde_json::from_str(&json).expect("deserialize v6 MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3350,6 +3352,24 @@ mod script_context_tests {
         assert!(normalized["game_host"].get("script_this").is_none());
         assert!(normalized["game_host"].get("current_scroll").is_none());
         assert!(normalized["game_host"].get("nested_call_depth").is_none());
+    }
+
+    #[test]
+    fn v5_parked_ai_global_deserializes_only_through_legacy_dto() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(5);
+        let mut parked = crate::ai::AiGlobalState::default();
+        parked.golden_eye_mode = true;
+        parked.next_repulsive_point_id = 77;
+        snapshot["game_host"]["ai_global"] =
+            serde_json::to_value(parked).expect("serialize legacy parked AI mirror");
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("legacy parked AI mirror remains loadable");
+        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
+        assert_eq!(normalized["snapshot_version"], 6);
+        assert!(normalized["game_host"].get("ai_global").is_none());
     }
 
     #[test]
@@ -3762,6 +3782,58 @@ mod script_context_tests {
     }
 
     #[test]
+    fn native_ai_mutation_writes_engine_inner_directly() {
+        use crate::interp::{HostFunctions, NativeStack};
+        use crate::natives::NativeFn;
+
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+        engine.scripts.mission = Some(empty_mission_script());
+        engine.ai.global.next_repulsive_point_id = 9;
+        engine
+            .ai
+            .global
+            .repulsive_points
+            .push(crate::ai::RepulsivePoint {
+                id: 8,
+                position: crate::ai::Position::default(),
+                radius: 10.0,
+                action_radius: 20.0,
+                flags: 0,
+            });
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        let canonical_ai_global = std::ptr::addr_of_mut!(engine.ai.global);
+
+        let result = engine.with_script_session(&assets, |script, script_domains, queries| {
+            let mut context = crate::natives::NativeContext::with_bindings(
+                &mut script.game_host,
+                &mut script.state,
+                script_domains,
+                &script.bindings,
+                queries,
+            );
+            assert_eq!(
+                std::ptr::from_mut(context.ai_global_mut()),
+                canonical_ai_global,
+                "the native capability must borrow EngineInner's AI allocation"
+            );
+            let mut stack = NativeStack::default();
+            stack.push_i32(8);
+            HostFunctions::call(
+                &mut context,
+                NativeFn::DeleteRepulsivePoint as u32,
+                &mut stack,
+            )
+            .expect_return("DeleteRepulsivePoint is synchronous")
+        });
+
+        assert_eq!(result, Some(0));
+        assert!(engine.ai.global.repulsive_points.is_empty());
+        assert_eq!(engine.ai.global.next_repulsive_point_id, 9);
+    }
+
+    #[test]
     #[should_panic(expected = "native dispatch requires live level attachments")]
     fn external_native_rejects_a_detached_live_script() {
         let mut engine = EngineInner::new();
@@ -3842,6 +3914,10 @@ mod script_context_tests {
                     engine.script_domains.mission_ui.outline_display,
                     "canonical domain mutation survives session unwind"
                 );
+                assert!(
+                    engine.ai.global.golden_eye_mode,
+                    "canonical AI-global mutation survives session unwind"
+                );
             }
         }
 
@@ -3854,8 +3930,18 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let _verify = VerifyRestoredOnUnwind(&engine);
 
-        let _ = engine.with_script_session(&assets, |script, script_domains, _| {
+        let _ = engine.with_script_session(&assets, |script, script_domains, queries| {
             script_domains.mission_ui.outline_display = true;
+            {
+                let mut context = crate::natives::NativeContext::with_bindings(
+                    &mut script.game_host,
+                    &mut script.state,
+                    script_domains,
+                    &script.bindings,
+                    queries,
+                );
+                context.ai_global_mut().golden_eye_mode = true;
+            }
             script.with_call_frame(
                 crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
                 |_| panic!("simulated script panic"),

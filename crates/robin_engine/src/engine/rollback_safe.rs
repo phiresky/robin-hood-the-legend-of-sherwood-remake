@@ -486,7 +486,8 @@ impl Engine {
     /// can drive custom-mission Lua events against the same
     /// `GameHost` the `.scb` VM uses. Only safe to call from
     /// script-event windows (right after `swap_engine_state`
-    /// install, before swap-out) — see the doc on
+    /// installs the entity/grid adapter, before swap-out); AI-global state is
+    /// passed through the accompanying `NativeQueryViews` capability. See
     /// [`EngineInner::mission_script_game_host_mut`].
     pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
         self.inner.mission_script_game_host_mut()

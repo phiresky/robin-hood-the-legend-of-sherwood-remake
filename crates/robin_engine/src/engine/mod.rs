@@ -3401,8 +3401,8 @@ impl EngineInner {
     /// rollback determinism, but crate-external callers must take care
     /// to only call from script-event sites (right after a
     /// `swap_engine_state` swap-in, before the swap-out), since the
-    /// host's view of entity/AI/fast-grid state is only live during
-    /// that window.
+    /// host's view of entity/fast-grid state is only live during that window.
+    /// Canonical AI-global state is borrowed separately by `NativeContext`.
     ///
     /// Exposed `pub` so the host crate's Lua scripting layer
     /// (`robin_rs::lua_session`) can drive custom-mission Lua events
