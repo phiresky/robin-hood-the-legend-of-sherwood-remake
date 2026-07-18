@@ -570,7 +570,7 @@ impl EngineInner {
     ) -> Option<BuiltDoorPass> {
         // Snapshot door geometry and type (releases borrow on mission_script).
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let _game_host = self.scripts.mission.as_mut()?.game_host_mut()?;
+            self.scripts.mission.as_ref()?;
             let door = self
                 .script_domains
                 .interactables
@@ -780,15 +780,9 @@ impl EngineInner {
 
         // Snapshot door data before mutable borrows.
         let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
-            let _game_host = match self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-            {
-                Some(h) => h,
-                None => return,
-            };
+            if self.scripts.mission.is_none() {
+                return;
+            }
             let door = match self
                 .script_domains
                 .interactables
@@ -1158,7 +1152,7 @@ impl EngineInner {
         direct: bool,
     ) {
         let Some((target_sector, lift_type, lift_direction)) = (|| {
-            let _game_host = self.scripts.mission.as_ref()?.game_host()?;
+            self.scripts.mission.as_ref()?;
             let door = self
                 .script_domains
                 .interactables
@@ -1290,17 +1284,11 @@ impl EngineInner {
     /// Calls `Patch::apply()` and delegates effect processing to
     /// `process_patch_effects` (patch_effects.rs).
     fn apply_door_patch(&mut self, assets: &LevelAssets, door_index: crate::gate::DoorIndex) {
+        if self.scripts.mission.is_none() {
+            return;
+        }
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
-            let _game_host = match self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-            {
-                Some(h) => h,
-                None => return,
-            };
             match self
                 .script_domains
                 .interactables
@@ -1325,25 +1313,16 @@ impl EngineInner {
         // closing.  The matching `finish_transition` fires when the
         // patch's FX animation ends (see `tick_entity_animations`).
         let was_applied = {
-            let _game_host = match self.scripts.mission.as_ref().and_then(|s| s.game_host()) {
-                Some(h) => h,
-                None => return,
-            };
             match self.script_domains.interactables.patches.get(patch_idx) {
                 Some(p) => p.applied,
                 None => return,
             }
         };
-        if let Some(_game_host) = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-            && let Some(door) = self
-                .script_domains
-                .interactables
-                .doors
-                .get_mut(usize::from(door_index))
+        if let Some(door) = self
+            .script_domains
+            .interactables
+            .doors
+            .get_mut(usize::from(door_index))
         {
             if was_applied {
                 door.gate_state.request_close();
@@ -1354,15 +1333,6 @@ impl EngineInner {
 
         // Apply the patch and collect effects.
         let effects = {
-            let _game_host = match self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-            {
-                Some(h) => h,
-                None => return,
-            };
             let patch = match self.script_domains.interactables.patches.get_mut(patch_idx) {
                 Some(p) => p,
                 None => return,
