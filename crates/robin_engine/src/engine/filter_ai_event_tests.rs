@@ -229,7 +229,8 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
 fn build_engine() -> (EngineInner, i32, i32, i32) {
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
-    engine.mission_script = Some(script);
+    engine.scripts.mission = Some(script);
+    engine.attach_script_bindings(&LevelAssets::new());
 
     let robin_id = engine.add_entity(make_pc(true));
     let sensitive_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
@@ -239,7 +240,7 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     let sensitive_handle = crate::natives::GameHost::actor_handle(sensitive_id);
     let noov_handle = crate::natives::GameHost::actor_handle(noov_id);
 
-    if let Some(ref mut s) = engine.mission_script {
+    if let Some(ref mut s) = engine.scripts.mission {
         assert!(s.bind_actor(
             sensitive_handle,
             "SourceSensitive",
@@ -333,7 +334,7 @@ fn filter_allows_when_actor_has_no_filter_override() {
 fn filter_allows_when_actor_not_bound_to_any_script() {
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
-    engine.mission_script = Some(script);
+    engine.scripts.mission = Some(script);
 
     let unbound_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
     let unbound_handle = crate::natives::GameHost::actor_handle(unbound_id);

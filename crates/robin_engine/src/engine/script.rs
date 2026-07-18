@@ -13,7 +13,8 @@ impl EngineInner {
     /// corrupt save and must not be resolved by silently choosing one side.
     pub(super) fn migrate_legacy_script_custom_values(&mut self) {
         let Some(legacy) = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .and_then(|script| script.legacy_custom_values.take())
         else {
@@ -68,12 +69,10 @@ impl EngineInner {
 
     /// Reattach sight-obstacle arrays rebuilt by live world mutations.
     pub(super) fn refresh_script_sight_bindings(&mut self) {
-        if let Some(script) = self.mission_script.as_mut() {
-            script.bindings.sight_obstacles.dynamic_obstacles =
-                std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone());
-            script.bindings.sight_obstacles.static_active =
-                std::sync::Arc::new(self.world.static_sight_obstacle_active.clone());
-        }
+        self.scripts.refresh_sight_bindings(
+            &self.world.dynamic_sight_obstacles,
+            &self.world.static_sight_obstacle_active,
+        );
     }
 
     /// Attach immutable level data to the script-native dispatcher.
@@ -81,29 +80,11 @@ impl EngineInner {
     /// The dispatcher borrows this object for each VM resume. It is not part
     /// of simulation state and is reattached after save/snapshot decode.
     pub(super) fn attach_script_bindings(&mut self, assets: &LevelAssets) {
-        let Some(ref mut script) = self.mission_script else {
-            return;
-        };
-        script.attach_bindings(crate::natives::AttachedScriptBindings {
-            profile_manager: assets.profile_manager.clone(),
-            hiking_paths: assets.hiking_paths.clone(),
-            level_grid: assets.level_grid.clone(),
-            sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
-                static_obstacles: assets.static_sight_obstacles.clone(),
-                dynamic_obstacles: std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone()),
-                static_active: std::sync::Arc::new(self.world.static_sight_obstacle_active.clone()),
-            },
-            script_location_count: assets.script_location_count,
-            script_point_count: assets.script_point_count,
-            script_building_count: assets.script_building_count,
-            script_hiking_path_count: assets.script_hiking_path_count,
-            location_positions: assets.script_location_positions.clone(),
-            location_layers: assets.script_location_layers.clone(),
-            location_sectors: assets.script_location_sectors.clone(),
-            script_zone_grid_indices: assets.script_zone_grid_indices.clone(),
-            patch_animation_entities: assets.patch_entity_handles.clone(),
-            lua_names: assets.script_names.clone(),
-        });
+        self.scripts.attach_native_capabilities(
+            assets,
+            &self.world.dynamic_sight_obstacles,
+            &self.world.static_sight_obstacle_active,
+        );
     }
 
     /// Apply changes from GameHost back to the engine after a script call.
@@ -112,15 +93,15 @@ impl EngineInner {
     pub(crate) fn sync_game_host_post_script(&mut self, assets: &LevelAssets) {
         // We need to take the script out briefly so we can mutably borrow
         // both GameHost fields and engine fields simultaneously.
-        let mut script = match self.mission_script.take() {
+        let mut script = match self.scripts.mission.take() {
             Some(s) => s,
             None => return,
         };
 
         let mut engine_commands = Vec::new();
-        // Deferred commands that must run AFTER `self.mission_script` is put
+        // Deferred commands that must run AFTER `self.scripts.mission` is put
         // back (currently `ProcessPatchEffects`, which looks patches up via
-        // `self.mission_script`). Populated inside the host block below.
+        // `self.scripts.mission`). Populated inside the host block below.
         let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
         // RHScript::SendMessage launches a standalone RHCOMMAND_SEND_MESSAGE
         // sequence element. Keep requests in native-call order and launch
@@ -263,7 +244,7 @@ impl EngineInner {
             }
 
             // ── Deferred game-logic commands ──
-            // NB: `ProcessPatchEffects` reads `self.mission_script`, which is
+            // NB: `ProcessPatchEffects` reads `self.scripts.mission`, which is
             // currently taken out of `self` — so that arm is deferred to
             // `post_script` and processed after the script is put back.
             for cmd in game_host.deferred_commands.drain(..) {
@@ -577,8 +558,8 @@ impl EngineInner {
 
         // Put the script back before applying engine commands (which may
         // need to look up entities, etc.) and before post-script deferred
-        // commands that read `self.mission_script`.
-        self.mission_script = Some(script);
+        // commands that read `self.scripts.mission`.
+        self.scripts.mission = Some(script);
 
         for cmd in post_script {
             match cmd {
@@ -703,7 +684,7 @@ impl EngineInner {
     ///
     /// Looks up the pre-decoded script program in
     /// `assets.mission_script_programs` and installs it into
-    /// `self.mission_script`.
+    /// `self.scripts.mission`.
     pub(crate) fn load_mission_script(&mut self, assets: &LevelAssets, scb_path: &std::path::Path) {
         let stem = scb_path.file_stem().and_then(|s| s.to_str());
         let program = stem.and_then(|name| {
@@ -731,7 +712,7 @@ impl EngineInner {
                     scb_path.display(),
                     script.manager.class_count(),
                 );
-                self.mission_script = Some(script);
+                self.scripts.install_mission(script);
             }
             Err(e) => {
                 tracing::warn!("Could not load mission script {}: {e}", scb_path.display());
@@ -817,7 +798,7 @@ impl EngineInner {
             .collect();
 
         let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.mission_script {
+        if let Some(ref mut script) = self.scripts.mission {
             script.swap_engine_state(
                 &mut self.world.entities,
                 &mut self.ai.global,
@@ -956,7 +937,7 @@ impl EngineInner {
         // divergence.  Unscripted NPCs leave the flag at its default
         // `false` and stay silent.  Entities have just been swapped
         // back, so this iteration sees the real engine state.
-        if let Some(script) = self.mission_script.as_ref() {
+        if let Some(script) = self.scripts.mission.as_ref() {
             let scripted_actors: Vec<i32> = script.actor_instances.keys().copied().collect();
             for handle in scripted_actors {
                 let has_override = script.actor_has_function(handle, "FilterAIEvent");
@@ -991,7 +972,7 @@ impl EngineInner {
     /// `abandoned` is true if the player quit/interrupted.
     pub(crate) fn finalize_mission_script(&mut self, abandoned: bool) {
         let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.mission_script {
+        if let Some(ref mut script) = self.scripts.mission {
             script.swap_engine_state(
                 &mut self.world.entities,
                 &mut self.ai.global,
@@ -1023,7 +1004,7 @@ impl EngineInner {
     /// `old_action`.  Called once per frame from `perform_hourglass`,
     /// after all animation updates.
     pub(crate) fn dispatch_actor_action_changes(&mut self, assets: &LevelAssets) {
-        if self.mission_script.is_none() {
+        if self.scripts.mission.is_none() {
             return;
         }
 
@@ -1078,7 +1059,7 @@ impl EngineInner {
         // Phase 2: Dispatch to scripts with engine state swapped in.
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -1125,7 +1106,7 @@ impl EngineInner {
     pub(crate) fn dispatch_scroll_hourglasses(&mut self, assets: &LevelAssets) {
         const SCRIPT_HOURGLASS_TIMEOUT: u32 = 25;
 
-        if self.mission_script.is_none() {
+        if self.scripts.mission.is_none() {
             return;
         }
 
@@ -1140,7 +1121,8 @@ impl EngineInner {
             }
             let handle = crate::natives::GameHost::actor_handle(id);
             let has_script = self
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .is_some_and(|ms| ms.scroll_instances.contains_key(&handle));
             if !has_script {
@@ -1160,7 +1142,7 @@ impl EngineInner {
         // Phase 2: dispatch with engine state swapped in.
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -1236,7 +1218,8 @@ impl EngineInner {
         // Step 2 — if no script is bound, return false immediately,
         // leaving the status at Opened.
         let has_script = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .is_some_and(|ms| ms.scroll_instances.contains_key(&handle));
         if !has_script {
@@ -1247,7 +1230,7 @@ impl EngineInner {
         let pc_handle = crate::natives::GameHost::actor_handle(pc_id);
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -1292,7 +1275,7 @@ impl EngineInner {
     /// Called during mission init, after script sectors are registered on the grid.
     pub(crate) fn initialize_zone_scripts(&mut self) {
         let queries = native_query_views!(self);
-        let script = match self.mission_script.as_mut() {
+        let script = match self.scripts.mission.as_mut() {
             Some(s) => s,
             None => return,
         };
@@ -1512,7 +1495,7 @@ impl EngineInner {
 
         // Phase 3: Dispatch EnterZone to zone scripts.
         let queries = native_query_views!(self);
-        let script = match self.mission_script.as_mut() {
+        let script = match self.scripts.mission.as_mut() {
             Some(s) => s,
             None => return,
         };
@@ -1556,7 +1539,7 @@ impl EngineInner {
     ///
     /// Called once per frame from `perform_hourglass`, after movement tick.
     pub(crate) fn tick_zone_occupants(&mut self, assets: &LevelAssets) {
-        if assets.script_zone_grid_indices.is_empty() || self.mission_script.is_none() {
+        if assets.script_zone_grid_indices.is_empty() || self.scripts.mission.is_none() {
             return;
         }
 
@@ -1662,7 +1645,7 @@ impl EngineInner {
         // Phase 3: Dispatch to zone scripts.
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -1711,7 +1694,7 @@ impl EngineInner {
             .len()
             .saturating_sub(self.script_domains.zones.scripts.len());
 
-        let Some(ref mut script) = self.mission_script else {
+        let Some(ref mut script) = self.scripts.mission else {
             return;
         };
         let game_host = match script.game_host_mut() {
@@ -1887,7 +1870,7 @@ impl EngineInner {
     ) {
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.mission_script {
+        if let Some(ref mut script) = self.scripts.mission {
             script.swap_engine_state(
                 &mut self.world.entities,
                 &mut self.ai.global,
@@ -1977,7 +1960,7 @@ impl EngineInner {
         }
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.mission_script {
+        if let Some(ref mut script) = self.scripts.mission {
             script.swap_engine_state(
                 &mut self.world.entities,
                 &mut self.ai.global,
@@ -2065,7 +2048,7 @@ impl EngineInner {
         };
 
         // Fast-paths that skip the swap+call machinery.
-        let has_override = match self.mission_script.as_ref() {
+        let has_override = match self.scripts.mission.as_ref() {
             Some(s) => s.actor_has_function(handle, "FilterAIEvent"),
             None => return true,
         };
@@ -2080,7 +2063,7 @@ impl EngineInner {
         // read and write live engine state.
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().expect("checked above");
+        let script = self.scripts.mission.as_mut().expect("checked above");
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -2148,7 +2131,8 @@ impl EngineInner {
         // AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
         let doors_ptr = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|ms| ms.game_host())
             .map(|_| self.script_domains.interactables.doors.as_slice());
@@ -2192,7 +2176,7 @@ impl EngineInner {
     /// `Default → Wondering → Attacking`) each fire their own
     /// notification — synchronous per-substate behaviour.
     pub(crate) fn dispatch_ai_state_change_notifications(&mut self, assets: &LevelAssets) {
-        if self.mission_script.is_none() {
+        if self.scripts.mission.is_none() {
             return;
         }
 
@@ -2232,7 +2216,7 @@ impl EngineInner {
 
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -3062,7 +3046,7 @@ impl EngineInner {
         // number. Sector number comes from the grid sector tagged
         // `building_index == bld_idx` (populated at level load).
         let (gate_point_in, sector_num) = {
-            let Some(ref script) = self.mission_script else {
+            let Some(ref script) = self.scripts.mission else {
                 return;
             };
             let Some(_game_host) = script.game_host() else {
@@ -3374,7 +3358,7 @@ mod script_context_tests {
             campaign: std::collections::BTreeMap::from([(7, 42)]),
             npc: std::collections::BTreeMap::new(),
         });
-        engine.mission_script = Some(script);
+        engine.scripts.mission = Some(script);
 
         engine.migrate_legacy_script_custom_values();
 
@@ -3382,7 +3366,8 @@ mod script_context_tests {
         assert_eq!(engine.campaign().unwrap().values[slot], 42);
         assert!(
             engine
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .unwrap()
                 .legacy_custom_values
@@ -3410,7 +3395,7 @@ mod script_context_tests {
     #[test]
     fn legacy_game_host_interactables_migrate_to_engine_domains_once() {
         let mut engine = EngineInner::new();
-        engine.mission_script = Some(empty_mission_script());
+        engine.scripts.mission = Some(empty_mission_script());
         engine
             .script_domains
             .interactables
@@ -3448,7 +3433,8 @@ mod script_context_tests {
         assert!(restored.script_domains.interactables.patches[0].applied);
         assert!(
             restored
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .expect("mission script survives migration")
                 .game_host
@@ -3463,7 +3449,7 @@ mod script_context_tests {
     #[test]
     fn legacy_game_host_mission_ui_migrates_without_overwriting_force_check() {
         let mut engine = EngineInner::new();
-        engine.mission_script = Some(empty_mission_script());
+        engine.scripts.mission = Some(empty_mission_script());
         engine.script_domains.mission_ui.outline_display = true;
         engine.script_domains.mission_ui.force_check = true;
         engine
@@ -3509,7 +3495,8 @@ mod script_context_tests {
         assert_eq!(ui.blink_expire_frame, 150);
         assert!(
             restored
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .expect("mission script survives migration")
                 .game_host
@@ -3533,7 +3520,7 @@ mod script_context_tests {
             campaign: std::collections::BTreeMap::from([(7, 42)]),
             npc: std::collections::BTreeMap::new(),
         });
-        engine.mission_script = Some(script);
+        engine.scripts.mission = Some(script);
 
         engine.migrate_legacy_script_custom_values();
     }
@@ -3544,7 +3531,8 @@ mod script_context_tests {
         let mut script = empty_mission_script();
         script.game_host.script_this = 41;
         script.game_host.entities.push(None);
-        engine.mission_script = Some(script);
+        engine.scripts.mission = Some(script);
+        engine.attach_script_bindings(&LevelAssets::new());
 
         let result =
             engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
@@ -3552,13 +3540,24 @@ mod script_context_tests {
         assert_eq!(result, Ok(99));
         assert!(engine.world.entities.is_empty());
         let host = engine
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .expect("script remains installed")
             .game_host()
             .expect("mission script always owns its game host");
         assert_eq!(host.script_this, 41);
         assert_eq!(host.entities.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "native dispatch requires live level attachments")]
+    fn external_native_rejects_a_detached_live_script() {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(empty_mission_script());
+
+        let _ =
+            engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
     }
 
     fn fail_inside_script_context(
@@ -3612,7 +3611,7 @@ mod script_context_tests {
         let mut script = empty_mission_script();
         script.game_host.script_this = 41;
         script.game_host.entities.push(None);
-        engine.mission_script = Some(script);
+        engine.scripts.mission = Some(script);
 
         let result = engine.call_external_native_with_this(
             &LevelAssets::new(),
@@ -3624,7 +3623,8 @@ mod script_context_tests {
         assert_eq!(result, Err("unknown native: NotAnOriginalNative".into()));
         assert!(engine.world.entities.is_empty());
         let host = &engine
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .expect("script remains installed")
             .game_host;
@@ -3812,7 +3812,7 @@ impl EngineInner {
             return Err(format!("unknown native: {native_name}"));
         };
 
-        if self.mission_script.is_none() {
+        if self.scripts.mission.is_none() {
             return Err("no mission script loaded (no mission running)".into());
         }
 
@@ -3822,7 +3822,8 @@ impl EngineInner {
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
         let script = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .expect("mission_script presence checked above");
 

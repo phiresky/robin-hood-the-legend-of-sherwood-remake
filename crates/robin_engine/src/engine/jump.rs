@@ -711,7 +711,8 @@ impl EngineInner {
             return false;
         };
         let Some(doors) = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .map(|_| self.script_domains.interactables.doors.as_slice())
@@ -750,7 +751,8 @@ impl EngineInner {
                     u16::from(sector_num) as i16
                 ))?;
         let doors = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .map(|_| self.script_domains.interactables.doors.as_slice())?;

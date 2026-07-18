@@ -91,7 +91,7 @@ impl EngineInner {
                     }
 
                     self.feedback.pending_side_effects.invalidate_background = true;
-                    if let Some(ref mut script) = self.mission_script
+                    if let Some(ref mut script) = self.scripts.mission
                         && let Some(game_host) = script.game_host_mut()
                     {
                         game_host.background_invalidated = true;
@@ -119,7 +119,7 @@ impl EngineInner {
                         self.queue_restore_fx_bg(entity_id);
                     }
                     self.feedback.pending_side_effects.invalidate_background = true;
-                    if let Some(ref mut script) = self.mission_script
+                    if let Some(ref mut script) = self.scripts.mission
                         && let Some(game_host) = script.game_host_mut()
                     {
                         game_host.background_invalidated = true;
@@ -134,7 +134,7 @@ impl EngineInner {
         &mut self,
         patch_index: crate::patch::PatchIndex,
     ) -> Option<PatchContext> {
-        let script = self.mission_script.as_mut()?;
+        let script = self.scripts.mission.as_mut()?;
         let animation_entity_handle = script
             .bindings
             .patch_animation_entities
@@ -172,7 +172,7 @@ impl EngineInner {
         if ctx.door_indices.is_empty() {
             return;
         }
-        if let Some(ref mut script) = self.mission_script
+        if let Some(ref mut script) = self.scripts.mission
             && let Some(_game_host) = script.game_host_mut()
         {
             for &di in &ctx.door_indices {

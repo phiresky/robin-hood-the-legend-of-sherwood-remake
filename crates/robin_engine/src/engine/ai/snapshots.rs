@@ -598,7 +598,8 @@ impl EngineInner {
         &self,
     ) -> std::collections::HashMap<u32, crate::ai::ForecastedDestination> {
         let doors = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .map(|_| self.script_domains.interactables.doors.as_slice())
@@ -857,7 +858,8 @@ impl EngineInner {
             // not where they are now.
             let forecast_destination = {
                 let doors = self
-                    .mission_script
+                    .scripts
+                    .mission
                     .as_ref()
                     .and_then(|ms| ms.game_host())
                     .map(|_| self.script_domains.interactables.doors.as_slice())

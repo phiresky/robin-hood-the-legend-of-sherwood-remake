@@ -131,12 +131,14 @@ fn scripted_receiver() -> Entity {
 
 fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
     let mut engine = EngineInner::new();
-    engine.mission_script = Some(message_script());
+    engine.scripts.mission = Some(message_script());
+    engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
     let handle = GameHost::actor_handle(receiver);
     assert!(
         engine
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .expect("script installed")
             .bind_actor(
@@ -182,7 +184,8 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     );
 
     engine
-        .mission_script
+        .scripts
+        .mission
         .as_mut()
         .expect("script installed")
         .game_host
@@ -233,7 +236,8 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
     let frame_before = engine.control.frame_counter;
 
     let host = &mut engine
-        .mission_script
+        .scripts
+        .mission
         .as_mut()
         .expect("script installed")
         .game_host;
@@ -255,7 +259,8 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
     assert_eq!(engine.control.frame_counter, frame_before);
     assert_eq!(
         engine
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .expect("script installed")
             .state

@@ -591,7 +591,7 @@ impl EngineInner {
                 let Some(id) = door_id else {
                     return false;
                 };
-                let Some(_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) else {
+                let Some(_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) else {
                     return false;
                 };
                 self.script_domains

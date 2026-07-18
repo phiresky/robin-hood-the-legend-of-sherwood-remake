@@ -704,7 +704,7 @@ impl EngineInner {
         // Pick the unlocked door nearest to first_pos by MaxNorm of
         // (door.point_in - first_pos).
         let (point_in, point_out, point_mid, out_layer) = {
-            let Some(_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) else {
+            let Some(_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) else {
                 return;
             };
             let mut best: Option<(u32, f32)> = None;
@@ -976,7 +976,7 @@ impl EngineInner {
         {
             let path = {
                 let level = self.world.fast_grid.level.clone();
-                let game_host = self.mission_script.as_ref().and_then(|s| s.game_host());
+                let game_host = self.scripts.mission.as_ref().and_then(|s| s.game_host());
                 game_host.and_then(|_h| {
                     crate::gate::find_path_gates(
                         &self.script_domains.interactables.doors,

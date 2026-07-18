@@ -5,6 +5,7 @@ mod mission;
 mod orders;
 mod players;
 mod script_domains;
+mod scripts;
 mod world;
 
 pub(crate) use ai::AiRuntime;
@@ -16,4 +17,5 @@ pub(crate) use players::PlayerRuntime;
 pub(crate) use script_domains::{
     BuildingState, InteractableState, MissionUiState, ScriptDomains, ScrollState,
 };
+pub(crate) use scripts::ScriptRuntime;
 pub(crate) use world::WorldState;

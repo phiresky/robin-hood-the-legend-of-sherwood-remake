@@ -194,7 +194,8 @@ impl EngineInner {
         let pc_handle = crate::natives::GameHost::actor_handle(pc);
         let queries = native_query_views!(self);
         let script_result = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .map(|script| {
                 script.call_scroll_function(scroll_handle, "IsTaken", &[pc_handle], queries)

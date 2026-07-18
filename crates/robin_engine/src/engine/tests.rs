@@ -35,7 +35,7 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.control.speed = 1.75;
     engine.control.speed_int = 9;
     engine.world.shield.is_protected = true;
-    engine.script_globals = vec![-7, 0, 42, i32::MAX];
+    engine.scripts.globals = vec![-7, 0, 42, i32::MAX];
     engine.mission_domain.cheat_used_flags = 0xA5A5_5A5A;
     engine.ai.standard_view_polygon_radius = 321;
     engine.orders.next_order_id = 0x5566_7788;
@@ -1376,7 +1376,7 @@ fn rollback_clone_stays_in_sync() {
         original.mission_domain.state.mission_won,
         replay.mission_domain.state.mission_won
     );
-    assert_eq!(original.script_globals, replay.script_globals);
+    assert_eq!(original.scripts.globals, replay.scripts.globals);
 
     // Double-check: re-cloning the original snapshot and replaying the
     // SAME number of ticks a second time must also match — guarding
@@ -1429,7 +1429,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
     };
 
     let mut engine = EngineInner::new();
-    engine.mission_script = Some(
+    engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
             classes: vec![startup],
@@ -1437,6 +1437,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
         .expect("synthetic StartUp script"),
     );
     let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
@@ -1446,7 +1447,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "the first simulation frame ran"
     );
     assert!(
-        !engine.mission_script.as_ref().unwrap().post_initialized,
+        !engine.scripts.mission.as_ref().unwrap().post_initialized,
         "PostInitialize must not run before the first host refresh and sound hourglass"
     );
 
@@ -1463,14 +1464,14 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "the post-refresh stage must not advance simulation time"
     );
     assert!(
-        engine.mission_script.as_ref().unwrap().post_initialized,
+        engine.scripts.mission.as_ref().unwrap().post_initialized,
         "the post-refresh stage must dispatch PostInitialize exactly at the frame-one boundary"
     );
 
     let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
     assert!(second_post_initialize_effects.is_none());
     assert_eq!(engine.control.frame_counter, 1);
-    assert!(engine.mission_script.as_ref().unwrap().post_initialized);
+    assert!(engine.scripts.mission.as_ref().unwrap().post_initialized);
 }
 
 /// Serialize the engine to JSON, deserialize it back, advance the
@@ -1518,7 +1519,7 @@ fn serde_roundtrip_stays_in_sync() {
         rehydrated.mission_domain.state.mission_won,
         clone_ref.mission_domain.state.mission_won
     );
-    assert_eq!(rehydrated.script_globals, clone_ref.script_globals);
+    assert_eq!(rehydrated.scripts.globals, clone_ref.scripts.globals);
 }
 
 #[test]
@@ -1888,7 +1889,7 @@ fn script_globals() {
     // `init_script_global` resizes to `id + 16`, giving scripts a
     // 16-slot slack window of valid reads beyond the last-initialised
     // index.
-    assert_eq!(engine.script_globals.len(), 5 + 16);
+    assert_eq!(engine.scripts.globals.len(), 5 + 16);
     for i in 6..(5 + 16) {
         assert_eq!(engine.get_script_global(i), 0);
     }
@@ -7090,7 +7091,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     let mission_script = MissionScript::from_scb(scb).expect("from_scb");
 
     let mut engine = EngineInner::new();
-    engine.mission_script = Some(mission_script);
+    engine.scripts.mission = Some(mission_script);
 
     let paths = vec![
         RawHikingPath {
@@ -7125,7 +7126,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     let assets = crate::engine::LevelAssets::new();
     engine.initialize_mission_script_with(&assets, 0, &paths);
 
-    let script = engine.mission_script.as_ref().expect("mission_script");
+    let script = engine.scripts.mission.as_ref().expect("mission_script");
     // Two `Script` waypoints, both bound.
     assert!(
         script
