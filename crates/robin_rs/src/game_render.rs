@@ -909,6 +909,7 @@ fn render_ground_mark_set(
             (dst_y + scaled_h) as f32,
         );
 
+        let draw_checkpoint = renderer.draw_queue_checkpoint();
         renderer.blit_with_shadow(
             surf_id,
             Some(&src_box),
@@ -937,6 +938,7 @@ fn render_ground_mark_set(
             &mark_world_bbox,
             mark_position,
             mark_rect,
+            draw_checkpoint,
             view_pos,
             zoom,
         );
@@ -951,13 +953,18 @@ fn render_character_masks_clipped(
     world_bbox: &engine_coordinates::MapBBox,
     position: engine_coordinates::MapPoint,
     clip_rect: Rect,
+    draw_checkpoint: usize,
     view: engine_coordinates::MapPoint,
     zoom: f32,
 ) {
-    for mask_idx in engine
+    let mask_indices = engine
         .fast_grid()
-        .get_masks_applied_to_character(layer, world_bbox, position)
-    {
+        .get_masks_applied_to_character(layer, world_bbox, position);
+    if mask_indices.is_empty() {
+        return;
+    }
+    renderer.insert_scene_snapshot(draw_checkpoint, clip_rect);
+    for mask_idx in mask_indices {
         let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
         let mask_screen_x = ((mask.bbox.x_min() - view.x) * zoom).round() as i32;
         let mask_screen_y = ((mask.bbox.y_min() - view.y) * zoom).round() as i32;
@@ -1158,6 +1165,7 @@ pub(crate) fn render_entities_gpu(
             let dst_y = ((sprite_y - view.y) * zoom) as i32;
 
             let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
+            let sprite_draw_checkpoint = renderer.draw_queue_checkpoint();
 
             // Cheat-teleport hulk-rebuild fade.  When
             // `teleport_counter > 0`, the PC is rendered TWICE: first
@@ -1288,6 +1296,9 @@ pub(crate) fn render_entities_gpu(
                     actor_position,
                 )
             };
+            if !mask_indices.is_empty() {
+                renderer.insert_scene_snapshot(sprite_draw_checkpoint, dst_rect);
+            }
             // When `draw_hidden` is on, the original mutates the
             // temporary sprite surface per mask: masked pixels become
             // transparent, except horizontal transparent/body edges

@@ -94,25 +94,17 @@ fn outline_cache_key(bank_id: u32, variant: SpriteVariant, shadow_color: u16) ->
 
 /// Per-mask static GPU state. The mask's binary `bitmap` is uploaded
 /// once at level load as a single-channel R8 texture; per-frame draws
-/// pair it with the renderer-owned background texture in a 2-texture
+/// pair it with a pre-sprite scene snapshot in a 2-texture
 /// bind group (`bgl_mask_overlay`) and let `shaders/mask_overlay.wgsl`
-/// composite in the fragment stage. Replaces the old
-/// `CachedMaskTexture`, which stored a CPU-pre-composed RGBA copy and
-/// had to be re-uploaded every time `BlitToMap` mutated the bg under it.
+/// restore the occluded pixels in the fragment stage.
 struct MaskAlpha {
     /// Held alive for `view`'s lifetime; not touched directly on draws.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
-    /// Pre-packed `(origin.x, origin.y, extent.x, extent.y)` — what
-    /// `mask_overlay.wgsl` reads from the per-vertex `tint` slot to
-    /// derive the bg sample uv. origin = `bbox_min / bg_size`,
-    /// extent = `mask_size / bg_size`. Computed once at upload to
-    /// keep `render_cached_mask` allocation-free.
-    bg_uv_tint: [f32; 4],
 }
 
 struct BackgroundTexture {
-    view: wgpu::TextureView,
+    _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
@@ -198,6 +190,11 @@ enum TextureRef {
     /// this queue run, then feeds that snapshot to the RGB565 alpha
     /// shader.
     FramebufferAlpha,
+    /// Queue-only pass boundary used by sprite occlusion. Before the
+    /// following sprite is drawn, pass 1 copies the composited render target
+    /// into `alpha_source_texture`; mask overlays then restore that exact
+    /// pre-sprite scene instead of sampling the immutable level background.
+    SceneSnapshot,
     /// View-cone overlay span. Uses the white texture bind group only to
     /// satisfy the shared quad layout; `fs_view_cone_gradient` reads the
     /// interpolated alpha from `uv.x` and the alert colour from `tint.rgb`.
@@ -263,7 +260,7 @@ pub struct Renderer {
     sprite_cache: SpriteTextureCache,
     /// Per-mask occlusion alpha textures (R8). Built once per level
     /// from `RuntimeMask::bitmap`, never re-uploaded per blit — the
-    /// `mask_overlay` pipeline samples the live bg texture at draw time.
+    /// `mask_overlay` pipeline samples a pre-sprite scene snapshot.
     mask_alpha_cache: HashMap<u32, MaskAlpha>,
     /// Level background map as a persistent immutable GPU texture.
     background_texture: Option<BackgroundTexture>,
@@ -313,10 +310,9 @@ pub struct Renderer {
     /// Bind-group layout for `(texture, sampler)` (group 1 in
     /// `shaders/quad.wgsl`).
     bgl_tex: wgpu::BindGroupLayout,
-    /// Bind-group layout for `(mask_alpha, bg_color, sampler)`
+    /// Bind-group layout for `(mask_alpha, scene_color, sampler)`
     /// (group 1 in `shaders/mask_overlay.wgsl`). Mask overlay draws
-    /// build a fresh bind group per call so they can reference the live
-    /// background texture view after rect updates.
+    /// build a fresh bind group per call against `alpha_source_view`.
     bgl_mask_overlay: wgpu::BindGroupLayout,
     /// Cached bind groups for textures we re-use every frame.
     white_bg: wgpu::BindGroup,
@@ -1722,38 +1718,76 @@ impl Renderer {
         );
     }
 
+    fn copy_rt_region_to_alpha_source(&self, encoder: &mut wgpu::CommandEncoder, rect: Rect) {
+        let left = rect.left().max(0).min(self.width as i32);
+        let top = rect.top().max(0).min(self.height as i32);
+        let right = rect.right().max(0).min(self.width as i32);
+        let bottom = rect.bottom().max(0).min(self.height as i32);
+        if left >= right || top >= bottom {
+            return;
+        }
+        let origin = wgpu::Origin3d {
+            x: left as u32,
+            y: top as u32,
+            z: 0,
+        };
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.render_target_texture,
+                mip_level: 0,
+                origin,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.alpha_source_texture,
+                mip_level: 0,
+                origin,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: (right - left) as u32,
+                height: (bottom - top) as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     /// Encode pass 1: queued draws → offscreen render target. Caller
     /// owns the encoder so it can either follow up with pass 2
     /// (`present`) or with a `copy_texture_to_buffer` (screenshot
     /// readback).
     fn encode_pass1_to_rt(&self, encoder: &mut wgpu::CommandEncoder) {
-        let first_framebuffer_alpha = self
-            .queued
-            .iter()
-            .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
-        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
-            self.encode_pass1_range_to_rt(
-                encoder,
-                0,
-                self.queued.len(),
-                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-            );
-            return;
-        };
+        let mut cursor = 0;
+        let mut load = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
+        let mut framebuffer_alpha_snapshotted = false;
 
-        self.encode_pass1_range_to_rt(
-            encoder,
-            0,
-            first_framebuffer_alpha,
-            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-        );
-        self.copy_rt_to_alpha_source(encoder);
-        self.encode_pass1_range_to_rt(
-            encoder,
-            first_framebuffer_alpha,
-            self.queued.len(),
-            wgpu::LoadOp::Load,
-        );
+        loop {
+            let boundary = self.queued[cursor..].iter().position(|draw| {
+                matches!(draw.tex, TextureRef::SceneSnapshot)
+                    || (!framebuffer_alpha_snapshotted
+                        && matches!(draw.tex, TextureRef::FramebufferAlpha))
+            });
+            let Some(relative_boundary) = boundary else {
+                self.encode_pass1_range_to_rt(encoder, cursor, self.queued.len(), load);
+                break;
+            };
+            let boundary = cursor + relative_boundary;
+            self.encode_pass1_range_to_rt(encoder, cursor, boundary, load);
+            load = wgpu::LoadOp::Load;
+
+            match self.queued[boundary].tex {
+                TextureRef::SceneSnapshot => {
+                    self.copy_rt_region_to_alpha_source(encoder, self.queued[boundary].dst);
+                    cursor = boundary + 1;
+                }
+                TextureRef::FramebufferAlpha => {
+                    self.copy_rt_to_alpha_source(encoder);
+                    framebuffer_alpha_snapshotted = true;
+                    cursor = boundary;
+                }
+                _ => unreachable!("pass-1 boundary predicate returned a non-boundary draw"),
+            }
+        }
     }
 
     fn encode_pass1_range_to_rt(
@@ -1797,6 +1831,7 @@ impl Renderer {
         let mut last_frame_idx: Option<u32> = None;
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
+                TextureRef::SceneSnapshot => continue,
                 TextureRef::ColorizeFromFrozen => {
                     if last_pipeline_kind != Some("colorize") {
                         pass.set_pipeline(&self.colorize_pipeline);
@@ -1848,6 +1883,7 @@ impl Renderer {
                 }
             }
             let need_rebind_tex = match d.tex {
+                TextureRef::SceneSnapshot => continue,
                 TextureRef::White => last_tex != Some("white"),
                 TextureRef::FrozenScene => last_tex != Some("frozen"),
                 TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
@@ -1863,6 +1899,7 @@ impl Renderer {
             };
             if need_rebind_tex {
                 match d.tex {
+                    TextureRef::SceneSnapshot => continue,
                     TextureRef::White => {
                         pass.set_bind_group(1, &self.white_bg, &[]);
                         last_tex = Some("white");
@@ -2787,27 +2824,16 @@ impl Renderer {
 
     /// Upload the static binary alpha for a sprite-occlusion mask. Built
     /// once after the background loads and reused for the life of the
-    /// level — replaces the old `upload_mask_texture` which baked
-    /// mask + bg into RGBA on every `BlitToMap` and churned the
-    /// amdgpu GTT pool. The bg is now sampled live by
-    /// `mask_overlay.wgsl` at draw time.
-    ///
-    /// `bbox_min` / `bg_w` / `bg_h` are stored pre-normalised so
-    /// `render_cached_mask` doesn't recompute them per frame; the
-    /// `tint` slot in the queued draw carries
-    /// `(origin.xy, extent.xy)` straight to the shader.
-    #[allow(clippy::too_many_arguments)]
+    /// level. The composited scene beneath each masked sprite is sampled
+    /// from a render-target snapshot, so patch decals remain intact.
     pub fn upload_mask_alpha(
         &mut self,
         mask_index: u32,
         bitmap: &[u8],
         mask_w: u16,
         mask_h: u16,
-        bbox_min: (f32, f32),
-        bg_w: u32,
-        bg_h: u32,
     ) -> bool {
-        if mask_w == 0 || mask_h == 0 || bg_w == 0 || bg_h == 0 {
+        if mask_w == 0 || mask_h == 0 {
             return false;
         }
         let pixels = mask_w as usize * mask_h as usize;
@@ -2856,29 +2882,48 @@ impl Renderer {
             },
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let bg_w_f = bg_w as f32;
-        let bg_h_f = bg_h as f32;
-        let bg_uv_tint = [
-            bbox_min.0 / bg_w_f,
-            bbox_min.1 / bg_h_f,
-            mask_w as f32 / bg_w_f,
-            mask_h as f32 / bg_h_f,
-        ];
         self.mask_alpha_cache.insert(
             mask_index,
             MaskAlpha {
                 _texture: tex,
                 view,
-                bg_uv_tint,
             },
         );
         true
     }
 
+    /// Return a stable insertion point immediately before the next queued
+    /// sprite draw. If that sprite needs occlusion masks, pass the checkpoint
+    /// to [`Self::insert_scene_snapshot`] after resolving the mask list.
+    pub(crate) fn draw_queue_checkpoint(&self) -> usize {
+        self.queued.len()
+    }
+
+    /// Insert a pass boundary before an already-queued masked sprite. Pass 1
+    /// snapshots the scene at this exact point so mask overlays reveal the
+    /// previously composited scene, including dynamic building patches.
+    pub(crate) fn insert_scene_snapshot(&mut self, checkpoint: usize, rect: Rect) {
+        assert!(
+            checkpoint <= self.queued.len(),
+            "scene snapshot checkpoint {checkpoint} exceeds draw queue length {}",
+            self.queued.len()
+        );
+        self.queued.insert(
+            checkpoint,
+            QueuedDraw {
+                dst: rect,
+                corners: None,
+                uv: [0.0, 0.0, 0.0, 0.0],
+                tint: [0.0; 4],
+                tex: TextureRef::SceneSnapshot,
+                blend: BlendMode::None,
+            },
+        );
+    }
+
     /// Queue an occlusion mask clipped to the sprite/marker rectangle
-    /// currently being masked. This mirrors the legacy sprite path, where
-    /// building masks were composited into the sprite's temporary surface
-    /// rather than painted over the whole screen.
+    /// currently being masked. The caller must insert a scene snapshot before
+    /// the masked draw so this restores the exact pixels that preceded it.
     pub fn render_cached_mask_clipped(
         &mut self,
         mask_index: u32,
@@ -2888,19 +2933,21 @@ impl Renderer {
         let Some((vis_dst, vis_uv)) = clip_dst_to_uv(mask_rect, clip_rect) else {
             return true;
         };
-        let (mask_view, bg_uv_tint) = match self.mask_alpha_cache.get(&mask_index) {
-            Some(e) => (e.view.clone(), e.bg_uv_tint),
+        let mask_view = match self.mask_alpha_cache.get(&mask_index) {
+            Some(e) => e.view.clone(),
             None => return false,
         };
-        let bg_view = match self.background_texture.as_ref() {
-            Some(bg) => bg.view.clone(),
-            None => return false,
-        };
+        let scene_uv_tint = [
+            mask_rect.x as f32 / self.width as f32,
+            mask_rect.y as f32 / self.height as f32,
+            mask_rect.w as f32 / self.width as f32,
+            mask_rect.h as f32 / self.height as f32,
+        ];
         let bind_group = make_mask_overlay_bg(
             &self.gpu.device,
             &self.bgl_mask_overlay,
             &mask_view,
-            &bg_view,
+            &self.alpha_source_view,
             &self.sampler,
         );
         let tex_idx = self.queue_cached_bg(bind_group);
@@ -2908,7 +2955,7 @@ impl Renderer {
             dst: vis_dst,
             corners: None,
             uv: vis_uv,
-            tint: bg_uv_tint,
+            tint: scene_uv_tint,
             tex: TextureRef::MaskOverlayFrame(tex_idx),
             blend: BlendMode::Blend,
         });
@@ -3196,7 +3243,7 @@ impl Renderer {
             "background bg",
         );
         self.background_texture = Some(BackgroundTexture {
-            view,
+            _view: view,
             bind_group,
             width,
             height,
