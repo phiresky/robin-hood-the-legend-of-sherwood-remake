@@ -262,6 +262,137 @@ fn map_pc_initial_action(
     }
 }
 
+/// Spawn the animation elements owned by mission-level patches.
+///
+/// The original loader walks mission chunks in file order. Shipped missions
+/// place `PATCH_2` before `ELEMENT`, so these FX entries must occupy script
+/// slots after the proto animations but before every mission actor. Omitting
+/// them shifts all later `GetActorScript` lookups; in ambush missions that
+/// makes startup/arrow-trigger messages hit the wrong soldiers.
+fn spawn_mission_patch_fx_entities(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    patches: &[crate::level_data::RawPatch],
+    patch_index_offset: usize,
+) -> Vec<Option<i32>> {
+    let anim_base_dir = "Data/Animations";
+    let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
+    let bank_signature = assets.bank_signature;
+    let mut handles = Vec::with_capacity(patches.len());
+
+    for (mission_patch_idx, raw) in patches.iter().enumerate() {
+        let patch_idx = patch_index_offset + mission_patch_idx;
+        let fname = &raw.element_fx.sprite.frame_profile_name;
+        let profile = &raw.element_fx.sprite.profile_name;
+
+        if fname.is_empty() {
+            handles.push(None);
+            continue;
+        }
+
+        let mut sprite = crate::sprite::Sprite::default();
+        match crate::sprite_script::SpriteScriptor::resolve_rhs_path(
+            crate::sprite_script::FrameKind::Animation,
+            anim_base_dir,
+            fname,
+            sprite_ambiance,
+        ) {
+            Ok(path) => {
+                let cache_key = format!("{fname}/{profile}");
+                match assets.sprite_scriptor_mut().load(
+                    &path,
+                    profile,
+                    &cache_key,
+                    crate::sprite_script::FrameKind::Animation,
+                    |file| {
+                        let mut sig = 0u32;
+                        file.serialize_u32(&mut sig)
+                            .map_err(|e| format!("read signature: {e}"))?;
+                        if sig != bank_signature {
+                            return Err(format!(
+                                "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
+                            ));
+                        }
+                        Ok(())
+                    },
+                ) {
+                    Ok(info) => {
+                        sprite.scripts = info.scripts.clone();
+                        sprite.conversion = info.conversion.clone();
+                        sprite.frame_profile_name = fname.clone();
+                        sprite.profile_cache_key = cache_key;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to load sprite for mission patch {patch_idx} animation \
+                             '{fname}' profile '{profile}': {e}"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to resolve RHS path for mission patch {patch_idx} animation \
+                     '{fname}': {e}"
+                );
+            }
+        }
+
+        let initially_active = raw.start_animation_valid;
+        sprite.apply_placement(
+            MapPoint::new(
+                raw.element_fx.sprite.position_x as f32,
+                raw.element_fx.sprite.position_y as f32,
+            ),
+            0,
+            None,
+            0,
+            crate::element::GameMaterial::default(),
+            None,
+            None,
+        );
+        if initially_active {
+            if let Some(row) = sprite.row_for_action(crate::order::OrderType::PATCH_INITIAL) {
+                sprite.current_row = row;
+            }
+            sprite.current_frame = 0;
+            sprite.frame_count = 0;
+        }
+
+        let entity = crate::element::Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: initially_active,
+                sprite,
+                ..Default::default()
+            },
+            fx: crate::element::FxData {
+                restore_background: raw.integrate_in_background,
+                force_display: raw.element_fx.force_display,
+                animation: crate::order::OrderType::NonanimationEnd,
+                display_polyline: raw
+                    .element_fx
+                    .display_polyline
+                    .iter()
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+                    .collect(),
+                patch_index: crate::patch::PatchIndex::new(patch_idx as u32),
+                mobile_index: None,
+                animation_speed: 1.0,
+                rendering_properties: if raw.element_fx.blit_type != 0 {
+                    crate::element::RenderingProperties::NeedShadow
+                } else {
+                    crate::element::RenderingProperties::Blocky
+                },
+            },
+        });
+        let id = engine.add_entity(entity);
+        handles.push(Some(crate::natives::GameHost::actor_handle(id)));
+    }
+
+    handles
+}
+
 impl EngineInner {
     // ─── Accessory sprite hydration ──────────────────────────────
 
@@ -1299,15 +1430,16 @@ impl EngineInner {
         // visible at mission start.
         //
         // Load order:
-        //   1. Proto FX animations  (loaded before mission file)
-        //   2. Mission ELEMENT chunk sub-chunks in file order:
+        //   1. Proto patch FX + animation FX  (loaded before mission file)
+        //   2. Mission PATCH_2 FX  (shipped files place it before ELEMENT)
+        //   3. Mission ELEMENT chunk sub-chunks in file order:
         //        BETE animals (skipped) → GOOD beam-mes (no script entry) →
         //        CIVI civilians → PRIS PCs-to-rescue → EVIL soldiers → TGET targets
-        //   3. BONU bonuses
-        //   4. PARC scrolls
-        //   5. GUYS tenants  (not ported as entities — see note below;
+        //   4. BONU bonuses
+        //   5. PARC scrolls
+        //   6. GUYS tenants  (not ported as entities — see note below;
         //                      `InitOccupant` consumes GUYS already)
-        //   6. PCs from beam-mes  (one slot per beam-me, NULL if unfilled)
+        //   7. PCs from beam-mes  (one slot per beam-me, NULL if unfilled)
         //
         // Some types (PRIS, GUYS) are not yet spawned; we push None placeholders
         // for them so the script-position-to-entity-index mapping stays aligned.
@@ -1542,6 +1674,22 @@ impl EngineInner {
         }
 
         progress(1.0);
+
+        // Mission PATCH_2 precedes ELEMENT in shipped mission streams. The
+        // patch animations therefore belong here in the flat script-element
+        // array, between proto FX and mission actors (RHengine.cpp's mission
+        // chunk loop calls InitializePatchFromProtoStream immediately).
+        let mission_patch_handles = spawn_mission_patch_fx_entities(
+            self,
+            assets,
+            &loaded.mission.mission_patches,
+            loaded.proto.patches.len(),
+        );
+        std::sync::Arc::make_mut(&mut assets.patch_entity_handles).extend(mission_patch_handles);
+        tracing::info!(
+            "Spawned {} mission patch FX entities",
+            loaded.mission.mission_patches.len(),
+        );
 
         // Every freshly-constructed NPC (soldier or civilian, regardless
         // of camp) seeds `invulnerable` from the global highlander2
@@ -5460,7 +5608,13 @@ impl EngineInner {
         );
 
         // ── Patches ──
-        for (patch_idx, raw) in loaded.proto.patches.iter().enumerate() {
+        for (patch_idx, raw) in loaded
+            .proto
+            .patches
+            .iter()
+            .chain(&loaded.mission.mission_patches)
+            .enumerate()
+        {
             // Copy sight obstacle indices directly — they index into
             // EngineInner::sight_obstacles which is loaded from the same proto.
             let old_sight: Vec<crate::sight_obstacle::SightObstacleIndex> = raw
@@ -5688,7 +5842,13 @@ impl EngineInner {
         // and `Patch::door_indices` on `triggers_door`.
         let mut door_triggered_count = 0_usize;
         let mut triggers_door_count = 0_usize;
-        for (patch_idx, raw) in loaded.proto.patches.iter().enumerate() {
+        for (patch_idx, raw) in loaded
+            .proto
+            .patches
+            .iter()
+            .chain(&loaded.mission.mission_patches)
+            .enumerate()
+        {
             let patch_door_indices: Vec<u32> = raw
                 .door_indices
                 .iter()

@@ -4,9 +4,9 @@
 //! "script element" array. That array is the flat concatenation
 //! (per [`engine/level_loading.rs`](../../robin_engine/src/engine/level_loading.rs)):
 //! proto-level patch FX (only those with a non-empty frame profile),
-//! proto-level animation FX, civilians, PCs-to-rescue, soldiers, targets,
-//! bonuses, scrolls. `GetPatchScript(N)` indexes directly into
-//! `LoadedProtoLevel.patches`.
+//! proto-level animation FX, mission-level patch FX, civilians,
+//! PCs-to-rescue, soldiers, targets, bonuses, scrolls.
+//! `GetPatchScript(N)` indexes the concatenated proto + mission patches.
 //!
 //! We load a datadir via the engine's normal loader path (`load_level`
 //! + `ProfileManager`) and walk the resulting structs. Names come from:
@@ -339,8 +339,9 @@ fn load_profile_manager(datadir: &Path) -> Result<ProfileManager, LoadError> {
 fn build_names(loaded: &LoadedLevel, profiles: &ProfileManager) -> ActorNames {
     let mut slots = Slots::default();
 
-    push_patch_fx_slots(&loaded.proto, &mut slots);
+    push_patch_fx_slots(&loaded.proto.patches, &mut slots);
     push_animation_slots(&loaded.proto, &mut slots);
+    push_patch_fx_slots(&loaded.mission.mission_patches, &mut slots);
     push_civilians(&loaded.mission, profiles, &mut slots);
     push_pcs_to_rescue(&loaded.mission, profiles, &mut slots);
     push_soldiers(&loaded.mission, profiles, &mut slots);
@@ -348,7 +349,13 @@ fn build_names(loaded: &LoadedLevel, profiles: &ProfileManager) -> ActorNames {
     push_bonuses(&loaded.mission, &mut slots);
     push_scrolls(&loaded.mission, &mut slots);
 
-    let patches = collect_patch_names(&loaded.proto);
+    let patches = collect_patch_names(
+        loaded
+            .proto
+            .patches
+            .iter()
+            .chain(&loaded.mission.mission_patches),
+    );
     let class_kinds = collect_class_kinds(&loaded.mission);
 
     ActorNames {
@@ -431,9 +438,9 @@ fn collect_class_kinds(mission: &LoadedMission) -> HashMap<String, ScriptKind> {
     out
 }
 
-fn push_patch_fx_slots(proto: &LoadedProtoLevel, slots: &mut Slots) {
+fn push_patch_fx_slots(patches: &[robin_engine::level_data::RawPatch], slots: &mut Slots) {
     // Only patches with a non-empty frame profile spawn a script-element.
-    for patch in &proto.patches {
+    for patch in patches {
         if patch.element_fx.sprite.frame_profile_name.is_empty() {
             continue;
         }
@@ -548,10 +555,12 @@ fn pick_base_name(script_class: Option<&str>, fallback: Option<String>) -> Optio
         .filter(|s| !s.is_empty())
 }
 
-fn collect_patch_names(proto: &LoadedProtoLevel) -> Vec<Option<String>> {
-    let mut out = Vec::with_capacity(proto.patches.len());
+fn collect_patch_names<'a>(
+    patches: impl Iterator<Item = &'a robin_engine::level_data::RawPatch>,
+) -> Vec<Option<String>> {
+    let mut out = Vec::new();
     let mut used: HashMap<String, usize> = HashMap::new();
-    for patch in &proto.patches {
+    for patch in patches {
         let profile = &patch.element_fx.sprite.profile_name;
         let base = sanitize_identifier(profile);
         if base.is_empty() {
