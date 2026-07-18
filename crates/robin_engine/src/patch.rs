@@ -195,7 +195,12 @@ pub struct Patch {
     pub in_transition: bool,
     /// Whether the patch is locked (cannot be triggered).
     pub locked: bool,
-    /// Whether doors associated with this patch should be displayed.
+    /// Host-derived cursor/render cache: whether associated doors should be
+    /// highlighted for the current local selection. This is deliberately not
+    /// save, rollback, or state-hash data because each multiplayer peer owns
+    /// its own cursor and selection presentation.
+    #[serde(skip, default)]
+    #[state_hash(skip)]
     pub display_doors: bool,
     /// Actors currently inside this patch's sector.
     pub occupants: Vec<OccupantId>,
@@ -759,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip() {
+    fn serde_roundtrip_preserves_simulation_state_but_not_render_cache() {
         let mut p = active_patch_with_animations();
         p.applied = true;
         p.locked = true;
@@ -771,16 +776,39 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let p2: Patch = serde_json::from_str(&json).unwrap();
 
-        // All fields preserved by full round-trip.
+        // Deterministic patch state survives, while the local cursor-derived
+        // door highlight is rebuilt by the host after restore.
         assert_eq!(p2.active, p.active);
         assert_eq!(p2.applied, p.applied);
         assert_eq!(p2.in_transition, p.in_transition);
         assert_eq!(p2.locked, p.locked);
-        assert_eq!(p2.display_doors, p.display_doors);
+        assert!(!p2.display_doors);
         assert_eq!(p2.occupants, p.occupants);
         assert_eq!(p2.definitive, p.definitive);
         assert_eq!(p2.animated, p.animated);
         assert_eq!(p2.layer, p.layer);
         assert_eq!(p2.sector, p.sector);
+    }
+
+    #[test]
+    fn display_doors_is_not_serialized_or_hashed() {
+        let mut hidden = active_patch();
+        let mut highlighted = hidden.clone();
+        highlighted.display_doors = true;
+
+        assert_eq!(
+            robin_util::state_hash::compute(&hidden),
+            robin_util::state_hash::compute(&highlighted),
+        );
+
+        let json = serde_json::to_value(&highlighted).expect("serialize patch");
+        assert!(json.get("display_doors").is_none());
+
+        // Historical JSON saves may still carry the old field. Serde ignores
+        // it and the host reconstructs the cache from the local selection.
+        let mut legacy = json;
+        legacy["display_doors"] = serde_json::Value::Bool(true);
+        hidden = serde_json::from_value(legacy).expect("load legacy patch save");
+        assert!(!hidden.display_doors);
     }
 }

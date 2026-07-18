@@ -602,9 +602,9 @@ impl Engine {
 
     /// Refresh render-only patch door highlight flags.
     ///
-    /// `GameHost.patches` is intentionally outside the rollback hash,
-    /// so this is allowed from the cursor/render path. Sim-visible
-    /// mouse effects must still travel through `PlayerCommand`.
+    /// `Patch::display_doors` is intentionally outside serialization and the
+    /// rollback hash, so this is allowed from the cursor/render path.
+    /// Sim-visible mouse effects must still travel through `PlayerCommand`.
     pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
         self.inner
             .refresh_selected_patch_display_doors(selected_patch_idx);

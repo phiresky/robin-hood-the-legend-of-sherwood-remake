@@ -87,8 +87,8 @@ pub(crate) struct ScrollState {
 
 /// Engine-owned deterministic state shared with mission-script natives.
 ///
-/// `ScriptSession` keeps this value in `EngineInner` and lends each native
-/// resume a typed mutable borrow. It is never copied or parked in `GameHost`.
+/// `EngineInner` lends each native resume a typed mutable borrow. It is never
+/// copied or parked in `GameHost`.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 /// Canonical deterministic state shared by the engine and script natives.
 ///
