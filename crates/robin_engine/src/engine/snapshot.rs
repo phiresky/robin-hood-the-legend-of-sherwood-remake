@@ -179,15 +179,45 @@ impl<'de> Deserialize<'de> for EngineInner {
         let legacy_script_domains = mission_script
             .as_mut()
             .and_then(super::MissionScript::take_legacy_script_domains);
-        let mut script_domains = match (snapshot.script_domains, legacy_script_domains) {
-            (Some(_), Some(_)) => {
-                return Err(serde::de::Error::custom(
-                    "Engine snapshot contains contradictory new and legacy script domains",
-                ));
+        let mut script_domains = snapshot.script_domains.unwrap_or_default();
+        if let Some(legacy) = legacy_script_domains {
+            if let Some(buildings) = legacy.buildings {
+                let current = &script_domains.buildings;
+                if !current.occupants.is_empty()
+                    || !current.arrow_reserves.is_empty()
+                    || !current.actor_building.is_empty()
+                    || !current.active.is_empty()
+                    || !current.gates.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy building state",
+                    ));
+                }
+                script_domains.buildings = buildings;
             }
-            (Some(domains), None) | (None, Some(domains)) => domains,
-            (None, None) => super::state::ScriptDomains::default(),
-        };
+            if let Some(interactables) = legacy.interactables {
+                if !script_domains.interactables.doors.is_empty()
+                    || !script_domains.interactables.patches.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy interactable state",
+                    ));
+                }
+                script_domains.interactables = interactables;
+            }
+            if let Some(scrolls) = legacy.scrolls {
+                let current = &script_domains.scrolls;
+                if !current.status.is_empty()
+                    || !current.attachments.is_empty()
+                    || !current.attachment_dirty.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy scroll state",
+                    ));
+                }
+                script_domains.scrolls = scrolls;
+            }
+        }
         if let Some(legacy_zones) = snapshot.script_zone_data {
             if !script_domains.zones.scripts.is_empty() {
                 return Err(serde::de::Error::custom(

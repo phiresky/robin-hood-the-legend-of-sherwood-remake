@@ -3443,16 +3443,14 @@ mod script_context_tests {
             });
 
         let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        let domains = snapshot["script_domains"]
-            .take()
+        let interactables = snapshot["script_domains"]["interactables"]
             .as_object()
             .cloned()
-            .expect("current engine domains");
-        let interactables = domains["interactables"]
-            .as_object()
             .expect("current interactable domain");
         snapshot["mission_script"]["game_host"]["doors"] = interactables["doors"].clone();
         snapshot["mission_script"]["game_host"]["patches"] = interactables["patches"].clone();
+        snapshot["script_domains"]["interactables"]["doors"] = serde_json::json!([]);
+        snapshot["script_domains"]["interactables"]["patches"] = serde_json::json!([]);
 
         let restored: EngineInner =
             serde_json::from_value(snapshot).expect("normalize legacy interactables");

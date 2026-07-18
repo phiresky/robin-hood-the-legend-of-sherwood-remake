@@ -1082,10 +1082,11 @@ pub struct MissionScript {
     /// the campaign is back on `EngineInner` and this is `None`.
     #[state_hash(skip)]
     campaign_lease: Option<CampaignIdentity>,
-    /// Domains recovered from a pre-Wave-6 GameHost snapshot. Consumed once
-    /// by the outer Engine snapshot deserializer.
+    /// Domains recovered from a pre-Wave-6 GameHost snapshot. Each optional
+    /// domain is consumed once by the outer Engine snapshot deserializer and
+    /// merged with the already-migrated domains from the same save.
     #[state_hash(skip)]
-    legacy_script_domains_present: bool,
+    legacy_script_domains: Option<LegacyScriptDomains>,
 }
 
 const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 3;
@@ -1178,6 +1179,19 @@ struct CompatibleGameHost {
 pub(crate) struct LegacyScriptCustomValues {
     pub campaign: BTreeMap<i32, i32>,
     pub npc: BTreeMap<(i32, i32), i32>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct LegacyScriptDomains {
+    pub(crate) buildings: Option<super::state::BuildingState>,
+    pub(crate) interactables: Option<super::state::InteractableState>,
+    pub(crate) scrolls: Option<super::state::ScrollState>,
+}
+
+impl LegacyScriptDomains {
+    fn is_empty(&self) -> bool {
+        self.buildings.is_none() && self.interactables.is_none() && self.scrolls.is_none()
+    }
 }
 
 #[derive(Deserialize)]
@@ -1347,16 +1361,11 @@ impl<'de> Deserialize<'de> for MissionScript {
         let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
         let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
         let legacy_interactables = snapshot.game_host.legacy_interactables::<D::Error>()?;
-        let mut game_host = snapshot.game_host.current;
-        if let Some(scrolls) = legacy_scrolls.clone() {
-            game_host.engine_domains.scrolls = scrolls;
-        }
-        if let Some(buildings) = legacy_buildings.clone() {
-            game_host.engine_domains.buildings = buildings;
-        }
-        if let Some(interactables) = legacy_interactables.clone() {
-            game_host.engine_domains.interactables = interactables;
-        }
+        let legacy_script_domains = LegacyScriptDomains {
+            buildings: legacy_buildings,
+            interactables: legacy_interactables,
+            scrolls: legacy_scrolls,
+        };
 
         Ok(Self {
             script_name: snapshot.script_name,
@@ -1372,7 +1381,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                 (!campaign.is_empty() || !npc.is_empty())
                     .then_some(LegacyScriptCustomValues { campaign, npc })
             },
-            game_host,
+            game_host: snapshot.game_host.current,
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
             zone_instances: snapshot.zone_instances,
@@ -1381,9 +1390,8 @@ impl<'de> Deserialize<'de> for MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
             campaign_lease: None,
-            legacy_script_domains_present: legacy_scrolls.is_some()
-                || legacy_buildings.is_some()
-                || legacy_interactables.is_some(),
+            legacy_script_domains: (!legacy_script_domains.is_empty())
+                .then_some(legacy_script_domains),
         })
     }
 }
@@ -1507,11 +1515,8 @@ impl std::fmt::Debug for MissionScript {
 }
 
 impl MissionScript {
-    pub(crate) fn take_legacy_script_domains(&mut self) -> Option<super::state::ScriptDomains> {
-        if !std::mem::take(&mut self.legacy_script_domains_present) {
-            return None;
-        }
-        Some(std::mem::take(&mut self.game_host.engine_domains))
+    pub(crate) fn take_legacy_script_domains(&mut self) -> Option<LegacyScriptDomains> {
+        self.legacy_script_domains.take()
     }
 
     /// Build a [`MissionScript`] from an already-parsed `.scb` payload.
@@ -1547,7 +1552,7 @@ impl MissionScript {
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
             campaign_lease: None,
-            legacy_script_domains_present: false,
+            legacy_script_domains: None,
         })
     }
 
