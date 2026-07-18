@@ -4,11 +4,14 @@
 //! it has finalized the deterministic command stream. No presentation borrow
 //! escapes the phase or crosses into simulation.
 
+use super::event_hud::{
+    CollectedFrameInput, EventHudContext, EventHudOutcome, collect_event_and_hud_input,
+};
 use super::flow::{FrameControl, MissionExit, MissionServices};
 use super::interactive::MissionInput;
+use super::live_gameplay::{LiveGameplayContext, LiveGameplayInput, drive_live_gameplay_input};
 use super::runtime::FrameContractStage;
 use super::*;
-use crate::game::Game;
 
 /// Values produced by graphical network ingress at the frame boundary.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -242,131 +245,6 @@ fn apply_post_save_ui_state(
         // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
         // MT_MSG_GAME_LOADED once the localized text ownership is explicit.
         game.display_message(text.to_string(), 100);
-    }
-}
-
-/// Physical step-key state admitted by the input phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct StepShortcutInput {
-    now_ms: u32,
-    forward_held: bool,
-    forward_hit: bool,
-    back_held: bool,
-    back_hit: bool,
-    backspace_held: bool,
-    unpause_hit: bool,
-    gated: bool,
-}
-
-/// Step commands and manual-pause update produced from one key sample.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct StepShortcutOutput {
-    forward: bool,
-    back: bool,
-    manual_pause: Option<bool>,
-}
-
-/// Apply the debug-step edge/repeat policy without borrowing mission state.
-fn plan_step_shortcuts(
-    input: StepShortcutInput,
-    forward_repeat_at_ms: &mut Option<u32>,
-    back_repeat_at_ms: &mut Option<u32>,
-) -> StepShortcutOutput {
-    const INITIAL_DELAY_MS: u32 = 160;
-    const REPEAT_INTERVAL_MS: u32 = 40;
-
-    let repeat = |held: bool, hit: bool, repeat_at_ms: &mut Option<u32>| -> bool {
-        if !held {
-            *repeat_at_ms = None;
-            return false;
-        }
-        if hit {
-            *repeat_at_ms = Some(input.now_ms.saturating_add(INITIAL_DELAY_MS));
-            return true;
-        }
-        if let Some(next_ms) = *repeat_at_ms
-            && input.now_ms >= next_ms
-        {
-            *repeat_at_ms = Some(input.now_ms.saturating_add(REPEAT_INTERVAL_MS));
-            return true;
-        }
-        false
-    };
-
-    let forward = repeat(input.forward_held, input.forward_hit, forward_repeat_at_ms);
-    let back = repeat(input.back_held, input.back_hit, back_repeat_at_ms) || input.backspace_held;
-    if input.gated {
-        return StepShortcutOutput {
-            forward: false,
-            back: false,
-            manual_pause: None,
-        };
-    }
-    let manual_pause = if input.unpause_hit {
-        Some(false)
-    } else if forward || back {
-        Some(true)
-    } else {
-        None
-    };
-    StepShortcutOutput {
-        forward,
-        back,
-        manual_pause,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct InputModifiers {
-    ctrl: bool,
-    shift: bool,
-    alt: bool,
-}
-
-fn input_modifiers(keys: &std::collections::BTreeSet<winit::keyboard::KeyCode>) -> InputModifiers {
-    use winit::keyboard::KeyCode;
-    InputModifiers {
-        ctrl: keys.contains(&KeyCode::ControlLeft) || keys.contains(&KeyCode::ControlRight),
-        shift: keys.contains(&KeyCode::ShiftLeft) || keys.contains(&KeyCode::ShiftRight),
-        alt: keys.contains(&KeyCode::AltLeft) || keys.contains(&KeyCode::AltRight),
-    }
-}
-
-/// Apply only logical resolution changes. Ordinary WM resizes reconfigure the
-/// swapchain but deliberately leave the fixed logical game resolution alone.
-fn apply_frame_resizes(
-    events: &[GameEvent],
-    window: &mut GameWindow,
-    host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
-    assets: &robin_engine::engine::LevelAssets,
-    input: &mut MissionInput,
-    hud: &mut super::interactive::MissionHud,
-    presentation: &mut super::interactive::MissionPresentation,
-    frame: &mut MissionFrame,
-) {
-    for event in events {
-        let GameEvent::Resized(new_w, new_h) = *event else {
-            continue;
-        };
-        presentation.renderer.configure_surface_size(new_w, new_h);
-        if !matches!((new_w, new_h), (640, 480) | (800, 600) | (1024, 768)) {
-            continue;
-        }
-        let w = new_w as f32;
-        let h = new_h as f32;
-        window.set_logical_size(new_w, new_h);
-        host.viewport.set_screen_size(w, h);
-        presentation.renderer.resize(new_w as u16, new_h as u16);
-        input.resize(new_w, new_h, &host.key_config);
-        if host.minimap_corner_size.x > 0.0 {
-            let cmd = PlayerCommand::MinimapResize {
-                base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
-                corner_size: host.minimap_corner_size,
-            };
-            dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
-        }
-        hud.resize(new_w, new_h);
     }
 }
 
@@ -714,476 +592,6 @@ fn dispatch_pre_tick_pointer_commands(
     }
 }
 
-/// Dispatch simulation-affecting keyboard, pause-menu, and mouse input. The
-/// caller admits this phase only when replay and rewind are inactive.
-#[allow(clippy::too_many_arguments)]
-async fn drive_live_gameplay_input(
-    host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
-    game: &mut Game,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &mut robin_engine::engine::DevState,
-    callbacks: &mut RustCallbacks,
-    window: &mut GameWindow,
-    presentation: &mut super::interactive::MissionPresentation,
-    resources: &mut super::interactive::MissionResources,
-    audio: &mut super::interactive::MissionAudio,
-    input: &mut MissionInput,
-    ui: &mut super::interactive::MissionUi,
-    hud: &mut super::interactive::MissionHud,
-    frame: &mut MissionFrame,
-    events: &[GameEvent],
-    keyboard_actions: &[GameAction],
-    mouse_actions: &[GameAction],
-    minimap_toggle_pressed: bool,
-    modifiers: InputModifiers,
-    pause_closed_this_frame: &mut bool,
-) -> HandlerAction {
-    let InputModifiers {
-        ctrl: ctrl_held,
-        shift: shift_held,
-        alt: _,
-    } = modifiers;
-    let kb_actions = keyboard_actions;
-    // Minimap accelerator key.
-    // Suppressed while the console or pause menu has focus so the
-    // toggle can't fire underneath modal UI.
-    if minimap_toggle_pressed && !ui.console_overlay.is_visible() && ui.pause_menu.is_none() {
-        let cmd = PlayerCommand::MinimapToggle;
-        dispatch_local_command(
-            host,
-            &mut manager.engine,
-            &mut frame.commands,
-            &assets,
-            &cmd,
-        );
-    }
-
-    for action in kb_actions.iter().chain(mouse_actions.iter()) {
-        // Console captures every other action while it has focus.
-        if ui.console_overlay.is_visible() {
-            continue;
-        }
-        match action {
-            GameAction::DisplayConsole => {
-                // Already handled above — swallow so we don't
-                // hit the catch-all below.
-            }
-            GameAction::DisplayInfo => {
-                // Toggle the host flag — the per-frame debug
-                // overlay presentation.renderer polls `host.info_displayed`
-                // to decide whether to draw FPS / mission
-                // clock / music-mode bars.
-                host.info_displayed = !host.info_displayed;
-                tracing::debug!("DisplayInfo toggled: {}", host.info_displayed);
-            }
-            GameAction::DisplayMenu => {
-                if ui.pause_menu.is_some() {
-                    debug_assert!(ui.close_pause(input, presentation));
-                    *pause_closed_this_frame = true;
-                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    // Resume play-time recording after the
-                    // modal closes.
-                    callbacks.start_play_time();
-                } else {
-                    // Suspend play-time recording before
-                    // opening the modal so `MissionLength`
-                    // doesn't count wall-clock spent in the
-                    // pause menu.
-                    callbacks.suspend_play_time();
-                    if let Some(resources) = resources.menu.as_ref() {
-                        ui.pause_menu = Some(PauseMenu::new(resources, ui.restart_allowed));
-                    } else {
-                        // Retry the resource load in case a transient presentation.renderer state
-                        // prevented mission-start initialization. A pause menu still
-                        // requires the real resources after this retry.
-                        let fallback = IngameMenuResources::new(
-                            &mut presentation.renderer,
-                            host.shipping.as_deref(),
-                        );
-                        let res = required_menu_resources(
-                            &fallback,
-                            "opening the pause menu after resource reload",
-                        );
-                        ui.pause_menu = Some(PauseMenu::new(res, ui.restart_allowed));
-                        resources.menu = fallback;
-                    }
-                    if ui.pause_menu.is_some() {
-                        // Freeze the current screen so the
-                        // pause-menu backdrop composites over
-                        // a still frame instead of the live
-                        // engine output.  Idempotent; the
-                        // symmetric close-branch above calls
-                        // `clear_frozen_scene`.
-                        presentation.renderer.freeze_scene_for_modal();
-                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
-                    }
-                }
-            }
-            _ if ui.pause_menu.is_some() || *pause_closed_this_frame => {
-                // Skip all other game actions while paused
-                // and for the remainder of the frame if pause
-                // was toggled off this frame, so actions
-                // queued during pause don't fire the instant
-                // the game resumes.
-            }
-            _ => {
-                match action {
-                    GameAction::SlowMotion => {
-                        // Toggle the slow-motion pacing flag.
-                        // The frame-pacing block multiplies
-                        // the 40 ms frame target by 10 when
-                        // set.  Pure host-side, not sim state.
-                        host.slow_motion = !host.slow_motion;
-                    }
-                    GameAction::SwitchMaskedDisplay => {
-                        // Toggle the "draw hidden" debug view.
-                        // This is per-seat presentation state;
-                        // script-visible outline display
-                        // changes still come from sim-side
-                        // `SetOutlineDisplay` commands.
-                        host.input.draw_hidden = !host.input.draw_hidden;
-                    }
-                    // Scroll{Up,Down,Left,Right} and Zoom{In,Out}
-                    // are handled by the always-on view-only
-                    // input pass at the top of the frame so
-                    // they work during replay/rewind.
-                    GameAction::ScrollUp
-                    | GameAction::ScrollDown
-                    | GameAction::ScrollLeft
-                    | GameAction::ScrollRight
-                    | GameAction::ZoomIn
-                    | GameAction::ZoomOut => {}
-                    GameAction::SelectAll => {
-                        let cmd = PlayerCommand::SelectAllPcs;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                    }
-                    GameAction::UnselectAll => {
-                        let cmd = PlayerCommand::UnselectAllPcs;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                    }
-                    GameAction::SelectAction { index } => {
-                        let selected = manager.engine.seat_selection(host.local_seat);
-                        if selected.len() == 1 {
-                            let pc_id = selected[0];
-                            let cmd = PlayerCommand::SelectAction {
-                                pc_id,
-                                action_index: *index as u32,
-                            };
-                            dispatch_local_command(
-                                host,
-                                &mut manager.engine,
-                                &mut frame.commands,
-                                &assets,
-                                &cmd,
-                            );
-                        }
-                    }
-                    GameAction::SelectCharacter { portrait_index } => {
-                        let idx = *portrait_index as usize;
-                        let cmd = if ctrl_held {
-                            PlayerCommand::AssignQuickGroup { index: idx as u8 }
-                        } else {
-                            let has_group =
-                                idx < 9 && !manager.engine.quick_select_group(idx).is_empty();
-                            if has_group {
-                                PlayerCommand::RecallQuickGroup { index: idx as u8 }
-                            } else {
-                                PlayerCommand::SelectByPortrait {
-                                    portrait_index: *portrait_index as u32,
-                                    append: false,
-                                }
-                            }
-                        };
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                    }
-                    GameAction::QuickSave => {
-                        // F9 (default binding).  The quick-
-                        // save request rotates the previous
-                        // QuickSave to ExQuickSave before
-                        // writing — distinct from the generic
-                        // `LevelSave` state-machine path.
-                        //
-                        // Defer the save until any active zoom
-                        // finishes so the mid-zoom background
-                        // isn't captured.
-                        if !manager.engine.is_zoom_possible(&host.engine_display) {
-                            game.quick_save_after_zoom = true;
-                        } else {
-                            let campaign = manager.engine.campaign();
-                            let mission_id = current_mission_id(campaign, &assets.profile_manager);
-                            callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
-                        }
-                    }
-                    GameAction::QuickLoad => {
-                        // F12 (default binding).  Loads the
-                        // quick-save slot into the current
-                        // engine, with a zoom-defer gate and a
-                        // Shift+F12 → backup (ExQuickSave)
-                        // shortcut.  The cross-mission
-                        // confirmation modal is handled by
-                        // `confirm_quickload_cross_mission`
-                        // running before the per-frame
-                        // `perform_pending_save_load` flush —
-                        // it either drops the queued request
-                        // (No) or rewrites it to
-                        // `SaveLoadRequest::Load` so the
-                        // cross-mission `PendingLevelLoad`
-                        // routing performs the mission swap
-                        // (Yes).
-                        if !manager.engine.is_zoom_possible(&host.engine_display) {
-                            game.quick_load_after_zoom = true;
-                        } else {
-                            callbacks.pending = Some(SaveLoadRequest::QuickLoad {
-                                use_backup: shift_held,
-                            });
-                        }
-                    }
-                    GameAction::CrouchDown => {
-                        // Prime the crouch-down focus latch
-                        // before issuing the command so the
-                        // down-arrow "pressed" overlay
-                        // appears for the full transition.
-                        // Snapshot the pre-command stature so
-                        // the latch clears the first frame
-                        // posture shifts.
-                        let pre = manager.engine.retrieve_stature(None);
-                        let cmd = PlayerCommand::CrouchDown;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                        game.stature_focus.latch_crouch_down(pre);
-                    }
-                    GameAction::StandUp => {
-                        // Companion of CrouchDown above —
-                        // primes the stand-up focus latch so
-                        // the up-arrow holds pressed while
-                        // the sim runs the stand-up animation.
-                        let pre = manager.engine.retrieve_stature(None);
-                        let cmd = PlayerCommand::StandUp;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                        game.stature_focus.latch_stand_up(pre);
-                    }
-                    GameAction::KeyControl => {
-                        // Save the current action on every
-                        // selected PC.  Used by the
-                        // "move during action" modifier so
-                        // ctrl-release can restore the action.
-                        let cmd = PlayerCommand::KeyControl;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                    }
-                    GameAction::KeyReleaseControl => {
-                        // Restore each selected PC's saved
-                        // action on ctrl-up.  The handler
-                        // honours the macOS carve-out via
-                        // `cfg(target_os = "macos")`.
-                        let cmd = PlayerCommand::KeyReleaseControl;
-                        dispatch_local_command(
-                            host,
-                            &mut manager.engine,
-                            &mut frame.commands,
-                            &assets,
-                            &cmd,
-                        );
-                    }
-                    GameAction::SwitchTask => {
-                        // Emit a reset-input so held-key edges
-                        // caught during an Alt+Tab / Ctrl+Esc
-                        // task switch don't re-fire in-game
-                        // when focus returns.  Route through
-                        // the engine messenger so the drain
-                        // handler applies the reset
-                        // symmetrically with the hide-console
-                        // path.
-                        manager
-                            .engine
-                            .send_simple_message(engine_messenger::SimpleMessage::SwitchTask);
-                    }
-                    GameAction::Teleport => {
-                        // F7 cheat — teleport every selected
-                        // PC to the current mouse map point.
-                        let mouse_screen = input.threaded.position();
-                        if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {
-                            if !manager.engine.seat_selection(host.local_seat).is_empty() {
-                                // Resolve destination sector/layer
-                                // via `get_sector_screen_accessible`
-                                // and bail when it returns None.
-                                // Doors / motion obstacles / empty
-                                // cells are rejected up front rather
-                                // than going through as the topmost
-                                // hit.
-                                let accessible = manager
-                                    .engine
-                                    .fast_grid()
-                                    .get_sector_screen_accessible(mouse_map);
-                                if let Some(sector_idx) = accessible.sector_idx {
-                                    let cmd = PlayerCommand::TeleportSelectedToPoint {
-                                        dest: mouse_map,
-                                        layer: accessible.layer,
-                                        sector: u16::try_from(u32::from(sector_idx))
-                                            .ok()
-                                            .and_then(engine_position_interface::SectorHandle::new),
-                                    };
-                                    dispatch_local_command(
-                                        host,
-                                        &mut manager.engine,
-                                        &mut frame.commands,
-                                        &assets,
-                                        &cmd,
-                                    );
-                                }
-                            } else if dev.debug.free_shadow_polygon {
-                                // With no PCs selected and the
-                                // shadow-polygon dev cheat on,
-                                // reposition the free-floating
-                                // shadow-polygon viewer at the
-                                // mouse map point, 45 units
-                                // above the impact surface.
-                                // Non-sim dev state, handled
-                                // host-side outside the replay
-                                // pipeline.
-                                let p3d = manager.engine.fast_grid().convert_2d_to_3d(
-                                    mouse_map,
-                                    engine_sight_obstacle::SIGHTOBSTACLE_MOUSE,
-                                    manager.engine.sight_obstacles(&assets),
-                                );
-                                dev.cheat_free_shadow_polygon_pos =
-                                    Some(engine_coordinates::WorldPoint3D {
-                                        x: p3d.x,
-                                        y: p3d.y,
-                                        z: p3d.z + 45.0,
-                                    });
-                            }
-                        }
-                    }
-                    GameAction::RecordQa => {
-                        // F5 (default binding) — replay the
-                        // corner-clock left-click behaviour:
-                        // start / cycle the macro slot for
-                        // the currently-selected PC(s).
-                        if !game.is_sherwood {
-                            dispatch_corner_button_left_click(
-                                CornerButton::Clock,
-                                manager,
-                                game,
-                                host,
-                                &assets,
-                                &mut frame.commands,
-                            );
-                        }
-                    }
-                    GameAction::PrintScreen => {
-                        // Defer to the post-render drain so we
-                        // capture the fully-composited frame
-                        // rather than an incomplete in-progress draw
-                        // queue. Ctrl matches the historical wide
-                        // snapshot branch; Shift applies the 3x3
-                        // median filter branch.
-                        host.pending_print_screen =
-                            Some(print_screen_request_from_modifiers(ctrl_held, shift_held));
-                    }
-                    _ => {
-                        tracing::trace!("Game action: {:?}", action);
-                    }
-                }
-            }
-        }
-    }
-
-    match handle_pause_menu_events(
-        &mut ui.pause_menu,
-        pause_closed_this_frame,
-        host,
-        manager,
-        game,
-        &assets,
-        callbacks,
-        &mut *window,
-        &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
-        &resources.menu,
-        &mut audio.backend,
-        &audio.sample_loader,
-        &mut input.threaded,
-        &mut input.translator,
-        &mut hud.sherwood_layout,
-        &mut hud.zoom_layout,
-        &hud.zoom_sprites,
-        &mut frame.commands,
-        &events,
-    )
-    .await
-    {
-        HandlerAction::Continue => {
-            return HandlerAction::Continue;
-        }
-        HandlerAction::Exit(code) => {
-            execute_app_effects(
-                &mut callbacks.app_effects,
-                &mut host.sound,
-                &mut input.threaded,
-                audio
-                    .backend
-                    .as_mut()
-                    .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
-            );
-            return HandlerAction::Exit(code);
-        }
-        HandlerAction::Proceed => {}
-    }
-
-    handle_mouse_input(
-        manager,
-        host,
-        &assets,
-        &presentation.renderer,
-        &presentation.sprites.portrait_cache,
-        &mut frame.commands,
-        &events,
-        ui.pause_menu.as_ref(),
-        *pause_closed_this_frame,
-        shift_held,
-        ctrl_held,
-    );
-
-    HandlerAction::Proceed
-}
-
 /// Collect input, drive operation/save flows, and finalize the pre-tick
 /// command stream.
 pub(super) struct InteractiveFramePreparation<'mission, 'services, 'app> {
@@ -1295,315 +703,51 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             HandlerAction::Proceed => {}
         }
 
-        // Tracks whether the pause menu closed at any point this
-        // frame.  Used to flush queued input so actions that would
-        // have run while the menu was up don't leak into the resumed
-        // game.
-        let mut pause_closed_this_frame = false;
-
-        // ── Input ──
-        // Flattened gameplay modals still own their own one-frame
-        // `poll_events()` call.  If the main loop drains the window
-        // first, modal widgets only receive occasional synthetic state,
-        // while global gameplay shortcuts (notably Escape/DisplayMenu)
-        // can fire underneath the modal.  Leave the event queue intact
-        // whenever a modal is active or queued so `tick_active_modal`
-        // gets first chance at the raw input.
-        let modal_input_active = ui.active_modal.is_some() || modal_state_pending(&host);
-        if modal_input_active && ui.close_pause(input, presentation) {
-            pause_closed_this_frame = true;
-            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-        }
-        // Disjoint-borrow event poll: `event_pump`/`width`/`height` are
-        // separate fields from `canvas`, which the presentation.renderer owns mutably.
-        let mut events = if modal_input_active {
-            Vec::new()
-        } else {
-            window.poll_events()
-        };
-        input.threaded.feed_events(&events);
-
-        let rewind_active = handle_hold_to_rewind(
-            manager,
-            assets.as_ref(),
-            &input.threaded,
-            &mut runtime.rewind_buffer,
-            &mut runtime.rollback_checker,
-            &mut runtime.replay_player,
-        );
-
-        // Field-disjoint access to keep `presentation.renderer` (holding &mut *window)
-        // alive through the event loop.  Skip gamepad command dispatch
-        // during replay/rewind — see input_suppressed comment below.
-        if runtime.replay_player.is_none() && !rewind_active {
-            handle_gamepad_events(
-                host,
-                manager,
-                &assets,
-                &mut input.threaded,
-                &mut frame.commands,
-                &events,
-                &mut window.active_gamepad,
-            );
-        }
-        events.extend(input.threaded.drain_synthetic_events());
-
-        // ── Handle window resize ──
-        // Window-size changes don't change the game's logical render
-        // resolution any more — `present()` letterboxes the fixed-size
-        // offscreen RT into whatever shape the WM hands the swapchain.
-        // The `host.viewport.set_screen_size` + `presentation.renderer.resize` below
-        // are kept for the graphics-options menu's resolution change
-        // path, which fakes a Resized event with the user-picked
-        // logical size; under the new arch we should separate those,
-        // but for now: only fire the full
-        // logical-resize cascade if the new size matches one of the
-        // menu's supported resolutions. Pure WM resizes drop through
-        // and only the swapchain reconfigures.
-        apply_frame_resizes(
-            &events,
-            window,
+        let collected = collect_event_and_hud_input(EventHudContext {
             host,
             manager,
-            assets.as_ref(),
-            input,
-            hud,
-            presentation,
-            &mut frame,
-        );
-
-        if input.threaded.is_ended() {
-            runtime.trace(FrameContractStage::Exit);
-            return Ok(Some(FrameControl::Exit(MissionExit::new(GameCode::Quit))));
-        }
-
-        match handle_sherwood_hud_buttons(
             game,
-            manager,
-            host,
-            &mut frame.commands,
-            &assets,
+            assets: assets.as_ref(),
+            dev,
             callbacks,
-            &mut *window,
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &resources.menu,
-            &events,
-            &hud.sherwood_layout,
-            &mut hud.sherwood_enable,
-        )
-        .await
-        {
-            HandlerAction::Continue => {
+            window,
+            presentation,
+            resources,
+            input,
+            ui,
+            hud,
+            runtime,
+            frame: &mut frame,
+            manual_pause,
+            step_forward_repeat_at_ms,
+            step_back_repeat_at_ms,
+        })
+        .await;
+        let CollectedFrameInput {
+            events,
+            keyboard_actions: kb_actions,
+            mouse_actions,
+            modifiers,
+            minimap_toggle_pressed,
+            mut pause_closed_this_frame,
+            rewind_active,
+            step_forward_pressed,
+            step_back_pressed,
+        } = match collected {
+            EventHudOutcome::Ready(input) => input,
+            EventHudOutcome::Control(HandlerAction::Continue) => {
                 runtime.trace(FrameContractStage::EarlyRestart);
                 return Ok(Some(FrameControl::RestartIteration));
             }
-            HandlerAction::Exit(code) => {
+            EventHudOutcome::Control(HandlerAction::Exit(code)) => {
                 runtime.trace(FrameContractStage::Exit);
                 return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
             }
-            HandlerAction::Proceed => {}
-        }
-
-        // Suppress all mouse-driven HUD widget clicks while a replay
-        // is playing back (recorded commands re-enter at the tick
-        // boundary) or a rewind hold is active (live clicks
-        // shouldn't perturb a reconstructed past state).  Without
-        // this the user could click HUD buttons mid-replay and steer
-        // the run.
-        let input_suppressed = runtime.replay_player.is_some() || rewind_active;
-
-        // Zoom HUD buttons (ZoomUp / ZoomDown).  Maps to
-        // `EngineStateRequest::ZoomingUp/Down` — same path the
-        // mouse wheel + keyboard bindings use.
-        if !input_suppressed {
-            let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine, &host.engine_display);
-            let mut zoom_btn_hit = None;
-            for event in &events {
-                if let GameEvent::MouseDown(mx, my, 1 /* left */, _) = *event
-                    && let Some(btn) = hud.zoom_layout.hit_test(mx, my, zoom_enable)
-                {
-                    zoom_btn_hit = Some((btn, mx, my));
-                    break;
-                }
+            EventHudOutcome::Control(HandlerAction::Proceed) => {
+                unreachable!("event/HUD collection must return data when it proceeds")
             }
-            if let Some((btn, mx, my)) = zoom_btn_hit {
-                let factor = match btn {
-                    ZoomButton::ZoomUp => 2.0,
-                    ZoomButton::ZoomDown => 0.5,
-                };
-                host.viewport.zoom_by(
-                    factor,
-                    Some(engine_coordinates::ScreenPoint::new(mx as f32, my as f32)),
-                );
-            }
-        }
-
-        // Corner HUD buttons (Clock / Sight / QuickStart).  Only
-        // active on non-Sherwood missions.
-        //
-        // Left-click dispatches the activation message (record /
-        // lock-alt / launch-all).  Right-click unlocks / deletes
-        // macros.
-        if !game.is_sherwood && !input_suppressed {
-            let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
-            for event in &events {
-                match *event {
-                    GameEvent::MouseDown(mx, my, 1 /* left */, _) => {
-                        let Some(btn) = hud.corner_layout.hit_test(mx, my, corner_enable) else {
-                            continue;
-                        };
-                        dispatch_corner_button_left_click(
-                            btn,
-                            manager,
-                            game,
-                            host,
-                            &assets,
-                            &mut frame.commands,
-                        );
-                    }
-                    GameEvent::MouseDown(mx, my, 3 /* right */, _) => {
-                        let Some(btn) = hud.corner_layout.hit_test_geometric(mx, my) else {
-                            continue;
-                        };
-                        dispatch_corner_button_right_click(
-                            btn,
-                            manager,
-                            host,
-                            &assets,
-                            &mut frame.commands,
-                        );
-                    }
-                    _ => {}
-                }
-            }
-
-            // Stature up/down-arrow click dispatch.  Emits the same
-            // PlayerCommand the keyboard path uses.  Clicking either
-            // arrow also primes the focus-latch so the arrow stays
-            // visually pressed while the sim runs the posture
-            // transition.  Auto-clears when the aggregate stature
-            // shifts.
-            let stature = manager.engine.retrieve_stature(None);
-            game.stature_focus.maybe_clear(stature);
-            let stature_enable =
-                StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
-            for event in &events {
-                if let GameEvent::MouseDown(mx, my, 1 /* left */, _) = *event
-                    && let Some(btn) = hud.stature_layout.hit_test(mx, my, stature_enable)
-                {
-                    let cmd = btn.as_command();
-                    dispatch_local_command(
-                        host,
-                        &mut manager.engine,
-                        &mut frame.commands,
-                        &assets,
-                        &cmd,
-                    );
-                    match btn {
-                        StatureButton::Up => {
-                            game.stature_focus.latch_stand_up(stature);
-                        }
-                        StatureButton::Down => {
-                            game.stature_focus.latch_crouch_down(stature);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Edge-check the minimap accelerator key BEFORE
-        // `translate_keyboard` advances the translator's prev-key
-        // buffer.  The widget holds the accelerator itself and
-        // toggles on release.
-        let minimap_toggle_pressed = {
-            host.minimap_fast_key.is_some_and(|fast_key| {
-                input
-                    .translator
-                    .was_key_released(fast_key, &input.threaded.keyboard_state().keys)
-            })
         };
-
-        // Step-debug keys: `.` (forward), `,` / Backspace (back), Enter
-        // (unpause).  `.` and `,` step immediately on the press edge,
-        // then repeat after a short hold delay so a normal key tap
-        // advances exactly one frame but holding still scrubs. Backspace
-        // keeps its held-state rewind scrub behavior.  Enter uses the
-        // release edge so a held Enter doesn't spam-resume.  All checks
-        // read physical keys rather than the bindable `GameAction` map.
-        use winit::keyboard::KeyCode;
-        let keys = &input.threaded.keyboard_state().keys;
-        // Suppress these shortcuts when any modal input sink has focus
-        // so `.` / `,` / Enter typed into the console, pause menu, or
-        // text input don't accidentally freeze/step the sim.
-        let step_keys_gated =
-            ui.console_overlay.is_visible() || ui.pause_menu.is_some() || modal_input_active;
-        let step_shortcuts = plan_step_shortcuts(
-            StepShortcutInput {
-                now_ms: frame.started_at_ms,
-                forward_held: keys.contains(&KeyCode::Period),
-                forward_hit: input.translator.was_key_pressed(KeyCode::Period, keys),
-                back_held: keys.contains(&KeyCode::Comma),
-                back_hit: input.translator.was_key_pressed(KeyCode::Comma, keys),
-                backspace_held: keys.contains(&KeyCode::Backspace),
-                unpause_hit: input.translator.was_key_released(KeyCode::Enter, keys),
-                gated: step_keys_gated,
-            },
-            step_forward_repeat_at_ms,
-            step_back_repeat_at_ms,
-        );
-        if let Some(paused) = step_shortcuts.manual_pause {
-            *manual_pause = paused;
-        }
-        let step_forward_pressed = step_shortcuts.forward;
-        let step_back_pressed = step_shortcuts.back;
-
-        // Translate to game actions
-        let mut kb_actions = input
-            .translator
-            .translate_keyboard(&input.threaded.keyboard_state().keys, TranslationFlags::ALL);
-        if events
-            .iter()
-            .any(|event| matches!(event, GameEvent::MenuToggleRequested))
-            || (ui.pause_menu.is_none()
-                && !modal_input_active
-                && events
-                    .iter()
-                    .any(|event| matches!(event, GameEvent::PauseRequested)))
-        {
-            kb_actions.push(GameAction::DisplayMenu);
-        }
-        let mouse_actions = if input.threaded.has_position() {
-            input.translator.translate_mouse(
-                input.threaded.position().x,
-                input.threaded.position().y,
-                input.threaded.wheel_delta(),
-            )
-        } else {
-            Vec::new()
-        };
-
-        let modifiers = input_modifiers(&input.threaded.keyboard_state().keys);
-        let InputModifiers {
-            ctrl: _,
-            shift: shift_held,
-            alt: alt_held,
-        } = modifiers;
-        // Persist the alt state on `InputState` so subsystems that
-        // don't otherwise see the platform modifier state can read it.
-        host.input.is_alt = alt_held;
-
-        handle_console_overlay_events(
-            &mut ui.console_overlay,
-            &mut manager.engine,
-            &assets,
-            host,
-            dev,
-            &events,
-            &kb_actions,
-            &mut input.translator,
-        );
+        let shift_held = modifiers.shift;
 
         // ── View-only input (scroll / zoom): always allowed ──
         // These mutate host-side viewport state only — never the sim —
@@ -1627,26 +771,30 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // shouldn't perturb a state reconstructed from the past).
         if runtime.replay_player.is_none() && !rewind_active {
             match drive_live_gameplay_input(
-                host,
-                manager,
-                game,
-                assets.as_ref(),
-                dev,
-                callbacks,
-                window,
-                presentation,
-                resources,
-                audio,
-                input,
-                ui,
-                hud,
-                &mut frame,
-                &events,
-                &kb_actions,
-                &mouse_actions,
-                minimap_toggle_pressed,
-                modifiers,
-                &mut pause_closed_this_frame,
+                LiveGameplayContext {
+                    host,
+                    manager,
+                    game,
+                    assets: assets.as_ref(),
+                    dev,
+                    callbacks,
+                    window,
+                    presentation,
+                    resources,
+                    audio,
+                    input,
+                    ui,
+                    hud,
+                    frame: &mut frame,
+                },
+                LiveGameplayInput {
+                    events: &events,
+                    keyboard_actions: &kb_actions,
+                    mouse_actions: &mouse_actions,
+                    minimap_toggle_pressed,
+                    modifiers,
+                    pause_closed_this_frame: &mut pause_closed_this_frame,
+                },
             )
             .await
             {
@@ -1997,95 +1145,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        PreTickPauseSources, StepShortcutInput, StepShortcutOutput, plan_step_shortcuts,
-        pre_tick_is_paused,
-    };
-
-    fn step_input(now_ms: u32) -> StepShortcutInput {
-        StepShortcutInput {
-            now_ms,
-            forward_held: false,
-            forward_hit: false,
-            back_held: false,
-            back_hit: false,
-            backspace_held: false,
-            unpause_hit: false,
-            gated: false,
-        }
-    }
-
-    #[test]
-    fn step_shortcuts_preserve_edge_repeat_and_modal_gating() {
-        let mut forward_repeat = None;
-        let mut back_repeat = None;
-        let first = plan_step_shortcuts(
-            StepShortcutInput {
-                forward_held: true,
-                forward_hit: true,
-                ..step_input(100)
-            },
-            &mut forward_repeat,
-            &mut back_repeat,
-        );
-        assert_eq!(
-            first,
-            StepShortcutOutput {
-                forward: true,
-                back: false,
-                manual_pause: Some(true),
-            }
-        );
-        assert_eq!(forward_repeat, Some(260));
-
-        let before_repeat = plan_step_shortcuts(
-            StepShortcutInput {
-                forward_held: true,
-                ..step_input(259)
-            },
-            &mut forward_repeat,
-            &mut back_repeat,
-        );
-        assert!(!before_repeat.forward);
-
-        let gated_repeat = plan_step_shortcuts(
-            StepShortcutInput {
-                forward_held: true,
-                gated: true,
-                ..step_input(260)
-            },
-            &mut forward_repeat,
-            &mut back_repeat,
-        );
-        assert_eq!(
-            gated_repeat,
-            StepShortcutOutput {
-                forward: false,
-                back: false,
-                manual_pause: None,
-            }
-        );
-        assert_eq!(forward_repeat, Some(300));
-    }
-
-    #[test]
-    fn unpause_edge_wins_when_sampled_with_a_step() {
-        let mut forward_repeat = None;
-        let mut back_repeat = None;
-        let output = plan_step_shortcuts(
-            StepShortcutInput {
-                forward_held: true,
-                forward_hit: true,
-                unpause_hit: true,
-                ..step_input(400)
-            },
-            &mut forward_repeat,
-            &mut back_repeat,
-        );
-
-        assert!(output.forward);
-        assert_eq!(output.manual_pause, Some(false));
-    }
+    use super::{PreTickPauseSources, pre_tick_is_paused};
 
     #[test]
     fn pre_tick_pause_combines_all_graphical_pause_sources() {

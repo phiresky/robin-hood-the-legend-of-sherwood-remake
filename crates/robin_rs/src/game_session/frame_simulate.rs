@@ -7,6 +7,7 @@
 use super::flow::{FrameControl, MissionServices};
 use super::interactive::{MissionPresentation, MissionResources};
 use super::runtime::FrameContractStage;
+use super::terminal_debriefing::{TerminalDebriefingContext, drive_tick_exit_modals};
 use super::*;
 use crate::game::Game;
 
@@ -133,29 +134,6 @@ impl SimulationVisualRefresh<'_> {
 enum ScriptedModalMode {
     Interactive,
     AutoDismiss,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-enum TerminalDebriefingAction {
-    Continue,
-    LoadRestart,
-    Load { slot: usize, mission_id: u32 },
-    EmergencyExit,
-}
-
-fn terminal_debriefing_action(
-    outcome: &SettledDebriefingOutcome,
-    mission_id: u32,
-) -> TerminalDebriefingAction {
-    match outcome {
-        SettledDebriefingOutcome::Ok => TerminalDebriefingAction::Continue,
-        SettledDebriefingOutcome::Restart => TerminalDebriefingAction::LoadRestart,
-        SettledDebriefingOutcome::Load { slot } => TerminalDebriefingAction::Load {
-            slot: *slot,
-            mission_id,
-        },
-        SettledDebriefingOutcome::EmergencyEnd => TerminalDebriefingAction::EmergencyExit,
-    }
 }
 
 /// Drain the ordered dialogue -> popup/report -> debriefing lanes. An
@@ -453,306 +431,6 @@ fn reset_input_after_tick_request(host: &mut Host, input: &mut super::interactiv
     host.input.draw_multi_selection = false;
 }
 
-/// Resolve an engine tick exit through the original mission-state/debriefing
-/// flow. Returns true only for an emergency window close.
-#[allow(clippy::too_many_arguments)]
-async fn drive_tick_exit_modals(
-    tick_exit_code: Option<GameCode>,
-    host: &mut Host,
-    game: &mut Game,
-    manager: &mut robin_engine::engine_manager::EngineManager,
-    assets: &robin_engine::engine::LevelAssets,
-    window: &mut GameWindow,
-    callbacks: &mut RustCallbacks,
-    input: &mut super::interactive::MissionInput,
-    audio: &mut super::interactive::MissionAudio,
-    resources: &mut super::interactive::MissionResources,
-    ui: &mut super::interactive::MissionUi,
-    presentation: &mut super::interactive::MissionPresentation,
-    runtime: &mut super::runtime::TimelineRuntime,
-    frame: &mut MissionFrame,
-) -> bool {
-    if let Some(exit_code) = tick_exit_code {
-        tracing::info!("Engine tick returned: {:?}", exit_code);
-
-        // Apply quit-mission updates (stat sync, coma reset,
-        // score bonuses, warcrime recruitment, blazon
-        // consumption) before showing the debriefing so it
-        // displays correct stats. The command mutates the campaign in
-        // place inside the engine's required mission domain.
-        dispatch_local_command(
-            host,
-            &mut manager.engine,
-            &mut frame.commands,
-            assets,
-            &PlayerCommand::ApplyQuitMissionUpdates {
-                exit_code,
-                difficulty: game.global_options.sim_config().difficulty,
-            },
-        );
-
-        // Show the mission state popup + debriefing synchronously
-        // now, while the presentation.renderer and menu resources are still
-        // alive.  `show_debriefing` blocks the loop until the
-        // player dismisses it.
-        if let (Some((popup_title, _popup_body)), Some(menu_resources)) = (
-            crate::ingame_menu::mission_state_text(exit_code),
-            &resources.menu,
-        ) {
-            let won = exit_code == GameCode::LevelSucceeded;
-            let mission_state_kind = engine_player_command::ModalKind::MissionState {
-                kind: engine_player_command::MissionStateModalKind::EndState { won },
-            };
-            let mission_state_result = match pop_matching_dismissal(
-                &mut frame.replay_modal_dismissals,
-                &mission_state_kind,
-            ) {
-                Some(
-                    result @ (engine_player_command::DialogResult::Completed
-                    | engine_player_command::DialogResult::Aborted),
-                ) => result,
-                Some(result) => {
-                    tracing::warn!(
-                        ?result,
-                        "final mission-state replay result is only yes/no; treating as aborted"
-                    );
-                    engine_player_command::DialogResult::Aborted
-                }
-                None => {
-                    let cursor = Some(default_modal_cursor(
-                        &mut presentation.sprites.cursor_renderer,
-                        &mut resources.cursor,
-                        &mut presentation.renderer,
-                    ));
-                    let confirmed = crate::ingame_menu::show_mission_state_popup(
-                        &mut *window,
-                        &mut presentation.renderer,
-                        menu_resources,
-                        cursor,
-                        popup_title,
-                        won,
-                        None,
-                    )
-                    .await;
-                    if confirmed {
-                        engine_player_command::DialogResult::Completed
-                    } else {
-                        engine_player_command::DialogResult::Aborted
-                    }
-                }
-            };
-            if let Some(recorder) = runtime.replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                    kind: mission_state_kind,
-                    result: mission_state_result,
-                });
-            }
-            // Resolve the per-mission debriefing prose from the
-            // level's text resource table: pick win or lose
-            // table_id depending on `won`, then look up the
-            // string at `victory_defeat_id` (set by the
-            // script-side `ChooseVictoryDefeatText`).  On any
-            // failure, fall back to a placeholder so the body is
-            // never empty.
-            let debriefing_index = manager.engine.mission().victory_defeat_id as usize;
-            let debriefing_kind = engine_player_command::ModalKind::FinalDebriefing {
-                text_id: engine_player_command::DebriefingTextId::from_outcome(
-                    won,
-                    debriefing_index,
-                ),
-            };
-            let debriefing_body = if let Some(descriptors) = resources.level_descriptors.as_ref() {
-                let table_id = if won {
-                    descriptors.debriefing.win_text_table_id
-                } else {
-                    descriptors.debriefing.lose_text_table_id
-                };
-                match resources.text.get_string(table_id, debriefing_index) {
-                    Ok(s) => s.to_string(),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Debriefing text lookup failed (table={table_id}, \
-                                     index={debriefing_index}): {e}"
-                        );
-                        "Invalid debriefing ID...".to_string()
-                    }
-                }
-            } else {
-                tracing::warn!("Debriefing text lookup: level descriptors unavailable");
-                "No dynamic resources for this level...".to_string()
-            };
-            // Feed the mission-stat panel through the mission-clock
-            // abstraction. The current implementation returns the
-            // deterministic campaign counter, which advances from
-            // completed sim seconds.
-            let mission_length =
-                <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
-                    callbacks,
-                    manager.engine.campaign(),
-                );
-            // When restart is allowed, the debriefing accepts a
-            // QuickLoad keypress to short-circuit into a load.
-            // Pull the configured `QuickLoad1` key out of
-            // the input translator so the modal can fire on that
-            // key.
-            let quick_load_key = input.translator.get_binding(GameKey::QuickLoad1);
-            // Restart only fires when a restart snapshot exists.
-            // When missing, the body window closes and the stat
-            // panel still shows.  Probe the save manager up
-            // front so the modal can short-circuit a no-snapshot
-            // Restart click to "skip body, show stat".
-            let restart_snapshot_exists =
-                ui.restart_allowed && callbacks.save_manager.has_restart_save();
-            let campaign = manager.engine.campaign();
-            let mission_id = current_mission_id(campaign, &assets.profile_manager);
-
-            // Re-entry loop for the Load button: clicking Load
-            // chains into the save-load picker; if the picker is
-            // cancelled, the current debriefing page stays
-            // visible and the player can continue interacting
-            // with it.  We model that by re-entering
-            // `show_debriefing` with the page text the player
-            // was viewing when they clicked Load.
-            let post_load_outcome = if let Some(result) =
-                pop_matching_dismissal(&mut frame.replay_modal_dismissals, &debriefing_kind)
-            {
-                final_debriefing_outcome_from_replay(result)
-            } else {
-                let mut current_body = debriefing_body.clone();
-                let mut start_at_stat = false;
-                loop {
-                    let cursor = Some(default_modal_cursor(
-                        &mut presentation.sprites.cursor_renderer,
-                        &mut resources.cursor,
-                        &mut presentation.renderer,
-                    ));
-                    let outcome = crate::ingame_menu::show_debriefing(
-                        &mut *window,
-                        &mut presentation.renderer,
-                        menu_resources,
-                        cursor,
-                        &current_body,
-                        Some(manager.engine.mission_stat()),
-                        mission_length,
-                        won,
-                        ui.restart_allowed,
-                        quick_load_key,
-                        restart_snapshot_exists,
-                        start_at_stat,
-                    )
-                    .await;
-                    match outcome {
-                        DebriefingOutcome::LoadAttempt {
-                            body_remaining,
-                            was_on_stat,
-                        } => {
-                            // Run the save-load picker.  If a slot is
-                            // selected we'll re-enter the loop with a
-                            // synthetic outcome below; otherwise we
-                            // re-show the same page (body or stat).
-                            let cursor = Some(default_modal_cursor(
-                                &mut presentation.sprites.cursor_renderer,
-                                &mut resources.cursor,
-                                &mut presentation.renderer,
-                            ));
-                            let picker_outcome = crate::ingame_menu::show_save_load(
-                                &mut *window,
-                                &mut presentation.renderer,
-                                menu_resources,
-                                cursor,
-                                &mut callbacks.save_manager,
-                                mission_id,
-                                Some(&assets.profile_manager),
-                                SaveLoadMode::Load,
-                                Some(&mut host.sound),
-                                audio
-                                    .backend
-                                    .as_mut()
-                                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                                Some(&audio.sample_loader),
-                            )
-                            .await;
-                            match picker_outcome {
-                                SaveLoadOutcome::Slot(slot) => {
-                                    // Synthesise a Load-resolved outcome and
-                                    // exit the re-entry loop.  Stored in
-                                    // `post_load_outcome` so the match
-                                    // below processes it uniformly.
-                                    break SettledDebriefingOutcome::Load { slot };
-                                }
-                                SaveLoadOutcome::Cancel => {
-                                    // Picker cancelled — re-enter the
-                                    // debriefing on the same page.
-                                    current_body = body_remaining;
-                                    start_at_stat = was_on_stat;
-                                    continue;
-                                }
-                            }
-                        }
-                        DebriefingOutcome::Ok { .. } => {
-                            break SettledDebriefingOutcome::Ok;
-                        }
-                        DebriefingOutcome::Restart => {
-                            break SettledDebriefingOutcome::Restart;
-                        }
-                        DebriefingOutcome::EmergencyEnd => {
-                            break SettledDebriefingOutcome::EmergencyEnd;
-                        }
-                    }
-                }
-            };
-            if let Some(recorder) = runtime.replay_recorder.as_mut() {
-                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
-                    kind: debriefing_kind,
-                    result: final_debriefing_result(&post_load_outcome),
-                });
-            }
-
-            // Wire the Load/Restart outcomes back into the game
-            // state machine.  Both funnel through the engine's
-            // save-game slot machinery rather than re-running
-            // the mission cold.
-            match terminal_debriefing_action(&post_load_outcome, mission_id) {
-                TerminalDebriefingAction::Continue => {
-                    // Normal dismissal — let the exit_code flow
-                    // through the Game state machine on the next
-                    // frame's `process_operation`.
-                }
-                TerminalDebriefingAction::LoadRestart => {
-                    // We've already verified the restart snapshot
-                    // exists via `restart_snapshot_exists`; queue
-                    // `SaveLoadRequest::LoadRestart` and reset
-                    // `game.operation` so the next frame's
-                    // `perform_pending_save_load` applies it in
-                    // place.
-                    callbacks.pending = Some(SaveLoadRequest::LoadRestart);
-                    game.operation.set(GameCode::LevelInProgress);
-                }
-                TerminalDebriefingAction::Load { slot, mission_id } => {
-                    // The Load button chains into the save-load
-                    // picker (run inline above) and queues a
-                    // level load.
-                    callbacks.pending = Some(SaveLoadRequest::Load {
-                        slot: Some(slot),
-                        mission_id,
-                    });
-                    game.operation.set(GameCode::LevelInProgress);
-                }
-                TerminalDebriefingAction::EmergencyExit => {
-                    // External force-close (window close / Alt-
-                    // F4) propagates as `GameCode::Quit` so
-                    // `handle_quit` writes the continue-save and
-                    // the outer session returns to the main
-                    // menu.
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
 impl InteractiveFrameSimulation {
     pub(super) fn new(frame: MissionFrame, flags: FrameSimulationFlags) -> Self {
         Self { frame, flags }
@@ -943,12 +621,12 @@ impl InteractiveFrameSimulation {
         );
         reset_input_after_tick_request(host, input);
 
-        if drive_tick_exit_modals(
+        if drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
             host,
             game,
             manager,
-            assets.as_ref(),
+            assets: assets.as_ref(),
             window,
             callbacks,
             input,
@@ -957,8 +635,8 @@ impl InteractiveFrameSimulation {
             ui,
             presentation,
             runtime,
-            &mut frame,
-        )
+            frame: &mut frame,
+        })
         .await
         {
             runtime.finish_recording(&mut frame);
@@ -1239,8 +917,7 @@ impl InteractiveFrameSimulation {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScriptedModalMode, TerminalDebriefingAction, terminal_debriefing_action};
-    use crate::game_session::debriefing::SettledDebriefingOutcome;
+    use super::ScriptedModalMode;
 
     #[test]
     fn scripted_modal_mode_roundtrips_for_phase_handoffs() {
@@ -1252,36 +929,6 @@ mod tests {
             let decoded: ScriptedModalMode =
                 serde_json::from_str(&encoded).expect("deserialize modal mode");
             assert_eq!(decoded, mode);
-        }
-    }
-
-    #[test]
-    fn terminal_debriefing_maps_to_explicit_control_actions() {
-        let mission_id = 42;
-        let cases = [
-            (
-                SettledDebriefingOutcome::Ok,
-                TerminalDebriefingAction::Continue,
-            ),
-            (
-                SettledDebriefingOutcome::Restart,
-                TerminalDebriefingAction::LoadRestart,
-            ),
-            (
-                SettledDebriefingOutcome::Load { slot: 7 },
-                TerminalDebriefingAction::Load {
-                    slot: 7,
-                    mission_id,
-                },
-            ),
-            (
-                SettledDebriefingOutcome::EmergencyEnd,
-                TerminalDebriefingAction::EmergencyExit,
-            ),
-        ];
-
-        for (outcome, expected) in cases {
-            assert_eq!(terminal_debriefing_action(&outcome, mission_id), expected);
         }
     }
 }

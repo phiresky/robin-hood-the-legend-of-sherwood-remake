@@ -2,17 +2,20 @@
 
 ## Implementation status (2026-07-18)
 
-The ownership and lifecycle target is implemented. The latest phase cleanup
-also reduced `collect_input_and_menus` from 993 to 469 lines,
-`finalize_pre_tick` from 365 to 118, and `drive_modals` from 618 to 119. Focused
-helpers now own live gameplay input, pre-tick replay/network boundaries,
-scripted modal lanes, leave-mission prompts, save/reset effects, and terminal
-debriefing control mapping. Graphical/headless phase traces and consuming
-campaign return remain unchanged.
+The ownership and lifecycle target is implemented. Wave ten split the final
+local mega-domains into `event_hud`, `live_gameplay`, and
+`terminal_debriefing`. `collect_input_and_menus` is now 210 lines (down from
+993 before the phase cleanup and 469 after wave nine); its extracted live
+dispatcher is a 102-line orchestrator around a 202-line action helper, and the
+former 300-line terminal exit/modal flow is a 39-line driver around focused
+mission-state, page, renderer/picker, and action helpers. Graphical/headless
+phase traces, consuming campaign return, save representation, blocking modal
+placement, and `PostInitialize` ordering remain unchanged.
 
-Future cleanup is local rather than architectural: split the remaining live
-gameplay-action dispatcher, terminal debriefing renderer/picker flow, and the
-event/HUD portion still inside input collection.
+No architectural or mega-domain work remains in `run_mission`. Possible future
+local polish is limited to subdividing already-focused helpers such as the
+252-line event/HUD collector or the roughly 180-line network-ingress and
+scripted-modal-lane helpers if those domains change substantially.
 
 ## Decision summary
 
