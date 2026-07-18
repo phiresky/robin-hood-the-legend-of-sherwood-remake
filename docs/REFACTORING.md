@@ -25,8 +25,8 @@ Non-goals:
 
 ## Required invariants
 
-1. A normal mission has exactly one campaign. Script access is a scoped
-   borrow/lease, not an optional second owner.
+1. A normal mission has exactly one campaign. Script access borrows that
+   canonical value in place; it never installs an optional second owner.
 2. Every value read by a deterministic tick is in the snapshot, immutable level
    assets, or derived solely from those inputs.
 3. Every gameplay RNG draw advances the Engine stream. Missing scope is an
@@ -61,10 +61,9 @@ MissionRuntime (only while a mission is active)
     replay / rewind / rollback / multiplayer retention views
 ```
 
-`MissionRuntime::finish(self)` returns the same campaign. SCB and Lua natives
-receive a scoped `MissionAccess<'_>` rather than moving campaign/entities among
-optional holders. If the current VM still requires swapping, wrap it in an RAII
-guard that always swaps back and asserts pre/post ownership.
+Consuming mission finalization returns the same campaign. SCB and Lua natives
+receive scoped access rather than moving campaign/entities among optional
+holders; no take/install or swap-back ownership protocol remains.
 
 ## Explicit tick phases
 
@@ -100,7 +99,7 @@ and regressions, not work to reimplement.
 | 1 | **Finish required-state errors.** Make replay-header preload fatal and missing sequence references loud. Preserve the landed campaign and fast-grid rejection paths; no phase moves. | Partial | None | Medium: exposes latent corruption. | bad replay header; missing campaign; corrupt grid lengths; stale sequence ref. | `setup.rs`, `game_session/mod.rs`, `rollback_safe.rs`, `sequence.rs` |
 | 2 | **Snapshot input closure.** Inventory every `apply_commands`/`perform_hourglass` read; move sim-relevant display control into snapshot/Engine. | Open | 1 | High: save, camera, rollback. | zoom replay; save/load during zoom; one-frame live/replay hash. | `peripherals.rs`, `camera.rs`, `tick.rs`, `sim_timeline.rs`, `save_file.rs` |
 | 3 | **Harden the shared timeline.** Consolidation has landed; verify rewind, rollback checker, multiplayer history/join, and EngineManager all use the same snapshot/replay boundaries. | Landed; audit callers | 2 for snapshot closure | High: correction and stepping. | equivalent reconstruction by every caller; missing-command error; correction truncation. | `sim_timeline.rs`, `rewind.rs`, `rollback_checker.rs`, multiplayer/tick session files |
-| 4 | **MissionRuntime ownership.** Campaign is required in the live Engine domain; mission/session construction and finish pass it only by value, and script access borrows canonical owners in place. | Landed | 1 | High: all exits/save/load/natives. | identity-equivalent campaign on success/error/cancellation; legacy save migration; save around script call. | `engine/mod.rs`, `engine/types.rs`, natives, `game.rs`, session/mouse files |
+| 4 | **MissionRuntime ownership.** Campaign is required in the live Engine domain; mission/session construction and finish pass it only by value, and script access borrows canonical owners in place. | Landed | 1 | High: all exits/save/load/natives. | identity-equivalent campaign on controlled success/error, exact owned allocation on future cancellation/drop; legacy save migration; save around script call. | `engine/mod.rs`, `engine/types.rs`, natives, `game.rs`, session/mouse files |
 | 5 | **RNG context.** Encapsulate/replace TLS with tick/script context tied to one Engine; retain serialized fastrand state/call order. | Open | 2, 4 | Medium-high: broad signatures. | RNG round trips; nested/missing scope; replay next roll; Lua Initialize random. | `sim_rng.rs`, `tick.rs`, AI/combat callers, `robin_lua/state.rs` |
 | 6 | **Finish sequence barriers.** Synchronous condolence and immediate traces have landed; make WAIT launch-time and invalid refs loud. | Partial | 1 | High: action timing. | WAIT launch; command levels; recursive immediate; FIFO; stop/preemption. | `sequence.rs`, `tick.rs` |
 | 7 | **Lua contract gate.** Reject Spellforge in deterministic modes; required startup/runtime failures abort; correct public event claims. | Open | 1, 4, 5 | Medium vanilla/high mods. | required failure; deterministic rejection; optional callback; return coercion. | `lua_session.rs`, `robin_lua`, `host.rs`, session startup |
