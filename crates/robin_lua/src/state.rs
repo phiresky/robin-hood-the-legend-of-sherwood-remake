@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use mlua::Lua;
-use robin_engine::natives::{GameHost, ScriptState};
+use robin_engine::natives::{GameHost, NativeSessionCapabilities, ScriptState};
 
 use crate::natives::HostPtr;
 
@@ -152,20 +152,20 @@ impl MissionLuaState {
     /// removed so a stray Lua coroutine resumed later can't see
     /// stale state.
     ///
-    /// **Safety**: the closure must not stash a reference to the
-    /// host that outlives this call (no `lua.create_thread` that
-    /// captures host state, no Rust upvalues holding `&mut
-    /// GameHost`). All host access happens through registered
-    /// native shims, which themselves only run synchronously
-    /// inside this scope.
+    /// **Safety**: the closure must not stash a reference to the host or
+    /// capability bundle that outlives this call (no `lua.create_thread` that
+    /// captures engine state, no Rust upvalues holding engine borrows). All
+    /// access happens through synchronous registered shims. `HostAttachment`
+    /// removes the one erased capability pointer on normal and error returns.
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
         script_domains: &mut robin_engine::engine::ScriptDomains,
+        capabilities: &NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         let mut script_state = ScriptState::default();
-        self.with_host_and_state(host, &mut script_state, script_domains, f)
+        self.with_host_and_state(host, &mut script_state, script_domains, capabilities, f)
     }
 
     /// Variant used by mission execution, where script-owned state must
@@ -175,6 +175,7 @@ impl MissionLuaState {
         host: &mut GameHost,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
+        capabilities: &NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.with_host_state_and_bindings(
@@ -182,7 +183,7 @@ impl MissionLuaState {
             script_state,
             script_domains,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
-            robin_engine::natives::NativeQueryViews::default(),
+            capabilities,
             f,
         )
     }
@@ -193,7 +194,7 @@ impl MissionLuaState {
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
-        queries: robin_engine::natives::NativeQueryViews<'_>,
+        capabilities: &NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         assert!(
@@ -205,7 +206,7 @@ impl MissionLuaState {
             script_state as *mut _,
             script_domains as *mut _,
             bindings as *const _,
-            queries,
+            capabilities,
         ));
         debug_assert!(replaced.is_none());
         let _attachment = HostAttachment(&self.lua);

@@ -193,13 +193,13 @@ impl EngineInner {
         let scroll_handle = crate::natives::GameHost::actor_handle(scroll);
         let pc_handle = crate::natives::GameHost::actor_handle(pc);
         let script_result = self
-            .with_script_session(assets, |script, script_domains, queries| {
+            .with_script_session(assets, |script, script_domains, capabilities| {
                 script.call_scroll_function(
                     scroll_handle,
                     "IsTaken",
                     &[pc_handle],
                     script_domains,
-                    queries,
+                    capabilities,
                 )
             })
             .transpose();

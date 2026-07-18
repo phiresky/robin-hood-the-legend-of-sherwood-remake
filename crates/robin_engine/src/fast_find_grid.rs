@@ -945,6 +945,16 @@ impl Default for FastFindGrid {
     }
 }
 
+impl FastFindGrid {
+    pub(crate) fn runtime_is_empty_for_legacy_merge(&self) -> bool {
+        self.line_active.is_empty()
+            && self.sector_active.is_empty()
+            && self.mask_active.is_empty()
+            && self.lift_state.is_empty()
+            && self.sector_type_overlay.is_empty()
+    }
+}
+
 /// Compute a flat block index from cell coordinates without borrowing
 /// `&self`. Lets builder methods compute block indices while holding a
 /// `&mut` borrow on the level Arc.

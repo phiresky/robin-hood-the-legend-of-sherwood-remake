@@ -723,8 +723,8 @@ impl EngineInner {
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND) {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
-            let _ = self.with_script_session(assets, |script, script_domains, queries| {
-                if let Err(e) = script.hourglass(game_seconds, script_domains, queries) {
+            let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+                if let Err(e) = script.hourglass(game_seconds, script_domains, capabilities) {
                     tracing::warn!("Script Hourglass error: {e}");
                 }
             });
@@ -737,8 +737,8 @@ impl EngineInner {
                 self.script_domains.mission_ui.force_check = false;
 
                 if let Some(victory_result) =
-                    self.with_script_session(assets, |script, script_domains, queries| {
-                        script.check_victory_condition(game_seconds, script_domains, queries)
+                    self.with_script_session(assets, |script, script_domains, capabilities| {
+                        script.check_victory_condition(game_seconds, script_domains, capabilities)
                     })
                 {
                     match victory_result {

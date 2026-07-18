@@ -60,8 +60,7 @@ mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub(crate) use context::NativeCampaignCapabilities;
-pub use context::{NativeContext, NativeQueryViews, ScriptCallFrame};
+pub use context::{NativeContext, NativeSessionCapabilities, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
@@ -72,7 +71,7 @@ pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
+use crate::ai::{AiState, AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
@@ -125,15 +124,6 @@ pub struct GameHost {
     pub verbose: bool,
     /// Deferred commands for the engine to process after script execution.
     pub commands: Vec<EngineCommand>,
-    /// Entity storage, swapped in from EngineInner before script execution
-    /// and swapped back out after.  Empty when no script is running.
-    pub entities: Vec<Option<Entity>>,
-    /// Global AI state, swapped in from EngineInner before script execution.
-    pub ai_global: AiGlobalState,
-    /// FastFindGrid state, swapped in from EngineInner before script execution.
-    /// Script-native visibility must use the same `FastFindGrid::is_reachable`
-    /// path as engine AI, not a separate obstacle scan.
-    pub fast_grid: crate::fast_find_grid::FastFindGrid,
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
     pub production_registrations: Vec<(i32, i32, i32)>,
@@ -179,9 +169,6 @@ impl GameHost {
     pub fn new() -> Self {
         Self {
             verbose: false,
-            entities: Vec::new(),
-            ai_global: AiGlobalState::default(),
-            fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             commands: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
@@ -203,33 +190,36 @@ impl GameHost {
         self
     }
 
-    /// Look up an entity by actor handle. Returns None for null or invalid handles.
+    /// Drain all completed sequences (built by Start/Record*/Thanx).
+    /// Called by the engine after each script execution.
+    pub fn take_completed_sequences(&mut self) -> Vec<Sequence> {
+        std::mem::take(&mut self.completed_sequences)
+    }
+}
+
+impl NativeContext<'_, '_> {
+    /// Look up an entity by actor handle in the canonical Engine store.
     fn get_entity(&self, handle: i32) -> Option<&Entity> {
         let idx = Self::actor_handle_index(handle)?;
-        self.entities.get(idx)?.as_ref()
+        self.entities
+            .get_legacy_slot(idx as u32)
+            .map(|(_, entity)| entity)
     }
 
-    /// Look up an entity mutably by its actor handle.
+    /// Look up an entity mutably by actor handle in the canonical Engine store.
     fn get_entity_mut(&mut self, handle: i32) -> Option<&mut Entity> {
         let idx = Self::actor_handle_index(handle)?;
-        self.entities.get_mut(idx)?.as_mut()
+        self.entities
+            .get_legacy_slot_mut(idx as u32)
+            .map(|(_, entity)| entity)
     }
 
     fn occupied_entities(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.entities.iter().enumerate().filter_map(|(idx, slot)| {
-            slot.as_ref()
-                .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
-        })
+        self.entities.occupied()
     }
 
     fn occupied_entities_mut(&mut self) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
-        self.entities
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                slot.as_mut()
-                    .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
-            })
+        self.entities.occupied_mut()
     }
 
     fn pc_handles(&self) -> Vec<i32> {
@@ -295,24 +285,18 @@ impl GameHost {
         result
     }
 
-    /// Check whether an actor handle refers to a valid entity.
     fn actor_exists(&self, handle: i32) -> bool {
         self.get_entity(handle).is_some()
     }
 
-    /// `ActorExists && IsActor`: the handle resolves to a live actor
-    /// entity (PC / Soldier / Civilian, plus any other `is_actor` kind).
-    /// Used by Record* natives that gate element creation on the script
-    /// passing a real actor.
     fn is_actor_handle(&self, handle: i32) -> bool {
-        self.get_entity(handle).is_some_and(|e| e.is_actor())
+        self.get_entity(handle)
+            .is_some_and(|entity| entity.is_actor())
     }
 
-    /// True iff `handle` resolves to an actor or an FX target.  Used as
-    /// the guard for `RecordPlayAnim` / `RecordPlayAnimFreeze`.
     fn is_actor_or_fx_target(&self, handle: i32) -> bool {
         self.get_entity(handle)
-            .is_some_and(|e| e.is_actor() || e.is_fx_target())
+            .is_some_and(|entity| entity.is_actor() || entity.is_fx_target())
     }
 
     fn actor_action_distance(&self, actor: i32, animation: OrderType) -> Option<f32> {
@@ -320,7 +304,7 @@ impl GameHost {
             tracing::warn!(
                 actor,
                 ?animation,
-                "GameHost::actor_action_distance: actor handle is missing"
+                "NativeContext::actor_action_distance: actor handle is missing"
             );
             return None;
         };
@@ -331,21 +315,13 @@ impl GameHost {
                     actor,
                     ?animation,
                     error = %err,
-                    "GameHost::actor_action_distance: missing sprite action distance"
+                    "NativeContext::actor_action_distance: missing sprite action distance"
                 );
                 None
             }
         }
     }
 
-    /// Drain all completed sequences (built by Start/Record*/Thanx).
-    /// Called by the engine after each script execution.
-    pub fn take_completed_sequences(&mut self) -> Vec<Sequence> {
-        std::mem::take(&mut self.completed_sequences)
-    }
-}
-
-impl NativeContext<'_> {
     /// Mutate the canonical campaign value and mission statistics inline,
     /// matching `RHCampaign::AddValue` in the Original.
     fn add_campaign_value(
@@ -419,13 +395,15 @@ impl NativeContext<'_> {
     }
 
     fn frame_counter(&self) -> u32 {
-        self.queries.frame_counter()
+        *self
+            .frame_counter
+            .expect("script native requires a live simulation-clock query view")
     }
 
     fn selected_pc_handles(&self) -> Vec<i32> {
         let mut selected: Vec<i32> = self
-            .queries
-            .selected_pcs()
+            .selected_pcs
+            .expect("script native requires a live player-selection query view")
             .iter()
             .copied()
             .map(Self::actor_handle)
@@ -452,7 +430,9 @@ impl NativeContext<'_> {
     }
 
     fn sound_source_count(&self) -> usize {
-        self.queries.sound_sources().num_sources()
+        self.sound_sources
+            .expect("script native requires a live SoundSourceManager query view")
+            .num_sources()
     }
 
     fn sound_source_alive(&self, index: usize) -> bool {
@@ -465,7 +445,10 @@ impl NativeContext<'_> {
         ) {
             return false;
         }
-        self.queries.sound_sources().get(index).is_some()
+        self.sound_sources
+            .expect("script native requires a live SoundSourceManager query view")
+            .get(index)
+            .is_some()
     }
 
     fn current_animation(&self, actor: i32) -> Option<OrderType> {
@@ -477,8 +460,8 @@ impl NativeContext<'_> {
             return None;
         }
         let entity_id = self.actor_id(actor)?;
-        self.queries
-            .sequence_manager()
+        self.sequence_manager
+            .expect("script native requires a live SequenceManager query view")
             .current_order_for_actor(entity_id)
             .map(|(_, _, order)| order.order_type)
     }
@@ -516,8 +499,7 @@ impl NativeContext<'_> {
     /// 0 (null handle) or stale handles map to `None`.
     fn actor_id(&self, handle: i32) -> Option<EntityId> {
         let idx = GameHost::actor_handle_index(handle)?;
-        let entity = self.entities.get(idx)?.as_ref()?;
-        Some(EntityId::new(idx as u32, entity.entity_id_kind()))
+        self.entities.id_at_legacy_slot(idx as u32)
     }
 
     /// Resolve a script mobile-array index to the first masked FX child used
@@ -565,8 +547,8 @@ impl NativeContext<'_> {
     }
 
     fn sector_kind(&self, sector: u16) -> Option<&crate::fast_find_grid::GridSector> {
-        self.bindings
-            .level_grid
+        self.fast_grid
+            .level
             .sectors
             .iter()
             .find(|candidate| u16::from(candidate.sector_number) == sector)
@@ -626,9 +608,8 @@ impl NativeContext<'_> {
     /// Side effects (seed `ASSERT_POSITION` against the source sector,
     /// choose move-after-last-door, raise `TO_JUMP` until past the
     /// first jump gate, lockpick short-circuit, `SEEK` building-interior
-    /// trailing MOVE) are driven from the data swapped onto `GameHost`
-    /// at level load (`doors`, `sector_kinds`, `entities` for the
-    /// actor's auth/lockpick lookup).
+    /// trailing MOVE) are driven from script domains plus the canonical grid
+    /// and entity owners borrowed by this native resume.
     ///
     /// `victim` is the SEEK target, passed straight through onto the
     /// trailing MOVE element's `element` field.
@@ -1316,7 +1297,7 @@ impl NativeContext<'_> {
     /// panics if no edge is reached (shouldn't happen for a valid
     /// inside point and non-zero direction vector).
     fn compute_border_point(&self, inside: (f32, f32), direction: i16) -> ((f32, f32), (f32, f32)) {
-        compute_border_point_bbox(self.bindings.map_bbox(), inside, direction)
+        compute_border_point_bbox(self.fast_grid.level.map_bbox, inside, direction)
     }
 }
 
@@ -1434,7 +1415,7 @@ pub(crate) fn compute_border_point_bbox(
     ((bx, by), (ox, oy))
 }
 
-impl NativeContext<'_> {
+impl NativeContext<'_, '_> {
     /// Convert a script seek style int for the *Message variants.
     /// style==0 → WALKING, else → RUNNING (reversed from RecordSeekActor).
     fn seek_message_style(style: i32) -> OrderType {
@@ -2103,13 +2084,18 @@ impl NativeContext<'_> {
                                     );
                                     return false;
                                 }
-                                let Some(Some(Entity::Soldier(s))) =
-                                    self.entities.get_mut(actor as usize)
-                                else {
+                                let Some(actor_index) = Self::actor_handle_index(actor) else {
                                     tracing::warn!(
                                         "Script Error: SetPersistentProperty invalid actor {actor}"
                                     );
                                     return false;
+                                };
+                                let Some((_, Entity::Soldier(s))) =
+                                    self.entities.get_legacy_slot_mut(actor_index as u32)
+                                else {
+                                    panic!(
+                                        "SetPersistentProperty: validated soldier handle {actor} no longer resolves to a soldier"
+                                    );
                                 };
                                 s.npc.number_of_arrows = amount as u16;
                                 tracing::debug!(
@@ -2336,7 +2322,7 @@ impl GameHost {
     }
 }
 
-impl NativeContext<'_> {
+impl NativeContext<'_, '_> {
     fn get_door(&self, handle: i32) -> Option<&Door> {
         GameHost::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
             .and_then(|idx| self.script_domains.interactables.doors.get(idx))
@@ -2636,7 +2622,7 @@ impl NativeContext<'_> {
     }
 }
 
-impl NativeContext<'_> {
+impl NativeContext<'_, '_> {
     fn call_immediate(&mut self, index: u32, stack: &mut NativeStack) -> i32 {
         use NativeFn::*;
 
@@ -3224,7 +3210,7 @@ impl NativeContext<'_> {
                     } else if idx < 0 {
                         panic!("GetActorScript: negative actor ID {idx}");
                     } else if (idx as usize) < script_count {
-                        if self.entities[idx as usize].is_some() {
+                        if self.entities.id_at_legacy_slot(idx as u32).is_some() {
                             Self::actor_handle_from_index(idx as usize)
                         } else {
                             // legacy implementation returns `marrayElementsScript[idx]`
@@ -4619,17 +4605,16 @@ impl NativeContext<'_> {
                     // script-element array; we abort with `false`
                     // when out of range. Convert that script index into
                     // an actor handle before resolving it.
-                    let resolve_antagonist =
-                        |number: i32, entities: &[Option<Entity>]| -> Option<Option<EntityId>> {
-                            if number < 0 || (number as usize) >= entities.len() {
-                                None
-                            } else {
-                                // Slot may be None (a null antagonist
-                                // is accepted once the bounds check
-                                // passes).
-                                Some(self.actor_id(Self::actor_handle_from_index(number as usize)))
-                            }
-                        };
+                    let resolve_antagonist = |number: i32| -> Option<Option<EntityId>> {
+                        if number < 0 || (number as usize) >= self.entities.len() {
+                            None
+                        } else {
+                            // Slot may be None (a null antagonist
+                            // is accepted once the bounds check
+                            // passes).
+                            Some(self.actor_id(Self::actor_handle_from_index(number as usize)))
+                        }
+                    };
                     // Script command constants.
                     const WAIT: i32 = 0;
                     const TURN: i32 = 1;
@@ -4666,8 +4651,7 @@ impl NativeContext<'_> {
                         AIM => SequenceElement::new(level, Command::EquipBow, owner),
                         AIM_UP => SequenceElement::new(level, Command::RaiseBow, owner),
                         SHOOT => {
-                            let Some(antagonist) = resolve_antagonist(number, &self.entities)
-                            else {
+                            let Some(antagonist) = resolve_antagonist(number) else {
                                 tracing::warn!(
                                     "RecordAction SHOOT: illegal antagonist index {number}"
                                 );
@@ -4681,8 +4665,7 @@ impl NativeContext<'_> {
                             )
                         }
                         ENTER_SF => {
-                            let Some(antagonist) = resolve_antagonist(number, &self.entities)
-                            else {
+                            let Some(antagonist) = resolve_antagonist(number) else {
                                 tracing::warn!(
                                     "RecordAction ENTER_SF: illegal antagonist index {number}"
                                 );
@@ -4717,8 +4700,7 @@ impl NativeContext<'_> {
                                 THRUST_H => Command::SwordstrikeThrustH,
                                 _ => Command::SwordstrikeThrustI,
                             };
-                            let Some(antagonist) = resolve_antagonist(number, &self.entities)
-                            else {
+                            let Some(antagonist) = resolve_antagonist(number) else {
                                 tracing::warn!(
                                     "RecordAction THRUST: illegal antagonist index {number}"
                                 );
@@ -5477,7 +5459,7 @@ impl NativeContext<'_> {
                         .and_then(|idx| idx.checked_sub(self.bindings.script_point_count));
                     if let Some(zi) = zone_idx
                         && let Some(&grid_idx) = self.bindings.script_zone_grid_indices.get(zi)
-                        && let Some(zone) = self.bindings.level_grid.sectors.get(grid_idx as usize)
+                        && let Some(zone) = self.fast_grid.level.sectors.get(grid_idx as usize)
                         && let Some(entity) = self.get_entity(actor)
                     {
                         let ed = entity.element_data();
@@ -5930,7 +5912,9 @@ impl NativeContext<'_> {
                                 })
                         });
                     let is_night_or_fog = matches!(
-                        self.queries.weather().ambiance,
+                        self.weather
+                            .expect("script native requires a live WeatherState query view")
+                            .ambiance,
                         crate::engine::Ambiance::Night | crate::engine::Ambiance::Fog
                     );
                     let effective_view_radius = crate::ai_vision::compute_view_radius(
@@ -5944,7 +5928,10 @@ impl NativeContext<'_> {
                         sight_obstacle_list,
                         target_obstacle,
                     );
-                    let forest_180_degree_view = self.queries.weather().is_forest_level
+                    let forest_180_degree_view = self
+                        .weather
+                        .expect("script native requires a live WeatherState query view")
+                        .is_forest_level
                         && npc_entity.camp() == Camp::Royalists;
                     if forest_180_degree_view && !npc_entity.is_active() {
                         return 0;
@@ -6249,9 +6236,8 @@ impl NativeContext<'_> {
                     // `playable`; do not double-filter here.
                     let playable_profiles: Vec<crate::profiles::CharacterProfileIdx> = self
                         .entities
-                        .iter()
-                        .filter_map(|slot| {
-                            let entity = slot.as_ref()?;
+                        .occupied()
+                        .filter_map(|(_, entity)| {
                             let pc = entity.pc_data()?;
                             if !pc.playable {
                                 return None;
@@ -7632,13 +7618,22 @@ impl NativeContext<'_> {
                         );
                         return 0;
                     }
-                    // The clickable polygon lives in `fast_grid.sector_active`;
-                    // queue an engine-side flip so script calls actually
-                    // disable the click region.
-                    self.commands.push(EngineCommand::ActivateDoorMouseSector {
-                        door_handle: door_h,
-                        active: active != 0,
-                    });
+                    let door_idx = Self::door_index(door_h)
+                        .expect("validated door handle must retain its door index")
+                        as u32;
+                    let sector_idx = self
+                        .fast_grid
+                        .level
+                        .sectors
+                        .iter()
+                        .position(|sector| sector.door_index == Some(door_idx))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ActivateDoorMouseSector: no grid sector registered for door {door_h}"
+                            )
+                        });
+                    self.fast_grid
+                        .set_sector_active(sector_idx as u32, active != 0);
                     0
                 }
 
@@ -8387,7 +8382,7 @@ impl NativeContext<'_> {
     }
 }
 
-impl HostFunctions for NativeContext<'_> {
+impl HostFunctions for NativeContext<'_, '_> {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
         if index == NativeFn::PrototypeFilterEvent as u32 {
             // The VM must yield before the outer script can observe a return

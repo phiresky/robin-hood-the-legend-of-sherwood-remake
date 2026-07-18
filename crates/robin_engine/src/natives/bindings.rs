@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::coordinates::MapBBox;
-use crate::fast_find_grid::LevelGrid;
 use crate::level_data::RawHikingPath;
 use crate::profiles::ProfileManager;
 use crate::sight_obstacle::SharedSightObstacles;
@@ -15,7 +13,6 @@ use crate::sight_obstacle::SharedSightObstacles;
 pub struct AttachedScriptBindings {
     pub profile_manager: Arc<ProfileManager>,
     pub hiking_paths: Arc<Vec<RawHikingPath>>,
-    pub level_grid: Arc<LevelGrid>,
     pub sight_obstacles: SharedSightObstacles,
     pub script_location_count: usize,
     pub script_point_count: usize,
@@ -62,10 +59,6 @@ impl<'a> ScriptBindings<'a> {
             attached: AttachedScriptBindings::empty_ref(),
         }
     }
-
-    pub fn map_bbox(self) -> MapBBox {
-        self.attached.level_grid.map_bbox
-    }
 }
 
 impl std::ops::Deref for ScriptBindings<'_> {
@@ -84,6 +77,14 @@ mod tests {
 
     fn get_location(bindings: &AttachedScriptBindings, index: i32) -> i32 {
         let mut host = GameHost::new();
+        let mut entities = crate::entities::Entities::new();
+        let mut ai_global = crate::ai::AiGlobalState::default();
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let capabilities = crate::natives::NativeSessionCapabilities::new(
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut state = ScriptState::default();
         let mut script_domains = crate::engine::ScriptDomains::default();
         let mut stack = NativeStack::default();
@@ -93,7 +94,7 @@ mod tests {
             &mut state,
             &mut script_domains,
             bindings,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         );
         HostFunctions::call(&mut context, NativeFn::GetLocationScript as u32, &mut stack)
             .expect_return("GetLocationScript is synchronous")

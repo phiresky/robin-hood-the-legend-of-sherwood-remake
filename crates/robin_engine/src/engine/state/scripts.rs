@@ -109,7 +109,6 @@ impl ScriptRuntime {
         script.attach_bindings(crate::natives::AttachedScriptBindings {
             profile_manager: assets.profile_manager.clone(),
             hiking_paths: assets.hiking_paths.clone(),
-            level_grid: assets.level_grid.clone(),
             sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
                 static_obstacles: assets.static_sight_obstacles.clone(),
                 dynamic_obstacles: Arc::new(dynamic_sight_obstacles.to_vec()),

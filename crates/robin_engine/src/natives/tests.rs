@@ -10,6 +10,52 @@ const TMP8: u16 = 0xC008;
 const TMP12: u16 = 0xC00C;
 const TMP16: u16 = 0xC010;
 
+#[derive(Clone, Copy, Default)]
+struct TestQueryViews<'a> {
+    sequence_manager: Option<&'a crate::sequence::SequenceManager>,
+    selected_pcs: Option<&'a [crate::element::EntityId]>,
+    sound_sources: Option<&'a crate::sound_source::SoundSourceManager>,
+    weather: Option<&'a crate::engine::WeatherState>,
+    frame_counter: Option<&'a u32>,
+}
+
+impl<'a> TestQueryViews<'a> {
+    fn new(
+        sequence_manager: &'a crate::sequence::SequenceManager,
+        selected_pcs: &'a [crate::element::EntityId],
+        sound_sources: &'a crate::sound_source::SoundSourceManager,
+        weather: &'a crate::engine::WeatherState,
+        frame_counter: &'a u32,
+    ) -> Self {
+        Self {
+            sequence_manager: Some(sequence_manager),
+            selected_pcs: Some(selected_pcs),
+            sound_sources: Some(sound_sources),
+            weather: Some(weather),
+            frame_counter: Some(frame_counter),
+        }
+    }
+
+    fn attach_to(
+        self,
+        capabilities: NativeSessionCapabilities<'a>,
+    ) -> NativeSessionCapabilities<'a> {
+        match (
+            self.sequence_manager,
+            self.selected_pcs,
+            self.sound_sources,
+            self.weather,
+            self.frame_counter,
+        ) {
+            (Some(sequences), Some(selected), Some(sounds), Some(weather), Some(frame)) => {
+                capabilities.with_queries(sequences, selected, sounds, weather, frame)
+            }
+            (None, None, None, None, None) => capabilities,
+            _ => panic!("test query fixture must supply either every query owner or none"),
+        }
+    }
+}
+
 /// Helper: build a program that pushes constants, calls a native, and returns the result.
 fn call_native_return(index: u32, args: &[i32]) -> Vec<crate::vm::Instruction> {
     let temps = [TMP0, TMP4, TMP8, TMP12, TMP16];
@@ -65,16 +111,21 @@ fn call_host_native_with_queries(
     host: &mut BoundGameHost,
     native: NativeFn,
     stack: &mut NativeStack,
-    queries: NativeQueryViews<'_>,
+    queries: TestQueryViews<'_>,
 ) -> i32 {
+    let capabilities = queries.attach_to(NativeSessionCapabilities::new(
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    ));
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         AttachedScriptBindings::empty_ref(),
-        queries,
+        &capabilities,
     );
-    <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
+    <NativeContext<'_, '_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native query test")
 }
 
@@ -84,14 +135,19 @@ fn call_bound_host_native(
     native: NativeFn,
     stack: &mut NativeStack,
 ) -> i32 {
+    let capabilities = NativeSessionCapabilities::new(
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    );
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
         &mut host.script_domains,
         bindings,
-        NativeQueryViews::default(),
+        &capabilities,
     );
-    <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
+    <NativeContext<'_, '_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native test")
 }
 
@@ -100,14 +156,23 @@ fn with_campaign_context<R>(
     bindings: &AttachedScriptBindings,
     campaign: &mut crate::campaign::Campaign,
     mission_stat: &mut crate::mission_stat::MissionStat,
-    f: impl FnOnce(&mut NativeContext<'_>) -> R,
+    f: impl FnOnce(&mut NativeContext<'_, '_>) -> R,
 ) -> R {
-    let capabilities = NativeCampaignCapabilities::new(campaign, mission_stat);
-    let queries = NativeQueryViews::default().with_campaign_capabilities(&capabilities);
+    let mut entities = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_campaign(campaign, mission_stat);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut context =
-        NativeContext::with_bindings(host, &mut state, &mut script_domains, bindings, queries);
+    let mut context = NativeContext::with_bindings(
+        host,
+        &mut state,
+        &mut script_domains,
+        bindings,
+        &capabilities,
+    );
     f(&mut context)
 }
 
@@ -124,7 +189,7 @@ fn call_campaign_native(
         campaign,
         mission_stat,
         |context| {
-            <NativeContext<'_> as HostFunctions>::call(context, native as u32, stack)
+            <NativeContext<'_, '_> as HostFunctions>::call(context, native as u32, stack)
                 .expect_return("non-nested campaign native test")
         },
     )
@@ -132,6 +197,9 @@ fn call_campaign_native(
 
 struct CampaignGameHost {
     host: GameHost,
+    entities: crate::entities::Entities,
+    ai_global: crate::ai::AiGlobalState,
+    fast_grid: crate::fast_find_grid::FastFindGrid,
     state: ScriptState,
     script_domains: crate::engine::ScriptDomains,
     campaign: crate::campaign::Campaign,
@@ -140,15 +208,18 @@ struct CampaignGameHost {
 
 impl HostFunctions for CampaignGameHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
-        let capabilities =
-            NativeCampaignCapabilities::new(&mut self.campaign, &mut self.mission_stat);
-        let queries = NativeQueryViews::default().with_campaign_capabilities(&capabilities);
+        let capabilities = NativeSessionCapabilities::new(
+            &mut self.entities,
+            &mut self.ai_global,
+            &mut self.fast_grid,
+        )
+        .with_campaign(&mut self.campaign, &mut self.mission_stat);
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
             &mut self.script_domains,
             AttachedScriptBindings::empty_ref(),
-            queries,
+            &capabilities,
         )
         .call(index, stack)
     }
@@ -156,6 +227,9 @@ impl HostFunctions for CampaignGameHost {
 
 struct BoundGameHost {
     host: GameHost,
+    entities: crate::entities::Entities,
+    ai_global: crate::ai::AiGlobalState,
+    fast_grid: crate::fast_find_grid::FastFindGrid,
     state: ScriptState,
     script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
@@ -165,6 +239,9 @@ impl BoundGameHost {
     fn new() -> Self {
         Self {
             host: GameHost::new(),
+            entities: crate::entities::Entities::new(),
+            ai_global: crate::ai::AiGlobalState::default(),
+            fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             state: ScriptState::default(),
             script_domains: crate::engine::ScriptDomains::default(),
             bindings: AttachedScriptBindings::default(),
@@ -189,6 +266,20 @@ impl BoundGameHost {
                     .then_some(crate::gate::DoorIndex(idx as u32))
             })
     }
+
+    fn entity_at_legacy_slot(&self, slot: u32) -> &crate::element::Entity {
+        self.entities
+            .get_legacy_slot(slot)
+            .unwrap_or_else(|| panic!("missing test entity in legacy slot {slot}"))
+            .1
+    }
+
+    fn entity_at_legacy_slot_mut(&mut self, slot: u32) -> &mut crate::element::Entity {
+        self.entities
+            .get_legacy_slot_mut(slot)
+            .unwrap_or_else(|| panic!("missing test entity in legacy slot {slot}"))
+            .1
+    }
 }
 
 impl std::ops::Deref for BoundGameHost {
@@ -207,12 +298,17 @@ impl std::ops::DerefMut for BoundGameHost {
 
 impl HostFunctions for BoundGameHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        let capabilities = NativeSessionCapabilities::new(
+            &mut self.entities,
+            &mut self.ai_global,
+            &mut self.fast_grid,
+        );
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
             &mut self.script_domains,
             &self.bindings,
-            NativeQueryViews::default(),
+            &capabilities,
         )
         .call(index, stack)
     }
@@ -322,20 +418,22 @@ fn name_lookup() {
 }
 
 #[test]
-fn npc_custom_values_round_trip_through_json() {
+fn game_host_json_omits_runtime_entities() {
     let mut host = BoundGameHost::new();
     let mut npc = native_test_soldier();
     npc.npc_data_mut().unwrap().custom_values[7] = 456;
     host.entities.push(Some(npc));
 
-    serde_json::to_value(&*host).expect("save/rollback JSON value");
+    let value = serde_json::to_value(&*host).expect("save/rollback JSON value");
+    assert!(value.get("entities").is_none());
     let json = serde_json::to_string(&*host).expect("serialize GameHost");
-    let decoded: GameHost = serde_json::from_str(&json).expect("deserialize GameHost");
+    let _decoded: GameHost = serde_json::from_str(&json).expect("deserialize GameHost");
 
     assert_eq!(
-        decoded.entities[0]
-            .as_ref()
+        host.entities
+            .get_legacy_slot(0)
             .unwrap()
+            .1
             .npc_data()
             .unwrap()
             .custom_values[7],
@@ -355,12 +453,12 @@ fn npc_custom_values_participate_in_state_hash() {
     }
 
     assert_eq!(
-        robin_util::state_hash::compute(&*baseline),
-        robin_util::state_hash::compute(&*same)
+        robin_util::state_hash::compute(&baseline.entities),
+        robin_util::state_hash::compute(&same.entities)
     );
     assert_ne!(
-        robin_util::state_hash::compute(&*baseline),
-        robin_util::state_hash::compute(&*changed)
+        robin_util::state_hash::compute(&baseline.entities),
+        robin_util::state_hash::compute(&changed.entities)
     );
 }
 
@@ -860,11 +958,11 @@ fn compute_location_between() {
 #[test]
 fn are_all_pcs_inside() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
-    ];
+    ]);
     let loc = GameHost::location_handle_from_index(0);
     seed_zone(
         &mut host,
@@ -881,11 +979,11 @@ fn are_all_pcs_inside() {
 #[test]
 fn are_all_pcs_inside_not_all() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
-    ];
+    ]);
     let handles: Vec<_> = (0..3).map(GameHost::actor_handle_from_index).collect();
     let loc = GameHost::location_handle_from_index(0);
     seed_zone(&mut host, 0, &[handles[0], handles[2]]); // PC 2 missing
@@ -931,6 +1029,9 @@ fn campaign_values_set_get() {
     ];
     let host = CampaignGameHost {
         host: GameHost::new(),
+        entities: crate::entities::Entities::new(),
+        ai_global: crate::ai::AiGlobalState::default(),
+        fast_grid: crate::fast_find_grid::FastFindGrid::default(),
         state: ScriptState::default(),
         script_domains: crate::engine::ScriptDomains::default(),
         campaign: crate::campaign::Campaign::default(),
@@ -1054,7 +1155,7 @@ fn deferred_selection_is_visible_to_later_natives_in_the_same_callback() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
-    let queries = NativeQueryViews::new(&sequences, &selected, &sounds, &weather, &frame);
+    let queries = TestQueryViews::new(&sequences, &selected, &sounds, &weather, &frame);
 
     let mut select = NativeStack::default();
     select.push_i32(actor);
@@ -1088,7 +1189,7 @@ fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
     sounds.sources_push_some(crate::sound_source::SoundSource::default());
     let weather = crate::engine::WeatherState::default();
     let frame = 23;
-    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
+    let queries = TestQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
     let handle = GameHost::sound_source_handle_from_index(0);
 
     let mut destroy = NativeStack::default();
@@ -1143,7 +1244,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;
-    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
+    let queries = TestQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
 
     let mut action = NativeStack::default();
     action.push_i32(pc_handle);
@@ -1173,9 +1274,8 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0
     );
     assert_eq!(
-        npc_host.entities[0]
-            .as_ref()
-            .unwrap()
+        npc_host
+            .entity_at_legacy_slot(0)
             .ai_controller()
             .unwrap()
             .emoticon_expiration_date,
@@ -1198,14 +1298,14 @@ fn canonical_query_views_are_isolated_between_engine_instances() {
     let second_sounds = crate::sound_source::SoundSourceManager::new();
     let second_weather = crate::engine::WeatherState::default();
     let second_frame = 900;
-    let first_queries = NativeQueryViews::new(
+    let first_queries = TestQueryViews::new(
         &first_sequences,
         &first_selection,
         &first_sounds,
         &first_weather,
         &first_frame,
     );
-    let second_queries = NativeQueryViews::new(
+    let second_queries = TestQueryViews::new(
         &second_sequences,
         &second_selection,
         &second_sounds,
@@ -1284,7 +1384,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
             },
             NativeFn::GetNumberOfSelectedPCs,
             &mut NativeStack::default(),
-            NativeQueryViews::new(&sequences, &selection, &sounds, &weather, &frame),
+            TestQueryViews::new(&sequences, &selection, &sounds, &weather, &frame),
         ),
         1,
         "loaded hosts query canonical runtime state, not stale save mirrors"
@@ -1318,7 +1418,7 @@ fn animation_state_write_is_immediately_visible_from_canonical_entity() {
         call_host_native(&mut host, NativeFn::IsAnimationActive, &mut get),
         1
     );
-    assert!(host.entities[0].as_ref().unwrap().element_data().active);
+    assert!(host.entity_at_legacy_slot(0).element_data().active);
 }
 
 #[test]
@@ -1447,17 +1547,21 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 50;
-    let capabilities = NativeCampaignCapabilities::new(&mut campaign, &mut mission_stat);
-    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame)
-        .with_campaign_capabilities(&capabilities);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entities = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_queries(&sequences, &[], &sounds, &weather, &frame)
+            .with_campaign(&mut campaign, &mut mission_stat);
     let mut context = NativeContext::with_bindings(
         &mut host,
         &mut state,
         &mut script_domains,
         AttachedScriptBindings::empty_ref(),
-        queries,
+        &capabilities,
     );
 
     let mut set = NativeStack::default();
@@ -1563,7 +1667,7 @@ fn persistent_property_test_host(
     pc_data.profile_index = CharacterProfileIdx(0);
     pc_data.current_action = Action::Bow;
     pc_data.saved_action = Action::Bow;
-    host.entities = vec![Some(pc)];
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(pc)]);
 
     let campaign = if with_campaign {
         let mut status = crate::pc_status::PcStatus::default();
@@ -1670,7 +1774,7 @@ fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
         1
     );
 
-    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    let pc = host.entity_at_legacy_slot(0).pc_data().unwrap();
     assert_eq!(
         pc.ammo,
         PcAmmoData {
@@ -1701,7 +1805,7 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     let mut campaign = campaign.expect("campaign fixture");
     let mut mission_stat = crate::mission_stat::MissionStat::default();
     {
-        let pc = host.entities[0].as_mut().unwrap().pc_data_mut().unwrap();
+        let pc = host.entity_at_legacy_slot_mut(0).pc_data_mut().unwrap();
         pc.ammo.arrows = 2;
         pc.ammo.stones = 5;
         pc.current_action = Action::Stone;
@@ -1733,7 +1837,7 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
         1
     );
 
-    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    let pc = host.entity_at_legacy_slot(0).pc_data().unwrap();
     assert_eq!(
         pc.ammo,
         PcAmmoData {
@@ -1788,7 +1892,7 @@ fn native_sees(
         host,
         NativeFn::Sees,
         &mut stack,
-        NativeQueryViews::new(&sequences, &[], &sounds, weather, &frame),
+        TestQueryViews::new(&sequences, &[], &sounds, weather, &frame),
     )
 }
 
@@ -1813,7 +1917,7 @@ fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundGa
     pc.element_data_mut().posture = Posture::Upright;
 
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(npc), Some(pc)];
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(npc), Some(pc)]);
     host
 }
 
@@ -1832,7 +1936,7 @@ fn sees_uses_forest_royalist_180_degree_rule() {
     weather.is_forest_level = true;
     assert_eq!(native_sees(&mut host, &weather, 0, 1), 1);
 
-    let Entity::Soldier(soldier) = host.entities[0].as_mut().unwrap() else {
+    let Entity::Soldier(soldier) = host.entity_at_legacy_slot_mut(0) else {
         unreachable!("observer must remain a soldier")
     };
     soldier.soldier.cached_camp = Camp::Lacklandists;
@@ -1851,9 +1955,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
         Camp::Lacklandists,
     );
     let mut weather = crate::engine::WeatherState::default();
-    host.entities[0]
-        .as_mut()
-        .unwrap()
+    host.entity_at_legacy_slot_mut(0)
         .npc_data_mut()
         .unwrap()
         .view_radius = 500;
@@ -1921,7 +2023,10 @@ fn set_experiences_test_host() -> (BoundGameHost, crate::campaign::Campaign, i32
     });
 
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
+        Vec::new(),
+        Vec::new(),
+    ))]);
     (host, campaign, actor)
 }
 
@@ -1984,10 +2089,10 @@ fn set_experiences_capacities_persist_with_campaign_description() {
 #[test]
 fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(native_test_pc(
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
-    ))];
+    ))]);
 
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(0));
@@ -1995,17 +2100,17 @@ fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     stack.push_i32(0);
     let ret = call_host_native(&mut host, NativeFn::SetActionAvailable, &mut stack);
     assert_eq!(ret, 1);
-    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    let pc = host.entity_at_legacy_slot(0).pc_data().unwrap();
     assert_eq!(pc.disabled_actions, [false, false, false]);
 }
 
 #[test]
 fn is_action_available_rejects_out_of_range_slot() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(native_test_pc(
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, false, false],
         vec![false, false, false],
-    ))];
+    ))]);
 
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(0));
@@ -2017,10 +2122,10 @@ fn is_action_available_rejects_out_of_range_slot() {
 #[test]
 fn is_action_available_reads_persistent_and_temp_slot_masks() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(native_test_pc(
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
         vec![false, true, false],
         vec![false, false, true],
-    ))];
+    ))]);
     let actor = GameHost::actor_handle_from_index(0);
 
     let mut stack = NativeStack::default();
@@ -2051,7 +2156,10 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
 #[test]
 fn add_as_subordinate_requests_patrol_reinit() {
     let mut host = BoundGameHost::new();
-    host.entities = vec![Some(native_test_soldier()), Some(native_test_soldier())];
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
+        Some(native_test_soldier()),
+        Some(native_test_soldier()),
+    ]);
 
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(0));
@@ -2059,9 +2167,9 @@ fn add_as_subordinate_requests_patrol_reinit() {
     let ret = call_host_native(&mut host, NativeFn::AddAsSubordinate, &mut stack);
     assert_eq!(ret, 0);
 
-    let chief_ai = host.entities[0]
-        .as_ref()
-        .and_then(|entity| entity.ai_controller())
+    let chief_ai = host
+        .entity_at_legacy_slot(0)
+        .ai_controller()
         .expect("chief has AI");
     assert_eq!(
         chief_ai.theoretical_patrol,

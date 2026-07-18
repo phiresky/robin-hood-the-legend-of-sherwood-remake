@@ -182,6 +182,49 @@ impl<'de> Deserialize<'de> for EngineInner {
         let legacy_script_domains = mission_script
             .as_mut()
             .and_then(super::MissionScript::take_legacy_script_domains);
+        let legacy_native_owners = mission_script
+            .as_mut()
+            .map(super::MissionScript::take_legacy_native_owners);
+        let mut entities = snapshot.entities;
+        if let Some(legacy) = legacy_native_owners
+            .as_ref()
+            .and_then(|owners| owners.entities.clone())
+            && !legacy.is_empty()
+        {
+            if entities.is_empty() {
+                entities = legacy;
+            } else {
+                return Err(serde::de::Error::custom(
+                    "Engine snapshot contains contradictory canonical and legacy GameHost entities",
+                ));
+            }
+        }
+        let mut ai_global = snapshot.ai_global;
+        if let Some(legacy) = legacy_native_owners
+            .as_ref()
+            .and_then(|owners| owners.ai_global.clone())
+            && !legacy.is_default_for_legacy_merge()
+        {
+            if ai_global.is_default_for_legacy_merge() {
+                ai_global = legacy;
+            } else {
+                return Err(serde::de::Error::custom(
+                    "Engine snapshot contains contradictory canonical and legacy GameHost AI state",
+                ));
+            }
+        }
+        let mut fast_grid = snapshot.fast_grid;
+        if let Some(legacy) = legacy_native_owners.and_then(|owners| owners.fast_grid)
+            && !legacy.runtime_is_empty_for_legacy_merge()
+        {
+            if fast_grid.runtime_is_empty_for_legacy_merge() {
+                fast_grid = legacy;
+            } else {
+                return Err(serde::de::Error::custom(
+                    "Engine snapshot contains contradictory canonical and legacy GameHost grid state",
+                ));
+            }
+        }
         let mut script_domains = snapshot.script_domains.unwrap_or_default();
         if let Some(legacy) = legacy_script_domains {
             if let Some(buildings) = legacy.buildings {
@@ -258,13 +301,13 @@ impl<'de> Deserialize<'de> for EngineInner {
                 fast_forward: snapshot.fast_forward,
             },
             ai: AiRuntime {
-                global: snapshot.ai_global,
+                global: ai_global,
                 standard_view_polygon_radius: snapshot.standard_view_polygon_radius,
             },
             world: WorldState {
-                entities: snapshot.entities,
+                entities,
                 pc_ids: snapshot.pc_ids,
-                fast_grid: snapshot.fast_grid,
+                fast_grid,
                 pathfinder: snapshot.pathfinder,
                 weather: snapshot.weather,
                 shield: snapshot.shield,

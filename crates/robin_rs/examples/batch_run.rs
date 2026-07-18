@@ -44,10 +44,22 @@ fn main() {
                     .collect();
 
                 let mut game_host = GameHost::new();
+                let mut entities = robin_engine::entities::Entities::new();
+                let mut ai_global = robin_engine::ai::AiGlobalState::default();
+                let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+                let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+                    &mut entities,
+                    &mut ai_global,
+                    &mut fast_grid,
+                );
                 let mut script_state = ScriptState::default();
                 let mut script_domains = robin_rs::engine::ScriptDomains::default();
-                let context =
-                    NativeContext::new(&mut game_host, &mut script_state, &mut script_domains);
+                let context = NativeContext::new(
+                    &mut game_host,
+                    &mut script_state,
+                    &mut script_domains,
+                    &capabilities,
+                );
                 let mut vm_state = Vm::new().with_host(context);
                 vm_state
                     .vm

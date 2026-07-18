@@ -32,6 +32,15 @@ impl Entities {
         Self::default()
     }
 
+    /// Reconstruct the original engine's sparse `marrayElements` layout.
+    ///
+    /// This is intentionally narrower than `From<Vec<_>>`: only legacy
+    /// loaders, compatibility DTOs, and parity fixtures should manufacture
+    /// raw slots. Runtime code should use typed IDs and entity accessors.
+    pub fn from_legacy_slots(slots: Vec<Option<Entity>>) -> Self {
+        Self(slots)
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -46,10 +55,6 @@ impl Entities {
 
     pub fn resize(&mut self, new_len: usize, value: Option<Entity>) {
         self.0.resize(new_len, value);
-    }
-
-    pub fn swap_slots_with(&mut self, slots: &mut Vec<Option<Entity>>) {
-        std::mem::swap(&mut self.0, slots);
     }
 
     /// Resolve an original-game raw element-array slot to the typed ID for

@@ -7199,13 +7199,21 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
 
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(2).unwrap(),
         3,
         "TestWaypoint",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default(),
+        &capabilities,
     ));
     assert!(
         script
@@ -7219,7 +7227,7 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
         0,
         "NonExistent",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default(),
+        &capabilities,
     ));
     assert!(
         !script
@@ -7236,12 +7244,20 @@ fn call_waypoint_function_dispatches_and_falls_back() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(0).unwrap(),
         0,
         "TestWaypoint",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default(),
+        &capabilities,
     ));
 
     // Bound: call dispatches cleanly.
@@ -7253,7 +7269,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             "ReachPoint",
             &[actor_handle],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("ReachPoint");
     assert_eq!(ret, 0, "empty ReachPoint should return 0");
@@ -7266,7 +7282,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             "ReachPoint",
             &[actor_handle],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("missing instance should be Ok(0)");
     assert_eq!(ret_missing, 0);
@@ -7279,7 +7295,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             "NotAFunction",
             &[],
             &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
+            &capabilities,
         )
         .expect("missing function should be Ok(0)");
     assert_eq!(ret_no_fn, 0);
@@ -7422,12 +7438,20 @@ fn waypoint_script_heap_round_trips_through_serde() {
 
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
+    let mut entity_store = crate::entities::Entities::new();
+    let mut ai_global = crate::ai::AiGlobalState::default();
+    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut entity_store,
+        &mut ai_global,
+        &mut fast_grid,
+    );
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(3).unwrap(),
         7,
         "HeapWaypoint",
         &mut script_domains,
-        crate::natives::NativeQueryViews::default(),
+        &capabilities,
     ));
 
     // Poke distinct bytes into the heap so a zero reset is detectable.
