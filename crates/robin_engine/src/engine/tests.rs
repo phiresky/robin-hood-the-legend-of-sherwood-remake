@@ -2082,6 +2082,25 @@ fn post_load_fixups_aborts_midzoom() {
 }
 
 #[test]
+fn patch_door_highlight_refresh_does_not_require_a_script_host() {
+    let mut engine = EngineInner::new();
+    let mut first = crate::patch::Patch::new();
+    first.display_doors = true;
+    engine.script_domains.interactables.patches.push(first);
+    engine
+        .script_domains
+        .interactables
+        .patches
+        .push(crate::patch::Patch::new());
+
+    assert!(engine.scripts.mission.is_none());
+    engine.refresh_selected_patch_display_doors(Some(1));
+
+    assert!(!engine.script_domains.interactables.patches[0].display_doors);
+    assert!(engine.script_domains.interactables.patches[1].display_doors);
+}
+
+#[test]
 fn mercenary_formation_single_pc_lands_on_click() {
     let click = crate::coordinates::map_pt(200.0, 300.0);
     let dests = mercenary_formation_destinations(&[crate::coordinates::map_pt(50.0, 50.0)], click);
