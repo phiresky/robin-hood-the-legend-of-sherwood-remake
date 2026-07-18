@@ -120,6 +120,9 @@ pub enum EngineCommand {
     /// without the `EngineInner` borrow, so it queues this command for
     /// the engine to drain via `actor_make_crouched`.
     ScriptMakePCCrouched { actor_handle: i32 },
+    /// Propagate generic Activate/Deactivate from the script-visible mobile
+    /// handle to its non-entity RHElementMobile master.
+    SetMobileActive { mobile_index: u16, active: bool },
 }
 
 /// Commands queued by script natives for the engine's sound system.

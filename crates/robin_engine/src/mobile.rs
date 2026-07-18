@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    coordinates::{MapPoint, MapVec},
+    coordinates::{MapBBox, MapPoint, MapVec},
     element::EntityId,
     fast_find_grid::GridLine,
     level_data::{RawHikingPath, RawMobileElement, WaypointCommand},
@@ -25,6 +25,9 @@ pub struct MobileElement {
     pub forward: bool,
     pub layer: u16,
     pub sector: u16,
+    /// Current projection-area obstacle. Shipped records start at NULL and
+    /// acquire one while crossing authored elevation bonds.
+    pub obstacle: Option<u16>,
     pub active: bool,
     pub stopped: bool,
     pub speed: f32,
@@ -83,6 +86,7 @@ impl MobileElement {
             forward: true,
             layer: waypoint.level,
             sector: waypoint.sector,
+            obstacle: None,
             active: true,
             stopped: false,
             speed: 10.0,
@@ -179,6 +183,17 @@ impl MobileElement {
             previous = current;
         }
         inside
+    }
+
+    /// Exact polygon-vs-box test used by RHPositionInterface's mobile
+    /// blocker check. A corridor may miss every perimeter line while its
+    /// destination move box is nevertheless wholly inside the cart.
+    pub fn polygon_intersects_bbox(polygon: &[MapPoint], bbox: &MapBBox) -> bool {
+        let vertices = polygon
+            .iter()
+            .map(|point| point.to_geo())
+            .collect::<Vec<_>>();
+        crate::geo2d::polygon_vertices_intersect_bbox(&vertices, &bbox.to_geo())
     }
 
     pub fn is_moving(&self) -> bool {
@@ -528,5 +543,31 @@ mod tests {
                     .all(|point| point.radius == 0.0 && point.action_radius == 15.0)
             );
         });
+    }
+
+    #[test]
+    fn stopped_mobile_freezes_master_motion() {
+        crate::sim_rng::with_seed(11, || {
+            let path = path();
+            let mut mobile = MobileElement::from_raw(&raw_mobile(), &path, Vec::new()).unwrap();
+            let position = mobile.position;
+            mobile.stop();
+            assert_eq!(mobile.hourglass(&path).unwrap().movement, MapVec::ZERO);
+            assert_eq!(mobile.position, position);
+        });
+    }
+
+    #[test]
+    fn motion_polygon_blocks_a_box_fully_inside_it() {
+        let polygon = vec![
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(20.0, 0.0),
+            MapPoint::new(20.0, 20.0),
+            MapPoint::new(0.0, 20.0),
+        ];
+        let inside = MapBBox::from_coords(8.0, 8.0, 12.0, 12.0);
+        let outside = MapBBox::from_coords(30.0, 30.0, 35.0, 35.0);
+        assert!(MobileElement::polygon_intersects_bbox(&polygon, &inside));
+        assert!(!MobileElement::polygon_intersects_bbox(&polygon, &outside));
     }
 }

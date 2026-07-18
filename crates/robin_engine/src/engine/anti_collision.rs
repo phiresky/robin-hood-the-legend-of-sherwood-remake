@@ -537,6 +537,7 @@ pub fn apply_anti_collision_step(
     static_points: &[StaticRepulsivePoint],
     mobile_points: &[RepulsivePoint],
     mobile_lines: &[crate::fast_find_grid::GridLine],
+    mobile_polygons: &[Vec<MapPoint>],
     grid: Option<&FastFindGrid>,
     mut state: Option<&mut AntiCollisionState>,
     nx: f32,
@@ -566,12 +567,21 @@ pub fn apply_anti_collision_step(
 
     let increment = MapVec::new(nx, ny);
     let (mut points, mut lines) = gather_disturbing(mover, neighbours, &box_future, increment);
-    points.extend(mobile_points.iter().copied());
-    lines.extend(
-        mobile_lines
-            .iter()
-            .map(|line| RepulsiveLine::new(line.a, line.b, 0.0, 15.0)),
-    );
+    // FastFindGrid::GetMobileRepulsiveObjects first rejects a mobile whose
+    // complete motion sector misses boxFuture, then contributes all of that
+    // mobile's repulsive objects. Released missions contain one mobile per
+    // level, so a single intersection gate exactly preserves that grouping.
+    let mobile_interferes = mobile_polygons
+        .iter()
+        .any(|polygon| crate::mobile::MobileElement::polygon_intersects_bbox(polygon, &box_future));
+    if mobile_interferes {
+        points.extend(mobile_points.iter().copied());
+        lines.extend(
+            mobile_lines
+                .iter()
+                .map(|line| RepulsiveLine::new(line.a, line.b, 0.0, 15.0)),
+        );
+    }
     points.extend(gather_static_repulsive_points(
         mover,
         static_points,
@@ -644,6 +654,26 @@ pub fn apply_anti_collision_step(
             _ => false,
         };
         if reachable {
+            if let Some(grid) = grid
+                && is_blocked_by_mobile(
+                    grid,
+                    mover.position_map,
+                    future,
+                    mover.layer,
+                    state
+                        .as_deref()
+                        .expect("deviated state disappeared")
+                        .half_diagonal,
+                    &state
+                        .as_deref()
+                        .expect("deviated state disappeared")
+                        .move_box,
+                    mobile_lines,
+                    mobile_polygons,
+                )
+            {
+                return (0.0, 0.0);
+            }
             if let Some(s) = state.as_deref_mut() {
                 s.pi.deviated = false;
             }
@@ -688,6 +718,18 @@ pub fn apply_anti_collision_step(
             None => false,
         };
         if reachable {
+            if is_blocked_by_mobile(
+                grid.expect("reachable mobile recovery requires a grid"),
+                mover.position_map,
+                deviated_future,
+                mover.layer,
+                state.half_diagonal,
+                &state.move_box,
+                mobile_lines,
+                mobile_polygons,
+            ) {
+                return (0.0, 0.0);
+            }
             state.pi.deviated = false;
             return (
                 deviated_future.x - mover.position_map.x,
@@ -716,12 +758,15 @@ pub fn apply_anti_collision_step(
         deviated_future.to_geo().into(),
         mover.layer,
         &state.move_box,
-    ) && grid.is_reachable_thick_mobile(
+    ) && !is_blocked_by_mobile(
+        grid,
         mover.position_map,
         deviated_future,
         mover.layer,
         state.half_diagonal,
+        &state.move_box,
         mobile_lines,
+        mobile_polygons,
     ) && grid.is_reachable_thick(
         deviated_future.to_geo().into(),
         state.goal_map.to_geo().into(),
@@ -753,6 +798,22 @@ pub fn apply_anti_collision_step(
     // fails widen the box and ask the grid for any authorised cell
     // nearby.
     if state.pi.blocked_count > 0 {
+        // The original checks the already-computed candidate against mobile
+        // geometry before its break-through/barge escape. A cart is never
+        // barged through, even when static anti-collision has been blocked
+        // long enough to trigger the escape hatch.
+        if is_blocked_by_mobile(
+            grid,
+            mover.position_map,
+            deviated_future,
+            mover.layer,
+            state.half_diagonal,
+            &state.move_box,
+            mobile_lines,
+            mobile_polygons,
+        ) {
+            return (0.0, 0.0);
+        }
         let to_goal = MapVec::new(
             state.goal_map.x - mover.position_map.x,
             state.goal_map.y - mover.position_map.y,
@@ -825,6 +886,29 @@ pub fn apply_anti_collision_step(
     // No deviation committed and no barge — stay put.
     state.pi.deviated = true;
     (0.0, 0.0)
+}
+
+/// C++ `RHPositionInterface::IsBlockedByMobile`: the thick movement
+/// corridor must avoid both the cart's repulsive perimeter lines and a
+/// destination move-box overlap with its full motion polygon.
+#[allow(clippy::too_many_arguments)]
+fn is_blocked_by_mobile(
+    grid: &FastFindGrid,
+    start: MapPoint,
+    goal: MapPoint,
+    layer: u16,
+    half_diagonal: MoveBoxHalfDiagonal,
+    move_box: &MoveBox,
+    mobile_lines: &[crate::fast_find_grid::GridLine],
+    mobile_polygons: &[Vec<MapPoint>],
+) -> bool {
+    if !grid.is_reachable_thick_mobile(start, goal, layer, half_diagonal, mobile_lines) {
+        return true;
+    }
+    let goal_box = move_box.translated(goal);
+    mobile_polygons
+        .iter()
+        .any(|polygon| crate::mobile::MobileElement::polygon_intersects_bbox(polygon, &goal_box))
 }
 
 /// Build `RepulsiveLine`s from the level's `LINE_REPULSIVE` grid lines
@@ -907,6 +991,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -935,6 +1020,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             -1.0,
@@ -955,6 +1041,7 @@ mod tests {
         let (dx, dy) = apply_anti_collision_step(
             &a,
             &snapshots,
+            &[],
             &[],
             &[],
             &[],
@@ -981,6 +1068,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1001,6 +1089,7 @@ mod tests {
         let (dx, dy) = apply_anti_collision_step(
             &a,
             &snapshots,
+            &[],
             &[],
             &[],
             &[],
@@ -1028,6 +1117,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1052,6 +1142,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1073,6 +1164,7 @@ mod tests {
         let (dx, dy) = apply_anti_collision_step(
             &a,
             &snapshots,
+            &[],
             &[],
             &[],
             &[],
@@ -1137,6 +1229,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1157,6 +1250,7 @@ mod tests {
         let (dx, dy) = apply_anti_collision_step(
             &a,
             &snapshots,
+            &[],
             &[],
             &[],
             &[],
@@ -1195,6 +1289,7 @@ mod tests {
             &static_points,
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1231,6 +1326,7 @@ mod tests {
             &static_points,
             &[],
             &[],
+            &[],
             None,
             None,
             1.0,
@@ -1262,6 +1358,7 @@ mod tests {
             &a,
             &snapshots,
             &static_points,
+            &[],
             &[],
             &[],
             None,

@@ -474,6 +474,81 @@ fn script_actor_handle_maps_back_to_zero_based_entity_index() {
     );
 }
 
+fn mobile_fx(mobile_index: u16) -> Entity {
+    Entity::Fx(crate::element::ElementFx {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Fx,
+            active: true,
+            ..Default::default()
+        },
+        fx: crate::element::FxData {
+            mobile_index: Some(mobile_index),
+            ..Default::default()
+        },
+    })
+}
+
+#[test]
+fn mobile_master_is_appended_to_script_actor_indices() {
+    let mut host = GameHost::new();
+    host.entities
+        .push(Some(Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            },
+            fx: crate::element::FxData::default(),
+        })));
+    host.entities.push(Some(mobile_fx(0)));
+
+    let mut get = NativeStack::default();
+    get.push_i32(1);
+    let handle = call_host_native(&mut host, NativeFn::GetActorScript, &mut get);
+    assert_eq!(handle, GameHost::actor_handle_from_index(1));
+
+    let mut reverse = NativeStack::default();
+    reverse.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::GetActorIndex, &mut reverse),
+        0
+    );
+
+    let mut is_cart = NativeStack::default();
+    is_cart.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsActorCart, &mut is_cart),
+        1
+    );
+}
+
+#[test]
+fn generic_mobile_activation_propagates_to_all_children() {
+    let mut host = GameHost::new();
+    host.entities.push(Some(mobile_fx(0)));
+    host.entities.push(Some(mobile_fx(0)));
+    let handle = GameHost::actor_handle_from_index(0);
+
+    let mut deactivate = NativeStack::default();
+    deactivate.push_i32(handle);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::Deactivate, &mut deactivate),
+        1
+    );
+    assert!(
+        host.entities
+            .iter()
+            .flatten()
+            .all(|entity| !entity.is_active())
+    );
+    assert!(matches!(
+        host.commands.as_slice(),
+        [EngineCommand::SetMobileActive {
+            mobile_index: 0,
+            active: false
+        }]
+    ));
+}
+
 #[test]
 fn is_actor_equal_same() {
     assert_eq!(run_native(86, &[7, 7]), StopReason::ReturnedValue(1));

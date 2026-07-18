@@ -3490,6 +3490,10 @@ impl EngineInner {
             u16,
             Vec<crate::repulsive::RepulsivePoint>,
         > = std::collections::BTreeMap::new();
+        let mut mobile_polygons_by_layer: std::collections::BTreeMap<
+            u16,
+            Vec<Vec<crate::coordinates::MapPoint>>,
+        > = std::collections::BTreeMap::new();
         for mobile in &self.world.mobile_elements {
             if mobile.active {
                 mobile_lines_by_layer
@@ -3500,6 +3504,10 @@ impl EngineInner {
                     .entry(mobile.layer)
                     .or_default()
                     .extend(mobile.repulsive_points());
+                mobile_polygons_by_layer
+                    .entry(mobile.layer)
+                    .or_default()
+                    .push(mobile.motion_polygon.clone());
             }
         }
 
@@ -4708,6 +4716,10 @@ impl EngineInner {
                                 .get(&mover_snapshot.layer)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]),
+                            mobile_polygons_by_layer
+                                .get(&mover_snapshot.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
                             Some(&self.world.fast_grid),
                             Some(&mut state),
                             nx,
@@ -5029,6 +5041,10 @@ impl EngineInner {
                             .map(Vec::as_slice)
                             .unwrap_or(&[]),
                         mobile_lines_by_layer
+                            .get(&mover_snap.layer)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                        mobile_polygons_by_layer
                             .get(&mover_snap.layer)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]),
@@ -5741,6 +5757,84 @@ impl EngineInner {
             Some(left)
         } else {
             None
+        }
+    }
+
+    /// Elevation-bond crossing for a shipped mobile master. The C++ mobile
+    /// owns the obstacle pointer, then propagates it to every masked child.
+    /// Its multi-line branch accidentally iterates a zero counter; preserve
+    /// that release behavior and only cross when this tick sees exactly one
+    /// unique, non-origin elevation line.
+    pub(super) fn check_mobile_line_crossing(&mut self, assets: &LevelAssets, mobile_index: usize) {
+        let (old_pos, new_pos, layer, increment, current) = {
+            let mobile = self
+                .world
+                .mobile_elements
+                .get(mobile_index)
+                .unwrap_or_else(|| panic!("missing mobile {mobile_index}"));
+            (
+                mobile.old_position,
+                mobile.position,
+                mobile.layer,
+                mobile.increment,
+                mobile.obstacle,
+            )
+        };
+        if old_pos == new_pos {
+            return;
+        }
+
+        let mut indices = self
+            .world
+            .fast_grid
+            .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
+        indices.dedup_by(|left_idx, right_idx| {
+            let left = &self.world.fast_grid.level.lines[usize::from(*left_idx)];
+            let right = &self.world.fast_grid.level.lines[usize::from(*right_idx)];
+            (left.a == right.a && left.b == right.b) || (left.a == right.b && left.b == right.a)
+        });
+        indices.retain(|idx| {
+            let line = &self.world.fast_grid.level.lines[usize::from(*idx)];
+            let vector = line.b - line.a;
+            let from_a = old_pos - line.a;
+            vector.x * from_a.y - vector.y * from_a.x != 0.0
+        });
+        if indices.len() != 1 {
+            return;
+        }
+
+        let line = &self.world.fast_grid.level.lines[usize::from(indices[0])];
+        let mut next = Self::crossed_elevation_obstacle(
+            current,
+            line.left_obstacle_index,
+            line.right_obstacle_index,
+        )
+        .flatten();
+        if current != line.left_obstacle_index && current != line.right_obstacle_index {
+            next = self.find_plane_obstacle_at(assets, layer, new_pos);
+            if next.is_none() && increment != MapVec::ZERO {
+                let probe = new_pos + increment.scale(2.0);
+                next = self.find_plane_obstacle_split(assets, layer, probe, new_pos);
+            }
+            if next.is_none() {
+                tracing::debug!(
+                    mobile_index,
+                    ?current,
+                    left = ?line.left_obstacle_index,
+                    right = ?line.right_obstacle_index,
+                    "mobile crossed an illegal elevation bond with no projection-area fallback"
+                );
+                return;
+            }
+        }
+
+        let sprite_ids = {
+            let mobile = &mut self.world.mobile_elements[mobile_index];
+            mobile.obstacle = next;
+            mobile.sprite_ids.clone()
+        };
+        for sprite_id in sprite_ids {
+            self.set_obstacle_and_material(assets, sprite_id, next);
         }
     }
 

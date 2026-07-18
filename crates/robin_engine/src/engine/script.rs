@@ -2843,6 +2843,33 @@ impl EngineInner {
                     }
                     self.actor_make_crouched(eid);
                 }
+                EngineCommand::SetMobileActive {
+                    mobile_index,
+                    active,
+                } => {
+                    let mobile = self
+                        .world
+                        .mobile_elements
+                        .get_mut(usize::from(mobile_index))
+                        .unwrap_or_else(|| {
+                            panic!("SetMobileActive references missing mobile {mobile_index}")
+                        });
+                    mobile.set_active(active);
+                    let sprite_ids = mobile.sprite_ids.clone();
+                    for sprite_id in sprite_ids {
+                        let fx = self
+                            .world
+                            .entities
+                            .get_mut(sprite_id)
+                            .and_then(crate::element::Entity::as_fx_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "mobile {mobile_index} child {sprite_id} is missing or non-FX"
+                                )
+                            });
+                        fx.element.active = active;
+                    }
+                }
                 EngineCommand::MarkPc { actor_handle } => {
                     // Resolve the script handle to an EntityId and route
                     // it to the host via pending_side_effects.  The sim

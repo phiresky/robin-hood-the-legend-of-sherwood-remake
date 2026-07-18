@@ -566,6 +566,33 @@ impl NativeContext<'_> {
         })
     }
 
+    /// Mobile masters are appended after the normal script-element array in
+    /// C++. Rust stores only their masked child FX entities, created at the
+    /// same boundary. Return that boundary so script indices remain those of
+    /// the original arrays rather than leaking the child entity slot layout.
+    fn standard_actor_script_count(&self) -> usize {
+        self.entities
+            .iter()
+            .position(|slot| {
+                slot.as_ref()
+                    .and_then(Entity::as_fx)
+                    .is_some_and(|fx| fx.fx.mobile_index.is_some())
+            })
+            .unwrap_or(self.entities.len())
+    }
+
+    fn actor_script_index(&self, handle: i32) -> Option<usize> {
+        let entity_index = Self::actor_handle_index(handle)?;
+        let entity = self.entities.get(entity_index)?.as_ref()?;
+        if let Some(mobile_index) = entity.as_fx().and_then(|fx| fx.fx.mobile_index) {
+            // The original does not add the normal-array length here: after
+            // its first Find fails it returns the raw mobile-array index.
+            Some(usize::from(mobile_index))
+        } else {
+            Some(entity_index)
+        }
+    }
+
     /// Add a sequence element to the current recording session.
     /// Returns 1 on success, 0 if not currently recording.
     fn record_element(&mut self, element: SequenceElement) -> i32 {
@@ -2532,13 +2559,17 @@ impl NativeContext<'_> {
         // before phase 2).
         enum Action {
             Pc,
+            Mobile(u16),
             General,
             Invalid,
         }
 
         let action = match self.get_entity(actor) {
             Some(entity) if entity.is_pc() => Action::Pc,
-            Some(_) => Action::General,
+            Some(entity) => match entity.as_fx().and_then(|fx| fx.fx.mobile_index) {
+                Some(index) => Action::Mobile(index),
+                None => Action::General,
+            },
             None => Action::Invalid,
         };
 
@@ -2585,6 +2616,20 @@ impl NativeContext<'_> {
                 if let Some(entity) = self.get_entity_mut(actor) {
                     entity.element_data_mut().active = activate;
                 }
+            }
+            Action::Mobile(mobile_index) => {
+                for entity in self.entities.iter_mut().flatten() {
+                    if entity
+                        .as_fx()
+                        .is_some_and(|fx| fx.fx.mobile_index == Some(mobile_index))
+                    {
+                        entity.element_data_mut().active = activate;
+                    }
+                }
+                self.commands.push(EngineCommand::SetMobileActive {
+                    mobile_index,
+                    active: activate,
+                });
             }
             Action::Invalid => {
                 tracing::warn!(
@@ -3246,12 +3291,12 @@ impl NativeContext<'_> {
 
                 // --- entity handle / script lookup ---
                 // Handles are opaque non-null VM values with 0-based payload indices.
-                // Mobile masters do not occupy Rust script-entity slots. Shipped
-                // scripts address them through the dedicated Record*MobileElement
-                // natives, matching their separate C++ array.
+                // C++ appends its separate mobile-master array after the normal
+                // script-element array. Rust exposes the first masked child as
+                // the opaque handle while retaining the original script index.
                 GetActorScript => {
                     let idx = stack.pop_i32();
-                    let script_count = self.entities.len();
+                    let script_count = self.standard_actor_script_count();
                     if idx == -1 {
                         0
                     } else if idx < 0 {
@@ -3267,9 +3312,11 @@ impl NativeContext<'_> {
                             // SBError.
                             0
                         }
+                    } else if let Some(owner) = self.mobile_owner_id(idx - script_count as i32) {
+                        Self::actor_handle_from_index(owner.index() as usize)
                     } else {
                         tracing::debug!(
-                            "Script Error: invalid actor ID {idx} (max={script_count})"
+                            "Script Error: invalid actor ID {idx} (normal={script_count})"
                         );
                         0
                     }
@@ -3344,7 +3391,7 @@ impl NativeContext<'_> {
                 | GetBuildingIndex | GetWayIndex => {
                     let handle = stack.pop_i32();
                     let idx = match f {
-                        GetActorIndex => Self::actor_handle_index(handle),
+                        GetActorIndex => self.actor_script_index(handle),
                         GetDoorIndex => Self::door_index(handle),
                         GetPatchIndex => Self::patch_index(handle),
                         GetLocationIndex => Self::location_index(handle),
