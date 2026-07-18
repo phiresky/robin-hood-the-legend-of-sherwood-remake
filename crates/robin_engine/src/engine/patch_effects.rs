@@ -91,11 +91,6 @@ impl EngineInner {
                     }
 
                     self.feedback.pending_side_effects.invalidate_background = true;
-                    if let Some(ref mut script) = self.scripts.mission
-                        && let Some(game_host) = script.game_host_mut()
-                    {
-                        game_host.background_invalidated = true;
-                    }
                 }
                 PatchEffect::SwapObjects {
                     applied,
@@ -119,29 +114,23 @@ impl EngineInner {
                         self.queue_restore_fx_bg(entity_id);
                     }
                     self.feedback.pending_side_effects.invalidate_background = true;
-                    if let Some(ref mut script) = self.scripts.mission
-                        && let Some(game_host) = script.game_host_mut()
-                    {
-                        game_host.background_invalidated = true;
-                    }
                 }
             }
         }
     }
 
-    /// Extract patch context data from GameHost (snapshot to avoid borrow issues).
+    /// Extract the patch and immutable script-binding data needed by effect processing.
     fn snapshot_patch_context(
         &mut self,
         patch_index: crate::patch::PatchIndex,
     ) -> Option<PatchContext> {
-        let script = self.scripts.mission.as_mut()?;
+        let script = self.scripts.mission.as_ref()?;
         let animation_entity_handle = script
             .bindings
             .patch_animation_entities
             .get(usize::from(patch_index))
             .copied()
             .flatten();
-        let _game_host = script.game_host_mut()?;
         let patch = self
             .script_domains
             .interactables
@@ -172,13 +161,9 @@ impl EngineInner {
         if ctx.door_indices.is_empty() {
             return;
         }
-        if let Some(ref mut script) = self.scripts.mission
-            && let Some(_game_host) = script.game_host_mut()
-        {
-            for &di in &ctx.door_indices {
-                if let Some(door) = self.script_domains.interactables.doors.get_mut(di as usize) {
-                    door.swap_rights_patch();
-                }
+        for &di in &ctx.door_indices {
+            if let Some(door) = self.script_domains.interactables.doors.get_mut(di as usize) {
+                door.swap_rights_patch();
             }
         }
     }

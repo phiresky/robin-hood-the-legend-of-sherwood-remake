@@ -118,8 +118,6 @@ pub struct GameHost {
 
     /// Queued sound commands for the engine to process after script execution.
     pub sound_commands: Vec<SoundCommand>,
-    /// Set to true when a patch change requires background redraw.
-    pub background_invalidated: bool,
 
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
@@ -149,7 +147,6 @@ impl GameHost {
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
             sound_commands: Vec::new(),
-            background_invalidated: false,
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
         }

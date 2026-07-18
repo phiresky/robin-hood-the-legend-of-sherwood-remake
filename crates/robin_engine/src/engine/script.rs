@@ -362,12 +362,6 @@ impl EngineInner {
                 }
             }
 
-            // ── Background invalidation ──
-            if game_host.background_invalidated {
-                self.feedback.pending_side_effects.invalidate_background = true;
-                game_host.background_invalidated = false;
-            }
-
             // ── Camera / UI commands ──
             engine_commands = game_host.drain_commands();
 
@@ -3252,6 +3246,7 @@ mod script_context_tests {
         assert!(value["game_host"].get("entities").is_none());
         assert!(value["game_host"].get("ai_global").is_none());
         assert!(value["game_host"].get("fast_grid").is_none());
+        assert!(value["game_host"].get("background_invalidated").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
@@ -3287,6 +3282,54 @@ mod script_context_tests {
 
         assert!(error.to_string().contains("active script callback"));
         assert_eq!(script.active_call_frame_count(), 0);
+    }
+
+    #[test]
+    fn legacy_game_host_background_invalidation_is_accepted_then_omitted() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(script).expect("serialize current MissionScript");
+        snapshot["game_host"]["background_invalidated"] = serde_json::json!(true);
+
+        let restored: MissionScript =
+            serde_json::from_value(snapshot).expect("decode legacy background invalidation flag");
+        let normalized =
+            serde_json::to_value(restored).expect("serialize normalized MissionScript");
+
+        assert!(
+            normalized["game_host"]
+                .get("background_invalidated")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(empty_mission_script());
+        engine
+            .script_domains
+            .interactables
+            .patches
+            .push(crate::patch::Patch {
+                integrate_in_background: true,
+                ..Default::default()
+            });
+        let patch_index = crate::patch::PatchIndex::new(0).expect("zero is a valid patch index");
+
+        engine.process_patch_effects(
+            &LevelAssets::default(),
+            patch_index,
+            vec![crate::patch::PatchEffect::SwapBackground { applied: true }],
+        );
+        assert!(engine.feedback.pending_side_effects.invalidate_background);
+
+        engine.feedback.pending_side_effects.invalidate_background = false;
+        engine.process_patch_effects(
+            &LevelAssets::default(),
+            patch_index,
+            vec![crate::patch::PatchEffect::RestoreBackground],
+        );
+        assert!(engine.feedback.pending_side_effects.invalidate_background);
     }
 
     #[test]
