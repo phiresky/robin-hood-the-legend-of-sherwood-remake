@@ -4,6 +4,7 @@ mod bootstrap;
 mod debriefing;
 mod dispatch;
 mod flow;
+mod frame_prepare;
 mod frame_simulate;
 mod headless;
 mod input_handlers;
