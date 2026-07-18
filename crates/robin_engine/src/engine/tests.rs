@@ -6338,6 +6338,138 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
 }
 
 #[test]
+fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
+        let action = OrderType::WalkingUpright;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 20.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 20,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![20],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        let mut sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let element = engine
+            .get_entity_mut(entity_id)
+            .expect("anti-collision fixture actor exists")
+            .element_data_mut();
+        let position = element.position_map();
+        let sector = element.sector();
+        sprite.position_iface.set_sector(sector);
+        sprite.position_iface.set_anti_collision_on(true);
+        sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                MapVec::new(-2.0, -2.0),
+                MapVec::new(2.0, 2.0),
+            ));
+        element.sprite = sprite;
+        element.set_position_map(position);
+    }
+
+    let mut engine = EngineInner::new();
+    let destination = MapPoint::new(10.0, 0.0);
+
+    let mut mover = make_test_pc(Posture::Upright);
+    mover.element_data_mut().active = true;
+    mover
+        .element_data_mut()
+        .set_position_map(MapPoint::new(0.0, 0.0));
+    mover.element_data_mut().set_sector(SectorHandle::new(1));
+
+    let mut blocker = make_test_pc(Posture::Upright);
+    blocker.element_data_mut().active = true;
+    blocker.element_data_mut().set_position_map(destination);
+    blocker.element_data_mut().set_sector(SectorHandle::new(1));
+
+    let mover_id = engine.add_entity(mover);
+    let blocker_id = engine.add_entity(blocker);
+    bind_walking_sprite(&mut engine, mover_id);
+    bind_walking_sprite(&mut engine, blocker_id);
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(mover_id), OrderType::WalkingUpright);
+    movement.orders.push_back(Order::test_new(
+        OrderType::WalkingUpright,
+        destination.x,
+        destination.y,
+    ));
+    let SequenceElementData::Movement {
+        destination: movement_destination,
+        sector,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!("new_movement must create movement data")
+    };
+    *movement_destination = destination;
+    *sector = SectorHandle::new(1);
+
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .expect("mover exists")
+        .actor_data_mut()
+        .expect("mover is an actor");
+    actor.action_state = ActionState::Moving;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    // A newly-seen motion order spends one tick in MotionState::Start.
+    // On the next tick the destination is within one animation step. The
+    // original game still applies actor repulsion before checking arrival.
+    let assets = LevelAssets::new();
+    engine.tick_entity_movement(&assets);
+    engine.tick_entity_movement(&assets);
+
+    let mover_position = engine
+        .get_entity(mover_id)
+        .expect("mover remains after movement")
+        .element_data()
+        .position_map();
+    let blocker_position = engine
+        .get_entity(blocker_id)
+        .expect("blocker remains after movement")
+        .element_data()
+        .position_map();
+    assert_ne!(
+        mover_position, blocker_position,
+        "the final movement tick must not snap the mover onto another actor"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("movement remains inspectable")
+            .state,
+        SequenceState::InProgress,
+        "a deflected final step must reconsider arrival on a later tick"
+    );
+}
+
+#[test]
 fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
     use super::ai::npc_hourglass_frame_phase;
 

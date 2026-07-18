@@ -1928,7 +1928,7 @@ impl InteractiveMission {
                         .map_or(0, |r| r.replayed_frames);
                     let last_rollback_total_us =
                         runtime.last_mp_rollback.as_ref().map_or(0, |r| r.total_us);
-                    tracing::error!(
+                    tracing::warn!(
                         frame = manager.sim_frame,
                         local = format!("{local_hash:016x}"),
                         host = format!("{host_hash:016x}"),
