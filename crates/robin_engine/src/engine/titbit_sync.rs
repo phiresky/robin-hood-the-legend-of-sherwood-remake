@@ -903,7 +903,7 @@ impl EngineInner {
             if !active {
                 continue;
             }
-            let script_handle = crate::natives::GameHost::actor_handle(npc_id);
+            let script_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
             states.push(SpeakState {
                 id: npc_id.into(),
                 position: WorldPoint3D {

@@ -490,7 +490,7 @@ fn spawn_mission_patch_fx_entities(
             },
         });
         let id = engine.add_entity(entity);
-        handles.push(Some(crate::natives::GameHost::actor_handle(id)));
+        handles.push(Some(crate::natives::ScriptHandleCodec::actor_handle(id)));
     }
 
     handles
@@ -1657,7 +1657,7 @@ impl EngineInner {
                     },
                 });
                 let id = self.add_entity(entity);
-                let handle = crate::natives::GameHost::actor_handle(id);
+                let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
                 patch_entity_handles.push(Some(handle));
                 tracing::trace!(
                     "Spawned patch {patch_idx} FX entity: id={:?}, handle={handle}, sprite='{fname}'",
@@ -5366,7 +5366,7 @@ impl EngineInner {
                 crate::level_data::RawBuildingEntry::Building { doors } => (doors, true),
                 crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => (doors, false),
             };
-            let first_handle = crate::natives::GameHost::door_handle_from_index(
+            let first_handle = crate::natives::ScriptHandleCodec::door_handle_from_index(
                 self.script_domains.interactables.doors.len(),
             );
             for raw in raw_doors {
@@ -6024,10 +6024,11 @@ impl EngineInner {
             }
             self.script_domains.buildings.arrow_reserves[bld_idx] = tenants.arrow_reserve;
             for &elem_idx in &tenants.tenant_element_indices {
-                let actor_h =
-                    crate::natives::GameHost::actor_handle_from_index(usize::from(elem_idx));
+                let actor_h = crate::natives::ScriptHandleCodec::actor_handle_from_index(
+                    usize::from(elem_idx),
+                );
                 self.script_domains.buildings.occupants[bld_idx].push(actor_h);
-                let bld_h = crate::natives::GameHost::building_handle_from_index(bld_idx);
+                let bld_h = crate::natives::ScriptHandleCodec::building_handle_from_index(bld_idx);
                 self.script_domains
                     .buildings
                     .actor_building

@@ -816,7 +816,7 @@ impl EngineInner {
             Some(e) => (e.element_data().sector(), e.is_pc()),
             None => return,
         };
-        let actor_handle = crate::natives::GameHost::actor_handle(entity_id);
+        let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
 
         // ── Leave callbacks ──
         // Track whether we're leaving a building so we can refresh the
@@ -881,7 +881,7 @@ impl EngineInner {
                 // into "stored" state.
                 if is_pc && let Some(bi) = bld_idx {
                     if let Some(carried_id) = carried_to_unhide {
-                        let carried_h = crate::natives::GameHost::actor_handle(carried_id);
+                        let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
                         {
                             if let Some(occupants) = self
                                 .script_domains
@@ -1033,7 +1033,7 @@ impl EngineInner {
             let bld_idx = enter_gs.and_then(|s| s.building_index);
             if let Some(bi) = bld_idx {
                 let bld_handle =
-                    crate::natives::GameHost::building_handle_from_index(usize::from(bi));
+                    crate::natives::ScriptHandleCodec::building_handle_from_index(usize::from(bi));
                 if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
                     self.script_domains
                         .buildings
@@ -1082,9 +1082,10 @@ impl EngineInner {
             // `PutActorInBuilding` helper.
             if is_pc && let Some(bi) = bld_idx {
                 if let Some(carried_id) = carried_to_hide {
-                    let carried_h = crate::natives::GameHost::actor_handle(carried_id);
-                    let bld_handle =
-                        crate::natives::GameHost::building_handle_from_index(usize::from(bi));
+                    let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
+                    let bld_handle = crate::natives::ScriptHandleCodec::building_handle_from_index(
+                        usize::from(bi),
+                    );
                     if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
                         self.script_domains
                             .buildings

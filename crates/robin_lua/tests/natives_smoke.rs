@@ -5,7 +5,8 @@
 use mlua::Lua;
 use robin_engine::entities::Entities;
 use robin_engine::natives::{
-    EngineCommand, GameHost, NativeSessionCapabilities, ObjectiveChange, ScriptState,
+    EngineCommand, GameHost, NativeSessionCapabilities, ObjectiveChange, ScriptHandleCodec,
+    ScriptState,
 };
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 
@@ -78,9 +79,9 @@ fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
         ..Default::default()
     };
     let mut script_state = ScriptState::default();
-    let actor = GameHost::actor_handle_from_index(0);
-    let point = GameHost::location_handle_from_index(0);
-    let door = GameHost::door_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let point = ScriptHandleCodec::location_handle_from_index(0);
+    let door = ScriptHandleCodec::door_handle_from_index(0);
 
     state
         .with_host_state_and_bindings(

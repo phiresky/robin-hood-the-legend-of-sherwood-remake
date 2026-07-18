@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use super::{AttachedScriptBindings, GameHost, ScriptBindings, ScriptState};
+use super::{AttachedScriptBindings, GameHost, ScriptBindings, ScriptHandleCodec, ScriptState};
 use crate::element::EntityId;
 
 /// Canonical engine owners and read views borrowed for one complete script
@@ -301,47 +301,47 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         &mut self.ai_global
     }
 
-    // Associated functions do not participate in deref method lookup. Keep
-    // these small forwards while dispatch is split between NativeContext and
-    // the legacy GameHost helper implementation.
+    // Associated functions do not participate in deref method lookup. These
+    // forwards let native dispatch use `Self` while the stateless codec remains
+    // the single owner of the script-handle representation.
     pub(crate) fn actor_handle<I: Into<EntityId>>(id: I) -> i32 {
-        GameHost::actor_handle(id)
+        ScriptHandleCodec::actor_handle(id)
     }
 
     pub(crate) fn actor_handle_from_index(index: usize) -> i32 {
-        GameHost::actor_handle_from_index(index)
+        ScriptHandleCodec::actor_handle_from_index(index)
     }
 
     pub(crate) fn sound_source_handle_from_index(index: usize) -> i32 {
-        GameHost::sound_source_handle_from_index(index)
+        ScriptHandleCodec::sound_source_handle_from_index(index)
     }
 
     pub(crate) fn actor_handle_index(handle: i32) -> Option<usize> {
-        GameHost::actor_handle_index(handle)
+        ScriptHandleCodec::actor_handle_index(handle)
     }
 
     pub(crate) fn door_index(handle: i32) -> Option<usize> {
-        GameHost::door_index(handle)
+        ScriptHandleCodec::door_index(handle)
     }
 
     pub(crate) fn patch_index(handle: i32) -> Option<usize> {
-        GameHost::patch_index(handle)
+        ScriptHandleCodec::patch_index(handle)
     }
 
     pub(crate) fn location_index(handle: i32) -> Option<usize> {
-        GameHost::location_index(handle)
+        ScriptHandleCodec::location_index(handle)
     }
 
     pub(crate) fn sound_source_index(handle: i32) -> Option<usize> {
-        GameHost::sound_source_index(handle)
+        ScriptHandleCodec::sound_source_index(handle)
     }
 
     pub(crate) fn building_index(handle: i32) -> Option<usize> {
-        GameHost::building_index(handle)
+        ScriptHandleCodec::building_index(handle)
     }
 
     pub(crate) fn way_index(handle: i32) -> Option<usize> {
-        GameHost::way_index(handle)
+        ScriptHandleCodec::way_index(handle)
     }
 }
 
