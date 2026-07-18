@@ -2307,18 +2307,7 @@ impl EngineInner {
     /// (the RANSOM/SCORE branches of `Campaign::add_value`), so
     /// re-adding them at mission end would double-count.
     pub fn sync_stats_to_campaign(&self, campaign: &mut Campaign) {
-        campaign.add_value(
-            CampaignValue::LivingSoldiers,
-            self.mission_domain.mission_stat.living_soldier_count as i32,
-        );
-        campaign.add_value(
-            CampaignValue::DeadSoldiers,
-            self.mission_domain
-                .mission_stat
-                .total_soldier_count
-                .saturating_sub(self.mission_domain.mission_stat.living_soldier_count)
-                as i32,
-        );
+        super::sync_mission_stats_to_campaign(&self.mission_domain.mission_stat, campaign);
     }
 
     /// Get the current mission's static profile from the campaign.

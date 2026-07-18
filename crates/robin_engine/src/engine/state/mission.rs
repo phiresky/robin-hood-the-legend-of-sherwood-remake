@@ -30,6 +30,35 @@ impl MissionDomain {
             campaign: None,
         }
     }
+
+    pub(crate) fn required_campaign(&self, context: &str) -> &Campaign {
+        self.campaign
+            .as_ref()
+            .unwrap_or_else(|| panic!("{context}: active campaign is missing"))
+    }
+
+    pub(crate) fn required_campaign_mut(&mut self, context: &str) -> &mut Campaign {
+        self.campaign
+            .as_mut()
+            .unwrap_or_else(|| panic!("{context}: active campaign is missing"))
+    }
+
+    /// Borrow the required campaign and mission statistics as disjoint parts
+    /// of their common owner.
+    pub(crate) fn required_campaign_and_stat(
+        &mut self,
+        context: &str,
+    ) -> (&mut Campaign, &mut MissionStat) {
+        let Self {
+            campaign,
+            mission_stat,
+            ..
+        } = self;
+        let campaign = campaign
+            .as_mut()
+            .unwrap_or_else(|| panic!("{context}: active campaign is missing"));
+        (campaign, mission_stat)
+    }
 }
 
 #[cfg(test)]
