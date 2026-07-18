@@ -14,8 +14,8 @@
 //! - Weak/stunned titbits are added by AI alert events and combat stun.
 //! - Hidden titbits are added when a PC enters a hidden posture
 //!   (cape/tree/anonymous archer).
-//! - Smoke is a dead mobile-element titbit in shipped Robin Hood data:
-//!   `RHElementMobile` is never instantiated, so no gameplay path creates it.
+//! - Smoke belongs to `RHElementMobile`, but every chariot record in shipped
+//!   Robin Hood data has its smoke flag disabled.
 
 use super::*;
 use crate::ai::{AiState, EmoticonType};

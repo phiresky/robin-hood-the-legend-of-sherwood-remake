@@ -52,9 +52,10 @@ its pending list FIFO and calls `Go()` at
   Failed-request deadlines remain in the same phase. Seek refresh and
   WAIT_TIMER maintenance live in `Entities`, matching
   `RHElementActor::Hourglass` provenance. The intervening original
-  `CheckForCollision` had only a mobile-damage arm, explicitly marked dead in
-  `original-code/RHengine.cpp:10790-10855` because shipped missions never
-  return true from `IsMobile`; Rust therefore has no invented replacement.
+  `CheckForCollision` has a live mobile-damage arm: ten shipped missions use
+  chariots. Rust runs that containment/damage check between `Paths` and the
+  mobile/entity hourglasses, preserving the original previous-tick movement
+  test and reverse human traversal.
 - **Entities:** `EngineInner::add_entity` appends and removal leaves a hole;
   `Entities::occupied_mut()` walks those slots in ascending order. Focused
   tests prove slots are not reused and serde save/load preserves both holes

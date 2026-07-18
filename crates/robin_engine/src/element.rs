@@ -16,9 +16,9 @@
 //! └── Object → Bonus | Projectile → Net
 //! ```
 //!
-//! Mobile and masked-FX entities are Spellbound engine leftovers — no
-//! shipped Robin Hood mission spawns them, so they are intentionally
-//! absent (same pattern as the animal actor branch).
+//! Mission chariot masters live in `WorldState::mobile_elements`; their
+//! masked child sprites use `Entity::Fx` slots tagged by
+//! `FxData::mobile_index`.
 //!
 //! This Rust port uses:
 //! - **Composition**: Each hierarchy level has its own `*Data` struct.
@@ -1682,7 +1682,7 @@ pub struct CivilianData {
 }
 
 /// FX-level data.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, robin_state_hash_derive::StateHash)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct FxData {
     pub restore_background: bool,
     pub force_display: bool,
@@ -1695,12 +1695,39 @@ pub struct FxData {
     /// index (into `GameHost::patches`).  Used by the animation tick
     /// to apply reversed playback and detect transition completion.
     pub patch_index: Option<crate::patch::PatchIndex>,
+    /// Index of the owning mission mobile element for its masked child
+    /// sprite. `None` for ordinary proto/patch FX.
+    #[serde(default)]
+    pub mobile_index: Option<u16>,
+    /// C++ `RHElementFXMasked::mfAnimationSpeed`. Mobile carts update this
+    /// to `1 / movement_speed`; ordinary FX retain `1.0`.
+    #[serde(default = "default_fx_animation_speed")]
+    pub animation_speed: f32,
     /// Rendering properties (`Blocky` vs `NeedShadow`) selected from
     /// the blit-type byte at level load.  `NeedShadow` selects the
     /// `BlitAlphaKeying` path (sprite gets the global shadow tint
     /// composited on); `Blocky` selects plain `Blit` with no shadow
     /// compositing.
     pub rendering_properties: RenderingProperties,
+}
+
+const fn default_fx_animation_speed() -> f32 {
+    1.0
+}
+
+impl Default for FxData {
+    fn default() -> Self {
+        Self {
+            restore_background: false,
+            force_display: false,
+            animation: Animation::default(),
+            display_polyline: Vec::new(),
+            patch_index: None,
+            mobile_index: None,
+            animation_speed: 1.0,
+            rendering_properties: RenderingProperties::default(),
+        }
+    }
 }
 
 /// Target-level data.

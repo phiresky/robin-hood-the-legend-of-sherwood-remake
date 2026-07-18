@@ -553,6 +553,19 @@ impl NativeContext<'_> {
         Some(EntityId::new(idx as u32, entity.entity_id_kind()))
     }
 
+    /// Resolve a script mobile-array index to the first masked FX child used
+    /// as the Rust sequence owner. The original owner is the non-rendered
+    /// RHElementMobile master; dispatch maps this child back to that master.
+    fn mobile_owner_id(&self, mobile_index: i32) -> Option<EntityId> {
+        let mobile_index = u16::try_from(mobile_index).ok()?;
+        self.occupied_entities().find_map(|(id, entity)| {
+            entity
+                .as_fx()
+                .is_some_and(|fx| fx.fx.mobile_index == Some(mobile_index))
+                .then_some(id)
+        })
+    }
+
     /// Add a sequence element to the current recording session.
     /// Returns 1 on success, 0 if not currently recording.
     fn record_element(&mut self, element: SequenceElement) -> i32 {
@@ -3233,7 +3246,9 @@ impl NativeContext<'_> {
 
                 // --- entity handle / script lookup ---
                 // Handles are opaque non-null VM values with 0-based payload indices.
-                // The legacy mobile-element tier is dead engine code and is not modelled.
+                // Mobile masters do not occupy Rust script-entity slots. Shipped
+                // scripts address them through the dedicated Record*MobileElement
+                // natives, matching their separate C++ array.
                 GetActorScript => {
                     let idx = stack.pop_i32();
                     let script_count = self.entities.len();
@@ -4870,19 +4885,26 @@ impl NativeContext<'_> {
                     self.record_element(elem)
                 }
 
-                // --- Mobile elements (dead engine code) ---
-                // The discriminants stay so shipped SCB bytecode lines
-                // up; no shipped level spawns a mobile, so these
-                // natives are unreachable in practice.
+                // --- Mobile elements ---
                 RecordStartMobileElement
                 | RecordStopMobileElement
                 | RecordActivateMobileElement
                 | RecordDeactivateMobileElement => {
-                    let _ = stack.pop_i32();
-                    tracing::error!(
-                        "Script Error: Record*MobileElement called but mobiles are not ported"
-                    );
-                    0
+                    let mobile_index = stack.pop_i32();
+                    let Some(owner) = self.mobile_owner_id(mobile_index) else {
+                        panic!(
+                            "Record*MobileElement references missing mobile index {mobile_index}"
+                        );
+                    };
+                    let command = match f {
+                        RecordStartMobileElement => Command::StartMobile,
+                        RecordStopMobileElement => Command::StopMobile,
+                        RecordActivateMobileElement => Command::ActivateMobile,
+                        RecordDeactivateMobileElement => Command::DeactivateMobile,
+                        _ => unreachable!(),
+                    };
+                    let level = self.recording_level();
+                    self.record_element(SequenceElement::new(level, command, Some(owner)))
                 }
 
                 // --- Misc ---
@@ -5028,11 +5050,10 @@ impl NativeContext<'_> {
                     0
                 }
                 IsActorCart => {
-                    // No mobiles in this port; shipped scripts never
-                    // observe a true return.  Slot kept for SCB
-                    // bytecode alignment (same as `IsActorAnimal`).
-                    let _handle = stack.pop_i32();
-                    0
+                    let handle = stack.pop_i32();
+                    self.get_entity(handle)
+                        .and_then(crate::element::Entity::as_fx)
+                        .is_some_and(|fx| fx.fx.mobile_index.is_some()) as i32
                 }
                 IsActorActive => {
                     let handle = stack.pop_i32();

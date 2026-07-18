@@ -897,6 +897,14 @@ fn collect_level_refs(proto: &LoadedProtoLevel, mission: &LoadedMission, out: &m
             out.sprite_rhs.insert(n.clone());
         }
     }
+    for mobile in &mission.mobile_elements {
+        for fx in &mobile.sprites {
+            let n = &fx.sprite.frame_profile_name;
+            if !n.is_empty() {
+                out.sprite_rhs.insert(n.clone());
+            }
+        }
+    }
     // Targets are Data/Animations sprites resolved via `resolve_rhs_path`
     // (see `engine/level_loading.rs` :1255) — add their `filename` to the
     // referenced-sprite set so the converter emits the `.rhs` / `.bnk`
@@ -1311,6 +1319,16 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 animation_rhs_rel_existing(mission.header.ambiance, &target.filename, &in_path),
                 &target.profile_name,
             );
+        }
+        for mobile in &mission.mobile_elements {
+            for fx in &mobile.sprites {
+                add_required_animation_rhs_profile(
+                    &mut required_rhs_profiles,
+                    mission.header.ambiance,
+                    &fx.sprite,
+                    &in_path,
+                );
+            }
         }
         for soldier in &mission.soldiers {
             if let Some(profile) = cpf.soldiers.get(soldier.profile_number as usize) {

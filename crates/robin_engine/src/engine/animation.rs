@@ -3512,6 +3512,14 @@ impl EngineInner {
             // special handling: reversed playback during unapply
             // transitions, and final patch effects on completion.
             if entity.is_fx() {
+                if let Entity::Fx(fx) = entity
+                    && fx.fx.mobile_index.is_some()
+                {
+                    fx.element
+                        .sprite
+                        .increment_frame_modulated(fx.fx.animation_speed);
+                    continue;
+                }
                 // Check if this is a patch FX entity.
                 let patch_idx = match entity {
                     Entity::Fx(fx) => fx.fx.patch_index,

@@ -94,6 +94,7 @@ pub mod engine;
 pub mod markers;
 pub mod material_sectors;
 pub mod minimap;
+pub mod mobile;
 pub mod short_briefings;
 pub mod sound_geometry;
 pub mod sound_source;

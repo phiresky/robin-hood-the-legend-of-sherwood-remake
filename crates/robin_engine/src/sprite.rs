@@ -1477,6 +1477,31 @@ impl Sprite {
         }
     }
 
+    /// C++ `RHSprite::IncrementFrameModulated`, used by moving cart sprites.
+    /// The authored wait time is multiplied by `animation_speed` and cast to
+    /// `u16` before the normal default-progression comparison.
+    pub fn increment_frame_modulated(&mut self, animation_speed: f32) -> bool {
+        if self.current_scripts().is_empty() {
+            return false;
+        }
+        let num_frames = self.num_frames_for_row(self.current_row);
+        let wait =
+            (animation_speed * self.wait_time(self.current_row, self.current_frame) as f32) as u16;
+        self.frame_count = self.frame_count.wrapping_add(1);
+        if self.frame_count > wait {
+            self.frame_count = 0;
+            self.current_frame += 1;
+        }
+        if self.current_frame >= num_frames {
+            self.current_frame = 0;
+        }
+        let last_wait =
+            (animation_speed * self.wait_time(self.current_row, self.current_frame) as f32) as u16;
+        self.current_frame == num_frames - 1
+            && (self.frame_count == last_wait
+                || self.wait_time(self.current_row, self.current_frame) == 0)
+    }
+
     // -- High-level animation methods --
 
     /// Record `state` as the most recent motion-state on this sprite
