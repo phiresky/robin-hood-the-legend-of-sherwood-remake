@@ -2032,28 +2032,36 @@ impl InteractiveMission {
         //
         // Paused frames don't tick, so they'd consume the same
         // buffered slot repeatedly; skipped here for the same reason
-        // the tick below is.  Replay playback (`--replay`) has its
-        // own command stream and stays unaffected (guarded below by
-        // the separate `runtime.replay_player.is_none()` check).
+        // the tick below is. Replay playback (`--replay`) keeps using
+        // its authoritative command stream, but still marks an existing
+        // rewind-buffer slot as consumed so resuming after a timeline seek
+        // does not try to append an old checkpoint behind newer history.
         let mut consumed_buffered = false;
         if !rewind_active
             && !paused
-            && runtime.replay_player.is_none()
             && manager.sim_frame < runtime.rewind_buffer.next_record_frame()
         {
-            if frame.commands.commands.is_empty() {
-                if let Some(recorded) = runtime.rewind_buffer.commands_for(manager.sim_frame) {
-                    let recorded: Vec<PlayerInput> = recorded.to_vec();
-                    manager.engine.apply_commands(
-                        &mut host.engine_display,
-                        &mut host.input,
-                        &assets,
-                        &recorded,
-                    );
-                    frame.commands.commands = recorded;
-                    consumed_buffered = true;
-                    tracing::trace!("Auto-replay → frame {}", manager.sim_frame);
-                }
+            let Some(recorded) = runtime.rewind_buffer.commands_for(manager.sim_frame) else {
+                return Err(format!(
+                    "cannot replay frame {}: rewind command history starts at frame {}",
+                    manager.sim_frame,
+                    runtime.rewind_buffer.oldest_cmd_frame()
+                ));
+            };
+            if runtime.replay_player.is_some() {
+                consumed_buffered = true;
+                tracing::trace!("Replay reused rewind-buffer frame {}", manager.sim_frame);
+            } else if frame.commands.commands.is_empty() {
+                let recorded: Vec<PlayerInput> = recorded.to_vec();
+                manager.engine.apply_commands(
+                    &mut host.engine_display,
+                    &mut host.input,
+                    &assets,
+                    &recorded,
+                );
+                frame.commands.commands = recorded;
+                consumed_buffered = true;
+                tracing::trace!("Auto-replay → frame {}", manager.sim_frame);
             } else {
                 tracing::trace!(
                     "Auto-replay interrupted by live input; truncating buffer at {}",
@@ -2295,20 +2303,38 @@ impl InteractiveMission {
         // and applies them before the tick; back seeks the cursor to
         // the rewound frame so playback resumes from there.
         if step_forward_pressed && !modal_state_pending(&host) {
-            let mut step_frame_cmds: Vec<PlayerInput> = Vec::new();
-            if let Some(ref mut player) = runtime.replay_player
-                && !player.is_finished()
-            {
-                let replay_cmds = player.next_frame();
-                for cmd in replay_cmds {
-                    if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
-                        tracing::debug!(
-                            "step-forward: dropping recorded ModalDismiss at frame {}",
-                            manager.sim_frame
-                        );
-                        continue;
+            let step_frame = manager.sim_frame;
+            let buffered_cmds = if step_frame < runtime.rewind_buffer.next_record_frame() {
+                runtime
+                    .rewind_buffer
+                    .commands_for(step_frame)
+                    .map(<[PlayerInput]>::to_vec)
+            } else {
+                Some(Vec::new())
+            };
+            if let Some(buffered_cmds) = buffered_cmds {
+                let reusing_recorded_frame = step_frame < runtime.rewind_buffer.next_record_frame();
+                runtime
+                    .rewind_buffer
+                    .begin_frame(step_frame, &manager.engine, &assets);
+
+                let mut step_frame_cmds: Vec<PlayerInput> = Vec::new();
+                if let Some(ref mut player) = runtime.replay_player
+                    && !player.is_finished()
+                {
+                    let replay_cmds = player.next_frame();
+                    for cmd in replay_cmds {
+                        if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
+                            tracing::debug!(
+                                "step-forward: dropping recorded ModalDismiss at frame {}",
+                                manager.sim_frame
+                            );
+                            continue;
+                        }
+                        step_frame_cmds.push(cmd.clone());
                     }
-                    step_frame_cmds.push(cmd.clone());
+                } else if reusing_recorded_frame {
+                    step_frame_cmds = buffered_cmds;
                 }
                 manager.engine.apply_commands(
                     &mut host.engine_display,
@@ -2316,33 +2342,42 @@ impl InteractiveMission {
                     &assets,
                     &step_frame_cmds,
                 );
-            }
-            let mut display = std::mem::take(&mut host.engine_display);
-            game.run_engine_tick(
-                host,
-                &mut display,
-                assets.as_ref(),
-                &mut manager.engine,
-                dev,
-                false,
-                false,
-            );
-            crate::sim_timeline::run_post_initialize_stage(
-                host,
-                &mut display,
-                &assets,
-                &mut manager.engine,
-                dev,
-            );
-            host.engine_display = display;
-            runtime.rewind_buffer.end_frame(step_frame_cmds);
-            manager.sim_frame += 1;
-            // Stepping bypasses the checker's begin_frame/end_frame
-            // pairing, so its ring buffer is now stale relative to the
-            // advanced engine.  Clear it — the checker resumes
-            // populating on the next normal frame.
-            if let Some(ref mut checker) = runtime.rollback_checker {
-                checker.reset();
+
+                let mut display = std::mem::take(&mut host.engine_display);
+                game.run_engine_tick(
+                    host,
+                    &mut display,
+                    assets.as_ref(),
+                    &mut manager.engine,
+                    dev,
+                    false,
+                    false,
+                );
+                crate::sim_timeline::run_post_initialize_stage(
+                    host,
+                    &mut display,
+                    &assets,
+                    &mut manager.engine,
+                    dev,
+                );
+                host.engine_display = display;
+                if !reusing_recorded_frame {
+                    runtime.rewind_buffer.end_frame(step_frame_cmds);
+                }
+                manager.sim_frame += 1;
+                // Stepping bypasses the checker's begin_frame/end_frame
+                // pairing, so its ring buffer is now stale relative to the
+                // advanced engine.  Clear it — the checker resumes
+                // populating on the next normal frame.
+                if let Some(ref mut checker) = runtime.rollback_checker {
+                    checker.reset();
+                }
+            } else {
+                tracing::warn!(
+                    frame = step_frame,
+                    oldest_command_frame = runtime.rewind_buffer.oldest_cmd_frame(),
+                    "step-forward: frame lies inside recorded history but its commands are missing"
+                );
             }
         } else if step_back_pressed && !modal_state_pending(&host) {
             if let Some(target) = manager.sim_frame.checked_sub(1)
