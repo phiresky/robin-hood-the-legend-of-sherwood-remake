@@ -567,8 +567,8 @@ impl Engine {
 
     /// Invoke a script `NativeFn` from outside the VM (HTTP-RPC, debug
     /// tooling).  See [`EngineInner::call_external_native`] for the full
-    /// contract — performs the same swap-engine-state /
-    /// `sync_game_host_post_script` dance script callbacks use, so any
+    /// contract — runs through the same script-session boundary as engine
+    /// callbacks, so any
     /// queued side-effects (camera, dialog, sequences, sound, deferred
     /// game-logic) are drained as if a script had made the call.
     pub fn call_external_native(

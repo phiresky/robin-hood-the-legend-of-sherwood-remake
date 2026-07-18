@@ -6535,9 +6535,9 @@ impl EngineInner {
             }
 
             // Queue EventHear for the post-AI `pending_stimuli` drain so
-            // `FilterAIEvent` can run with entities available (the
-            // filter needs `swap_engine_state`, which conflicts with any
-            // entity mut borrow we might hold here).
+            // `FilterAIEvent` can run with entities available (the script
+            // session leases entity storage, which conflicts with any entity
+            // mut borrow we might hold here).
             let noise = Noise {
                 origin: noise_pos,
                 noise_type,
@@ -7501,20 +7501,7 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        // Pattern mirrors the target/scroll callback sites (see
-        // `listenable_calls` in the target block): one swap pair for
-        // the whole batch.
-        self.refresh_script_sight_bindings();
-        let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.scripts.mission {
-            script.swap_engine_state(
-                &mut self.world.entities,
-                &mut self.ai.global,
-                &mut self.world.fast_grid,
-                &mut self.mission_domain.campaign,
-                &mut self.mission_domain.mission_stat,
-                &mut self.script_domains,
-            );
+        let _ = self.with_script_session(assets, |script, queries| {
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
                 match script.call_waypoint_function(
@@ -7539,16 +7526,7 @@ impl EngineInner {
                     }
                 }
             }
-            script.swap_engine_state(
-                &mut self.world.entities,
-                &mut self.ai.global,
-                &mut self.world.fast_grid,
-                &mut self.mission_domain.campaign,
-                &mut self.mission_domain.mission_stat,
-                &mut self.script_domains,
-            );
-        }
-        self.sync_game_host_post_script(assets);
+        });
 
         // ── Phase 2: synchronous Think(EventAfterScriptGoOn) ──
         // `think(EVENT_AFTER_SCRIPT_GO_ON)` fires immediately after

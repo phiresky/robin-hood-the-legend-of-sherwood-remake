@@ -3495,27 +3495,9 @@ impl EngineInner {
         }
         script.post_initialized = true;
 
-        self.refresh_script_sight_bindings();
-        let queries = native_query_views!(self);
-        let script = self.scripts.mission.as_mut().unwrap();
-        script.swap_engine_state(
-            &mut self.world.entities,
-            &mut self.ai.global,
-            &mut self.world.fast_grid,
-            &mut self.mission_domain.campaign,
-            &mut self.mission_domain.mission_stat,
-            &mut self.script_domains,
-        );
-        let result = script.post_initialize(queries);
-        script.swap_engine_state(
-            &mut self.world.entities,
-            &mut self.ai.global,
-            &mut self.world.fast_grid,
-            &mut self.mission_domain.campaign,
-            &mut self.mission_domain.mission_stat,
-            &mut self.script_domains,
-        );
-        self.sync_game_host_post_script(assets);
+        let result = self
+            .with_script_session(assets, |script, queries| script.post_initialize(queries))
+            .expect("PostInitialize mission script disappeared before dispatch");
 
         if let Err(e) = result {
             tracing::warn!("Script PostInitialize failed: {e}");

@@ -802,6 +802,49 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
 }
 
 #[test]
+fn script_session_preserves_nested_pending_call_resume_and_restoration() {
+    let mut script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
+    let outer_handle = 1;
+    let inner_handle = 2;
+    assert!(script.bind_actor(
+        outer_handle,
+        "OuterCaller",
+        crate::natives::NativeQueryViews::default()
+    ));
+    assert!(script.bind_actor(
+        inner_handle,
+        "InnerTarget",
+        crate::natives::NativeQueryViews::default()
+    ));
+    script.game_host.script_this = 77;
+
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+
+    let result = engine
+        .with_script_session(&assets, |script, queries| {
+            script.call_actor_function(
+                outer_handle,
+                "FilterAIEvent",
+                &[inner_handle, 0, 0],
+                queries,
+            )
+        })
+        .expect("mission script stays present")
+        .expect("nested dispatch runs cleanly");
+
+    assert_eq!(
+        result, 42,
+        "the nested return register reaches the outer VM"
+    );
+    let script = engine.scripts.mission.as_ref().unwrap();
+    assert_eq!(script.game_host.script_this, 77);
+    assert_eq!(script.game_host.nested_call_depth, 0);
+}
+
+#[test]
 fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let scb = build_nested_scb_with_default_inner();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");

@@ -694,7 +694,7 @@ impl EngineInner {
         // Each of the three quit branches displays the full minimap.
         if self.mission_domain.state.quit_won {
             display.minimap.display_map(false, true);
-            self.finalize_mission_script(false);
+            self.finalize_mission_script(assets, false);
             return Some(GameCode::LevelSucceeded);
         }
         if self.mission_domain.state.quit_lost {
@@ -704,7 +704,7 @@ impl EngineInner {
         }
         if self.mission_domain.state.quit_interrupted {
             display.minimap.display_map(false, true);
-            self.finalize_mission_script(true);
+            self.finalize_mission_script(assets, true);
             return Some(GameCode::LevelInterrupted);
         }
 
@@ -723,34 +723,11 @@ impl EngineInner {
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND) {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
-            // Refresh only the static/dynamic sight bindings borrowed by Sees.
-            self.refresh_script_sight_bindings();
-
-            let queries = native_query_views!(self);
-            if let Some(ref mut script) = self.scripts.mission {
-                script.swap_engine_state(
-                    &mut self.world.entities,
-                    &mut self.ai.global,
-                    &mut self.world.fast_grid,
-                    &mut self.mission_domain.campaign,
-                    &mut self.mission_domain.mission_stat,
-                    &mut self.script_domains,
-                );
+            let _ = self.with_script_session(assets, |script, queries| {
                 if let Err(e) = script.hourglass(game_seconds, queries) {
                     tracing::warn!("Script Hourglass error: {e}");
                 }
-                script.swap_engine_state(
-                    &mut self.world.entities,
-                    &mut self.ai.global,
-                    &mut self.world.fast_grid,
-                    &mut self.mission_domain.campaign,
-                    &mut self.mission_domain.mission_stat,
-                    &mut self.script_domains,
-                );
-            }
-
-            // Apply changes the script made back to the engine.
-            self.sync_game_host_post_script(assets);
+            });
 
             // Check victory/defeat conditions every 3 game-seconds
             // (or immediately if force_check was set by a native call).
@@ -759,32 +736,9 @@ impl EngineInner {
             {
                 self.script_domains.mission_ui.force_check = false;
 
-                // Take the script out to avoid borrow conflicts with `self`.
-                self.scripts.assert_native_attachments_ready();
-                if let Some(mut script) = self.scripts.mission.take() {
-                    let queries = native_query_views!(self);
-                    script.swap_engine_state(
-                        &mut self.world.entities,
-                        &mut self.ai.global,
-                        &mut self.world.fast_grid,
-                        &mut self.mission_domain.campaign,
-                        &mut self.mission_domain.mission_stat,
-                        &mut self.script_domains,
-                    );
-                    let victory_result = script.check_victory_condition(game_seconds, queries);
-                    script.swap_engine_state(
-                        &mut self.world.entities,
-                        &mut self.ai.global,
-                        &mut self.world.fast_grid,
-                        &mut self.mission_domain.campaign,
-                        &mut self.mission_domain.mission_stat,
-                        &mut self.script_domains,
-                    );
-
-                    // Put the script back before syncing side-effects.
-                    self.scripts.mission = Some(script);
-                    self.sync_game_host_post_script(assets);
-
+                if let Some(victory_result) = self.with_script_session(assets, |script, queries| {
+                    script.check_victory_condition(game_seconds, queries)
+                }) {
                     match victory_result {
                         Ok(1) => {
                             // Mission won!
@@ -7606,7 +7560,7 @@ impl EngineInner {
                 // When the script returns non-zero the status
                 // advances to Taken; otherwise it rests at Opened.
                 Some(crate::element::ObjectType::Scroll) => {
-                    self.take_scroll(taker, object);
+                    self.take_scroll(assets, taker, object);
                 }
                 Some(obj_type) if taker_is_pc => {
                     // Snapshot the object's position/layer/quantity/

@@ -708,17 +708,7 @@ impl EngineInner {
             }
         }
         if !listenable_calls.is_empty() {
-            self.refresh_script_sight_bindings();
-            let queries = native_query_views!(self);
-            if let Some(ref mut script) = self.scripts.mission {
-                script.swap_engine_state(
-                    &mut self.world.entities,
-                    &mut self.ai.global,
-                    &mut self.world.fast_grid,
-                    &mut self.mission_domain.campaign,
-                    &mut self.mission_domain.mission_stat,
-                    &mut self.script_domains,
-                );
+            let _ = self.with_script_session(assets, |script, queries| {
                 for (target_handle, pc_handle) in listenable_calls {
                     if let Err(e) = script.call_target_function(
                         target_handle,
@@ -729,16 +719,7 @@ impl EngineInner {
                         tracing::warn!("ActivatedByListenable (target {target_handle}): {e}");
                     }
                 }
-                script.swap_engine_state(
-                    &mut self.world.entities,
-                    &mut self.ai.global,
-                    &mut self.world.fast_grid,
-                    &mut self.mission_domain.campaign,
-                    &mut self.mission_domain.mission_stat,
-                    &mut self.script_domains,
-                );
-            }
-            self.sync_game_host_post_script(assets);
+            });
         }
     }
 
