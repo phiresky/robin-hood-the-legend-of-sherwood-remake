@@ -6027,10 +6027,6 @@ impl EngineInner {
                     .insert(actor_h, bld_h);
             }
         }
-
-        // ── Entity active state (FX animations) ──
-        // Populated here once; script effects mutate the canonical owners.
-        self.refresh_script_sight_bindings();
     }
 
     /// Harvest the Sherwood engine state into the campaign's production

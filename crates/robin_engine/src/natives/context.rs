@@ -17,7 +17,8 @@ pub struct NativeSessionCapabilities<'a> {
     campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
     mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
     sequence_manager: Option<&'a crate::sequence::SequenceManager>,
-    selected_pcs: Option<&'a [EntityId]>,
+    selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
+    sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'a>>,
     sound_sources: Option<&'a crate::sound_source::SoundSourceManager>,
     weather: Option<&'a crate::engine::WeatherState>,
     frame_counter: Option<&'a u32>,
@@ -37,6 +38,7 @@ impl<'a> NativeSessionCapabilities<'a> {
             mission_stat: None,
             sequence_manager: None,
             selected_pcs: None,
+            sight_obstacles: None,
             sound_sources: None,
             weather: None,
             frame_counter: None,
@@ -46,16 +48,33 @@ impl<'a> NativeSessionCapabilities<'a> {
     pub fn with_queries(
         mut self,
         sequence_manager: &'a crate::sequence::SequenceManager,
-        selected_pcs: &'a [EntityId],
+        selected_pcs: &'a mut Vec<EntityId>,
         sound_sources: &'a crate::sound_source::SoundSourceManager,
         weather: &'a crate::engine::WeatherState,
         frame_counter: &'a u32,
     ) -> Self {
         self.sequence_manager = Some(sequence_manager);
-        self.selected_pcs = Some(selected_pcs);
+        self.selected_pcs = Some(RefCell::new(selected_pcs));
         self.sound_sources = Some(sound_sources);
         self.weather = Some(weather);
         self.frame_counter = Some(frame_counter);
+        self
+    }
+
+    /// Attach canonical world arrays needed by synchronous native queries.
+    /// Mutable sight arrays remain owned by `WorldState`; the dispatcher only
+    /// borrows them for the duration of a script session.
+    pub fn with_world_views(
+        mut self,
+        static_sight_obstacles: &'a [crate::sight_obstacle::SightObstacle],
+        dynamic_sight_obstacles: &'a [crate::sight_obstacle::SightObstacle],
+        static_sight_obstacle_active: &'a [bool],
+    ) -> Self {
+        self.sight_obstacles = Some(crate::sight_obstacle::ObstacleList {
+            static_obstacles: static_sight_obstacles,
+            dynamic_obstacles: dynamic_sight_obstacles,
+            static_active: static_sight_obstacle_active,
+        });
         self
     }
 
@@ -155,8 +174,17 @@ impl<'a> NativeSessionCapabilities<'a> {
     }
 
     #[doc(hidden)]
-    pub fn selected_pcs_option(&self) -> Option<&'a [EntityId]> {
-        self.selected_pcs
+    pub fn selected_pcs_option(&self) -> Option<RefMut<'_, Vec<EntityId>>> {
+        self.selected_pcs.as_ref().map(|selected_pcs| {
+            RefMut::map(selected_pcs.borrow_mut(), |selected_pcs| {
+                &mut **selected_pcs
+            })
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn sight_obstacles_option(&self) -> Option<crate::sight_obstacle::ObstacleList<'a>> {
+        self.sight_obstacles
     }
 
     #[doc(hidden)]
@@ -191,7 +219,8 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) campaign: Option<RefMut<'ctx, crate::campaign::Campaign>>,
     pub(crate) mission_stat: Option<RefMut<'ctx, crate::mission_stat::MissionStat>>,
     pub(crate) sequence_manager: Option<&'owners crate::sequence::SequenceManager>,
-    pub(crate) selected_pcs: Option<&'owners [EntityId]>,
+    pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
+    pub(crate) sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'owners>>,
     pub(crate) sound_sources: Option<&'owners crate::sound_source::SoundSourceManager>,
     pub(crate) weather: Option<&'owners crate::engine::WeatherState>,
     pub(crate) frame_counter: Option<&'owners u32>,
@@ -217,6 +246,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),
@@ -243,6 +273,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),
@@ -270,6 +301,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),

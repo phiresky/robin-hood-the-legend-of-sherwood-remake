@@ -788,7 +788,7 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let outer_handle = 11;
     let inner_handle = 22;
     let sequences = crate::sequence::SequenceManager::new();
-    let selection = [
+    let mut selection = vec![
         crate::element::EntityId::Pc(crate::entity_id::PcId(0)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(2)),
@@ -803,7 +803,7 @@ fn nested_callback_keeps_the_canonical_query_views() {
         &mut ai_global,
         &mut fast_grid,
     )
-    .with_queries(&sequences, &selection, &sounds, &weather, &frame);
+    .with_queries(&sequences, &mut selection, &sounds, &weather, &frame);
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",

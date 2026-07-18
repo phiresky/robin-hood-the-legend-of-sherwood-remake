@@ -102,11 +102,12 @@ pub enum EngineCommand {
         y: f32,
         layer: u16,
     },
-    /// Update a scroll's status from script.  Stores the new status,
-    /// updates the minimap dot, and (on `Opened`) forces the
-    /// `BONUS_THREE` animation. `scroll_handle` is the actor script
-    /// handle; status is in `0..=3` (Invisible/Visible/Taken/Opened) —
-    /// both pre-validated by the native.
+    /// Finish a script scroll-status update after the native has already
+    /// written the canonical status synchronously. The engine-side barrier
+    /// refreshes the minimap dot and (on `Opened`) forces the `BONUS_THREE`
+    /// animation. `scroll_handle` is the actor script handle; status is in
+    /// `0..=3` (Invisible/Visible/Taken/Opened) — both pre-validated by the
+    /// native.
     SetScrollStatus { scroll_handle: i32, status: i32 },
     /// Crouch a PC via the full sequence/animation rewrite path:
     /// rewrite an active movement sequence to its crouched variant, or
@@ -148,7 +149,10 @@ pub enum DeferredCommand {
         arg1: i32,
         arg2: i32,
     },
-    /// SelectActorPC(actor, select). `actor == 0` means "all PCs".
+    /// Finish SelectActorPC(actor, select) after the native has already
+    /// updated the canonical selection synchronously. `actor == 0` means
+    /// "all PCs". The engine-side barrier performs action/sequence and
+    /// Sherwood-interface side effects.
     SelectPC { actor: i32, select: bool },
     /// Stop the actor's current and pending sequence elements
     /// (script-level priority).

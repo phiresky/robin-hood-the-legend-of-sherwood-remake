@@ -46,7 +46,6 @@ impl EngineInner {
             &crate::natives::NativeSessionCapabilities<'_>,
         ) -> R,
     ) -> Option<R> {
-        self.refresh_script_sight_bindings();
         self.scripts.assert_native_attachments_ready();
         let result = {
             let EngineInner {
@@ -68,9 +67,14 @@ impl EngineInner {
                 &mut ai.global,
                 &mut world.fast_grid,
             )
+            .with_world_views(
+                assets.static_sight_obstacles.as_slice(),
+                &world.dynamic_sight_obstacles,
+                &world.static_sight_obstacle_active,
+            )
             .with_queries(
                 &orders.sequence_manager,
-                &players.seats[0].selection,
+                &mut players.seats[0].selection,
                 &feedback.sound_sim.sources,
                 &world.weather,
                 &control.frame_counter,
@@ -150,24 +154,12 @@ impl EngineInner {
         }
     }
 
-    /// Reattach sight-obstacle arrays rebuilt by live world mutations.
-    pub(super) fn refresh_script_sight_bindings(&mut self) {
-        self.scripts.refresh_sight_bindings(
-            &self.world.dynamic_sight_obstacles,
-            &self.world.static_sight_obstacle_active,
-        );
-    }
-
     /// Attach immutable level data to the script-native dispatcher.
     ///
     /// The dispatcher borrows this object for each VM resume. It is not part
     /// of simulation state and is reattached after save/snapshot decode.
     pub(super) fn attach_script_bindings(&mut self, assets: &LevelAssets) {
-        self.scripts.attach_native_capabilities(
-            assets,
-            &self.world.dynamic_sight_obstacles,
-            &self.world.static_sight_obstacle_active,
-        );
+        self.scripts.attach_native_capabilities(assets);
     }
 
     /// Drain and apply script-originated effects after a callback batch.
@@ -343,7 +335,7 @@ impl EngineInner {
                         if select {
                             // Script-path SelectPC uses `speak=false`
                             // — script already owns the sound flow.
-                            self.select_pc(assets, 0, id, true, false);
+                            self.select_pc(assets, 0, id, false, false);
                         } else {
                             self.players.seats[0].selection.retain(|&x| x != id);
                         }
@@ -805,7 +797,6 @@ impl EngineInner {
         seed: i32,
         hiking_paths: &[crate::level_data::RawHikingPath],
     ) {
-        self.refresh_script_sight_bindings();
         self.attach_script_bindings(assets);
 
         // Collect per-actor script classes before borrowing canonical entities.

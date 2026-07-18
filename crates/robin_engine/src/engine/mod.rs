@@ -391,11 +391,7 @@ impl EngineInner {
 
     pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
         self.world.attach_preflighted_level_assets(assets);
-        self.scripts.attach_preflighted_level_assets(
-            assets,
-            &self.world.dynamic_sight_obstacles,
-            &self.world.static_sight_obstacle_active,
-        );
+        self.scripts.attach_preflighted_level_assets(assets);
     }
 
     /// Test fixture constructor. Production construction always supplies the

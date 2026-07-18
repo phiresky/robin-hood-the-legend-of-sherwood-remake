@@ -79,15 +79,8 @@ impl ScriptRuntime {
         Ok(())
     }
 
-    /// Attach the preflighted immutable program and native capabilities.
-    /// World arrays are copied into the shared binding adapter; they do not
-    /// become script-owned authoritative state.
-    pub(crate) fn attach_preflighted_level_assets(
-        &mut self,
-        assets: &LevelAssets,
-        dynamic_sight_obstacles: &[crate::sight_obstacle::SightObstacle],
-        static_sight_obstacle_active: &[bool],
-    ) {
+    /// Attach the preflighted immutable program and native bindings.
+    pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission.as_mut() else {
             self.native_attachments_ready = false;
             return;
@@ -101,50 +94,25 @@ impl ScriptRuntime {
             script.attach_program(Arc::clone(program));
         }
 
-        Self::attach_native_bindings(
-            script,
-            assets,
-            dynamic_sight_obstacles,
-            static_sight_obstacle_active,
-        );
+        Self::attach_native_bindings(script, assets);
         self.native_attachments_ready = true;
     }
 
     /// Attach native capabilities when the bytecode was installed directly
     /// from the already-loaded level (the normal new-mission path).
-    pub(crate) fn attach_native_capabilities(
-        &mut self,
-        assets: &LevelAssets,
-        dynamic_sight_obstacles: &[crate::sight_obstacle::SightObstacle],
-        static_sight_obstacle_active: &[bool],
-    ) {
+    pub(crate) fn attach_native_capabilities(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission.as_mut() else {
             self.native_attachments_ready = false;
             return;
         };
-        Self::attach_native_bindings(
-            script,
-            assets,
-            dynamic_sight_obstacles,
-            static_sight_obstacle_active,
-        );
+        Self::attach_native_bindings(script, assets);
         self.native_attachments_ready = true;
     }
 
-    fn attach_native_bindings(
-        script: &mut MissionScript,
-        assets: &LevelAssets,
-        dynamic_sight_obstacles: &[crate::sight_obstacle::SightObstacle],
-        static_sight_obstacle_active: &[bool],
-    ) {
+    fn attach_native_bindings(script: &mut MissionScript, assets: &LevelAssets) {
         script.attach_bindings(crate::natives::AttachedScriptBindings {
             profile_manager: assets.profile_manager.clone(),
             hiking_paths: assets.hiking_paths.clone(),
-            sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
-                static_obstacles: assets.static_sight_obstacles.clone(),
-                dynamic_obstacles: Arc::new(dynamic_sight_obstacles.to_vec()),
-                static_active: Arc::new(static_sight_obstacle_active.to_vec()),
-            },
             script_location_count: assets.script_location_count,
             script_point_count: assets.script_point_count,
             script_building_count: assets.script_building_count,
@@ -156,19 +124,6 @@ impl ScriptRuntime {
             patch_animation_entities: assets.patch_entity_handles.clone(),
             lua_names: assets.script_names.clone(),
         });
-    }
-
-    pub(crate) fn refresh_sight_bindings(
-        &mut self,
-        dynamic_sight_obstacles: &[crate::sight_obstacle::SightObstacle],
-        static_sight_obstacle_active: &[bool],
-    ) {
-        if let Some(script) = self.mission.as_mut() {
-            script.bindings.sight_obstacles.dynamic_obstacles =
-                Arc::new(dynamic_sight_obstacles.to_vec());
-            script.bindings.sight_obstacles.static_active =
-                Arc::new(static_sight_obstacle_active.to_vec());
-        }
     }
 
     /// Fail before native dispatch rather than running a live VM against the
