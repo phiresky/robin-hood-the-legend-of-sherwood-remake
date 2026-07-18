@@ -1768,6 +1768,26 @@ impl DirectAbilityCommandContext<'_> {
 mod sequence_phase_context_tests {
     use super::*;
 
+    fn shield_pc(action_state: crate::element::ActionState) -> Entity {
+        Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: crate::element::ActorData {
+                action_state,
+                ..Default::default()
+            },
+            human: crate::element::HumanData::default(),
+            pc: crate::element::PcData {
+                life_points: crate::combat::LIFEPOINTS_PC,
+                ..Default::default()
+            },
+        })
+    }
+
     #[test]
     fn synchronous_successor_is_spliced_before_older_hourglass_work() {
         let older = crate::sequence::SequenceAction::EngineCommand {
@@ -1804,6 +1824,231 @@ mod sequence_phase_context_tests {
             })
         ));
         assert!(phase.pop_action().is_none());
+    }
+
+    #[test]
+    fn shield_context_preserves_transition_orders_and_states() {
+        use crate::element::ActionState;
+        use crate::order::OrderType;
+        use crate::sequence::{SequenceElement, SequenceState};
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+        let target = engine.add_entity(shield_pc(ActionState::Waiting));
+        let seq_id =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new_interaction(
+                    1,
+                    Command::RaiseShield,
+                    Some(owner),
+                    Some(target),
+                ));
+
+        let follow_up = crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::RaiseShield, seq_id, 0);
+
+        assert!(follow_up.is_none());
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("raise-shield element remains live");
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.orders.front().map(|order| order.order_type),
+            Some(OrderType::RaisingShield)
+        );
+        let owner_entity = engine.get_entity(owner).expect("shield owner exists");
+        assert_eq!(
+            owner_entity.element_data().posture,
+            crate::element::Posture::Upright
+        );
+        assert_eq!(
+            owner_entity
+                .actor_data()
+                .expect("shield owner has actor data")
+                .action_state,
+            ActionState::Waiting,
+            "raising completion, not translation, enters HoldingShield"
+        );
+
+        let instant_seq = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(
+                1,
+                Command::RaiseShieldInstantly,
+                Some(owner),
+            ));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::RaiseShieldInstantly, instant_seq, 0);
+        let instant = engine
+            .orders
+            .sequence_manager
+            .get_element(instant_seq, 0)
+            .expect("instant raise-shield element remains inspectable");
+        assert_eq!(instant.state, SequenceState::Terminated);
+        assert_eq!(
+            instant.orders.front().map(|order| order.order_type),
+            Some(OrderType::WaitingShield)
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("shield owner exists")
+                .actor_data()
+                .expect("shield owner has actor data")
+                .action_state,
+            ActionState::HoldingShield
+        );
+
+        let lower_seq = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+        engine
+            .get_entity_mut(owner)
+            .expect("shield owner exists")
+            .actor_data_mut()
+            .expect("shield owner has actor data")
+            .action_state = ActionState::HoldingShield;
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::LowerShield, lower_seq, 0);
+        let lower = engine
+            .orders
+            .sequence_manager
+            .get_element(lower_seq, 0)
+            .expect("lower-shield element remains live");
+        assert_eq!(lower.state, SequenceState::InProgress);
+        assert_eq!(
+            lower.orders.front().map(|order| order.order_type),
+            Some(OrderType::LoweringShield)
+        );
+
+        let parry_seq = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::ParryShield, Some(owner)));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::ParryShield, parry_seq, 0);
+        let parry = engine
+            .orders
+            .sequence_manager
+            .get_element(parry_seq, 0)
+            .expect("parry-shield element remains live");
+        assert_eq!(parry.state, SequenceState::InProgress);
+        assert_eq!(
+            parry.orders.front().map(|order| order.order_type),
+            Some(OrderType::ParryingShield)
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .expect("shield owner exists")
+                .actor_data()
+                .expect("shield owner has actor data")
+                .action_state,
+            ActionState::ParryingShield
+        );
+    }
+
+    #[test]
+    fn shield_refresh_seek_is_registered_before_the_action_splice() {
+        use crate::element::ActionState;
+        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(shield_pc(ActionState::HoldingShield));
+        let protected = engine.add_entity(shield_pc(ActionState::Waiting));
+        let mut raise = SequenceElement::new_generic(1, Command::RaiseShield, Some(owner));
+        raise.set_property(
+            Field::ShieldDangerPoint,
+            FieldValue::Point3D {
+                x: 100.0,
+                y: 50.0,
+                z: 7.0,
+            },
+        );
+        raise.set_property(Field::ShieldDangerPointLayer, FieldValue::Integer(3));
+        raise.set_property(Field::ShieldProtected, FieldValue::Element(protected));
+        let raise_seq = engine.orders.sequence_manager.launch_element(raise);
+
+        let mut phase = SequencePhase::begin(&mut engine.orders);
+        phase.begin_dispatch();
+        assert!(matches!(
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::InstructOwner {
+                owner: action_owner,
+                sequence_id,
+                element_index: 0,
+            }) if action_owner == owner && sequence_id == raise_seq
+        ));
+
+        let follow_up = crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::RaiseShield, raise_seq, 0)
+        .expect("already-shielding protector gets an immediate Seek");
+        match &follow_up.data {
+            crate::sequence::SequenceElementData::Movement {
+                element,
+                tolerance,
+                flags,
+                ..
+            } => {
+                assert_eq!(*element, Some(protected));
+                assert_eq!(*tolerance, 0.0);
+                assert!(flags.contains(MoveFlags::SEEK));
+                assert!(flags.contains(MoveFlags::SEEK_SHIELD));
+            }
+            data => panic!("shield follow-up must be movement, got {data:?}"),
+        }
+        let follow_up_seq = engine.launch_element(follow_up);
+
+        // A normal Move/Seek launch registers with the manager FIFO rather
+        // than the immediate-action splice. The pre-split helper launched at
+        // this same point, so the current action loop must remain empty and
+        // the next manager hourglass must produce the Seek instruction.
+        phase.splice_synchronous_actions(&mut engine.orders);
+        assert!(phase.pop_action().is_none());
+        let next_actions = engine.orders.sequence_manager.hourglass();
+        assert!(matches!(
+            next_actions.as_slice(),
+            [crate::sequence::SequenceAction::InstructOwner {
+                owner: action_owner,
+                sequence_id,
+                element_index: 0,
+            }] if *action_owner == owner && *sequence_id == follow_up_seq
+        ));
+
+        let owner_pc = engine
+            .get_entity(owner)
+            .expect("shield owner exists")
+            .pc_data()
+            .expect("shield owner is a PC");
+        assert_eq!(owner_pc.shield_protected, Some(protected));
+        assert_eq!(owner_pc.shield_danger_point_layer, 3);
+        assert_eq!(owner_pc.shield_danger_point.z, 7.0);
     }
 }
 
@@ -4093,17 +4338,23 @@ impl EngineInner {
                         }
 
                         // ── Shield commands ─────────────────────
-                        Command::RaiseShield => {
-                            self.dispatch_raise_shield(owner, seq_id, elem_idx);
-                        }
-                        Command::RaiseShieldInstantly => {
-                            self.dispatch_raise_shield_instantly(owner, seq_id, elem_idx);
-                        }
-                        Command::LowerShield => {
-                            self.dispatch_lower_shield(owner, seq_id, elem_idx);
-                        }
-                        Command::ParryShield => {
-                            self.dispatch_parry_shield(owner, seq_id, elem_idx);
+                        Command::RaiseShield
+                        | Command::RaiseShieldInstantly
+                        | Command::LowerShield
+                        | Command::ParryShield => {
+                            let follow_up = crate::engine::melee::ShieldCommandContext::new(
+                                &mut self.world.entities,
+                                &mut self.orders.sequence_manager,
+                                &mut self.orders.next_order_id,
+                            )
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if let Some(follow_up) = follow_up {
+                                // `RHElementActorPC::Translate(RAISE_SHIELD)`
+                                // launches this SEEK synchronously. Route it
+                                // through the full owned-element Instruct path
+                                // before the action-loop splice below.
+                                self.launch_element(follow_up);
+                            }
                         }
                         // ── Bow equip / raise / lower ───────────
                         //
