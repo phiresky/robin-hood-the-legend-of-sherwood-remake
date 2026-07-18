@@ -60,6 +60,7 @@ mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
+pub(crate) use context::NativeCampaignCapabilities;
 pub use context::{NativeContext, NativeQueryViews};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
@@ -139,14 +140,6 @@ pub struct GameHost {
     /// Script-native visibility must use the same `FastFindGrid::is_reachable`
     /// path as engine AI, not a separate obstacle scan.
     pub fast_grid: crate::fast_find_grid::FastFindGrid,
-    /// Campaign state, swapped in from EngineInner before script execution.
-    pub campaign: Option<crate::campaign::Campaign>,
-    /// Per-mission debriefing stats, swapped in from EngineInner.  Script
-    /// natives that mutate campaign RANSOM/SCORE values credit this so
-    /// the side effects of campaign value updates match the in-mission
-    /// pickup path.
-    pub mission_stat: crate::mission_stat::MissionStat,
-
     /// Engine-owned script domains parked here only while the legacy script
     /// transaction is active. The canonical value is serialized by
     /// `EngineInner`, never as part of the native dispatcher.
@@ -218,8 +211,6 @@ impl GameHost {
             entities: Vec::new(),
             ai_global: AiGlobalState::default(),
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
-            campaign: None,
-            mission_stat: crate::mission_stat::MissionStat::default(),
             engine_domains: crate::engine::state::ScriptDomains::default(),
             commands: Vec::new(),
             script_this: 0,
@@ -238,62 +229,6 @@ impl GameHost {
     /// Drain all queued engine commands. Called by the engine after script execution.
     pub fn drain_commands(&mut self) -> Vec<EngineCommand> {
         std::mem::take(&mut self.commands)
-    }
-
-    /// Mutate a campaign value, with the same side effects as the
-    /// engine-side `EngineInner::add_campaign_value`: RANSOM credits
-    /// `mission_stat.collected_money` (unconditionally — the underlying
-    /// counter is unsigned and wraps on negative deltas) and queues the
-    /// `CashWon` jingle only on positive deltas after the first frame;
-    /// SCORE credits `mission_stat.added_score` unconditionally.  Both
-    /// are swapped in from the engine, so the side effects land on the
-    /// same per-mission state the in-mission pickup path writes to.
-    pub fn add_campaign_value(
-        &mut self,
-        name: crate::campaign::CampaignValue,
-        amount: i32,
-        frame_counter: u32,
-    ) {
-        let Some(campaign) = self.campaign.as_mut() else {
-            return;
-        };
-        campaign.values[name] += amount;
-        // Mission-stat counters are credited unconditionally for
-        // RANSOM/SCORE — only the CashWon jingle is gated on
-        // `amount > 0 && frame_counter > 0`.
-        match name {
-            crate::campaign::CampaignValue::Ransom => {
-                self.mission_stat.add_collected_money(amount);
-                if amount > 0 && frame_counter > 0 {
-                    self.commands
-                        .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
-                }
-            }
-            crate::campaign::CampaignValue::Score => {
-                self.mission_stat.add_score(amount);
-            }
-            _ => {}
-        }
-    }
-
-    /// Force a campaign value to a specific number.  RANSOM queues
-    /// `CashWon` when the new value exceeds the old (and the universal
-    /// frame counter has advanced past 0).
-    pub fn set_campaign_value(
-        &mut self,
-        name: crate::campaign::CampaignValue,
-        value: i32,
-        frame_counter: u32,
-    ) {
-        let Some(campaign) = self.campaign.as_mut() else {
-            return;
-        };
-        let old = campaign.values[name];
-        campaign.values[name] = value;
-        if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
-            self.commands
-                .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
-        }
     }
 
     pub fn verbose(mut self) -> Self {
@@ -444,6 +379,61 @@ impl GameHost {
 }
 
 impl NativeContext<'_> {
+    /// Mutate the canonical campaign value and mission statistics inline,
+    /// matching `RHCampaign::AddValue` in the Original.
+    fn add_campaign_value(
+        &mut self,
+        name: crate::campaign::CampaignValue,
+        amount: i32,
+        frame_counter: u32,
+    ) {
+        let campaign = self
+            .campaign
+            .as_mut()
+            .expect("AddCampaignValue requires an active campaign");
+        campaign.values[name] += amount;
+        match name {
+            crate::campaign::CampaignValue::Ransom => {
+                self.mission_stat
+                    .as_mut()
+                    .expect("RANSOM campaign mutation requires live mission statistics")
+                    .add_collected_money(amount);
+                if amount > 0 && frame_counter > 0 {
+                    self.commands
+                        .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
+                }
+            }
+            crate::campaign::CampaignValue::Score => {
+                self.mission_stat
+                    .as_mut()
+                    .expect("SCORE campaign mutation requires live mission statistics")
+                    .add_score(amount);
+            }
+            _ => {}
+        }
+    }
+
+    /// Force a value on the canonical campaign owner. The Original does not
+    /// credit mission statistics for `SetValue`, but does emit the cash jingle
+    /// for an increased ransom after frame zero.
+    fn set_campaign_value(
+        &mut self,
+        name: crate::campaign::CampaignValue,
+        value: i32,
+        frame_counter: u32,
+    ) {
+        let campaign = self
+            .campaign
+            .as_mut()
+            .expect("SetCampaignValue requires an active campaign");
+        let old = campaign.values[name];
+        campaign.values[name] = value;
+        if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
+            self.commands
+                .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
+        }
+    }
+
     fn zone_index(&self, loc: i32) -> Option<usize> {
         GameHost::location_index(loc)?.checked_sub(self.bindings.script_point_count)
     }
@@ -8081,7 +8071,10 @@ impl NativeContext<'_> {
                                         .map(|cp| cp.profile_name.clone())
                                         .unwrap_or_default();
                                     let name_override = desc.status.name_override;
-                                    self.mission_stat.add_new_pc(fallback, name_override);
+                                    self.mission_stat
+                                        .as_mut()
+                                        .expect("AddPCToGang requires live mission statistics")
+                                        .add_new_pc(fallback, name_override);
                                 }
                             }
                         } else {

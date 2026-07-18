@@ -1429,6 +1429,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
     };
 
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     engine.scripts.mission = Some(
         MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
@@ -7306,6 +7307,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     let mission_script = MissionScript::from_scb(scb).expect("from_scb");
 
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     engine.scripts.mission = Some(mission_script);
 
     let paths = vec![

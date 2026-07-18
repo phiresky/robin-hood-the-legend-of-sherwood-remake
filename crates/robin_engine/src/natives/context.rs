@@ -1,7 +1,50 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    cell::{RefCell, RefMut},
+    ops::{Deref, DerefMut},
+};
 
 use super::{AttachedScriptBindings, GameHost, ScriptBindings, ScriptState};
 use crate::element::EntityId;
+
+/// Canonical mutable campaign owners borrowed for one script session.
+///
+/// The cells only sequence short-lived VM resumes. A [`NativeContext`] holds
+/// each mutable borrow until that resume returns; nested script dispatch can
+/// then construct a fresh context over these same owners without parking or
+/// copying either value into [`GameHost`].
+pub(crate) struct NativeCampaignCapabilities<'a> {
+    campaign: RefCell<&'a mut crate::campaign::Campaign>,
+    mission_stat: RefCell<&'a mut crate::mission_stat::MissionStat>,
+}
+
+pub(crate) trait NativeCampaignAccess {
+    fn campaign(&self) -> RefMut<'_, crate::campaign::Campaign>;
+    fn mission_stat(&self) -> RefMut<'_, crate::mission_stat::MissionStat>;
+}
+
+impl<'a> NativeCampaignCapabilities<'a> {
+    pub(crate) fn new(
+        campaign: &'a mut crate::campaign::Campaign,
+        mission_stat: &'a mut crate::mission_stat::MissionStat,
+    ) -> Self {
+        Self {
+            campaign: RefCell::new(campaign),
+            mission_stat: RefCell::new(mission_stat),
+        }
+    }
+}
+
+impl NativeCampaignAccess for NativeCampaignCapabilities<'_> {
+    fn campaign(&self) -> RefMut<'_, crate::campaign::Campaign> {
+        RefMut::map(self.campaign.borrow_mut(), |campaign| &mut **campaign)
+    }
+
+    fn mission_stat(&self) -> RefMut<'_, crate::mission_stat::MissionStat> {
+        RefMut::map(self.mission_stat.borrow_mut(), |mission_stat| {
+            &mut **mission_stat
+        })
+    }
+}
 
 /// Canonical read capabilities borrowed for exactly one VM resume.
 ///
@@ -14,6 +57,7 @@ pub struct NativeQueryViews<'a> {
     sound_sources: Option<&'a crate::sound_source::SoundSourceManager>,
     weather: Option<&'a crate::engine::WeatherState>,
     frame_counter: Option<&'a u32>,
+    campaign_capabilities: Option<&'a dyn NativeCampaignAccess>,
 }
 
 impl<'a> NativeQueryViews<'a> {
@@ -30,7 +74,16 @@ impl<'a> NativeQueryViews<'a> {
             sound_sources: Some(sound_sources),
             weather: Some(weather),
             frame_counter: Some(frame_counter),
+            campaign_capabilities: None,
         }
+    }
+
+    pub(crate) fn with_campaign_capabilities(
+        mut self,
+        campaign: &'a dyn NativeCampaignAccess,
+    ) -> Self {
+        self.campaign_capabilities = Some(campaign);
+        self
     }
 
     #[doc(hidden)]
@@ -95,6 +148,8 @@ pub struct NativeContext<'a> {
     pub(crate) script_state: &'a mut ScriptState,
     pub(crate) bindings: ScriptBindings<'a>,
     pub(crate) queries: NativeQueryViews<'a>,
+    pub(crate) campaign: Option<RefMut<'a, crate::campaign::Campaign>>,
+    pub(crate) mission_stat: Option<RefMut<'a, crate::mission_stat::MissionStat>>,
 }
 
 impl<'a> NativeContext<'a> {
@@ -104,6 +159,8 @@ impl<'a> NativeContext<'a> {
             script_state,
             bindings: ScriptBindings::empty(),
             queries: NativeQueryViews::default(),
+            campaign: None,
+            mission_stat: None,
         }
     }
 
@@ -113,11 +170,19 @@ impl<'a> NativeContext<'a> {
         bindings: &'a AttachedScriptBindings,
         queries: NativeQueryViews<'a>,
     ) -> Self {
+        let campaign = queries
+            .campaign_capabilities
+            .map(NativeCampaignAccess::campaign);
+        let mission_stat = queries
+            .campaign_capabilities
+            .map(NativeCampaignAccess::mission_stat);
         Self {
             game_host,
             script_state,
             bindings: bindings.view(),
             queries,
+            campaign,
+            mission_stat,
         }
     }
 

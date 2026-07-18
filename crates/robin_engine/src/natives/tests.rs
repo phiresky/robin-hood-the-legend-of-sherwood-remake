@@ -92,6 +92,61 @@ fn call_bound_host_native(
         .expect_return("non-nested native test")
 }
 
+fn with_campaign_context<R>(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    f: impl FnOnce(&mut NativeContext<'_>) -> R,
+) -> R {
+    let capabilities = NativeCampaignCapabilities::new(campaign, mission_stat);
+    let queries = NativeQueryViews::default().with_campaign_capabilities(&capabilities);
+    let mut state = ScriptState::default();
+    let mut context = NativeContext::with_bindings(host, &mut state, bindings, queries);
+    f(&mut context)
+}
+
+fn call_campaign_native(
+    host: &mut GameHost,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    native: NativeFn,
+    stack: &mut NativeStack,
+) -> i32 {
+    with_campaign_context(
+        host,
+        AttachedScriptBindings::empty_ref(),
+        campaign,
+        mission_stat,
+        |context| {
+            <NativeContext<'_> as HostFunctions>::call(context, native as u32, stack)
+                .expect_return("non-nested campaign native test")
+        },
+    )
+}
+
+struct CampaignGameHost {
+    host: GameHost,
+    state: ScriptState,
+    campaign: crate::campaign::Campaign,
+    mission_stat: crate::mission_stat::MissionStat,
+}
+
+impl HostFunctions for CampaignGameHost {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        let capabilities =
+            NativeCampaignCapabilities::new(&mut self.campaign, &mut self.mission_stat);
+        let queries = NativeQueryViews::default().with_campaign_capabilities(&capabilities);
+        NativeContext::with_bindings(
+            &mut self.host,
+            &mut self.state,
+            AttachedScriptBindings::empty_ref(),
+            queries,
+        )
+        .call(index, stack)
+    }
+}
+
 struct BoundGameHost {
     host: GameHost,
     state: ScriptState,
@@ -834,8 +889,12 @@ fn campaign_values_set_get() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let mut host = GameHost::new();
-    host.campaign = Some(crate::campaign::Campaign::default());
+    let host = CampaignGameHost {
+        host: GameHost::new(),
+        state: ScriptState::default(),
+        campaign: crate::campaign::Campaign::default(),
+        mission_stat: crate::mission_stat::MissionStat::default(),
+    };
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(42));
 }
@@ -886,32 +945,61 @@ fn npc_values_set_then_get_from_canonical_entity() {
 
 #[test]
 fn custom_values_are_isolated_between_script_hosts() {
-    fn set_campaign(host: &mut GameHost, value: i32) {
+    fn set_campaign(
+        host: &mut GameHost,
+        campaign: &mut crate::campaign::Campaign,
+        stat: &mut crate::mission_stat::MissionStat,
+        value: i32,
+    ) {
         let mut stack = NativeStack::default();
         stack.push_i32(3);
         stack.push_i32(value);
         assert_eq!(
-            call_host_native(host, NativeFn::SetCustomCampaignValue, &mut stack),
+            call_campaign_native(
+                host,
+                campaign,
+                stat,
+                NativeFn::SetCustomCampaignValue,
+                &mut stack,
+            ),
             0
         );
     }
 
-    fn get_campaign(host: &mut GameHost) -> i32 {
+    fn get_campaign(
+        host: &mut GameHost,
+        campaign: &mut crate::campaign::Campaign,
+        stat: &mut crate::mission_stat::MissionStat,
+    ) -> i32 {
         let mut stack = NativeStack::default();
         stack.push_i32(3);
-        call_host_native(host, NativeFn::GetCustomCampaignValue, &mut stack)
+        call_campaign_native(
+            host,
+            campaign,
+            stat,
+            NativeFn::GetCustomCampaignValue,
+            &mut stack,
+        )
     }
 
     let mut first = GameHost::new();
-    first.campaign = Some(crate::campaign::Campaign::default());
+    let mut first_campaign = crate::campaign::Campaign::default();
+    let mut first_stat = crate::mission_stat::MissionStat::default();
     let mut second = GameHost::new();
-    second.campaign = Some(crate::campaign::Campaign::default());
+    let mut second_campaign = crate::campaign::Campaign::default();
+    let mut second_stat = crate::mission_stat::MissionStat::default();
 
-    set_campaign(&mut first, 11);
-    set_campaign(&mut second, 22);
+    set_campaign(&mut first, &mut first_campaign, &mut first_stat, 11);
+    set_campaign(&mut second, &mut second_campaign, &mut second_stat, 22);
 
-    assert_eq!(get_campaign(&mut first), 11);
-    assert_eq!(get_campaign(&mut second), 22);
+    assert_eq!(
+        get_campaign(&mut first, &mut first_campaign, &mut first_stat),
+        11
+    );
+    assert_eq!(
+        get_campaign(&mut second, &mut second_campaign, &mut second_stat),
+        22
+    );
 }
 
 #[test]
@@ -1237,22 +1325,28 @@ fn compute_border_point_cardinal_directions() {
     assert!(outside.0 > 1000.0);
 }
 
-// ── GameHost campaign-value side effects ──────────────────────────
+// ── Direct campaign-owner side effects ────────────────────────────
 
 #[test]
-fn game_host_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
+fn direct_owner_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
     let mut host = GameHost::new();
-    host.campaign = Some(crate::campaign::Campaign::default());
-    host.add_campaign_value(crate::campaign::CampaignValue::Ransom, 250, 100);
+    let mut campaign = crate::campaign::Campaign::default();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
+    with_campaign_context(
+        &mut host,
+        AttachedScriptBindings::empty_ref(),
+        &mut campaign,
+        &mut mission_stat,
+        |context| {
+            context.add_campaign_value(crate::campaign::CampaignValue::Ransom, 250, 100);
+        },
+    );
 
     assert_eq!(
-        host.campaign
-            .as_ref()
-            .unwrap()
-            .get_value(crate::campaign::CampaignValue::Ransom),
+        campaign.get_value(crate::campaign::CampaignValue::Ransom),
         crate::campaign::INITIAL_RANSOM + 250
     );
-    assert_eq!(host.mission_stat.collected_money, 250);
+    assert_eq!(mission_stat.collected_money, 250);
     let jingle_count = host
         .commands
         .iter()
@@ -1262,17 +1356,34 @@ fn game_host_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
 }
 
 #[test]
-fn game_host_set_campaign_value_ransom_jingle_only_when_growing() {
+fn direct_owner_set_campaign_value_ransom_jingle_only_when_growing() {
     let mut host = GameHost::new();
-    host.campaign = Some(crate::campaign::Campaign::default());
-    host.campaign.as_mut().unwrap().values[crate::campaign::CampaignValue::Ransom] = 200;
+    let mut campaign = crate::campaign::Campaign::default();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
+    campaign.values[crate::campaign::CampaignValue::Ransom] = 200;
 
     // Lowering: no jingle.
-    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 50);
+    with_campaign_context(
+        &mut host,
+        AttachedScriptBindings::empty_ref(),
+        &mut campaign,
+        &mut mission_stat,
+        |context| {
+            context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 50);
+        },
+    );
     assert!(host.commands.is_empty());
 
     // Raising: jingle queued.
-    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 500, 50);
+    with_campaign_context(
+        &mut host,
+        AttachedScriptBindings::empty_ref(),
+        &mut campaign,
+        &mut mission_stat,
+        |context| {
+            context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 500, 50);
+        },
+    );
     let jingle_count = host
         .commands
         .iter()
@@ -1280,16 +1391,70 @@ fn game_host_set_campaign_value_ransom_jingle_only_when_growing() {
         .count();
     assert_eq!(jingle_count, 1);
     // SetValue does NOT credit collected_money.
-    assert_eq!(host.mission_stat.collected_money, 0);
+    assert_eq!(mission_stat.collected_money, 0);
 }
 
 #[test]
-fn game_host_add_campaign_value_score_credits_added_score_silently() {
+fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let mut host = GameHost::new();
-    host.campaign = Some(crate::campaign::Campaign::default());
-    host.add_campaign_value(crate::campaign::CampaignValue::Score, 750, 100);
+    let mut campaign = crate::campaign::Campaign::default();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
+    let sequences = crate::sequence::SequenceManager::new();
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 50;
+    let capabilities = NativeCampaignCapabilities::new(&mut campaign, &mut mission_stat);
+    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame)
+        .with_campaign_capabilities(&capabilities);
+    let mut state = ScriptState::default();
+    let mut context = NativeContext::with_bindings(
+        &mut host,
+        &mut state,
+        AttachedScriptBindings::empty_ref(),
+        queries,
+    );
 
-    assert_eq!(host.mission_stat.added_score, 750);
+    let mut set = NativeStack::default();
+    set.push_i32(1_234);
+    assert_eq!(
+        context
+            .call(NativeFn::SetRansomMoney as u32, &mut set)
+            .expect_return("SetRansomMoney is synchronous"),
+        0
+    );
+    let mut get = NativeStack::default();
+    assert_eq!(
+        context
+            .call(NativeFn::GetRansomMoney as u32, &mut get)
+            .expect_return("GetRansomMoney is synchronous"),
+        1_234
+    );
+    drop(context);
+    drop(capabilities);
+
+    assert_eq!(
+        campaign.get_value(crate::campaign::CampaignValue::Ransom),
+        1_234
+    );
+    assert_eq!(mission_stat.collected_money, 0);
+}
+
+#[test]
+fn direct_owner_add_campaign_value_score_credits_added_score_silently() {
+    let mut host = GameHost::new();
+    let mut campaign = crate::campaign::Campaign::default();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
+    with_campaign_context(
+        &mut host,
+        AttachedScriptBindings::empty_ref(),
+        &mut campaign,
+        &mut mission_stat,
+        |context| {
+            context.add_campaign_value(crate::campaign::CampaignValue::Score, 750, 100);
+        },
+    );
+
+    assert_eq!(mission_stat.added_score, 750);
     assert!(host.commands.is_empty());
 }
 
@@ -1325,7 +1490,14 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
-fn persistent_property_test_host(with_campaign: bool) -> (GameHost, AttachedScriptBindings, i32) {
+fn persistent_property_test_host(
+    with_campaign: bool,
+) -> (
+    GameHost,
+    AttachedScriptBindings,
+    Option<crate::campaign::Campaign>,
+    i32,
+) {
     use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
 
     let mut profiles = crate::profiles::ProfileManager::new();
@@ -1347,21 +1519,28 @@ fn persistent_property_test_host(with_campaign: bool) -> (GameHost, AttachedScri
     pc_data.saved_action = Action::Bow;
     host.entities = vec![Some(pc)];
 
-    if with_campaign {
+    let campaign = if with_campaign {
         let mut status = crate::pc_status::PcStatus::default();
         status.set_ammo(Action::Bow, 2);
         status.set_ammo(Action::Stone, 5);
-        host.campaign = Some(crate::campaign::Campaign {
+        Some(crate::campaign::Campaign {
             characters: vec![crate::campaign::PcDescription {
                 character_profile_idx: Some(CharacterProfileIdx(0)),
                 status,
                 ..Default::default()
             }],
             ..Default::default()
-        });
-    }
+        })
+    } else {
+        None
+    };
 
-    (host, bindings, GameHost::actor_handle_from_index(0))
+    (
+        host,
+        bindings,
+        campaign,
+        GameHost::actor_handle_from_index(0),
+    )
 }
 
 fn call_set_persistent_property(
@@ -1390,12 +1569,51 @@ fn call_get_persistent_property(
     call_bound_host_native(host, bindings, NativeFn::GetPersistentProperty, &mut stack)
 }
 
+fn call_set_persistent_property_with_campaign(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    actor: i32,
+    prop: i32,
+    amount: i32,
+) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    stack.push_i32(amount);
+    with_campaign_context(host, bindings, campaign, mission_stat, |context| {
+        context
+            .call(NativeFn::SetPersistentProperty as u32, &mut stack)
+            .expect_return("non-nested persistent-property test")
+    })
+}
+
+fn call_get_persistent_property_with_campaign(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    actor: i32,
+    prop: i32,
+) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    with_campaign_context(host, bindings, campaign, mission_stat, |context| {
+        context
+            .call(NativeFn::GetPersistentProperty as u32, &mut stack)
+            .expect_return("non-nested persistent-property test")
+    })
+}
+
 #[test]
 fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
     use crate::element::PcAmmoData;
     use crate::profiles::Action;
 
-    let (mut host, bindings, actor) = persistent_property_test_host(false);
+    let (mut host, bindings, campaign, actor) = persistent_property_test_host(false);
+    assert!(campaign.is_none());
 
     assert_eq!(
         call_set_persistent_property(&mut host, &bindings, actor, 0, 7),
@@ -1433,7 +1651,9 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     use crate::element::PcAmmoData;
     use crate::profiles::Action;
 
-    let (mut host, bindings, actor) = persistent_property_test_host(true);
+    let (mut host, bindings, campaign, actor) = persistent_property_test_host(true);
+    let mut campaign = campaign.expect("campaign fixture");
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
     {
         let pc = host.entities[0].as_mut().unwrap().pc_data_mut().unwrap();
         pc.ammo.arrows = 2;
@@ -1443,11 +1663,27 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     }
 
     assert_eq!(
-        call_set_persistent_property(&mut host, &bindings, actor, 0, 6),
+        call_set_persistent_property_with_campaign(
+            &mut host,
+            &bindings,
+            &mut campaign,
+            &mut mission_stat,
+            actor,
+            0,
+            6,
+        ),
         1
     );
     assert_eq!(
-        call_set_persistent_property(&mut host, &bindings, actor, 5, 0),
+        call_set_persistent_property_with_campaign(
+            &mut host,
+            &bindings,
+            &mut campaign,
+            &mut mission_stat,
+            actor,
+            5,
+            0,
+        ),
         1
     );
 
@@ -1463,16 +1699,29 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     assert_eq!(pc.current_action, Action::NoAction);
     assert_eq!(pc.saved_action, Action::NoAction);
 
-    let campaign = host.campaign.as_ref().unwrap();
     let status = &campaign.characters[0].status;
     assert_eq!(status.get_ammo(Action::Bow), 6);
     assert_eq!(status.get_ammo(Action::Stone), 0);
     assert_eq!(
-        call_get_persistent_property(&mut host, &bindings, actor, 0),
+        call_get_persistent_property_with_campaign(
+            &mut host,
+            &bindings,
+            &mut campaign,
+            &mut mission_stat,
+            actor,
+            0,
+        ),
         6
     );
     assert_eq!(
-        call_get_persistent_property(&mut host, &bindings, actor, 5),
+        call_get_persistent_property_with_campaign(
+            &mut host,
+            &bindings,
+            &mut campaign,
+            &mut mission_stat,
+            actor,
+            5,
+        ),
         0
     );
 }
@@ -1605,7 +1854,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
     assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
 }
 
-fn set_experiences_test_host() -> (GameHost, i32) {
+fn set_experiences_test_host() -> (GameHost, crate::campaign::Campaign, i32) {
     let actor = GameHost::actor_handle_from_index(0);
     let profile_idx = crate::profiles::CharacterProfileIdx(0);
     let mut status = crate::pc_status::PcStatus::default();
@@ -1627,28 +1876,41 @@ fn set_experiences_test_host() -> (GameHost, i32) {
 
     let mut host = GameHost::new();
     host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
-    host.campaign = Some(campaign);
-    (host, actor)
+    (host, campaign, actor)
 }
 
-fn call_set_experiences(host: &mut GameHost, actor: i32, sword: i32, bow: i32) {
+fn call_set_experiences(
+    host: &mut GameHost,
+    campaign: &mut crate::campaign::Campaign,
+    mission_stat: &mut crate::mission_stat::MissionStat,
+    actor: i32,
+    sword: i32,
+    bow: i32,
+) {
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
     stack.push_i32(sword);
     stack.push_i32(bow);
     assert_eq!(
-        call_host_native(host, NativeFn::SetExperiences, &mut stack),
+        call_campaign_native(
+            host,
+            campaign,
+            mission_stat,
+            NativeFn::SetExperiences,
+            &mut stack,
+        ),
         0
     );
 }
 
 #[test]
 fn set_experiences_updates_exact_backing_status_for_live_pc() {
-    let (mut host, actor) = set_experiences_test_host();
+    let (mut host, mut campaign, actor) = set_experiences_test_host();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
 
-    call_set_experiences(&mut host, actor, 64, 29);
+    call_set_experiences(&mut host, &mut campaign, &mut mission_stat, actor, 64, 29);
 
-    let status = &host.campaign.as_ref().unwrap().characters[0].status;
+    let status = &campaign.characters[0].status;
     assert_eq!(status.human_status.hand_to_hand.capacity, 64);
     assert_eq!(status.human_status.hand_to_hand.experience, 37);
     assert_eq!(status.human_status.bow.capacity, 29);
@@ -1657,11 +1919,12 @@ fn set_experiences_updates_exact_backing_status_for_live_pc() {
 
 #[test]
 fn set_experiences_capacities_persist_with_campaign_description() {
-    let (mut host, actor) = set_experiences_test_host();
-    call_set_experiences(&mut host, actor, 73, 41);
+    let (mut host, mut campaign, actor) = set_experiences_test_host();
+    let mut mission_stat = crate::mission_stat::MissionStat::default();
+    call_set_experiences(&mut host, &mut campaign, &mut mission_stat, actor, 73, 41);
 
-    let encoded = serde_json::to_string(host.campaign.as_ref().unwrap())
-        .expect("serialize campaign after SetExperiences");
+    let encoded =
+        serde_json::to_string(&campaign).expect("serialize campaign after SetExperiences");
     let restored: crate::campaign::Campaign =
         serde_json::from_str(&encoded).expect("restore serialized campaign");
 

@@ -38,11 +38,13 @@ impl ScriptCallState {
 ///
 /// The mission script is temporarily removed from `EngineInner`, which gives
 /// the session exclusive ownership while the legacy GameHost adapter leases
-/// the five canonical engine fields.  This is intentionally not serializable
+/// the remaining canonical engine fields. Campaign and mission statistics
+/// stay in `EngineInner` and are borrowed by each native resume. This is not
+/// serializable
 /// or hashable: legal snapshots only exist after the exact script and engine
 /// state have been restored to their canonical owners.
 ///
-/// TODO: Narrow the legacy five-field transfer into native-specific borrowed
+/// TODO: Narrow the remaining legacy transfer into native-specific borrowed
 /// capabilities as the remaining GameHost native families are migrated.
 struct ScriptSession<'engine, 'assets> {
     engine: &'engine mut EngineInner,
@@ -67,21 +69,32 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
     }
 
     /// Run one ordered callback batch while GameHost temporarily owns the
-    /// canonical engine fields. Nested `PendingNestedCall` yields remain in
-    /// `MissionScript` and resume against this same live-state lease.
+    /// remaining canonical engine fields. Nested `PendingNestedCall` yields
+    /// resume against the same borrowed campaign owners.
     fn dispatch<R>(
         &mut self,
         callback: impl FnOnce(&mut MissionScript, crate::natives::NativeQueryViews<'_>) -> R,
     ) -> R {
         assert!(!self.live_engine_state, "script session entered twice");
 
+        let campaign = self
+            .engine
+            .mission_domain
+            .campaign
+            .as_mut()
+            .expect("active mission entered a script call without its campaign");
+        let campaign_capabilities = crate::natives::NativeCampaignCapabilities::new(
+            campaign,
+            &mut self.engine.mission_domain.mission_stat,
+        );
         let queries = crate::natives::NativeQueryViews::new(
             &self.engine.orders.sequence_manager,
             &self.engine.players.seats[0].selection,
             &self.engine.feedback.sound_sim.sources,
             &self.engine.world.weather,
             &self.engine.control.frame_counter,
-        );
+        )
+        .with_campaign_capabilities(&campaign_capabilities);
         let script = self
             .script
             .as_mut()
@@ -90,8 +103,6 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
             &mut self.engine.world.entities,
             &mut self.engine.ai.global,
             &mut self.engine.world.fast_grid,
-            &mut self.engine.mission_domain.campaign,
-            &mut self.engine.mission_domain.mission_stat,
             &mut self.engine.script_domains,
         );
         self.live_engine_state = true;
@@ -118,8 +129,6 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
                 &mut self.engine.world.entities,
                 &mut self.engine.ai.global,
                 &mut self.engine.world.fast_grid,
-                &mut self.engine.mission_domain.campaign,
-                &mut self.engine.mission_domain.mission_stat,
                 &mut self.engine.script_domains,
             );
         self.live_engine_state = false;
@@ -170,9 +179,9 @@ impl EngineInner {
         Some(session.finish(result))
     }
 
-    /// Normalize custom values from the pre-v3 GameHost save shape into their
-    /// canonical campaign/entity owners. Contradictory duplicate values are a
-    /// corrupt save and must not be resolved by silently choosing one side.
+    /// Normalize campaign/custom values from the legacy GameHost save shape
+    /// into their canonical campaign/entity owners. Contradictory duplicate
+    /// values are corrupt and must not be resolved by choosing one silently.
     pub(super) fn migrate_legacy_script_custom_values(&mut self) {
         let Some(legacy) = self
             .scripts
@@ -182,6 +191,21 @@ impl EngineInner {
         else {
             return;
         };
+
+        if let Some(parked) = legacy.parked_campaign {
+            if let Some(canonical) = self.mission_domain.campaign.as_ref() {
+                let parked_value = serde_json::to_value(&parked)
+                    .expect("serialize legacy parked campaign for comparison");
+                let canonical_value = serde_json::to_value(canonical)
+                    .expect("serialize canonical campaign for comparison");
+                assert_eq!(
+                    parked_value, canonical_value,
+                    "legacy GameHost campaign contradicts canonical engine campaign"
+                );
+            } else {
+                self.mission_domain.campaign = Some(parked);
+            }
+        }
 
         if !legacy.campaign.is_empty() {
             let campaign = self
@@ -3186,7 +3210,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v3_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_v4_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3207,16 +3231,18 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v3 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize v4 MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 3);
+        assert_eq!(value["snapshot_version"], 4);
+        assert!(value["game_host"].get("campaign").is_none());
+        assert!(value["game_host"].get("mission_stat").is_none());
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v3 MissionScript");
+            serde_json::from_str(&json).expect("deserialize v4 MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3313,6 +3339,7 @@ mod script_context_tests {
         engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         let mut script = empty_mission_script();
         script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
+            parked_campaign: None,
             campaign: std::collections::BTreeMap::from([(7, 42)]),
             npc: std::collections::BTreeMap::new(),
         });
@@ -3348,6 +3375,95 @@ mod script_context_tests {
             .legacy_custom_values
             .expect("v2 custom values must survive until engine attachment");
         assert_eq!(legacy.campaign.get(&7), Some(&42));
+    }
+
+    #[test]
+    fn v3_game_host_parked_campaign_migrates_to_engine_owner() {
+        let script = empty_mission_script();
+        let mut parked = crate::campaign::Campaign::default();
+        parked.values[CampaignValue::Custom20] = 0x8b_20_26;
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(3);
+        snapshot["game_host"]["campaign"] =
+            serde_json::to_value(&parked).expect("serialize legacy parked campaign");
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("decode v3 parked campaign");
+        let mut engine = EngineInner::new();
+        assert!(engine.mission_domain.campaign.is_none());
+        engine.scripts.mission = Some(decoded);
+
+        engine.migrate_legacy_script_custom_values();
+
+        assert_eq!(
+            engine
+                .campaign()
+                .expect("legacy campaign becomes canonical")
+                .values[CampaignValue::Custom20],
+            0x8b_20_26
+        );
+    }
+
+    #[test]
+    fn legacy_engine_save_moves_game_host_campaign_to_canonical_owner() {
+        let mut engine = EngineInner::new();
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.values[CampaignValue::Custom19] = 0x19_08_25;
+        engine.mission_domain.campaign = Some(campaign);
+        engine.scripts.mission = Some(empty_mission_script());
+
+        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
+        snapshot["mission_script"]["snapshot_version"] = serde_json::json!(3);
+        let parked_campaign = std::mem::take(&mut snapshot["campaign"]);
+        snapshot["mission_script"]["game_host"]["campaign"] = parked_campaign;
+        snapshot["mission_script"]["game_host"]["mission_stat"] =
+            serde_json::to_value(crate::mission_stat::MissionStat::default())
+                .expect("serialize legacy parked mission stats");
+
+        let mut restored: EngineInner =
+            serde_json::from_value(snapshot).expect("decode legacy engine save");
+        assert!(restored.mission_domain.campaign.is_none());
+        restored.migrate_legacy_script_custom_values();
+
+        assert_eq!(
+            restored
+                .campaign()
+                .expect("parked campaign migrated")
+                .values[CampaignValue::Custom19],
+            0x19_08_25
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "legacy GameHost campaign contradicts canonical engine campaign")]
+    fn contradictory_legacy_game_host_campaign_is_rejected() {
+        let mut canonical = crate::campaign::Campaign::default();
+        canonical.values[CampaignValue::Custom20] = 1;
+        let mut parked = canonical.clone();
+        parked.values[CampaignValue::Custom20] = 2;
+
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(canonical);
+        let mut script = empty_mission_script();
+        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
+            parked_campaign: Some(parked),
+            campaign: std::collections::BTreeMap::new(),
+            npc: std::collections::BTreeMap::new(),
+        });
+        engine.scripts.mission = Some(script);
+
+        engine.migrate_legacy_script_custom_values();
+    }
+
+    #[test]
+    #[should_panic(expected = "active mission entered a script call without its campaign")]
+    fn script_session_does_not_default_missing_required_campaign() {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(empty_mission_script());
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+
+        let _ = engine.with_script_session(&assets, |_script, _queries| ());
     }
 
     #[test]
@@ -3475,6 +3591,7 @@ mod script_context_tests {
         engine.mission_domain.campaign = Some(campaign);
         let mut script = empty_mission_script();
         script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
+            parked_campaign: None,
             campaign: std::collections::BTreeMap::from([(7, 42)]),
             npc: std::collections::BTreeMap::new(),
         });
@@ -3486,6 +3603,7 @@ mod script_context_tests {
     #[test]
     fn external_this_actor_success_restores_callback_and_parked_state() {
         let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         let mut script = empty_mission_script();
         script.game_host.script_this = 41;
         script.game_host.entities.push(None);
@@ -3525,6 +3643,7 @@ mod script_context_tests {
         script.game_host.current_scroll = 17;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         engine.scripts.mission = Some(script);
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
@@ -3552,6 +3671,7 @@ mod script_context_tests {
         script.game_host.script_this = 41;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         engine.scripts.mission = Some(script);
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
@@ -3596,6 +3716,7 @@ mod script_context_tests {
         script.game_host.nested_call_depth = 2;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         engine.scripts.mission = Some(script);
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);

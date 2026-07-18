@@ -131,6 +131,7 @@ fn scripted_receiver() -> Entity {
 
 fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     engine.scripts.mission = Some(message_script());
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());

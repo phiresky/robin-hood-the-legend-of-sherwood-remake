@@ -1020,9 +1020,10 @@ pub struct MissionScript {
     /// before the VM can resume.
     #[state_hash(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
-    /// One-shot compatibility payload for saves written while custom values
-    /// were incorrectly serialized on `GameHost`. Engine attachment moves
-    /// these values into Campaign/NPC storage and clears this field.
+    /// One-shot compatibility payload for saves written while campaign or
+    /// custom values were incorrectly serialized on `GameHost`. Engine
+    /// attachment moves them into canonical Campaign/NPC storage and clears
+    /// this field.
     #[state_hash(skip)]
     pub(crate) legacy_custom_values: Option<LegacyScriptCustomValues>,
     /// Concrete script-native state. VMs borrow this through their
@@ -1076,12 +1077,6 @@ pub struct MissionScript {
     /// without a host-owned companion bool.
     pub post_initialized: bool,
 
-    /// Identity of the campaign temporarily installed on `game_host` by the
-    /// legacy paired swap API.  This is a transient ownership token, not
-    /// simulation state: snapshots are only valid between script calls, when
-    /// the campaign is back on `EngineInner` and this is `None`.
-    #[state_hash(skip)]
-    campaign_lease: Option<CampaignIdentity>,
     /// Domains recovered from a pre-Wave-6 GameHost snapshot. Each optional
     /// domain is consumed once by the outer Engine snapshot deserializer and
     /// merged with the already-migrated domains from the same save.
@@ -1089,7 +1084,7 @@ pub struct MissionScript {
     legacy_script_domains: Option<LegacyScriptDomains>,
 }
 
-const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 3;
+const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 4;
 
 #[derive(Serialize)]
 struct MissionScriptSnapshotRef<'a> {
@@ -1156,6 +1151,7 @@ struct MissionScriptSnapshot {
 struct CompatibleGameHost {
     #[serde(flatten)]
     current: GameHost,
+    campaign: Option<crate::campaign::Campaign>,
     campaign_values: Option<BTreeMap<i32, i32>>,
     npc_values: Option<LegacyNpcValues>,
     globals: Option<BTreeMap<i32, i32>>,
@@ -1182,6 +1178,7 @@ struct CompatibleGameHost {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LegacyScriptCustomValues {
+    pub parked_campaign: Option<crate::campaign::Campaign>,
     pub campaign: BTreeMap<i32, i32>,
     pub npc: BTreeMap<(i32, i32), i32>,
 }
@@ -1375,7 +1372,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                     )
                 })?
             }
-            Some(2 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
+            Some(2 | 3 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
                 let state = snapshot.state.ok_or_else(|| {
                     serde::de::Error::custom("v2 MissionScript snapshot is missing ScriptState")
                 })?;
@@ -1413,13 +1410,19 @@ impl<'de> Deserialize<'de> for MissionScript {
             state,
             bindings: crate::natives::AttachedScriptBindings::default(),
             legacy_custom_values: {
+                let parked_campaign = snapshot.game_host.campaign;
                 let campaign = snapshot.game_host.campaign_values.unwrap_or_default();
                 let npc = snapshot
                     .game_host
                     .npc_values
                     .map_or_else(BTreeMap::new, |values| values.0);
-                (!campaign.is_empty() || !npc.is_empty())
-                    .then_some(LegacyScriptCustomValues { campaign, npc })
+                (parked_campaign.is_some() || !campaign.is_empty() || !npc.is_empty()).then_some(
+                    LegacyScriptCustomValues {
+                        parked_campaign,
+                        campaign,
+                        npc,
+                    },
+                )
             },
             game_host: snapshot.game_host.current,
             instance: snapshot.instance,
@@ -1429,107 +1432,10 @@ impl<'de> Deserialize<'de> for MissionScript {
             scroll_instances: snapshot.scroll_instances,
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
-            campaign_lease: None,
             legacy_script_domains: (!legacy_script_domains.is_empty())
                 .then_some(legacy_script_domains),
         })
     }
-}
-
-/// Allocation identity of the campaign singleton while it crosses the
-/// engine/GameHost call adapter.
-///
-/// Script natives may mutate campaign contents, so a value hash cannot prove
-/// identity.  The mission and production-sector vectors are created with the
-/// campaign and retain their allocations throughout an active mission; moving
-/// the campaign between owners preserves these addresses, while replacing it
-/// with another (even a clone with identical values) does not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CampaignIdentity {
-    missions: (usize, usize),
-    production_sectors: (usize, usize),
-}
-
-impl CampaignIdentity {
-    #[cfg(test)]
-    const ABSENT_TEST_FIXTURE: Self = Self {
-        missions: (0, 0),
-        production_sectors: (0, 0),
-    };
-
-    fn of(campaign: &crate::campaign::Campaign) -> Self {
-        Self {
-            missions: (
-                campaign.missions.as_ptr() as usize,
-                campaign.missions.capacity(),
-            ),
-            production_sectors: (
-                campaign.production_sectors.as_ptr() as usize,
-                campaign.production_sectors.capacity(),
-            ),
-        }
-    }
-
-    fn assert_matches(self, campaign: &crate::campaign::Campaign) {
-        assert_eq!(
-            self,
-            Self::of(campaign),
-            "script host replaced the active campaign singleton"
-        );
-    }
-}
-
-fn lend_required_campaign(
-    engine_campaign: &mut Option<crate::campaign::Campaign>,
-    host_campaign: &mut Option<crate::campaign::Campaign>,
-) -> CampaignIdentity {
-    // A number of lower-level VM tests intentionally construct a bare script
-    // adapter rather than an active mission. Keep that test fixture possible
-    // without weakening production's required-campaign invariant or
-    // fabricating a default campaign for it.
-    #[cfg(test)]
-    if engine_campaign.is_none() && host_campaign.is_none() {
-        return CampaignIdentity::ABSENT_TEST_FIXTURE;
-    }
-
-    assert!(
-        host_campaign.is_none(),
-        "script host already owns a campaign before script entry"
-    );
-    let campaign = engine_campaign
-        .take()
-        .expect("active mission entered a script call without its campaign");
-    let identity = CampaignIdentity::of(&campaign);
-    *host_campaign = Some(campaign);
-    identity
-}
-
-fn reclaim_required_campaign(
-    engine_campaign: &mut Option<crate::campaign::Campaign>,
-    host_campaign: &mut Option<crate::campaign::Campaign>,
-    identity: CampaignIdentity,
-) {
-    #[cfg(test)]
-    if identity == CampaignIdentity::ABSENT_TEST_FIXTURE {
-        assert!(
-            engine_campaign.is_none() && host_campaign.is_none(),
-            "bare script test fixture unexpectedly acquired a campaign"
-        );
-        return;
-    }
-
-    assert!(
-        engine_campaign.is_none(),
-        "engine reacquired a campaign before script exit"
-    );
-    let campaign = host_campaign
-        .as_ref()
-        .expect("script host lost the active campaign singleton");
-    identity.assert_matches(campaign);
-    let campaign = host_campaign
-        .take()
-        .expect("validated script-host campaign disappeared");
-    *engine_campaign = Some(campaign);
 }
 
 /// Which instance map a bound script class belongs to.
@@ -1598,7 +1504,6 @@ impl MissionScript {
             scroll_instances: BTreeMap::new(),
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
-            campaign_lease: None,
             legacy_script_domains: None,
         })
     }
@@ -2242,37 +2147,19 @@ impl MissionScript {
         }
     }
 
-    /// Legacy transfer primitive used by the engine's `ScriptSession`.
-    /// Session entry calls it once before script execution and its structural
-    /// restoration path calls it once after. Do not open-code that pair at
-    /// callback sites. `mission_stat` is swapped so script natives that emit
-    /// campaign-style side effects (e.g. `ConfiscateMoney` crediting
-    /// collected money) land on the engine's per-mission counter rather
-    /// than a private GameHost copy.
+    /// Legacy transfer primitive used by the engine's `ScriptSession` for the
+    /// not-yet-migrated owners. Campaign and mission statistics remain in
+    /// `EngineInner` and are borrowed explicitly by `NativeContext`.
     pub(crate) fn swap_engine_state(
         &mut self,
         entities: &mut crate::entities::Entities,
         ai_global: &mut crate::ai::AiGlobalState,
         fast_grid: &mut crate::fast_find_grid::FastFindGrid,
-        campaign: &mut Option<crate::campaign::Campaign>,
-        mission_stat: &mut crate::mission_stat::MissionStat,
         script_domains: &mut super::state::ScriptDomains,
     ) {
-        match self.campaign_lease.take() {
-            None => {
-                self.campaign_lease = Some(lend_required_campaign(
-                    campaign,
-                    &mut self.game_host.campaign,
-                ));
-            }
-            Some(identity) => {
-                reclaim_required_campaign(campaign, &mut self.game_host.campaign, identity);
-            }
-        }
         entities.swap_slots_with(&mut self.game_host.entities);
         std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
-        std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
         std::mem::swap(&mut self.game_host.engine_domains, script_domains);
     }
 
@@ -2385,272 +2272,6 @@ impl MissionScript {
     /// Get an immutable reference to the underlying [`GameHost`].
     pub fn game_host(&self) -> Option<&GameHost> {
         Some(&self.game_host)
-    }
-}
-
-/// Scoped access to the live engine state installed on a [`GameHost`].
-///
-/// This is deliberately transient and non-serializable: it only exists while
-/// one native or script callback is executing.  Dropping it commits mutations
-/// back to the borrowed engine fields and restores the host's parked state.
-///
-/// TODO: Replace the five legacy swaps with native-specific borrowed fields
-/// plus explicit effects as native groups are migrated.  Until then this guard
-/// makes the legacy transaction safe on every Rust exit path.
-#[must_use = "dropping the script context restores the borrowed engine state"]
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) struct ScriptContext<'a> {
-    game_host: &'a mut GameHost,
-    script_state: &'a mut ScriptState,
-    bindings: &'a crate::natives::AttachedScriptBindings,
-    queries: crate::natives::NativeQueryViews<'a>,
-    entities: &'a mut crate::entities::Entities,
-    ai_global: &'a mut crate::ai::AiGlobalState,
-    fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
-    campaign: &'a mut Option<crate::campaign::Campaign>,
-    campaign_identity: CampaignIdentity,
-    mission_stat: &'a mut crate::mission_stat::MissionStat,
-    script_domains: &'a mut super::state::ScriptDomains,
-    saved_script_this: Option<i32>,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl<'a> ScriptContext<'a> {
-    fn new(
-        game_host: &'a mut GameHost,
-        script_state: &'a mut ScriptState,
-        bindings: &'a crate::natives::AttachedScriptBindings,
-        entities: &'a mut crate::entities::Entities,
-        ai_global: &'a mut crate::ai::AiGlobalState,
-        fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
-        campaign: &'a mut Option<crate::campaign::Campaign>,
-        mission_stat: &'a mut crate::mission_stat::MissionStat,
-        script_domains: &'a mut super::state::ScriptDomains,
-        queries: crate::natives::NativeQueryViews<'a>,
-        script_this: Option<i32>,
-    ) -> Self {
-        entities.swap_slots_with(&mut game_host.entities);
-        std::mem::swap(&mut game_host.ai_global, ai_global);
-        std::mem::swap(&mut game_host.fast_grid, fast_grid);
-        let campaign_identity = lend_required_campaign(campaign, &mut game_host.campaign);
-        std::mem::swap(&mut game_host.mission_stat, mission_stat);
-        std::mem::swap(&mut game_host.engine_domains, script_domains);
-
-        let saved_script_this =
-            script_this.map(|value| std::mem::replace(&mut game_host.script_this, value));
-
-        Self {
-            game_host,
-            script_state,
-            bindings,
-            queries,
-            entities,
-            ai_global,
-            fast_grid,
-            campaign,
-            campaign_identity,
-            mission_stat,
-            script_domains,
-            saved_script_this,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn game_host_mut(&mut self) -> &mut GameHost {
-        self.game_host
-    }
-
-    pub(crate) fn native_context_mut(&mut self) -> NativeContext<'_> {
-        NativeContext::with_bindings(
-            self.game_host,
-            self.script_state,
-            self.bindings,
-            self.queries,
-        )
-    }
-}
-
-#[cfg(test)]
-impl Drop for ScriptContext<'_> {
-    fn drop(&mut self) {
-        if let Some(saved) = self.saved_script_this {
-            self.game_host.script_this = saved;
-        }
-        self.entities.swap_slots_with(&mut self.game_host.entities);
-        std::mem::swap(&mut self.game_host.ai_global, self.ai_global);
-        std::mem::swap(&mut self.game_host.fast_grid, self.fast_grid);
-        std::mem::swap(&mut self.game_host.mission_stat, self.mission_stat);
-        std::mem::swap(&mut self.game_host.engine_domains, self.script_domains);
-        reclaim_required_campaign(
-            self.campaign,
-            &mut self.game_host.campaign,
-            self.campaign_identity,
-        );
-    }
-}
-
-#[cfg(test)]
-mod campaign_ownership_tests {
-    use super::*;
-    use crate::campaign::{Campaign, CampaignValue};
-
-    fn marked_campaign() -> Campaign {
-        let mut campaign = Campaign::default();
-        campaign.values[CampaignValue::Custom20] = 0x25_25_25;
-        campaign
-    }
-
-    fn with_context<R>(
-        campaign: &mut Option<Campaign>,
-        host: &mut GameHost,
-        f: impl FnOnce(&mut ScriptContext<'_>) -> R,
-    ) -> R {
-        let mut entities = crate::entities::Entities::new();
-        let mut ai_global = crate::ai::AiGlobalState::default();
-        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-        let mut mission_stat = crate::mission_stat::MissionStat::default();
-        let mut script_domains = crate::engine::state::ScriptDomains::default();
-        let mut script_state = ScriptState::default();
-        let bindings = crate::natives::AttachedScriptBindings::default();
-        let mut context = ScriptContext::new(
-            host,
-            &mut script_state,
-            &bindings,
-            &mut entities,
-            &mut ai_global,
-            &mut fast_grid,
-            campaign,
-            &mut mission_stat,
-            &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
-            None,
-        );
-        f(&mut context)
-    }
-
-    #[test]
-    fn native_call_returns_the_exact_campaign_allocation() {
-        let campaign = marked_campaign();
-        let identity = CampaignIdentity::of(&campaign);
-        let mut engine_campaign = Some(campaign);
-        let mut host = GameHost::new();
-
-        with_context(&mut engine_campaign, &mut host, |context| {
-            let campaign = context
-                .game_host_mut()
-                .campaign
-                .as_mut()
-                .expect("script host owns the campaign during the call");
-            campaign.values[CampaignValue::Custom19] = 37;
-        });
-
-        let campaign = engine_campaign
-            .as_ref()
-            .expect("engine reacquires campaign after native call");
-        assert_eq!(CampaignIdentity::of(campaign), identity);
-        assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
-        assert_eq!(campaign.values[CampaignValue::Custom19], 37);
-        assert!(host.campaign.is_none());
-    }
-
-    fn fail_in_context(
-        campaign: &mut Option<Campaign>,
-        host: &mut GameHost,
-    ) -> Result<(), &'static str> {
-        with_context(campaign, host, |context| {
-            context
-                .game_host_mut()
-                .campaign
-                .as_mut()
-                .expect("script host owns the campaign during the call")
-                .values[CampaignValue::Custom19] = 38;
-            Err("native error")
-        })
-    }
-
-    #[test]
-    fn native_error_returns_the_exact_campaign_allocation() {
-        let campaign = marked_campaign();
-        let identity = CampaignIdentity::of(&campaign);
-        let mut engine_campaign = Some(campaign);
-        let mut host = GameHost::new();
-
-        assert_eq!(
-            fail_in_context(&mut engine_campaign, &mut host),
-            Err("native error")
-        );
-
-        let campaign = engine_campaign
-            .as_ref()
-            .expect("engine reacquires campaign after native error");
-        assert_eq!(CampaignIdentity::of(campaign), identity);
-        assert_eq!(campaign.values[CampaignValue::Custom19], 38);
-        assert!(host.campaign.is_none());
-    }
-
-    #[test]
-    #[should_panic(expected = "simulated native panic")]
-    fn native_unwind_returns_the_exact_campaign_allocation() {
-        struct VerifyRestoredOnUnwind {
-            engine_campaign: *const Option<Campaign>,
-            host: *const GameHost,
-            identity: CampaignIdentity,
-        }
-
-        impl Drop for VerifyRestoredOnUnwind {
-            fn drop(&mut self) {
-                // SAFETY: both pointers refer to locals declared before this
-                // verifier. `ScriptContext` is declared after the verifier, so
-                // its Drop restores the campaign before this Drop inspects it.
-                let engine_campaign = unsafe { &*self.engine_campaign };
-                let host = unsafe { &*self.host };
-                let campaign = engine_campaign
-                    .as_ref()
-                    .expect("engine reacquires campaign while unwinding");
-                assert_eq!(CampaignIdentity::of(campaign), self.identity);
-                assert_eq!(campaign.values[CampaignValue::Custom19], 39);
-                assert!(host.campaign.is_none());
-            }
-        }
-
-        let campaign = marked_campaign();
-        let identity = CampaignIdentity::of(&campaign);
-        let mut engine_campaign = Some(campaign);
-        let mut host = GameHost::new();
-        let _verify = VerifyRestoredOnUnwind {
-            engine_campaign: &engine_campaign,
-            host: &host,
-            identity,
-        };
-        let mut entities = crate::entities::Entities::new();
-        let mut ai_global = crate::ai::AiGlobalState::default();
-        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-        let mut mission_stat = crate::mission_stat::MissionStat::default();
-        let mut script_domains = crate::engine::state::ScriptDomains::default();
-        let mut script_state = ScriptState::default();
-        let bindings = crate::natives::AttachedScriptBindings::default();
-        let mut context = ScriptContext::new(
-            &mut host,
-            &mut script_state,
-            &bindings,
-            &mut entities,
-            &mut ai_global,
-            &mut fast_grid,
-            &mut engine_campaign,
-            &mut mission_stat,
-            &mut script_domains,
-            crate::natives::NativeQueryViews::default(),
-            None,
-        );
-        context
-            .game_host_mut()
-            .campaign
-            .as_mut()
-            .expect("script host owns the campaign during the call")
-            .values[CampaignValue::Custom19] = 39;
-        panic!("simulated native panic");
     }
 }
 

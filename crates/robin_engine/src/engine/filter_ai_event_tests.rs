@@ -228,6 +228,7 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
 /// source-sensitive NPC, and a no-override NPC.
 fn build_engine() -> (EngineInner, i32, i32, i32) {
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
     engine.attach_script_bindings(&LevelAssets::new());
@@ -819,6 +820,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     script.game_host.script_this = 77;
 
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);

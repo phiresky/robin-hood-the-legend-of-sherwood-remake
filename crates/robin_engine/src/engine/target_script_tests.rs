@@ -195,6 +195,7 @@ fn build_test_scb() -> ScbFile {
 /// Returns the engine and the target entity id.
 fn build_engine_with_target() -> (EngineInner, EntityId) {
     let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
     let script = MissionScript::from_scb(build_test_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
     engine.attach_script_bindings(&LevelAssets::new());
