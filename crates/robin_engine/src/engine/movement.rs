@@ -3472,8 +3472,7 @@ impl EngineInner {
         // anti-collision disturbing-actor lookup.  Captured once per
         // tick so the mutable main loop can read neighbour state
         // without a second borrow, matching the deterministic
-        // start-of-tick view the replay system relies on.  No
-        // mobile-element branch — none ship in this game.
+        // start-of-tick view the replay system relies on.
         // Mutable — each entity's post-move position is written back
         // so later entities in the same tick see the serial
         // "already-moved" view: each actor's anti-collision lookup
@@ -3483,6 +3482,26 @@ impl EngineInner {
             &self.orders.sequence_manager,
             &assets.profile_manager,
         );
+        let mut mobile_lines_by_layer: std::collections::BTreeMap<
+            u16,
+            Vec<crate::fast_find_grid::GridLine>,
+        > = std::collections::BTreeMap::new();
+        let mut mobile_points_by_layer: std::collections::BTreeMap<
+            u16,
+            Vec<crate::repulsive::RepulsivePoint>,
+        > = std::collections::BTreeMap::new();
+        for mobile in &self.world.mobile_elements {
+            if mobile.active {
+                mobile_lines_by_layer
+                    .entry(mobile.layer)
+                    .or_default()
+                    .extend(mobile.repulsive_lines());
+                mobile_points_by_layer
+                    .entry(mobile.layer)
+                    .or_default()
+                    .extend(mobile.repulsive_points());
+            }
+        }
 
         // Collect movement results that need sequence manager notification.
         // We can't call sequence_manager while iterating entities mutably.
@@ -4681,6 +4700,14 @@ impl EngineInner {
                             mover_snapshot,
                             anti_snapshots.as_slice(),
                             &self.ai.global.repulsive_points,
+                            mobile_points_by_layer
+                                .get(&mover_snapshot.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            mobile_lines_by_layer
+                                .get(&mover_snapshot.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
                             Some(&self.world.fast_grid),
                             Some(&mut state),
                             nx,
@@ -4997,6 +5024,14 @@ impl EngineInner {
                         mover_snap,
                         anti_snapshots.as_slice(),
                         &self.ai.global.repulsive_points,
+                        mobile_points_by_layer
+                            .get(&mover_snap.layer)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                        mobile_lines_by_layer
+                            .get(&mover_snap.layer)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
                         Some(&self.world.fast_grid),
                         Some(&mut state),
                         nx,

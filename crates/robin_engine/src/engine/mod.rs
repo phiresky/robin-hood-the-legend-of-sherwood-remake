@@ -2594,7 +2594,10 @@ impl EngineInner {
         self.world
             .entities
             .fxs()
-            .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(id.into()))
+            .filter_map(|(id, fx)| {
+                (fx.element.position().z == 0.0 && fx.fx.mobile_index.is_none())
+                    .then_some(id.into())
+            })
             .collect()
     }
 

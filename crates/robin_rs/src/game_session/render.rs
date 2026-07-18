@@ -9,11 +9,11 @@ use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerToolti
 use crate::element::Posture;
 use crate::game::Game;
 use crate::game_render::{
-    apply_ambiance_overlay, render_bg_animations_gpu, render_combat_status_bars,
-    render_debug_animation_lines, render_debug_doors, render_debug_motion_graph,
-    render_debug_surfaces_fill, render_debug_surfaces_outline, render_debug_whatsup_overlay,
-    render_door_overlays, render_entities_gpu, render_ground_marks, render_listen_ping,
-    render_minimap, render_noise_display, render_patch_fx_gpu, render_ransom_amulet_overlay,
+    render_bg_animations_gpu, render_combat_status_bars, render_debug_animation_lines,
+    render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
+    render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
+    render_entities_gpu, render_ground_marks, render_listen_ping, render_minimap,
+    render_noise_display, render_patch_fx_gpu, render_ransom_amulet_overlay,
     render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
     render_view_cone_overlay,
 };
@@ -77,6 +77,7 @@ fn update_zoom_presentation(
 /// (focused_entity_id etc.) is not restored because the live `render_frame`
 /// overwrites it anyway.
 pub(super) fn drain_screenshots(
+    sim_frame: u32,
     engine: &Engine,
     display: &engine_api::HostDisplayState,
     host: &mut Host,
@@ -88,43 +89,64 @@ pub(super) fn drain_screenshots(
     // requests. The live draw later in the loop only reads the snapshot.
     update_zoom_presentation(engine, display, host, ctx);
 
-    let pending = crate::http_server::take_pending_screenshots();
+    let pending = crate::http_server::take_pending_screenshots(sim_frame);
     if pending.is_empty() {
         return;
     }
     for ss in pending {
-        let mut scratch_dev = dev.clone();
-        crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, ss.flags());
-
-        // Snapshot tooltip timers so this throwaway render doesn't
-        // double-advance them for the live frame.
-        let saved_corner = ctx.corner_tooltip.clone();
-        let saved_requirements = ctx.requirements_tooltip.clone();
-        let saved_blazon = ctx.blazon_tooltip.clone();
-        let saved_stature = ctx.stature_tooltip.clone();
-        let saved_sherwood = ctx.sherwood_tooltip.clone();
-        let saved_pc_action = ctx.pc_action_tooltip.clone();
-
-        render_frame(engine, display, host, assets, &scratch_dev, ctx);
-
-        match ctx.renderer.capture_frame_rgba() {
-            Some((w, h, rgba)) => ss.respond(w, h, &rgba),
-            None => ss.respond_err("renderer returned no framebuffer"),
+        match render_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
+            Ok((w, h, rgba)) => ss.respond(w, h, &rgba),
+            Err(err) => ss.respond_err(err),
         }
-
-        // Restore the trackers so the live render sees the pre-screenshot
-        // state.
-        *ctx.corner_tooltip = saved_corner;
-        *ctx.requirements_tooltip = saved_requirements;
-        *ctx.blazon_tooltip = saved_blazon;
-        *ctx.stature_tooltip = saved_stature;
-        *ctx.sherwood_tooltip = saved_sherwood;
-        *ctx.pc_action_tooltip = saved_pc_action;
 
         // Clear the offscreen target so the next render (another
         // screenshot or the live frame) starts from a clean slate.
         ctx.renderer.reset_render_target();
     }
+}
+
+/// Render either the current viewport or the complete level according to the
+/// same request used by the HTTP screenshot endpoint.
+fn render_screenshot_rgba(
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    request: &crate::http_server::ScreenshotRequest,
+    ctx: &mut RenderContext<'_>,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut scratch_dev = dev.clone();
+    crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, &request.flags);
+
+    // Snapshot update-owned presentation state so a throwaway screenshot
+    // cannot change the following live render.
+    let saved_corner = ctx.corner_tooltip.clone();
+    let saved_requirements = ctx.requirements_tooltip.clone();
+    let saved_blazon = ctx.blazon_tooltip.clone();
+    let saved_stature = ctx.stature_tooltip.clone();
+    let saved_sherwood = ctx.sherwood_tooltip.clone();
+    let saved_pc_action = ctx.pc_action_tooltip.clone();
+    let saved_draw_hud = ctx.draw_hud;
+    ctx.draw_hud = !request.hide_ui;
+
+    let captured = if request.full_map {
+        capture_wide_map_rgba(engine, display, host, assets, &scratch_dev, ctx)
+    } else {
+        render_frame(engine, display, host, assets, &scratch_dev, ctx);
+        ctx.renderer
+            .capture_frame_rgba()
+            .ok_or_else(|| "renderer returned no framebuffer".to_owned())
+    };
+
+    *ctx.corner_tooltip = saved_corner;
+    *ctx.requirements_tooltip = saved_requirements;
+    *ctx.blazon_tooltip = saved_blazon;
+    *ctx.stature_tooltip = saved_stature;
+    *ctx.sherwood_tooltip = saved_sherwood;
+    *ctx.pc_action_tooltip = saved_pc_action;
+    ctx.draw_hud = saved_draw_hud;
+    captured
 }
 
 /// Render a dedicated throwaway frame for a save-slot thumbnail and
@@ -290,21 +312,23 @@ pub(super) fn drain_wide_print_screen(
     }
 }
 
-/// Render the complete level at 1:1 map scale and write it to `path`.
+/// Render a screenshot request and write its full-resolution pixels to `path`.
 ///
 /// The temporary render target includes the bottom panel so the normal
 /// frame renderer observes its usual geometry; the returned PNG is cropped
 /// to the level bounds and therefore contains the map scene only.
-pub(super) fn capture_wide_map_to_path(
+pub(super) fn capture_screenshot_to_path(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
+    request: &crate::http_server::ScreenshotRequest,
     path: &std::path::Path,
 ) -> Result<(), String> {
-    let (w, h, rgba) = capture_wide_map_rgba(engine, display, host, assets, dev, ctx)?;
+    update_zoom_presentation(engine, display, host, ctx);
+    let (w, h, rgba) = render_screenshot_rgba(engine, display, host, assets, dev, request, ctx)?;
     write_rgba_png(path, w, h, &rgba)
 }
 
@@ -316,8 +340,6 @@ fn capture_wide_map_rgba(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> Result<(u32, u32, Vec<u8>), String> {
-    update_zoom_presentation(engine, display, host, ctx);
-
     let level_w = host.viewport.level_size.x.ceil() as u32;
     let level_h = host.viewport.level_size.y.ceil() as u32;
     if level_w == 0 || level_h == 0 {
@@ -711,6 +733,10 @@ pub struct RenderContext<'a> {
     pub shift_held: bool,
     pub rewind_active: bool,
     pub display_info_elapsed_secs: u32,
+
+    /// Draw screen-space gameplay UI after the map scene. Mission-map exports
+    /// disable this while retaining the normal renderer/viewport dimensions.
+    pub draw_hud: bool,
 }
 
 impl RenderContext<'_> {
@@ -790,6 +816,7 @@ pub(super) fn render_frame(
     let shift_held = ctx.shift_held;
     let rewind_active = ctx.rewind_active;
     let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
+    let draw_hud = ctx.draw_hud;
     let local_seat = host.local_seat;
     // Queue the GPU background texture for the current camera view.
     // Engine-mutating pre-render bookkeeping (bg blits, SortDisplayOrder)
@@ -813,11 +840,6 @@ pub(super) fn render_frame(
     //  renders as GPU textures / overlays on top.
     // ═══════════════════════════════════════════════════════════
     renderer.flush_base_layer();
-
-    // Apply night/fog tint as a GPU overlay rect.  Sprites carry
-    // their own night/fog variants, so only the background needs
-    // this tint.
-    apply_ambiance_overlay(engine, renderer);
 
     // C++ parity: RHengine::PerformRefreshAllElements refreshes background
     // animations/patch FX before ShowDetectionPolygon.  Keep the cone below
@@ -1023,6 +1045,14 @@ pub(super) fn render_frame(
     // actor).
     titbit_renderer.render_up_to(host, engine, assets, renderer, f32::INFINITY);
 
+    // Scene-only captures deliberately stop at the last world-space pass.
+    // Keeping this boundary after titbits preserves entity status effects and
+    // other mission-authored world visuals, while excluding the panel,
+    // minimap, information bars, buttons, tooltips, console, and cursor.
+    if !draw_hud {
+        return;
+    }
+
     // ── GPU phase: multi-selection rubber band box ──
     crate::game_render::draw_multi_selection_box(host, engine, renderer);
 
@@ -1108,7 +1138,12 @@ pub(super) fn render_frame(
         }
         let mission_team = campaign.mission_team_profile_indices();
         let selected = selected_pc_profile_indices(engine, local_seat);
-        if let Some(next_idx) = campaign.next_mission_idx
+        // Original parity: `RHGame::UpdateInformationBars` creates the
+        // requirements widget only under `mbSherwood`. Outside Sherwood the
+        // top information bar may contain blazons, but never mission-team
+        // character/action requirements.
+        if game.is_sherwood
+            && let Some(next_idx) = campaign.next_mission_idx
             && let Some(req) = build_requirements_state(
                 campaign,
                 &assets.profile_manager,

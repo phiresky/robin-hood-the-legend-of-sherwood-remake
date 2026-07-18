@@ -3,9 +3,8 @@
 //! The pure math lives in [`crate::position_interface::compute_deviated_future`]
 //! / [`crate::repulsive`]; this module glues it to the engine's entity
 //! iteration and gather filters for the disturbing-element loop.  The
-//! mobile-element arm of that loop is omitted — shipped RH missions
-//! don't use mobile elements (no trains, platforms, etc.), so there's
-//! no live call site.
+//! Mission chariots contribute their translated motion-sector perimeter as
+//! repulsive lines and thick-corridor blockers.
 
 use crate::ai::RepulsivePoint as StaticRepulsivePoint;
 use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
@@ -378,9 +377,9 @@ fn direction_vector(dir: u16) -> (f32, f32) {
     (angle.cos(), angle.sin())
 }
 
-/// Gather the disturbing-actor filter for the anti-collision loop.
-/// The mobile-element arm is omitted — shipped RH missions don't use
-/// mobile elements.
+/// Gather the disturbing-actor filter for the anti-collision loop. Mobile
+/// perimeter lines are supplied separately to [`apply_anti_collision_step`]
+/// because their master elements do not occupy entity slots.
 ///
 /// `mover` is a snapshot of the actor that's about to move;
 /// `neighbours` is the full snapshot array.  `box_future` is the
@@ -536,6 +535,8 @@ pub fn apply_anti_collision_step(
     mover: &ActorSnapshot,
     neighbours: &[Option<ActorSnapshot>],
     static_points: &[StaticRepulsivePoint],
+    mobile_points: &[RepulsivePoint],
+    mobile_lines: &[crate::fast_find_grid::GridLine],
     grid: Option<&FastFindGrid>,
     mut state: Option<&mut AntiCollisionState>,
     nx: f32,
@@ -565,6 +566,12 @@ pub fn apply_anti_collision_step(
 
     let increment = MapVec::new(nx, ny);
     let (mut points, mut lines) = gather_disturbing(mover, neighbours, &box_future, increment);
+    points.extend(mobile_points.iter().copied());
+    lines.extend(
+        mobile_lines
+            .iter()
+            .map(|line| RepulsiveLine::new(line.a, line.b, 0.0, 15.0)),
+    );
     points.extend(gather_static_repulsive_points(
         mover,
         static_points,
@@ -709,6 +716,12 @@ pub fn apply_anti_collision_step(
         deviated_future.to_geo().into(),
         mover.layer,
         &state.move_box,
+    ) && grid.is_reachable_thick_mobile(
+        mover.position_map,
+        deviated_future,
+        mover.layer,
+        state.half_diagonal,
+        mobile_lines,
     ) && grid.is_reachable_thick(
         deviated_future.to_geo().into(),
         state.goal_map.to_geo().into(),
@@ -888,8 +901,19 @@ mod tests {
         let a = mk_snapshot(0, 0.0, 0.0);
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         // The step should be pushed sideways (|dy| > 0) and shortened
         // or redirected from the naive (1.0, 0.0).
         assert!(
@@ -905,8 +929,19 @@ mod tests {
         let a = mk_snapshot(0, 0.0, 0.0);
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, -1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            -1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - -1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -917,8 +952,19 @@ mod tests {
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
         // anti_collision_on = false ⇒ naive step.
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, false);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            false,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -929,8 +975,19 @@ mod tests {
         let mut b = mk_snapshot(1, 8.0, 0.0);
         b.layer = 1;
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -941,8 +998,19 @@ mod tests {
         let mut b = mk_snapshot(1, 8.0, 0.0);
         b.is_ignored_for_anti_collision = true;
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -954,8 +1022,19 @@ mod tests {
         let a = mk_snapshot(0, 0.0, 0.0);
         let b = mk_snapshot(1, 200.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -967,8 +1046,19 @@ mod tests {
         a.target_element = Some(EntityId::Pc(crate::entity_id::PcId(1)));
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -980,8 +1070,19 @@ mod tests {
         let mut b = mk_snapshot(1, 8.0, 0.0);
         b.posture = Posture::Dead;
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -1030,8 +1131,19 @@ mod tests {
         a.sector = None;
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -1042,8 +1154,19 @@ mod tests {
         let mut b = mk_snapshot(1, 8.0, 0.0);
         b.posture = Posture::Carried;
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
-        let (dx, dy) =
-            apply_anti_collision_step(&a, &snapshots, &[], None, None, 1.0, 0.0, 1.0, true);
+        let (dx, dy) = apply_anti_collision_step(
+            &a,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
         assert!((dx - 1.0).abs() < 1e-4);
         assert!(dy.abs() < 1e-4);
     }
@@ -1070,6 +1193,8 @@ mod tests {
             &a,
             &snapshots,
             &static_points,
+            &[],
+            &[],
             None,
             None,
             1.0,
@@ -1104,6 +1229,8 @@ mod tests {
             &a,
             &snapshots,
             &static_points,
+            &[],
+            &[],
             None,
             None,
             1.0,
@@ -1135,6 +1262,8 @@ mod tests {
             &a,
             &snapshots,
             &static_points,
+            &[],
+            &[],
             None,
             None,
             1.0,

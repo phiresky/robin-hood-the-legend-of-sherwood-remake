@@ -24,6 +24,7 @@ pub(crate) struct WorldState {
     pub(crate) shield: ShieldState,
     pub(crate) dynamic_sight_obstacles: Vec<SightObstacle>,
     pub(crate) static_sight_obstacle_active: Vec<bool>,
+    pub(crate) mobile_elements: Vec<crate::mobile::MobileElement>,
 }
 
 impl WorldState {
@@ -37,6 +38,7 @@ impl WorldState {
             shield: ShieldState::default(),
             dynamic_sight_obstacles: Vec::new(),
             static_sight_obstacle_active: Vec::new(),
+            mobile_elements: Vec::new(),
         }
     }
 
@@ -57,6 +59,15 @@ impl WorldState {
                     let idx = id.index();
                     panic!("failed to attach sprite runtime for entity {idx}: {err}")
                 });
+        }
+
+        for (mobile_index, mobile) in self.mobile_elements.iter().enumerate() {
+            for &sprite_id in &mobile.sprite_ids {
+                assert!(
+                    matches!(self.entities.get(sprite_id), Some(Entity::Fx(_))),
+                    "mobile {mobile_index} references missing or non-FX sprite entity {sprite_id}"
+                );
+            }
         }
     }
 
@@ -118,6 +129,13 @@ impl WorldState {
                 "snapshot pathfinder state layer count {} does not match loaded world count {}",
                 self.pathfinder.states.len(),
                 loaded.pathfinder.states.len(),
+            ));
+        }
+        if self.mobile_elements.len() != loaded.mobile_elements.len() {
+            return Err(format!(
+                "snapshot mobile-element count {} does not match loaded world count {}",
+                self.mobile_elements.len(),
+                loaded.mobile_elements.len(),
             ));
         }
         for (layer_idx, (snapshot, level)) in self

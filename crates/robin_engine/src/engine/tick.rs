@@ -1423,10 +1423,36 @@ impl EngineInner {
         // correctly.
         self.process_failed_path_timeouts(assets);
 
-        // Original `CheckForCollision` followed ProcessPathRequests, but its
-        // sole mobile-damage branch is explicitly dead in shipped missions
-        // (`original-code/RHengine.cpp:10790-10855`): IsMobile never returns
-        // true. Do not synthesize a collision phase with invented effects.
+        // Original `CheckForCollision` follows ProcessPathRequests. Its only
+        // implemented response is a human standing inside a non-stopped
+        // mobile's motion polygon: launch RECEIVE_MOBILE_DAMAGE for 50/50
+        // while the mobile moved last tick, otherwise 10/10.
+        let mut humans: Vec<(EntityId, crate::coordinates::MapPoint)> = self
+            .world
+            .entities
+            .humans()
+            .map(|(id, human)| (id.into(), human.element_data().position_map()))
+            .collect();
+        humans.reverse();
+        let mut impacts = Vec::new();
+        for (human_id, position) in humans {
+            for mobile in &self.world.mobile_elements {
+                if !mobile.stopped && mobile.contains_point(position) {
+                    let amount = if mobile.is_moving() { 50 } else { 10 };
+                    impacts.push((human_id, mobile.sprite_ids[0], amount));
+                }
+            }
+        }
+        for (human_id, mobile_child, amount) in impacts {
+            self.launch_element(crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveMobileDamage,
+                Some(human_id),
+                Some(mobile_child),
+                amount,
+                amount,
+            ));
+        }
     }
 
     /// Launch and dispatch sequence elements after the ported base entity and
@@ -5851,6 +5877,48 @@ impl EngineInner {
         // Advance all entities that have active paths.
         let (arrived_entities, galopp_entities) = self.tick_entity_movement(assets);
 
+        // RHElementMobile masters precede their RHElementFXMasked children in
+        // the original creation-ordered Hourglass loop. Advance the shipped
+        // chariot masters now, then translate/update their child FX before
+        // the generic FX animation pass below.
+        for mobile_index in 0..self.world.mobile_elements.len() {
+            let path_index = self.world.mobile_elements[mobile_index].path_index;
+            let path = assets
+                .hiking_paths
+                .get(usize::from(path_index))
+                .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
+            let tick = self.world.mobile_elements[mobile_index]
+                .hourglass(path)
+                .unwrap_or_else(|e| panic!("mobile {mobile_index} hourglass failed: {e}"));
+            let active = self.world.mobile_elements[mobile_index].active;
+            let animation_speed = self.world.mobile_elements[mobile_index].animation_speed();
+            let layer = self.world.mobile_elements[mobile_index].layer;
+            let sector = self.world.mobile_elements[mobile_index].sector;
+            let sprite_ids = self.world.mobile_elements[mobile_index].sprite_ids.clone();
+            for sprite_id in sprite_ids {
+                let fx = self
+                    .world
+                    .entities
+                    .get_mut(sprite_id)
+                    .and_then(crate::element::Entity::as_fx_mut)
+                    .unwrap_or_else(|| {
+                        panic!("mobile {mobile_index} child {sprite_id} is missing or non-FX")
+                    });
+                if tick.movement != crate::coordinates::MapVec::ZERO {
+                    let position = fx.element.position_map() + tick.movement;
+                    fx.element.set_position_map(position);
+                    for point in &mut fx.fx.display_polyline {
+                        *point = *point + tick.movement;
+                    }
+                }
+                fx.element.active = active;
+                fx.fx.animation_speed = animation_speed;
+                fx.element.set_layer(layer);
+                fx.element
+                    .set_sector(crate::position_interface::SectorHandle::new(sector));
+            }
+        }
+
         // ── Quit swordfight with far opponents ──────────────────
         // `quit_swordfight_with_far_opponents` is called ONLY during
         // walking-with-sword movement, NOT for stationary entities.
@@ -7887,6 +7955,47 @@ impl EngineInner {
             None => return,
         };
         match cmd {
+            Command::StartMobile
+            | Command::StopMobile
+            | Command::ActivateMobile
+            | Command::DeactivateMobile => {
+                let mobile_index = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .and_then(crate::element::Entity::as_fx)
+                    .and_then(|fx| fx.fx.mobile_index)
+                    .unwrap_or_else(|| {
+                        panic!("{cmd:?} sequence owner {owner} is not a mobile child FX")
+                    });
+                let mobile = self
+                    .world
+                    .mobile_elements
+                    .get_mut(usize::from(mobile_index))
+                    .unwrap_or_else(|| panic!("{cmd:?} references missing mobile {mobile_index}"));
+                match cmd {
+                    Command::StartMobile => mobile.start(),
+                    Command::StopMobile => mobile.stop(),
+                    Command::ActivateMobile => {
+                        mobile.set_active(true);
+                    }
+                    Command::DeactivateMobile => {
+                        mobile.set_active(false);
+                    }
+                    _ => unreachable!(),
+                }
+                let active = mobile.active;
+                let sprite_ids = mobile.sprite_ids.clone();
+                for sprite_id in sprite_ids {
+                    let child = self.world.entities.get_mut(sprite_id).unwrap_or_else(|| {
+                        panic!("mobile {mobile_index} child {sprite_id} is missing")
+                    });
+                    child.element_data_mut().active = active;
+                }
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+            }
             Command::Unblip => {
                 if let Some(entity) = self.world.entities.get_mut(owner)
                     && entity.element_data().blipped

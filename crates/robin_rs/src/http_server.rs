@@ -20,7 +20,7 @@
 //!   | POST   | `/batch`            | `{calls: [{op, args, this?}]}`               | `{results: [...]}`                                     |
 //!   | POST   | `/console`          | `{command: "..."}`                           | `{kind, message?}`                                     |
 //!   | POST   | `/command`          | externally-tagged `PlayerCommand` JSON       | `{ok: true}` or `{error}`                              |
-//!   | GET    | `/screenshot`       | `?w=&h=&hide_ui=&view_cones=&pc_sight=&…`    | `image/png` of the next rendered frame                 |
+//!   | GET    | `/screenshot`       | `?frame=&full_map=&w=&h=&hide_ui=&…`          | `image/png` at or after the requested frame            |
 //!
 //! - **Wasm:** no loopback socket inside the browser.  Instead, the
 //!   exported `rh_rpc({ method, params })` async function returns a JS
@@ -164,12 +164,18 @@ pub enum HttpPayload {
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct ScreenshotRequest {
+    /// Earliest absolute simulation frame at which to capture. `None`
+    /// captures the next rendered frame.
+    pub frame: Option<u32>,
     /// Output width bound. Used with `height` as an aspect-preserving maximum.
     pub width: Option<u16>,
     /// Output height bound. Used with `width` as an aspect-preserving maximum.
     pub height: Option<u16>,
-    /// Crop the bottom HUD panel before encoding.
+    /// Omit all screen-space HUD drawing and crop the bottom panel area.
     pub hide_ui: bool,
+    /// Capture the complete level at 1:1 map scale instead of the current
+    /// viewport.
+    pub full_map: bool,
     /// Debug-overlay overrides merged into the frame's `DevState` for
     /// this one render only.  Each `Some(x)` forces the corresponding
     /// `DebugFlags` field to `x`; `None` leaves it at the live value.
@@ -504,9 +510,11 @@ fn parse_step_body(req: &mut tiny_http::Request) -> Result<u32, String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
     ScreenshotRequest {
+        frame: query_param(query, "frame").and_then(|s| s.parse().ok()),
         width: query_param(query, "w").and_then(|s| s.parse().ok()),
         height: query_param(query, "h").and_then(|s| s.parse().ok()),
         hide_ui: query_flag(query, "hide_ui").unwrap_or(false),
+        full_map: query_flag(query, "full_map").unwrap_or(false),
         flags: ScreenshotFlags {
             view_cones: query_flag(query, "view_cones"),
             pc_sight: query_flag(query, "pc_sight"),
@@ -614,7 +622,7 @@ fn info_json() -> serde_json::Value {
             {"method": "POST", "path": "/batch",              "desc": "invoke many natives on one tick: {calls: [{op, args, this?}]}"},
             {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
             {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
-            {"method": "GET",  "path": "/screenshot",         "desc": "PNG of next rendered frame. Query: w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
+            {"method": "GET",  "path": "/screenshot",         "desc": "PNG at the requested frame. Query: frame (absolute sim frame), full_map, w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
             {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N} (default 1). Any modal dialog / popup / debriefing / sherwood report / pause-all queued before or during the step is dismissed silently; the reply includes `modals_dismissed`."},
             {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N} (default 1). Fails if target frame is older than the oldest retained snapshot."},
         ],
@@ -1566,9 +1574,9 @@ pub struct PendingScreenshot {
 }
 
 impl PendingScreenshot {
-    /// The client's requested dev-flag overrides for this screenshot.
-    pub fn flags(&self) -> &ScreenshotFlags {
-        &self.request.flags
+    /// Full screenshot options shared by viewport and full-map captures.
+    pub fn request(&self) -> &ScreenshotRequest {
+        &self.request
     }
 
     /// Encode the captured RGBA frame as PNG (applying the request's
@@ -1651,12 +1659,16 @@ pub fn take_pending_steps() -> Vec<PendingStep> {
 /// Drain every screenshot request queued since the last call.  Safe to
 /// call from the main render loop once per frame — returns an empty
 /// `Vec` when nothing is pending.
-pub fn take_pending_screenshots() -> Vec<PendingScreenshot> {
-    std::mem::take(
-        &mut *pending_screenshots()
-            .lock()
-            .expect("screenshot queue poisoned"),
-    )
+pub fn take_pending_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
+    let mut queue = pending_screenshots()
+        .lock()
+        .expect("screenshot queue poisoned");
+    let requests = std::mem::take(&mut *queue);
+    let (ready, waiting) = requests
+        .into_iter()
+        .partition(|pending| pending.request.frame.is_none_or(|frame| sim_frame >= frame));
+    *queue = waiting;
+    ready
 }
 
 /// Merge a request's `Some(x)` overrides onto `debug`, mutating in
@@ -1700,14 +1712,15 @@ pub fn apply_screenshot_flags(debug: &mut engine_api::DebugFlags, flags: &Screen
 /// pulling in an image crate.
 fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> Reply {
     // Optional bottom-panel crop: strip the HUD strip before any resize.
-    let (src, mut used_w, mut used_h) = if req.hide_ui && src_h > PANNEL_HEIGHT as u32 {
-        let new_h = src_h - PANNEL_HEIGHT as u32;
-        let stride = (src_w as usize) * 4;
-        let cropped: Vec<u8> = rgba[..stride * new_h as usize].to_vec();
-        (Cow::Owned(cropped), src_w, new_h)
-    } else {
-        (Cow::Borrowed(rgba), src_w, src_h)
-    };
+    let (src, mut used_w, mut used_h) =
+        if req.hide_ui && !req.full_map && src_h > PANNEL_HEIGHT as u32 {
+            let new_h = src_h - PANNEL_HEIGHT as u32;
+            let stride = (src_w as usize) * 4;
+            let cropped: Vec<u8> = rgba[..stride * new_h as usize].to_vec();
+            (Cow::Owned(cropped), src_w, new_h)
+        } else {
+            (Cow::Borrowed(rgba), src_w, src_h)
+        };
 
     let (target_w, target_h) = screenshot_target_dimensions(used_w, used_h, req)?;
 
@@ -1816,6 +1829,16 @@ mod tests {
     fn screenshot_dimensions_reject_zero_bounds() {
         let req = screenshot_request(Some(0), Some(720));
         assert!(screenshot_target_dimensions(1024, 768, &req).is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn screenshot_query_parses_frame_and_full_map() {
+        let req = parse_screenshot_query("frame=10&full_map=1&hide_ui=true&entity_ids=0");
+        assert_eq!(req.frame, Some(10));
+        assert!(req.full_map);
+        assert!(req.hide_ui);
+        assert_eq!(req.flags.entity_ids, Some(false));
     }
 }
 

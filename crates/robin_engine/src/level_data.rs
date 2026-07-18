@@ -47,6 +47,9 @@ pub enum LevelError {
 
     #[error("unknown level format: file header tag '{0}'")]
     UnknownFormat(String),
+
+    #[error("unsupported mobile-element data: {0}")]
+    UnsupportedMobileData(String),
 }
 
 impl From<i32> for LevelError {
@@ -1312,6 +1315,26 @@ pub struct RawHikingPath {
     pub waypoints: Vec<RawWaypoint>,
 }
 
+/// A mission mobile element. Released Robin Hood data uses these records for
+/// the five horse-cart/chariot animations; the broader Spellbound mobile
+/// subsystem (hookable trailers, barrels, trains, and embedded sight
+/// obstacles) is not present in shipped missions.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct RawMobileElement {
+    pub sprites: Vec<RawElementFx>,
+    pub motion_polygon: SectorPolygon,
+    /// Legacy editor anchor serialized before the hook/barrel flags. The C++
+    /// loader reads these values but does not use them for placement.
+    pub editor_anchor: (i16, i16),
+    pub hook_point: Option<(i16, i16)>,
+    pub barrel_point: Option<(i16, i16)>,
+    pub path_index: u16,
+    pub start_waypoint: u32,
+    /// Serialized by the editor but likewise unused by the C++ loader.
+    pub stop_waypoint: i32,
+    pub obstacle_index: u16,
+}
+
 /// Data loaded from a proto-level file (.rhp).
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct LoadedProtoLevel {
@@ -1360,6 +1383,8 @@ pub struct LoadedMission {
     pub script_objects: Option<RawScriptObjects>,
     /// Hiking/patrol paths (from PWAY/RAIL chunk).
     pub hiking_paths: Vec<RawHikingPath>,
+    /// Moving cart/chariot elements (from CART/TING chunk).
+    pub mobile_elements: Vec<RawMobileElement>,
     /// AI tactic data (from AI /HIRN chunk).
     pub tactic_data: Option<RawTacticData>,
 }
@@ -1422,6 +1447,7 @@ impl LoadedLevel {
                 building_tenants: Vec::new(),
                 script_objects: None,
                 hiking_paths: Vec::new(),
+                mobile_elements: Vec::new(),
                 tactic_data: None,
             },
         }
@@ -2041,6 +2067,7 @@ pub fn load_mission(
     let mut building_tenants = Vec::new();
     let mut script_objects = None;
     let mut hiking_paths = Vec::new();
+    let mut mobile_elements = Vec::new();
     let mut tactic_data = None;
     let mut skipped_chunks = Vec::new();
 
@@ -2064,8 +2091,8 @@ pub fn load_mission(
             tracing::debug!("Mission: loading TENANT chunk");
             building_tenants = read_building_tenants(reader, format)?;
         } else if tag == *format.mobile_tag() {
-            tracing::debug!("Mission: skipping MOBILE chunk (mobiles not ported)");
-            consume_empty_mobile_chunk(reader, format)?;
+            tracing::debug!("Mission: loading MOBILE chunk");
+            mobile_elements = read_mobile_elements(reader, format)?;
         } else if tag == *format.script_tag() {
             tracing::debug!("Mission: loading SCRIPT chunk");
             script_objects = Some(read_script_objects(reader, format)?);
@@ -2089,7 +2116,7 @@ pub fn load_mission(
     tracing::info!(
         "Mission loaded: {} soldiers, {} civilians, {} targets, \
          {} bonuses, {} beam-mes, {} PCs, {} scrolls, {} patches, {} tenants, \
-         script_objects={}, {} paths, tactic={}, {} skipped",
+         script_objects={}, {} paths, {} mobiles, tactic={}, {} skipped",
         soldiers.len(),
         civilians.len(),
         targets.len(),
@@ -2104,6 +2131,7 @@ pub fn load_mission(
             .map(|so| so.points.len() + so.sectors.len())
             .unwrap_or(0),
         hiking_paths.len(),
+        mobile_elements.len(),
         tactic_data.is_some(),
         skipped_chunks.len()
     );
@@ -2122,6 +2150,7 @@ pub fn load_mission(
         building_tenants,
         script_objects,
         hiking_paths,
+        mobile_elements,
         tactic_data,
     })
 }
@@ -3387,25 +3416,87 @@ fn read_building_tenants(
     Ok(tenants)
 }
 
-/// Consume the CART/TING chunk and assert it's empty.
+/// Read the CART/TING chunk as `RHElementMobile::InitializeFromMissionStream`.
 ///
-/// `RHElementMobile` (carts/trains) is a Spellbound engine leftover —
-/// no shipped Robin Hood mission spawns one and the runtime was never
-/// ported.  Every shipped level has a count==0 chunk; if a non-zero
-/// count ever turns up we'd silently lose state, so panic instead.
-/// Same pattern as `read_animals` (animal subsystem deletion).
-fn consume_empty_mobile_chunk(
+/// All released missions use the same narrow subset: one masked cart sprite,
+/// no local sight obstacles, a motion polygon, and a hiking-path reference.
+/// Unsupported Spellbound-engine variants fail explicitly so they cannot be
+/// mistaken for parity with shipped Robin Hood data.
+fn read_mobile_elements(
     reader: &mut ChunkReader,
     format: LevelFormat,
-) -> Result<(), LevelError> {
+) -> Result<Vec<RawMobileElement>, LevelError> {
     reader.chunk_start(format.mobile_tag(), format.mobile_ver())?;
     let count = reader.read_u16()?;
-    assert_eq!(
-        count, 0,
-        "MOBILE chunk has {count} entries but RHElementMobile is not ported (no shipped level should populate it)",
-    );
+    let mut elements = Vec::with_capacity(count as usize);
+
+    for mobile_index in 0..count {
+        reader.chunk_start(format.animation_tag(), format.animation_ver())?;
+        let sprite_count = reader.read_u16()?;
+        let mut sprites = Vec::with_capacity(sprite_count as usize);
+        for _ in 0..sprite_count {
+            sprites.push(read_element_fx(reader, format)?);
+        }
+        reader.chunk_end()?;
+
+        reader.chunk_start(format.sight_tag(), format.sight_ver())?;
+        let sight_count = reader.read_u16()?;
+        if sight_count != 0 {
+            return Err(LevelError::UnsupportedMobileData(format!(
+                "mobile {mobile_index} embeds {sight_count} sight obstacles; released missions embed none"
+            )));
+        }
+        reader.chunk_end()?;
+
+        let motion_polygon = read_sector_polygon(reader, format)?;
+        let editor_anchor = (reader.read_i16()?, reader.read_i16()?);
+        let hook_point = if reader.read_bool()? {
+            Some((reader.read_i16()?, reader.read_i16()?))
+        } else {
+            None
+        };
+        let barrel_point = if reader.read_bool()? {
+            Some((reader.read_i16()?, reader.read_i16()?))
+        } else {
+            None
+        };
+        let path_index = reader.read_u16()?;
+        let start_waypoint = reader.read_u32()?;
+        let stop_waypoint = reader.read_i32()?;
+        let obstacle_index = reader.read_u16()?;
+
+        if sprites.len() != 1 {
+            return Err(LevelError::UnsupportedMobileData(format!(
+                "mobile {mobile_index} has {} sprites; every released cart has exactly one",
+                sprites.len()
+            )));
+        }
+        if hook_point.is_some() || barrel_point.is_some() {
+            return Err(LevelError::UnsupportedMobileData(format!(
+                "mobile {mobile_index} is hookable or a barrel; released missions only use chariots"
+            )));
+        }
+        if obstacle_index != u16::MAX {
+            return Err(LevelError::UnsupportedMobileData(format!(
+                "mobile {mobile_index} references projection obstacle {obstacle_index}; released chariots use 0xffff"
+            )));
+        }
+
+        elements.push(RawMobileElement {
+            sprites,
+            motion_polygon,
+            editor_anchor,
+            hook_point,
+            barrel_point,
+            path_index,
+            start_waypoint,
+            stop_waypoint,
+            obstacle_index,
+        });
+    }
+
     reader.chunk_end()?;
-    Ok(())
+    Ok(elements)
 }
 
 /// Read PWAY/RAIL chunk (hiking/patrol paths).

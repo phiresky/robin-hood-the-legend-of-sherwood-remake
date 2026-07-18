@@ -6,9 +6,18 @@ A list of which additional features we have added, which ones we might still wan
 - **Mission-start full-map renderer**
   (`crates/robin_rs/examples/render_mission_map.rs`). Loads a mission through
   the regular engine and GPU renderer, captures the complete map after the
-  mission's `Initialize` event but before frame one / `PostInitialize`, and
-  writes a PNG. `--reveal-all` (alias `--unblip-all`) switches every NPC from
-  its blip silhouette to its normal character profile before capture.
+  requested number of normal simulation frames (`--frame`, default zero), and
+  writes a HUD-free PNG. `--reveal-all` (alias `--unblip-all`) switches every
+  NPC from its blip silhouette to its normal character profile before capture;
+  `--headless` keeps the screenshot renderer's GPU-backed window hidden.
+  `scripts/render_all_mission_maps.sh [OUTPUT_DIR] [FRAME] [DATA_DIR]` renders
+  every shipped mission using the full-game profile mapping and human-readable
+  mission titles as filenames.
+
+- **Full-map and scheduled HTTP screenshots.** `/screenshot` accepts
+  `full_map=1` for a 1:1 complete-level capture and `frame=N` to wait until an
+  absolute simulation frame. `hide_ui=1` now suppresses all screen-space HUD
+  passes, including portraits and information bars, before readback.
 
 - **Pathfinder `LinkSource` relaxed-grid retry**
   (`crates/robin_engine/src/pathfinder.rs`). When the strict pass links zero

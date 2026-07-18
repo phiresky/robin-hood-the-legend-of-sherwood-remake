@@ -938,10 +938,8 @@ impl EngineInner {
             }
         }
 
-        // Mobile entities (carts/trains/ships) are a Spellbound engine
-        // leftover that no shipped Robin Hood mission uses — the runtime
-        // was never ported and the entity types were deleted.  Tracked
-        // in the deferred parity notes under "Spellbound engine leftovers".
+        // Mobile chariots are instantiated after the ordinary script actors,
+        // once sprite banks and hiking paths are available.
 
         // Convert raw sight obstacles into SightObstacle instances for AI
         // line-of-sight checks.
@@ -1421,6 +1419,8 @@ impl EngineInner {
                             .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect(),
                         patch_index: crate::patch::PatchIndex::new(patch_idx as u32),
+                        mobile_index: None,
+                        animation_speed: 1.0,
                         // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
                         rendering_properties: if raw.element_fx.blit_type != 0 {
                             crate::element::RenderingProperties::NeedShadow
@@ -1518,6 +1518,8 @@ impl EngineInner {
                             .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect(),
                         patch_index: None, // background animations aren't patches
+                        mobile_index: None,
+                        animation_speed: 1.0,
                         // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
                         rendering_properties: if raw.blit_type != 0 {
                             crate::element::RenderingProperties::NeedShadow
@@ -3279,9 +3281,160 @@ impl EngineInner {
             self.ensure_wait_element(actor_id);
         }
 
+        // Spawn the masked child sprites owned by mission mobile elements.
+        // Released data contains only the five chariot profiles. The mobile
+        // master is simulation-only, matching C++: only its child
+        // RHElementFXMasked objects enter the general element/render array.
+        for (mobile_index, raw_mobile) in loaded.mission.mobile_elements.iter().enumerate() {
+            let mobile_index_u16 = u16::try_from(mobile_index)
+                .expect("mission contains more than 65536 mobile elements");
+            let path = assets
+                .hiking_paths
+                .get(usize::from(raw_mobile.path_index))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mobile {mobile_index} references missing hiking path {}",
+                        raw_mobile.path_index
+                    )
+                })
+                .clone();
+            let start_waypoint = path
+                .waypoints
+                .get(raw_mobile.start_waypoint as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mobile {mobile_index} references missing start waypoint {}",
+                        raw_mobile.start_waypoint
+                    )
+                });
+            let start = MapPoint::new(start_waypoint.x as f32, start_waypoint.y as f32);
+            let mut sprite_ids = Vec::with_capacity(raw_mobile.sprites.len());
+
+            for raw in &raw_mobile.sprites {
+                let fname = &raw.sprite.frame_profile_name;
+                let profile = &raw.sprite.profile_name;
+                let mut sprite = crate::sprite::Sprite::default();
+                let path = crate::sprite_script::SpriteScriptor::resolve_rhs_path(
+                    crate::sprite_script::FrameKind::Animation,
+                    "Data/Animations",
+                    fname,
+                    Some(crate::engine::Ambiance::Day.to_sprite_ambiance()),
+                )
+                .unwrap_or_else(|e| {
+                    panic!("failed to resolve mobile {mobile_index} sprite '{fname}': {e}")
+                });
+                let cache_key = format!("{fname}/{profile}");
+                let info = assets
+                    .sprite_scriptor_mut()
+                    .load(
+                        &path,
+                        profile,
+                        &cache_key,
+                        crate::sprite_script::FrameKind::Animation,
+                        |file| {
+                            let mut sig = 0u32;
+                            file.serialize_u32(&mut sig)
+                                .map_err(|e| format!("read signature: {e}"))?;
+                            if sig != bank_signature {
+                                return Err(format!(
+                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
+                                ));
+                            }
+                            Ok(())
+                        },
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "failed to load mobile {mobile_index} sprite '{fname}' profile '{profile}': {e}"
+                        )
+                    });
+                sprite.scripts = info.scripts.clone();
+                sprite.conversion = info.conversion.clone();
+                sprite.center = info.center;
+                sprite.current_width = info.size.x as u16;
+                sprite.current_height = info.size.y as u16;
+                sprite.frame_profile_name = fname.clone();
+                sprite.profile_cache_key = cache_key;
+                sprite.apply_placement(
+                    MapPoint::new(
+                        raw.sprite.position_x as f32 + start.x,
+                        raw.sprite.position_y as f32 + start.y,
+                    ),
+                    start_waypoint.level,
+                    crate::position_interface::SectorHandle::new(start_waypoint.sector),
+                    0,
+                    crate::element::GameMaterial::default(),
+                    None,
+                    None,
+                );
+                sprite
+                    .position_iface
+                    .set_move_box(crate::coordinates::MoveBox::from_corners(
+                        crate::coordinates::MapVec::new(-50.0, -50.0),
+                        crate::coordinates::MapVec::new(50.0, 50.0),
+                    ));
+                assert!(
+                    sprite.has_animation(crate::order::OrderType::WaitingUprightBored),
+                    "mobile {mobile_index} sprite '{fname}' lacks WAITING_UPRIGHT_BORED"
+                );
+                sprite.force_animation(crate::order::OrderType::WaitingUprightBored, 0);
+
+                let entity = Entity::Fx(crate::element::ElementFx {
+                    element: crate::element::ElementData {
+                        kind: crate::element::ElementKind::Fx,
+                        active: raw.active,
+                        posture: crate::element::Posture::Upright,
+                        sprite,
+                        ..Default::default()
+                    },
+                    fx: crate::element::FxData {
+                        restore_background: false,
+                        force_display: raw.force_display,
+                        animation: crate::order::OrderType::WaitingUprightBored,
+                        display_polyline: raw
+                            .display_polyline
+                            .iter()
+                            .map(|&(x, y)| MapPoint::new(x as f32 + start.x, y as f32 + start.y))
+                            .collect(),
+                        patch_index: None,
+                        mobile_index: Some(mobile_index_u16),
+                        animation_speed: 1.0,
+                        rendering_properties: if raw.blit_type != 0 {
+                            crate::element::RenderingProperties::NeedShadow
+                        } else {
+                            crate::element::RenderingProperties::Blocky
+                        },
+                    },
+                });
+                sprite_ids.push(self.add_entity(entity));
+            }
+
+            let mobile = crate::mobile::MobileElement::from_raw(raw_mobile, &path, sprite_ids)
+                .unwrap_or_else(|e| panic!("failed to initialize mobile {mobile_index}: {e}"));
+            let active = mobile.active;
+            let animation_speed = mobile.animation_speed();
+            for &sprite_id in &mobile.sprite_ids {
+                let fx = self
+                    .world
+                    .entities
+                    .get_mut(sprite_id)
+                    .and_then(crate::element::Entity::as_fx_mut)
+                    .expect("fresh mobile sprite entity is missing");
+                fx.element.active = active;
+                fx.fx.animation_speed = animation_speed;
+            }
+            self.world.mobile_elements.push(mobile);
+        }
+        if !self.world.mobile_elements.is_empty() {
+            tracing::info!(
+                "Spawned {} mobile chariot element(s)",
+                self.world.mobile_elements.len()
+            );
+        }
+
         // Remaining load-time subsystems (motion grid, sight obstacles,
-        // background map, patrol paths, tactical info, mobile elements,
-        // tenants) are loaded from other code paths.
+        // background map, patrol paths, tactical info, and tenants are loaded
+        // from other code paths.
 
         // Set night color based on ambiance — pack via draw_manager.
         let (r, g, b) = self.world.weather.ambiance.night_color_rgb();

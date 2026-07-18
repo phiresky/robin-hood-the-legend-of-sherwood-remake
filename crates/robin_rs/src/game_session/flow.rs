@@ -87,20 +87,34 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<GameCode, String> {
-        if let Some(code) = self.run_startup_action(services).await? {
+        if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
             return Ok(code);
         }
         loop {
-            match self.run_frame(services).await? {
+            let control = self.run_frame(services).await?;
+            if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
+                return Ok(code);
+            }
+            match control {
                 FrameControl::Continue | FrameControl::RestartIteration => {}
-                FrameControl::Exit(exit) => return Ok(exit.into_game_code()),
+                FrameControl::Exit(exit) => {
+                    if let Some(output) = services.args.mission_start_map_output.as_deref() {
+                        return Err(format!(
+                            "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
+                            self.runtime.world.manager.sim_frame,
+                            services.args.mission_start_map_frame,
+                            output.display()
+                        ));
+                    }
+                    return Ok(exit.into_game_code());
+                }
             }
         }
     }
 
-    /// Handle the one-shot pre-frame tooling path without retaining sibling
-    /// frontend borrows across the first frame await.
-    async fn run_startup_action(
+    /// Fulfil the example's file-backed screenshot through the same request
+    /// and render implementation as the HTTP screenshot endpoint.
+    async fn capture_requested_screenshot_if_ready(
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<Option<GameCode>, String> {
@@ -126,9 +140,14 @@ impl InteractiveMission {
             ..
         } = frontend;
 
-        // One-shot tooling path: render the pristine mission after Initialize
-        // and camera setup, but before the first simulation hourglass or
-        // PostInitialize call.  This matches the original startup boundary in
+        if manager.sim_frame < args.mission_start_map_frame {
+            return Ok(None);
+        }
+
+        // Frame zero is the pristine mission after Initialize and camera setup,
+        // before the first simulation hourglass or PostInitialize call. Positive
+        // targets arrive here after that many complete normal mission frames.
+        // This matches the original startup boundary in
         // `original-code/RHgame.cpp` (Initialize around line 1449; the deferred
         // PostInitialize dispatch around lines 1835-1841).
         if let Some(output_path) = args.mission_start_map_output.as_deref() {
@@ -172,13 +191,20 @@ impl InteractiveMission {
                         display_info_elapsed_secs: 0,
                     },
                 );
-                capture_wide_map_to_path(
+                let screenshot = crate::http_server::ScreenshotRequest {
+                    frame: Some(args.mission_start_map_frame),
+                    hide_ui: true,
+                    full_map: true,
+                    ..Default::default()
+                };
+                capture_screenshot_to_path(
                     &manager.engine,
                     &display_snapshot,
                     host,
                     &assets,
                     &dev,
                     &mut render_ctx,
+                    &screenshot,
                     output_path,
                 )
             };
@@ -189,7 +215,11 @@ impl InteractiveMission {
                     output_path.display()
                 )
             })?;
-            tracing::info!("Mission-start map → {}", output_path.display());
+            tracing::info!(
+                frame = manager.sim_frame,
+                "Mission map screenshot → {}",
+                output_path.display()
+            );
             return Ok(Some(GameCode::Quit));
         }
 
@@ -466,7 +496,16 @@ impl InteractiveMission {
         // `--headless` forces the render block off for the entire
         // mission — same gate as the in-game fast-forward
         // `host.skip_render` toggle, just sticky.
-        let draw_result = if host.skip_render || args.headless || modal_rendered_this_frame {
+        // File-backed map exports need normal simulation/PostInitialize frames,
+        // not intermediate window presentation. Their requested full-map
+        // screenshot is rendered once immediately after the target frame.
+        let warming_up_map_export = args.mission_start_map_output.is_some()
+            && manager.sim_frame <= args.mission_start_map_frame;
+        let draw_result = if host.skip_render
+            || args.headless
+            || modal_rendered_this_frame
+            || warming_up_map_export
+        {
             1
         } else {
             0
@@ -512,6 +551,7 @@ impl InteractiveMission {
             // frame so `present()` still blits the real frame last.
             let display_snapshot = host.engine_display.clone();
             drain_screenshots(
+                manager.sim_frame,
                 &manager.engine,
                 &display_snapshot,
                 host,
@@ -2099,6 +2139,10 @@ impl InteractiveMission {
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
         let args = services.args;
+        // File-backed screenshot runs have no player to dismiss a dialogue
+        // which appears before their requested frame. Use the established
+        // headless auto-dismiss path while retaining normal graphical ticks.
+        let auto_dismiss_modals = args.headless || args.mission_start_map_output.is_some();
         let InteractiveMission { runtime, frontend } = self;
         let MissionRuntime {
             world,
@@ -2395,7 +2439,7 @@ impl InteractiveMission {
             }
         }
 
-        if args.headless {
+        if auto_dismiss_modals {
             drain_pending_dialogues(
                 host,
                 &mut *window,
@@ -2442,7 +2486,7 @@ impl InteractiveMission {
             }
         }
 
-        if !modal_rendered_this_frame && args.headless {
+        if !modal_rendered_this_frame && auto_dismiss_modals {
             drain_pending_popup_scroll(
                 host,
                 &mut *window,
@@ -2517,7 +2561,7 @@ impl InteractiveMission {
             }
         }
 
-        if !modal_rendered_this_frame && args.headless {
+        if !modal_rendered_this_frame && auto_dismiss_modals {
             drain_pending_debriefings(
                 host,
                 &mut *window,
@@ -2574,7 +2618,7 @@ impl InteractiveMission {
         {
             if host.pending_mission_state_popup {
                 host.pending_mission_state_popup = false;
-                if args.headless {
+                if auto_dismiss_modals {
                     let cmd = PlayerCommand::QuitMissionRequested;
                     dispatch_local_command(
                         host,
