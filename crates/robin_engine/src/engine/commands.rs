@@ -2134,7 +2134,7 @@ impl EngineInner {
 
         // Resolve the attached scroll entity id. The script-side
         // `scroll_attachments` map is keyed by actor script handle.
-        let npc_handle = crate::natives::GameHost::actor_handle(target);
+        let npc_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
         let scroll_handle = self
             .script_domains
             .scrolls
@@ -3959,8 +3959,8 @@ mod tests {
 
         let scroll_id = spawn_scroll(&mut engine, true);
         engine.script_domains.scrolls.attachments.insert(
-            crate::natives::GameHost::actor_handle(npc_id),
-            crate::natives::GameHost::actor_handle(scroll_id),
+            crate::natives::ScriptHandleCodec::actor_handle(npc_id),
+            crate::natives::ScriptHandleCodec::actor_handle(scroll_id),
         );
 
         (engine, assets, pc_id, npc_id, scroll_id)

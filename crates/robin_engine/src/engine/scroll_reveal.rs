@@ -137,7 +137,7 @@ impl EngineInner {
     /// Returns [`ScrollStatus::Invisible`] for scrolls that have no
     /// entry or when the mission script is unavailable.
     pub fn scroll_status(&self, scroll: EntityId) -> ScrollStatus {
-        let handle = crate::natives::GameHost::actor_handle(scroll);
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         let raw = self
             .script_domains
             .scrolls
@@ -150,7 +150,7 @@ impl EngineInner {
 
     /// Update a scroll's status and refresh its minimap dot.
     pub(crate) fn set_scroll_status(&mut self, scroll: EntityId, status: ScrollStatus) {
-        let handle = crate::natives::GameHost::actor_handle(scroll);
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         self.script_domains
             .scrolls
             .status
@@ -190,8 +190,8 @@ impl EngineInner {
         // Non-zero return advances status to Taken; zero keeps it at
         // Opened.  Scrolls with no bound class get `Ok(0)` and stay
         // at Opened.
-        let scroll_handle = crate::natives::GameHost::actor_handle(scroll);
-        let pc_handle = crate::natives::GameHost::actor_handle(pc);
+        let scroll_handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
+        let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc);
         let script_result = self
             .with_script_session(assets, |script, script_domains, capabilities| {
                 script.call_scroll_function(

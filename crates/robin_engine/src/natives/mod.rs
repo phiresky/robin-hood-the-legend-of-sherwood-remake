@@ -53,6 +53,7 @@ mod bindings;
 mod commands;
 mod context;
 mod defs;
+mod handle_codec;
 mod signatures;
 mod state;
 #[cfg(test)]
@@ -62,12 +63,15 @@ pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
 pub use context::{NativeContext, NativeSessionCapabilities, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
+pub use handle_codec::ScriptHandleCodec;
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
     NativeSignature, native_definition_by_index, native_definition_by_name,
     native_signature_by_index, native_signature_by_name,
 };
 pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
+
+use handle_codec::ScriptHandleKind;
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
@@ -94,34 +98,11 @@ fn anim_ordinal_to_order_type(anim: i32, native: &str) -> OrderType {
         .unwrap_or_else(|_| panic!("{native}: script passed invalid animation ordinal {anim}"))
 }
 
-// ── Script handle encoding ──────────────────────────────────────────
-//
-// C++ script values are typed `void*` handles. `NULL` is 0; valid
-// handles are opaque non-null pointers. The Rust VM stores script values
-// as `i32`, so we encode those opaque handles as tagged integers:
-//
-//   high 4 bits: script type tag
-//   low 28 bits: 0-based index in that type's table
-//
-// This keeps the script-facing index payload 0-based while preserving
-// the original null semantics (`0` is still null and can never name the
-// first actor).
-
-const SCRIPT_HANDLE_INDEX_MASK: i32 = 0x0fff_ffff;
-const SCRIPT_HANDLE_ACTOR_TAG: i32 = 0x1000_0000;
-const SCRIPT_HANDLE_DOOR_TAG: i32 = 0x2000_0000;
-const SCRIPT_HANDLE_PATCH_TAG: i32 = 0x3000_0000;
-const SCRIPT_HANDLE_LOCATION_TAG: i32 = 0x4000_0000;
-const SCRIPT_HANDLE_SOUND_SOURCE_TAG: i32 = 0x5000_0000;
-const SCRIPT_HANDLE_BUILDING_TAG: i32 = 0x6000_0000;
-const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
-
-/// A host-function implementation that handles the global-variable
-/// trio and logs all other calls as unimplemented stubs.
+/// Serialized shell for script-originated effects that have not yet moved to
+/// focused engine owners. [`NativeContext`] performs native dispatch while
+/// borrowing this queue state for the duration of a script resume.
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GameHost {
-    /// If true, print each call to stderr as it happens.
-    pub verbose: bool,
     /// Deferred commands for the engine to process after script execution.
     pub commands: Vec<EngineCommand>,
     /// Production sector registrations: (type, location_handle, speed).
@@ -160,15 +141,9 @@ pub struct GameHost {
 /// hazard if a script accidentally creates a true cycle.
 pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
 
-/// Cached subset of sector properties needed by record-time gate
-/// expansion in [`NativeContext::append_move_to_sequence`]. Same data as
-/// the runtime `EngineInner::sector_is_building` / `is_ladder_lift`
-/// helpers expose, but keyed off `GameHost`-owned data so the natives
-/// layer doesn't need a back-reference to the engine.
 impl GameHost {
     pub fn new() -> Self {
         Self {
-            verbose: false,
             commands: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
@@ -183,11 +158,6 @@ impl GameHost {
     /// Drain all queued engine commands. Called by the engine after script execution.
     pub fn drain_commands(&mut self) -> Vec<EngineCommand> {
         std::mem::take(&mut self.commands)
-    }
-
-    pub fn verbose(mut self) -> Self {
-        self.verbose = true;
-        self
     }
 
     /// Drain all completed sequences (built by Start/Record*/Thanx).
@@ -378,7 +348,7 @@ impl NativeContext<'_, '_> {
     }
 
     fn zone_index(&self, loc: i32) -> Option<usize> {
-        GameHost::location_index(loc)?.checked_sub(self.bindings.script_point_count)
+        ScriptHandleCodec::location_index(loc)?.checked_sub(self.bindings.script_point_count)
     }
 
     fn zone_occupant_handles(&self, loc: i32) -> Option<Vec<i32>> {
@@ -389,7 +359,7 @@ impl NativeContext<'_, '_> {
             zone.occupant_indices
                 .iter()
                 .copied()
-                .map(GameHost::actor_handle)
+                .map(ScriptHandleCodec::actor_handle)
                 .collect(),
         )
     }
@@ -498,7 +468,7 @@ impl NativeContext<'_, '_> {
     /// Convert a script actor handle to the live typed entity ID.
     /// 0 (null handle) or stale handles map to `None`.
     fn actor_id(&self, handle: i32) -> Option<EntityId> {
-        let idx = GameHost::actor_handle_index(handle)?;
+        let idx = ScriptHandleCodec::actor_handle_index(handle)?;
         self.entities.id_at_legacy_slot(idx as u32)
     }
 
@@ -2273,106 +2243,29 @@ impl Default for GameHost {
     }
 }
 
-// ── Handle resolution helpers ────────────────────────────────────────
-impl GameHost {
-    fn make_script_handle(tag: i32, index: usize) -> i32 {
-        let index = i32::try_from(index).expect("script handle index exceeds i32 range");
-        assert!(
-            (0..=SCRIPT_HANDLE_INDEX_MASK).contains(&index),
-            "script handle index exceeds 28-bit payload: {index}"
-        );
-        tag | index
-    }
-
-    pub fn actor_handle<I: Into<EntityId>>(id: I) -> i32 {
-        let id = id.into();
-        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, id.index() as usize)
-    }
-
-    pub fn actor_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, index)
-    }
-
-    pub fn door_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_DOOR_TAG, index)
-    }
-
-    pub fn patch_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_PATCH_TAG, index)
-    }
-
-    pub fn location_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_LOCATION_TAG, index)
-    }
-
-    pub fn sound_source_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_SOUND_SOURCE_TAG, index)
-    }
-
-    pub fn building_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_BUILDING_TAG, index)
-    }
-
-    pub fn actor_handle_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_ACTOR_TAG)
-    }
-
-    pub fn door_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
-    }
-
-    pub fn patch_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
-    }
-
-    pub fn location_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_LOCATION_TAG)
-    }
-
-    pub fn sound_source_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_SOUND_SOURCE_TAG)
-    }
-
-    pub fn building_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_BUILDING_TAG)
-    }
-
-    pub fn way_index(handle: i32) -> Option<usize> {
-        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_WAY_TAG)
-    }
-
-    fn handle_has_tag(handle: i32, tag: i32) -> bool {
-        handle > 0 && (handle & !SCRIPT_HANDLE_INDEX_MASK) == tag
-    }
-
-    fn typed_handle_to_index(handle: i32, tag: i32) -> Option<usize> {
-        Self::handle_has_tag(handle, tag).then_some((handle & SCRIPT_HANDLE_INDEX_MASK) as usize)
-    }
-}
-
 impl NativeContext<'_, '_> {
     fn get_door(&self, handle: i32) -> Option<&Door> {
-        GameHost::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
+        ScriptHandleCodec::door_index(handle)
             .and_then(|idx| self.script_domains.interactables.doors.get(idx))
     }
 
     fn get_door_mut(&mut self, handle: i32) -> Option<&mut Door> {
-        GameHost::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
+        ScriptHandleCodec::door_index(handle)
             .and_then(|idx| self.script_domains.interactables.doors.get_mut(idx))
     }
 
     fn get_patch(&self, handle: i32) -> Option<&Patch> {
-        GameHost::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
+        ScriptHandleCodec::patch_index(handle)
             .and_then(|idx| self.script_domains.interactables.patches.get(idx))
     }
 
     fn get_patch_mut(&mut self, handle: i32) -> Option<&mut Patch> {
-        GameHost::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
+        ScriptHandleCodec::patch_index(handle)
             .and_then(|idx| self.script_domains.interactables.patches.get_mut(idx))
     }
 
     fn is_script_sector_handle(&self, loc: i32) -> bool {
-        let Some(idx) = GameHost::typed_handle_to_index(loc, SCRIPT_HANDLE_LOCATION_TAG) else {
+        let Some(idx) = ScriptHandleCodec::location_index(loc) else {
             return false;
         };
         idx >= self.bindings.script_point_count && idx < self.bindings.script_location_count
@@ -2398,7 +2291,7 @@ impl NativeContext<'_, '_> {
     /// dynamically-computed locations (`GetActorLocation`,
     /// `ComputeLocationBetween`) are always points.
     fn is_script_point(&self, handle: i32) -> bool {
-        let Some(idx) = GameHost::location_index(handle) else {
+        let Some(idx) = ScriptHandleCodec::location_index(handle) else {
             return false;
         };
         if idx < self.bindings.script_point_count {
@@ -2415,7 +2308,7 @@ impl NativeContext<'_, '_> {
     /// Handles 1..=script_location_count are static locations from level data.
     /// Handles beyond that are dynamically computed by script natives.
     fn resolve_location_pos(&self, handle: i32) -> Option<(f32, f32)> {
-        let idx = GameHost::location_index(handle)?;
+        let idx = ScriptHandleCodec::location_index(handle)?;
         if idx < self.bindings.script_location_count {
             self.bindings.location_positions.get(idx).copied()
         } else {
@@ -2437,7 +2330,7 @@ impl NativeContext<'_, '_> {
     /// These reads back the `RecordEnterGame` layer/sector pickup and
     /// the `SetActorLocation` sector refresh.
     fn resolve_location_layer_sector(&self, handle: i32) -> Option<(u16, u16)> {
-        let idx = GameHost::location_index(handle)?;
+        let idx = ScriptHandleCodec::location_index(handle)?;
         if idx < self.bindings.script_location_count {
             return Some((
                 *self.bindings.location_layers.get(idx)?,
@@ -2466,7 +2359,7 @@ impl NativeContext<'_, '_> {
                 position: (x, y),
                 layer_sector,
             });
-        GameHost::location_handle_from_index(
+        ScriptHandleCodec::location_handle_from_index(
             self.bindings.script_location_count + self.script_state.computed_locations.len() - 1,
         )
     }
@@ -2477,14 +2370,14 @@ impl NativeContext<'_, '_> {
     /// sound sources, buildings, hiking paths).
     ///
     /// `-1` means "no script reference" and silently returns null.
-    fn script_index_to_handle(idx: i32, count: usize, kind: &str, tag: i32) -> i32 {
+    fn script_index_to_handle(idx: i32, count: usize, name: &str, kind: ScriptHandleKind) -> i32 {
         if idx == -1 {
             return 0;
         }
         if idx >= 0 && (idx as usize) < count {
-            return GameHost::make_script_handle(tag, idx as usize);
+            return ScriptHandleCodec::encode(kind, idx as usize);
         }
-        tracing::error!("Script Error: invalid {kind} ID {idx} (max={count})");
+        tracing::error!("Script Error: invalid {name} ID {idx} (max={count})");
         0
     }
 
@@ -3279,19 +3172,19 @@ impl NativeContext<'_, '_> {
                     stack.pop_i32(),
                     self.script_domains.interactables.doors.len(),
                     "door",
-                    SCRIPT_HANDLE_DOOR_TAG,
+                    ScriptHandleKind::Door,
                 ),
                 GetPatchScript => Self::script_index_to_handle(
                     stack.pop_i32(),
                     self.script_domains.interactables.patches.len(),
                     "patch",
-                    SCRIPT_HANDLE_PATCH_TAG,
+                    ScriptHandleKind::Patch,
                 ),
                 GetLocationScript => Self::script_index_to_handle(
                     stack.pop_i32(),
                     self.bindings.script_location_count,
                     "location",
-                    SCRIPT_HANDLE_LOCATION_TAG,
+                    ScriptHandleKind::Location,
                 ),
                 GetSoundSourceScript => {
                     // If the slot was nulled by a prior
@@ -3325,13 +3218,13 @@ impl NativeContext<'_, '_> {
                     stack.pop_i32(),
                     self.bindings.script_building_count,
                     "building",
-                    SCRIPT_HANDLE_BUILDING_TAG,
+                    ScriptHandleKind::Building,
                 ),
                 GetWayScript => Self::script_index_to_handle(
                     stack.pop_i32(),
                     self.bindings.script_hiking_path_count,
                     "way",
-                    SCRIPT_HANDLE_WAY_TAG,
+                    ScriptHandleKind::Way,
                 ),
 
                 // --- Reverse index lookup (handle → script index) ---
@@ -5858,10 +5751,8 @@ impl NativeContext<'_, '_> {
                     // Read everything we need off the live entity
                     // store for fields that move per-frame (position,
                     // direction, posture, view parameters, eye Z).
-                    // For building membership, use the GameHost copy
-                    // refreshed from the engine before each script call.
-                    // The old entity-view cache was AI-dispatch scratch,
-                    // not script or simulation state.
+                    // Building membership comes from the canonical script
+                    // domain borrowed for this native session.
                     let npc_dir = npc_entity.element_data().direction();
                     let npc_layer = npc_entity.element_data().layer();
                     let Some(npc_data) = npc_entity.npc_data() else {

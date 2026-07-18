@@ -1,9 +1,9 @@
-//! Run a named function from a .scb script with verbose native call tracing.
+//! Run a named function from a .scb script with tracing enabled.
 //!
-//!   cargo run --bin run_script -- <path.scb> <class> <function>
+//!   cargo run --example run_script -- <path.scb> <class> <function>
 //!
 //! Example:
-//!   cargo run --bin run_script -- datadirs/demo/.../Dem_Lei_MP.scb StartUp Initialize
+//!   cargo run --example run_script -- datadirs/demo/.../Dem_Lei_MP.scb StartUp Initialize
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use robin_rs::interp::Vm;
@@ -64,7 +64,7 @@ fn main() -> std::process::ExitCode {
         instructions.len()
     );
 
-    let mut game_host = GameHost::new().verbose();
+    let mut game_host = GameHost::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();

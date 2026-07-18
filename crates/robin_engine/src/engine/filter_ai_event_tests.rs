@@ -237,9 +237,9 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     let sensitive_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
     let noov_id = engine.add_entity(make_scripted_soldier("NoOverride"));
 
-    let robin_handle = crate::natives::GameHost::actor_handle(robin_id);
-    let sensitive_handle = crate::natives::GameHost::actor_handle(sensitive_id);
-    let noov_handle = crate::natives::GameHost::actor_handle(noov_id);
+    let robin_handle = crate::natives::ScriptHandleCodec::actor_handle(robin_id);
+    let sensitive_handle = crate::natives::ScriptHandleCodec::actor_handle(sensitive_id);
+    let noov_handle = crate::natives::ScriptHandleCodec::actor_handle(noov_id);
 
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &mut engine.world.entities,
@@ -277,7 +277,7 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
     // source — the stimulus info encodes a 0-based human handle, so
     // `filter_stimulus` will translate it to `robin_handle` before
     // passing to the script.
-    let robin_human = crate::natives::GameHost::actor_handle_index(robin_handle)
+    let robin_human = crate::natives::ScriptHandleCodec::actor_handle_index(robin_handle)
         .expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
@@ -345,7 +345,7 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
     engine.scripts.mission = Some(script);
 
     let unbound_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
-    let unbound_handle = crate::natives::GameHost::actor_handle(unbound_id);
+    let unbound_handle = crate::natives::ScriptHandleCodec::actor_handle(unbound_id);
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     assert!(
@@ -361,8 +361,8 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let (mut engine, _, sensitive_handle, _) = build_engine();
 
     // Snapshot AI state pre-dispatch.
-    let sensitive_idx =
-        crate::natives::GameHost::actor_handle_index(sensitive_handle).expect("valid test handle");
+    let sensitive_idx = crate::natives::ScriptHandleCodec::actor_handle_index(sensitive_handle)
+        .expect("valid test handle");
     let sensitive_entity_id = EntityId::Pc(crate::entity_id::PcId(sensitive_idx as u32));
     let before_state = engine
         .world
@@ -732,7 +732,7 @@ fn build_nested_ai_global_mutation_scb() -> ScbFile {
         q_aff1_get_param(TMP0, 0),
         q_aff0_iconstant(
             TMP1,
-            crate::natives::GameHost::location_handle_from_index(0),
+            crate::natives::ScriptHandleCodec::location_handle_from_index(0),
         ),
         q_aff0_iconstant(TMP2, 10.0_f32.to_bits() as i32),
         q_aff0_iconstant(TMP3, 20.0_f32.to_bits() as i32),
@@ -1150,8 +1150,8 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     let scb = build_nested_entity_mutation_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
-    let outer_handle = crate::natives::GameHost::actor_handle_from_index(0);
-    let prototype_handle = crate::natives::GameHost::actor_handle_from_index(1);
+    let outer_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
+    let prototype_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(1);
     let mut entity_store = crate::entities::Entities::from_legacy_slots(vec![
         Some(make_scripted_soldier("OuterCaller")),
         Some(make_scripted_soldier("InnerTarget")),

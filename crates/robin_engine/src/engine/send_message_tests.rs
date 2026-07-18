@@ -15,7 +15,7 @@ use crate::element::{
 };
 use crate::engine::EngineInner;
 use crate::engine::types::{LevelAssets, MissionScript};
-use crate::natives::{DeferredCommand, GameHost, NativeFn};
+use crate::natives::{DeferredCommand, NativeFn, ScriptHandleCodec};
 use crate::order::OrderType;
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::sequence::{Field, FieldValue, SequenceElement, SequenceState};
@@ -135,7 +135,7 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
     engine.scripts.mission = Some(message_script());
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
-    let handle = GameHost::actor_handle(receiver);
+    let handle = ScriptHandleCodec::actor_handle(receiver);
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &mut engine.world.entities,
         &mut engine.ai.global,

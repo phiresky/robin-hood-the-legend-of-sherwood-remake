@@ -302,7 +302,8 @@ impl EngineInner {
                         // then emit the side-effect so the host audio backend
                         // picks up the source and starts a channel.  Symmetric
                         // with the Deactivate path below.
-                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+                        {
                             // Re-activation cancels any previously
                             // scheduled finish so we don't prematurely
                             // kill a freshly-restarted source.
@@ -334,7 +335,8 @@ impl EngineInner {
                         // would fire as a no-op on an already-inactive
                         // source, but clearing it keeps the queue small
                         // and unambiguous across rollback snapshots.
-                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+                        {
                             if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
@@ -345,7 +347,8 @@ impl EngineInner {
                         }
                     }
                     crate::natives::SoundCommand::Destroy(h) => {
-                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+                        {
                             if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
@@ -884,7 +887,7 @@ impl EngineInner {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle(entity_id),
+                    crate::natives::ScriptHandleCodec::actor_handle(entity_id),
                     script_class.clone(),
                 ))
             })
@@ -903,7 +906,7 @@ impl EngineInner {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle(entity_id),
+                    crate::natives::ScriptHandleCodec::actor_handle(entity_id),
                     target.target.script_class.clone(),
                 ))
             })
@@ -921,7 +924,7 @@ impl EngineInner {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle(entity_id),
+                    crate::natives::ScriptHandleCodec::actor_handle(entity_id),
                     scroll.script_class.clone(),
                 ))
             })
@@ -1149,7 +1152,7 @@ impl EngineInner {
             .into_iter()
             .map(|(entity_id, new_anim, old_anim)| {
                 (
-                    crate::natives::GameHost::actor_handle(entity_id),
+                    crate::natives::ScriptHandleCodec::actor_handle(entity_id),
                     new_anim as i32,
                     old_anim as i32,
                 )
@@ -1203,7 +1206,7 @@ impl EngineInner {
             if !s.element.active {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle(id);
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
             let has_script = self
                 .scripts
                 .mission
@@ -1267,7 +1270,7 @@ impl EngineInner {
         use crate::element::Entity;
         use ScrollStatus;
 
-        let handle = crate::natives::GameHost::actor_handle(scroll_id);
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll_id);
 
         // Step 1 — always flip to the "opened" pose, even if there's no
         // script.  Set status to Opened and force the sprite animation
@@ -1295,7 +1298,7 @@ impl EngineInner {
         }
 
         // Step 3 — dispatch via the SetScrollExecutingScript bracket.
-        let pc_handle = crate::natives::GameHost::actor_handle(pc_id);
+        let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
         let result = self
             .with_script_session(assets, |script, script_domains, capabilities| {
                 script.call_scroll_function(
@@ -1448,7 +1451,7 @@ impl EngineInner {
             }
             let pos = ed.position_map();
             let layer = ed.layer();
-            let handle = crate::natives::GameHost::actor_handle(actor_id);
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip zones that `DefineFlatTrajectoryZone` converted
@@ -1490,7 +1493,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
+            let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
             entries.push((zone_idx, carried_id, carried_h));
         }
         entries
@@ -1606,7 +1609,7 @@ impl EngineInner {
             let active = ed.active && !ed.in_honolulu;
             let pos = ed.position_map();
             let layer = ed.layer();
-            let handle = crate::natives::GameHost::actor_handle(actor_id);
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
@@ -1649,7 +1652,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
+            let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
             enter_events.push((zone_idx, carried_id, carried_h));
         }
         let primary_exit_len = exit_events.len();
@@ -1670,7 +1673,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
+            let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
             exit_events.push((zone_idx, carried_id, carried_h));
         }
 
@@ -1759,7 +1762,8 @@ impl EngineInner {
                     continue;
                 }
             };
-            let Some(loc_idx) = crate::natives::GameHost::location_index(loc_handle) else {
+            let Some(loc_idx) = crate::natives::ScriptHandleCodec::location_index(loc_handle)
+            else {
                 tracing::warn!("RegisterAsProductionSector: invalid location handle {loc_handle}");
                 continue;
             };
@@ -1791,7 +1795,8 @@ impl EngineInner {
                 Some(t) => t,
                 None => continue,
             };
-            let Some(loc_idx) = crate::natives::GameHost::location_index(loc_handle) else {
+            let Some(loc_idx) = crate::natives::ScriptHandleCodec::location_index(loc_handle)
+            else {
                 continue;
             };
             if loc_idx >= assets.script_location_positions.len() {
@@ -2056,7 +2061,7 @@ impl EngineInner {
         let code = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2);
 
         let source = match stimulus.info {
-            crate::ai::StimulusInfo::Human(h) => crate::natives::GameHost::actor_handle(
+            crate::ai::StimulusInfo::Human(h) => crate::natives::ScriptHandleCodec::actor_handle(
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
             ),
             _ => 0,
@@ -2122,7 +2127,7 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         tick_data: &crate::ai::AiPerTickData,
     ) -> bool {
-        let handle = crate::natives::GameHost::actor_handle(entity_id);
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
         if !self.filter_stimulus(assets, handle, stimulus) {
             return false;
         }
@@ -2196,15 +2201,17 @@ impl EngineInner {
             if !is_scripted {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle(id);
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
             for (state, source_kind) in drained {
                 let code = state.state_change_event_code();
                 let source = match source_kind {
                     AiStateChangeSource::SelfActor => handle,
                     AiStateChangeSource::Null => 0,
-                    AiStateChangeSource::Human(h) => crate::natives::GameHost::actor_handle(
-                        crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
-                    ),
+                    AiStateChangeSource::Human(h) => {
+                        crate::natives::ScriptHandleCodec::actor_handle(
+                            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
+                        )
+                    }
                 };
                 notifications.push((handle, source, code));
             }
@@ -2331,7 +2338,7 @@ impl EngineInner {
         assets: &LevelAssets,
         handle: i32,
     ) -> Option<crate::coordinates::MapPoint> {
-        let idx = crate::natives::GameHost::location_index(handle)?;
+        let idx = crate::natives::ScriptHandleCodec::location_index(handle)?;
         assets
             .script_location_positions
             .get(idx)
@@ -2534,7 +2541,8 @@ impl EngineInner {
                         .script_location_positions
                         .len()
                         .saturating_sub(self.script_domains.zones.scripts.len());
-                    let Some(loc_idx) = crate::natives::GameHost::location_index(location_handle)
+                    let Some(loc_idx) =
+                        crate::natives::ScriptHandleCodec::location_index(location_handle)
                     else {
                         tracing::warn!(
                             "DefineFlatTrajectoryZone(loc={location_handle}): invalid location handle"
@@ -3017,7 +3025,7 @@ impl EngineInner {
             tracing::warn!("PutActorInBuilding: invalid actor handle {actor}");
             return;
         };
-        let Some(bld_idx) = crate::natives::GameHost::building_index(building) else {
+        let Some(bld_idx) = crate::natives::ScriptHandleCodec::building_index(building) else {
             tracing::warn!("PutActorInBuilding: invalid building handle {building}");
             return;
         };
@@ -3040,7 +3048,7 @@ impl EngineInner {
                 .and_then(|g| g.first())
                 .copied();
             let point_in = gate_handle
-                .and_then(crate::natives::GameHost::door_index)
+                .and_then(crate::natives::ScriptHandleCodec::door_index)
                 .and_then(|di| self.script_domains.interactables.doors.get(di))
                 .map(|d| d.point_in);
             let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
@@ -3092,7 +3100,7 @@ impl EngineInner {
             carried_handle = entity
                 .pc_data()
                 .and_then(|pc| pc.carried)
-                .map(crate::natives::GameHost::actor_handle);
+                .map(crate::natives::ScriptHandleCodec::actor_handle);
             if is_pc && let Some(pc) = entity.pc_data_mut() {
                 // DisableAllActionsTemp gates the
                 // disabled_actions_temp loop on `playable` so a
@@ -3756,7 +3764,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let canonical_domains = std::ptr::addr_of_mut!(engine.script_domains);
         let canonical_entities = std::ptr::from_ref(&engine.world.entities);
-        let door = crate::natives::GameHost::door_handle_from_index(0);
+        let door = crate::natives::ScriptHandleCodec::door_handle_from_index(0);
 
         let result = engine.with_script_session(&assets, |script, script_domains, capabilities| {
             assert_eq!(

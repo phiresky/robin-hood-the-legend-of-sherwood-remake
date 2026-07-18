@@ -97,7 +97,7 @@ fn seed_zone(host: &mut BoundGameHost, zone_idx: usize, handles: &[i32]) {
         .iter()
         .map(|handle| {
             crate::entity_id::EntityId::Civilian(crate::entity_id::CivilianId(
-                GameHost::actor_handle_index(*handle).expect("actor handle") as u32,
+                ScriptHandleCodec::actor_handle_index(*handle).expect("actor handle") as u32,
             ))
         })
         .collect();
@@ -510,7 +510,7 @@ fn door_mutation_is_visible_to_later_native_in_same_callback() {
         locked_pc: true,
         ..Default::default()
     });
-    let door = GameHost::door_handle_from_index(0);
+    let door = ScriptHandleCodec::door_handle_from_index(0);
 
     let mut unlock = NativeStack::default();
     unlock.push_i32(door);
@@ -540,7 +540,7 @@ fn patch_mutation_is_visible_to_later_native_in_same_callback() {
         initially_active: true,
         ..Default::default()
     });
-    let patch = GameHost::patch_handle_from_index(0);
+    let patch = ScriptHandleCodec::patch_handle_from_index(0);
 
     let mut apply = NativeStack::default();
     apply.push_i32(patch);
@@ -637,13 +637,13 @@ fn then_outside_recording_returns_zero() {
 
 #[test]
 fn script_actor_handle_maps_back_to_zero_based_entity_index() {
-    assert_eq!(GameHost::actor_handle_index(0), None);
+    assert_eq!(ScriptHandleCodec::actor_handle_index(0), None);
     assert_eq!(
-        GameHost::actor_handle_index(GameHost::actor_handle_from_index(0)),
+        ScriptHandleCodec::actor_handle_index(ScriptHandleCodec::actor_handle_from_index(0)),
         Some(0)
     );
     assert_eq!(
-        GameHost::actor_handle_index(GameHost::actor_handle_from_index(70)),
+        ScriptHandleCodec::actor_handle_index(ScriptHandleCodec::actor_handle_from_index(70)),
         Some(70)
     );
 }
@@ -678,7 +678,7 @@ fn mobile_master_is_appended_to_script_actor_indices() {
     let mut get = NativeStack::default();
     get.push_i32(1);
     let handle = call_host_native(&mut host, NativeFn::GetActorScript, &mut get);
-    assert_eq!(handle, GameHost::actor_handle_from_index(1));
+    assert_eq!(handle, ScriptHandleCodec::actor_handle_from_index(1));
 
     let mut reverse = NativeStack::default();
     reverse.push_i32(handle);
@@ -700,7 +700,7 @@ fn generic_mobile_activation_propagates_to_all_children() {
     let mut host = BoundGameHost::new();
     host.entities.push(Some(mobile_fx(0)));
     host.entities.push(Some(mobile_fx(0)));
-    let handle = GameHost::actor_handle_from_index(0);
+    let handle = ScriptHandleCodec::actor_handle_from_index(0);
 
     let mut deactivate = NativeStack::default();
     deactivate.push_i32(handle);
@@ -869,8 +869,8 @@ fn get_distance_with_positions() {
     let prog = call_native_return(
         160,
         &[
-            GameHost::location_handle_from_index(0),
-            GameHost::location_handle_from_index(1),
+            ScriptHandleCodec::location_handle_from_index(0),
+            ScriptHandleCodec::location_handle_from_index(1),
         ],
     );
     let mut vm = Vm::new().with_host(Box::new(BoundGameHost { bindings, ..host }));
@@ -885,8 +885,8 @@ fn get_distance_invalid_handle() {
 #[test]
 fn is_inside_building_specific() {
     let mut host = BoundGameHost::new();
-    let actor = GameHost::actor_handle_from_index(4);
-    let building = GameHost::building_handle_from_index(2);
+    let actor = ScriptHandleCodec::actor_handle_from_index(4);
+    let building = ScriptHandleCodec::building_handle_from_index(2);
     host.script_domains
         .buildings
         .actor_building
@@ -899,12 +899,15 @@ fn is_inside_building_specific() {
 #[test]
 fn is_inside_building_wrong() {
     let mut host = BoundGameHost::new();
-    let actor = GameHost::actor_handle_from_index(4);
+    let actor = ScriptHandleCodec::actor_handle_from_index(4);
     host.script_domains
         .buildings
         .actor_building
-        .insert(actor, GameHost::building_handle_from_index(2));
-    let prog = call_native_return(98, &[actor, GameHost::building_handle_from_index(6)]);
+        .insert(actor, ScriptHandleCodec::building_handle_from_index(2));
+    let prog = call_native_return(
+        98,
+        &[actor, ScriptHandleCodec::building_handle_from_index(6)],
+    );
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
@@ -912,11 +915,11 @@ fn is_inside_building_wrong() {
 #[test]
 fn is_inside_building_null_checks_any() {
     let mut host = BoundGameHost::new();
-    let actor = GameHost::actor_handle_from_index(4);
+    let actor = ScriptHandleCodec::actor_handle_from_index(4);
     host.script_domains
         .buildings
         .actor_building
-        .insert(actor, GameHost::building_handle_from_index(2));
+        .insert(actor, ScriptHandleCodec::building_handle_from_index(2));
     // NULL building (0): checks if in ANY building
     let prog = call_native_return(98, &[actor, 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
@@ -926,7 +929,7 @@ fn is_inside_building_null_checks_any() {
 #[test]
 fn is_inside_building_not_in_any() {
     let host = BoundGameHost::new();
-    let prog = call_native_return(98, &[GameHost::actor_handle_from_index(4), 0]);
+    let prog = call_native_return(98, &[ScriptHandleCodec::actor_handle_from_index(4), 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
@@ -934,15 +937,15 @@ fn is_inside_building_not_in_any() {
 #[test]
 fn is_inside_zone() {
     let mut host = BoundGameHost::new();
-    let actor = GameHost::actor_handle_from_index(4);
-    let loc = GameHost::location_handle_from_index(1);
+    let actor = ScriptHandleCodec::actor_handle_from_index(4);
+    let loc = ScriptHandleCodec::location_handle_from_index(1);
     seed_zone(
         &mut host,
         1,
         &[
-            GameHost::actor_handle_from_index(2),
+            ScriptHandleCodec::actor_handle_from_index(2),
             actor,
-            GameHost::actor_handle_from_index(6),
+            ScriptHandleCodec::actor_handle_from_index(6),
         ],
     );
     let prog = call_native_return(97, &[actor, loc]);
@@ -953,14 +956,14 @@ fn is_inside_zone() {
 #[test]
 fn is_inside_zone_not_present() {
     let mut host = BoundGameHost::new();
-    let actor = GameHost::actor_handle_from_index(4);
-    let loc = GameHost::location_handle_from_index(1);
+    let actor = ScriptHandleCodec::actor_handle_from_index(4);
+    let loc = ScriptHandleCodec::location_handle_from_index(1);
     seed_zone(
         &mut host,
         1,
         &[
-            GameHost::actor_handle_from_index(2),
-            GameHost::actor_handle_from_index(6),
+            ScriptHandleCodec::actor_handle_from_index(2),
+            ScriptHandleCodec::actor_handle_from_index(6),
         ],
     );
     let prog = call_native_return(97, &[actor, loc]);
@@ -980,14 +983,14 @@ fn actors_in_sector() {
         script_location_count: 2,
         ..Default::default()
     };
-    let loc = GameHost::location_handle_from_index(1);
+    let loc = ScriptHandleCodec::location_handle_from_index(1);
     seed_zone(
         &mut host,
         0,
         &[
-            GameHost::actor_handle_from_index(2),
-            GameHost::actor_handle_from_index(4),
-            GameHost::actor_handle_from_index(6),
+            ScriptHandleCodec::actor_handle_from_index(2),
+            ScriptHandleCodec::actor_handle_from_index(4),
+            ScriptHandleCodec::actor_handle_from_index(6),
         ],
     );
 
@@ -1006,9 +1009,9 @@ fn actors_in_sector() {
         &mut host2,
         0,
         &[
-            GameHost::actor_handle_from_index(2),
-            GameHost::actor_handle_from_index(4),
-            GameHost::actor_handle_from_index(6),
+            ScriptHandleCodec::actor_handle_from_index(2),
+            ScriptHandleCodec::actor_handle_from_index(4),
+            ScriptHandleCodec::actor_handle_from_index(6),
         ],
     );
     let prog2 = call_native_return(205, &[loc, 1]);
@@ -1018,7 +1021,7 @@ fn actors_in_sector() {
     }));
     assert_eq!(
         vm2.run(&prog2),
-        StopReason::ReturnedValue(GameHost::actor_handle_from_index(4))
+        StopReason::ReturnedValue(ScriptHandleCodec::actor_handle_from_index(4))
     );
 }
 
@@ -1037,8 +1040,8 @@ fn compute_location_between() {
     let prog = call_native_return(
         213,
         &[
-            GameHost::location_handle_from_index(0),
-            GameHost::location_handle_from_index(1),
+            ScriptHandleCodec::location_handle_from_index(0),
+            ScriptHandleCodec::location_handle_from_index(1),
             lambda_bits,
         ],
     );
@@ -1046,7 +1049,7 @@ fn compute_location_between() {
     // Should return a handle >= 3 (first computed location)
     match vm.run(&prog) {
         StopReason::ReturnedValue(handle) => {
-            assert_eq!(GameHost::location_index(handle), Some(2));
+            assert_eq!(ScriptHandleCodec::location_index(handle), Some(2));
         }
         other => panic!("expected return, got {other:?}"),
     }
@@ -1060,12 +1063,12 @@ fn are_all_pcs_inside() {
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
     ]);
-    let loc = GameHost::location_handle_from_index(0);
+    let loc = ScriptHandleCodec::location_handle_from_index(0);
     seed_zone(
         &mut host,
         0,
         &(0..3)
-            .map(GameHost::actor_handle_from_index)
+            .map(ScriptHandleCodec::actor_handle_from_index)
             .collect::<Vec<_>>(),
     );
     let prog = call_native_return(230, &[loc]);
@@ -1081,8 +1084,10 @@ fn are_all_pcs_inside_not_all() {
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
     ]);
-    let handles: Vec<_> = (0..3).map(GameHost::actor_handle_from_index).collect();
-    let loc = GameHost::location_handle_from_index(0);
+    let handles: Vec<_> = (0..3)
+        .map(ScriptHandleCodec::actor_handle_from_index)
+        .collect();
+    let loc = ScriptHandleCodec::location_handle_from_index(0);
     seed_zone(&mut host, 0, &[handles[0], handles[2]]); // PC 2 missing
     let prog = call_native_return(230, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
@@ -1147,7 +1152,7 @@ fn campaign_value_default_zero() {
 
 #[test]
 fn npc_values_set_then_get_from_canonical_entity() {
-    let actor = GameHost::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
     // SetCustomNPCValue(actor, id=5, value=77); return GetCustomNPCValue(actor, id=5).
     let program = vec![
         BeginFunction {
@@ -1246,7 +1251,7 @@ fn deferred_selection_is_visible_to_later_natives_in_the_same_callback() {
     let mut host = BoundGameHost::new();
     host.entities
         .push(Some(native_test_pc(Vec::new(), Vec::new())));
-    let actor = GameHost::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let sequences = crate::sequence::SequenceManager::new();
     let selected = Vec::new();
     let sounds = crate::sound_source::SoundSourceManager::new();
@@ -1287,7 +1292,7 @@ fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
     let weather = crate::engine::WeatherState::default();
     let frame = 23;
     let queries = TestQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
-    let handle = GameHost::sound_source_handle_from_index(0);
+    let handle = ScriptHandleCodec::sound_source_handle_from_index(0);
 
     let mut destroy = NativeStack::default();
     destroy.push_i32(handle);
@@ -1322,7 +1327,7 @@ fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
 #[test]
 fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
-    let pc_handle = GameHost::actor_handle(pc_id);
+    let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
     let mut pc_host = BoundGameHost::new();
     pc_host
         .entities
@@ -1358,7 +1363,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let mut npc_host = BoundGameHost::new();
     npc_host.entities.push(Some(native_test_soldier()));
     let mut emoticon = NativeStack::default();
-    emoticon.push_i32(GameHost::actor_handle_from_index(0));
+    emoticon.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
     emoticon.push_i32(crate::ai::EmoticonType::QuestionMark as i32);
     emoticon.push_i32(7);
     assert_eq!(
@@ -1433,7 +1438,7 @@ fn canonical_query_views_are_isolated_between_engine_instances() {
 }
 
 #[test]
-fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
+fn legacy_query_mirrors_and_verbose_are_ignored_when_loading_game_host_json() {
     let mut value = serde_json::to_value(GameHost::new()).expect("serialize GameHost");
     let object = value
         .as_object_mut()
@@ -1446,6 +1451,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
         ("ambiance", serde_json::json!("Night")),
         ("is_forest_level", serde_json::json!(true)),
         ("frame_counter", serde_json::json!(9876)),
+        ("verbose", serde_json::json!(true)),
     ] {
         object.insert(field.into(), old_value);
     }
@@ -1461,6 +1467,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
         "ambiance",
         "is_forest_level",
         "frame_counter",
+        "verbose",
     ] {
         assert!(
             saved_again.get(field).is_none(),
@@ -1490,7 +1497,7 @@ fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
 
 #[test]
 fn animation_state_write_is_immediately_visible_from_canonical_entity() {
-    let actor = GameHost::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let mut host = BoundGameHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
@@ -1786,7 +1793,7 @@ fn persistent_property_test_host(
         host,
         bindings,
         campaign,
-        GameHost::actor_handle_from_index(0),
+        ScriptHandleCodec::actor_handle_from_index(0),
     )
 }
 
@@ -1983,8 +1990,8 @@ fn native_sees(
     let sounds = crate::sound_source::SoundSourceManager::new();
     let frame = 0;
     let mut stack = NativeStack::default();
-    stack.push_i32(GameHost::actor_handle_from_index(npc_index));
-    stack.push_i32(GameHost::actor_handle_from_index(target_index));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(npc_index));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(target_index));
     call_host_native_with_queries(
         host,
         NativeFn::Sees,
@@ -2100,7 +2107,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
 }
 
 fn set_experiences_test_host() -> (BoundGameHost, crate::campaign::Campaign, i32) {
-    let actor = GameHost::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let profile_idx = crate::profiles::CharacterProfileIdx(0);
     let mut status = crate::pc_status::PcStatus::default();
     status.human_status.hand_to_hand = crate::pc_status::Skill {
@@ -2196,7 +2203,7 @@ fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     ))]);
 
     let mut stack = NativeStack::default();
-    stack.push_i32(GameHost::actor_handle_from_index(0));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
     stack.push_i32(0);
     stack.push_i32(0);
     let ret = call_host_native(&mut host, NativeFn::SetActionAvailable, &mut stack);
@@ -2214,7 +2221,7 @@ fn is_action_available_rejects_out_of_range_slot() {
     ))]);
 
     let mut stack = NativeStack::default();
-    stack.push_i32(GameHost::actor_handle_from_index(0));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
     stack.push_i32(-1);
     let ret = call_host_native(&mut host, NativeFn::IsActionAvailable, &mut stack);
     assert_eq!(ret, 0);
@@ -2227,7 +2234,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
         vec![false, true, false],
         vec![false, false, true],
     ))]);
-    let actor = GameHost::actor_handle_from_index(0);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
 
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
@@ -2263,8 +2270,8 @@ fn add_as_subordinate_requests_patrol_reinit() {
     ]);
 
     let mut stack = NativeStack::default();
-    stack.push_i32(GameHost::actor_handle_from_index(0));
-    stack.push_i32(GameHost::actor_handle_from_index(1));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
+    stack.push_i32(ScriptHandleCodec::actor_handle_from_index(1));
     let ret = call_host_native(&mut host, NativeFn::AddAsSubordinate, &mut stack);
     assert_eq!(ret, 0);
 

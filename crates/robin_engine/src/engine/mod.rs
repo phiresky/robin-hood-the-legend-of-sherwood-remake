@@ -1008,7 +1008,7 @@ impl EngineInner {
     /// Resolve a script actor handle to the typed ID variant for the entity
     /// currently stored in that slot.
     pub(crate) fn entity_id_for_actor_handle(&self, handle: i32) -> Option<EntityId> {
-        crate::natives::GameHost::actor_handle_index(handle)
+        crate::natives::ScriptHandleCodec::actor_handle_index(handle)
             .and_then(|idx| self.entity_id_for_index(idx as u32))
     }
 

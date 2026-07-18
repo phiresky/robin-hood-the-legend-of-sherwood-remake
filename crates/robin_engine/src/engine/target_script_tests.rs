@@ -219,7 +219,7 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
 
     // Bind the target to its script class.  In production this runs
     // during per-target Initialize (see `script.rs:568-584`).
-    let handle = crate::natives::GameHost::actor_handle(target_id);
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(target_id);
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &mut engine.world.entities,
         &mut engine.ai.global,
