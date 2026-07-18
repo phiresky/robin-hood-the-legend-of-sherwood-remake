@@ -64,8 +64,8 @@ enum FramePreparation {
 
 /// Existing mission exit decision propagated to the session wrapper.
 ///
-/// Campaign restoration intentionally remains at the established exit sites
-/// until campaign ownership moves by value in a later wave.
+/// This is deliberately only control flow. The outer campaign lease finalizes
+/// every exit after the frame phase which selected it has completed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct MissionExit {
     code: GameCode,
@@ -104,7 +104,6 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<Option<GameCode>, String> {
-        let campaign_ref = &mut *services.campaign;
         let args = services.args;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
@@ -184,11 +183,6 @@ impl InteractiveMission {
                 )
             };
 
-            restore_engine_campaign(
-                campaign_ref,
-                &mut manager.engine,
-                "mission-start map capture exit",
-            );
             capture_result.map_err(|err| {
                 format!(
                     "failed to render mission-start map to {}: {err}",
@@ -673,7 +667,6 @@ impl InteractiveMission {
             host,
             &mut frame.commands,
             &assets,
-            campaign_ref,
             &mut *window,
             &mut presentation.renderer,
             &mut resources.cursor,
@@ -794,11 +787,6 @@ impl InteractiveMission {
         }
 
         if input.threaded.is_ended() {
-            restore_engine_campaign(
-                campaign_ref,
-                &mut manager.engine,
-                "window-close mission exit",
-            );
             return Ok(FramePreparation::Control(FrameControl::Exit(
                 MissionExit::new(GameCode::Quit),
             )));
@@ -811,7 +799,6 @@ impl InteractiveMission {
             &mut frame.commands,
             &assets,
             callbacks,
-            campaign_ref,
             &mut *window,
             &mut presentation.renderer,
             &mut resources.cursor,
@@ -1545,7 +1532,6 @@ impl InteractiveMission {
                 game,
                 &assets,
                 callbacks,
-                campaign_ref,
                 &mut *window,
                 &mut presentation.renderer,
                 &mut resources.cursor,
@@ -1710,7 +1696,6 @@ impl InteractiveMission {
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
-            restore_engine_campaign(campaign_ref, &mut manager.engine, "completed mission exit");
             return Ok(FramePreparation::Control(FrameControl::Exit(
                 MissionExit::new(exit_code),
             )));
@@ -1736,7 +1721,6 @@ impl InteractiveMission {
         // and re-queue the Load on the fresh engine.
         if callbacks.pending_level_load.is_some() {
             game.operation.set(GameCode::LevelLoad);
-            restore_engine_campaign(campaign_ref, &mut manager.engine, "cross-mission load exit");
             return Ok(FramePreparation::Control(FrameControl::Exit(
                 MissionExit::new(GameCode::LevelLoad),
             )));
@@ -2113,7 +2097,6 @@ impl InteractiveMission {
     ) -> Result<FrameControl, String> {
         let window = &mut *services.window;
         let callbacks = &mut *services.callbacks;
-        let campaign_ref = &mut *services.campaign;
         let profiles = services.profiles;
         let args = services.args;
         let InteractiveMission { runtime, frontend } = self;
@@ -2988,11 +2971,6 @@ impl InteractiveMission {
                         {
                             recorder.end_frame();
                         }
-                        restore_engine_campaign(
-                            campaign_ref,
-                            &mut manager.engine,
-                            "emergency debriefing exit",
-                        );
                         return Ok(FrameControl::Exit(MissionExit::new(GameCode::Quit)));
                     }
                 }

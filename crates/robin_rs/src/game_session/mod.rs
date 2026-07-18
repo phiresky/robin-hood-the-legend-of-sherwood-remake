@@ -200,7 +200,7 @@ pub(super) enum HandlerAction {
 /// campaign as a singleton, while `original-code/launcher.cpp:956-958` owns
 /// that campaign across mission runs. There is no empty/default campaign to
 /// substitute if the engine loses ownership unexpectedly.
-pub(super) fn restore_required_campaign(
+fn restore_required_campaign(
     campaign_ref: &mut Campaign,
     campaign: Option<Campaign>,
     context: &str,
@@ -213,17 +213,43 @@ fn restore_campaign_value(campaign_ref: &mut Campaign, campaign: Campaign) {
     *campaign_ref = campaign;
 }
 
-/// End an active mission's campaign lease and restore the one concrete
-/// campaign to the session owner.
-fn restore_engine_campaign(
-    campaign_ref: &mut Campaign,
-    engine: &mut engine_api::Engine,
-    context: &str,
-) {
-    let campaign = engine
-        .take_campaign()
-        .unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
-    restore_campaign_value(campaign_ref, campaign);
+/// Session-side owner of the campaign while an active mission leases its value
+/// to the Engine.
+///
+/// Loading is the only ownership-transfer boundary: once
+/// `load_level_and_sprite_bank` succeeds, every controlled mission outcome is
+/// routed through [`Self::finish`]. Consuming the lease makes restoration a
+/// once-only operation while still leaving the Engine as the live campaign
+/// owner for saves, deterministic ticks, and Sherwood transitions.
+#[must_use = "an active mission campaign lease must be finalized"]
+struct MissionCampaignLease<'a> {
+    session_campaign: &'a mut Campaign,
+}
+
+impl<'a> MissionCampaignLease<'a> {
+    fn new(session_campaign: &'a mut Campaign) -> Self {
+        Self { session_campaign }
+    }
+
+    fn session_campaign(&mut self) -> &mut Campaign {
+        self.session_campaign
+    }
+
+    /// Restore the campaign after all mission-local exit work has run, then
+    /// propagate the already-decided mission result unchanged.
+    fn finish(
+        self,
+        engine: &mut engine_api::Engine,
+        outcome: Result<GameCode, String>,
+        context: &str,
+    ) -> Result<GameCode, String> {
+        self.finish_campaign(engine.take_campaign(), outcome, context)
+    }
+
+    fn finish_campaign<T>(self, campaign: Option<Campaign>, outcome: T, context: &str) -> T {
+        restore_required_campaign(self.session_campaign, campaign, context);
+        outcome
+    }
 }
 
 /// Construct the optional custom-mission Lua state before level loading.
@@ -349,13 +375,13 @@ pub(crate) async fn run_mission_headless(
         game,
         loaded,
     );
+    let campaign_lease = MissionCampaignLease::new(campaign_ref);
     if let Err(error) = bootstrap.start_required_spellforge() {
-        restore_engine_campaign(
-            campaign_ref,
+        return campaign_lease.finish(
             &mut bootstrap.loaded.engine,
-            "Spellforge startup failure",
+            Err(error.to_string()),
+            "headless Spellforge startup failure",
         );
-        return Err(error.to_string());
     }
     bootstrap.prepare_audio(None, profiles);
     // True headless has no HUD, renderer, dialogue widgets, or debriefing
@@ -370,15 +396,15 @@ pub(crate) async fn run_mission_headless(
         let frame_result = mission.run_frame(args);
         match frame_result.outcome {
             FrameOutcome::Exit(code) => {
-                restore_engine_campaign(
-                    campaign_ref,
+                let context = frame_result
+                    .exit
+                    .expect("runtime exit must have a campaign finalization context")
+                    .campaign_restore_context();
+                return campaign_lease.finish(
                     &mut mission.runtime.world.manager.engine,
-                    frame_result
-                        .exit
-                        .expect("runtime exit must have a campaign restore context")
-                        .campaign_restore_context(),
+                    Ok(code),
+                    context,
                 );
-                return Ok(code);
             }
             FrameOutcome::Continue { sleep_ms } if frame_result.paused => {
                 crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
@@ -798,6 +824,7 @@ pub(crate) async fn run_mission(
         game,
         loaded,
     );
+    let mut campaign_lease = MissionCampaignLease::new(campaign_ref);
 
     // ── Spellforge Lua: post-level-load events ──
     //
@@ -812,12 +839,11 @@ pub(crate) async fn run_mission(
     // has already been constructed, so a missing host or failed event aborts
     // mission startup instead of continuing with partially initialized state.
     if let Err(error) = bootstrap.start_required_spellforge() {
-        restore_engine_campaign(
-            campaign_ref,
+        return campaign_lease.finish(
             &mut bootstrap.loaded.engine,
-            "Spellforge startup failure",
+            Err(error.to_string()),
+            "interactive Spellforge startup failure",
         );
-        return Err(error.to_string());
     }
 
     // ── Mission-specific sound setup (banks + mission music) ──
@@ -1082,8 +1108,11 @@ pub(crate) async fn run_mission(
         }
 
         tracing::info!("Sherwood entry with ARES=0 (lost campaign) — returning to main menu");
-        restore_engine_campaign(campaign_ref, &mut engine, "lost-campaign Sherwood exit");
-        return Ok(GameCode::Quit);
+        return campaign_lease.finish(
+            &mut engine,
+            Ok(GameCode::Quit),
+            "lost-campaign Sherwood exit",
+        );
     }
 
     // Reset the campaign's `MissionLength` accumulator and start the
@@ -1234,20 +1263,31 @@ pub(crate) async fn run_mission(
 
     let mut mission = bootstrap.finish_interactive(frontend, args, profiles);
 
-    let mut services = flow::MissionServices {
-        window,
-        callbacks,
-        campaign: campaign_ref,
-        profiles,
-        args,
+    let outcome = {
+        let mut services = flow::MissionServices {
+            window,
+            callbacks,
+            campaign: campaign_lease.session_campaign(),
+            profiles,
+            args,
+        };
+        mission.run(&mut services).await
     };
-    mission.run(&mut services).await
+    // `run` completes the selected exit phase (save/load flush, transition
+    // effects, recorder/modal bookkeeping) while the Engine still owns the
+    // campaign, matching the original GameLoop-before-session boundary.
+    campaign_lease.finish(
+        &mut mission.runtime.world.manager.engine,
+        outcome,
+        "interactive mission finalization",
+    )
 }
 
 #[cfg(test)]
 mod required_state_tests {
-    use super::{required_menu_resources, restore_campaign_value, restore_required_campaign};
+    use super::{MissionCampaignLease, required_menu_resources, restore_campaign_value};
     use crate::campaign::{Campaign, CampaignValue};
+    use crate::game_operation::GameCode;
     use crate::ingame_menu::IngameMenuResources;
 
     #[test]
@@ -1267,10 +1307,58 @@ mod required_state_tests {
     }
 
     #[test]
-    #[should_panic(expected = "test campaign restore: engine campaign is missing")]
-    fn campaign_restore_rejects_missing_engine_campaign() {
+    fn campaign_lease_finalizes_every_controlled_exit_outcome() {
+        let exit_outcomes = [
+            ("normal mission exit", Ok(GameCode::LevelSucceeded)),
+            ("mission-start map export", Ok(GameCode::Quit)),
+            ("window close", Ok(GameCode::Quit)),
+            ("modal emergency exit", Ok(GameCode::Quit)),
+            ("cross-mission load", Ok(GameCode::LevelLoad)),
+            ("pause-menu restart", Ok(GameCode::LevelRestart)),
+            ("Sherwood mission launch", Ok(GameCode::LevelInterrupted)),
+            ("campaign-map quit", Ok(GameCode::Quit)),
+            ("headless mission exit", Ok(GameCode::LevelFailed)),
+            ("headless replay completion", Ok(GameCode::Quit)),
+            (
+                "Spellforge startup error",
+                Err("startup failed".to_string()),
+            ),
+            ("map export error", Err("capture failed".to_string())),
+            ("mission frame error", Err("frame failed".to_string())),
+        ];
+
+        for (index, (path, outcome)) in exit_outcomes.into_iter().enumerate() {
+            let mut session_campaign = Campaign::default();
+            let mut engine_campaign = Campaign::default();
+            let marker = index as i32 + 1;
+            engine_campaign.values[CampaignValue::Custom20] = marker;
+            let production_sectors = engine_campaign.production_sectors.as_ptr();
+
+            let actual = MissionCampaignLease::new(&mut session_campaign).finish_campaign(
+                Some(engine_campaign),
+                outcome.clone(),
+                path,
+            );
+
+            assert_eq!(actual, outcome, "{path}");
+            assert_eq!(
+                session_campaign.values[CampaignValue::Custom20],
+                marker,
+                "{path}"
+            );
+            assert_eq!(
+                session_campaign.production_sectors.as_ptr(),
+                production_sectors,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "test campaign lease: engine campaign is missing")]
+    fn campaign_lease_rejects_missing_engine_campaign() {
         let mut campaign = Campaign::default();
-        restore_required_campaign(&mut campaign, None, "test campaign restore");
+        MissionCampaignLease::new(&mut campaign).finish_campaign(None, (), "test campaign lease");
     }
 
     #[test]

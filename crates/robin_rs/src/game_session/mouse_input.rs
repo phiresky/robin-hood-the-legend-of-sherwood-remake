@@ -7,12 +7,11 @@
 
 use super::{
     HandlerAction, center_on_reselected_portrait_pc, dispatch_local_command,
-    dispatch_local_commands, required_menu_resources, restore_required_campaign,
+    dispatch_local_commands, required_menu_resources,
 };
 use crate::Host;
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
-use crate::campaign::Campaign;
 use crate::campaign_map::{self, CampaignMapChoice};
 use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
@@ -1056,7 +1055,6 @@ pub(super) async fn handle_pause_menu_events(
     game: &mut Game,
     assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
-    campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
@@ -1319,11 +1317,6 @@ pub(super) async fn handle_pause_menu_events(
             PauseMenuOutcome::Restart => {
                 // Reload the same mission.
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                restore_required_campaign(
-                    campaign_ref,
-                    engine.take_campaign(),
-                    "pause-menu restart",
-                );
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
             PauseMenuOutcome::Quit => {
@@ -1336,11 +1329,6 @@ pub(super) async fn handle_pause_menu_events(
                     ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
                 if confirmed {
                     callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    restore_required_campaign(
-                        campaign_ref,
-                        engine.take_campaign(),
-                        "confirmed pause-menu Quit",
-                    );
                     return HandlerAction::Exit(GameCode::Quit);
                 }
                 if let Some(menu) = pause_menu.as_mut() {
@@ -1469,7 +1457,6 @@ pub(super) async fn handle_sherwood_hud_buttons(
     frame_cmds: &mut FrameCommands,
     assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
-    campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
@@ -1681,11 +1668,6 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
                     callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
-                    restore_required_campaign(
-                        campaign_ref,
-                        engine.take_campaign(),
-                        "Sherwood mission launch",
-                    );
                     return HandlerAction::Exit(GameCode::LevelInterrupted);
                 }
                 SherwoodButton::GoToExit => {
@@ -1727,7 +1709,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     host: &mut Host,
     frame_cmds: &mut FrameCommands,
     assets: &engine_api::LevelAssets,
-    campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
@@ -1896,11 +1877,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 engine.campaign_reset_last_pseudo_mission_status();
                 let ares_after = engine.campaign().expect("campaign").get_ares();
                 if ares_after == 0 {
-                    restore_required_campaign(
-                        campaign_ref,
-                        engine.take_campaign(),
-                        "lost pseudo-mission exit",
-                    );
                     return Ok(HandlerAction::Exit(GameCode::Quit));
                 }
                 game.show_campaign_map();
@@ -2022,11 +1998,6 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 // mission committed: exit Sherwood to the main menu.
                 // We deliberately leave `campaign_map_displayed` set
                 // so a save-on-exit would restore the overlay.
-                restore_required_campaign(
-                    campaign_ref,
-                    engine.take_campaign(),
-                    "campaign-map Quit",
-                );
                 return Ok(HandlerAction::Exit(GameCode::Quit));
             }
             CampaignMapChoice::Redisplay => {
