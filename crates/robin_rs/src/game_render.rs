@@ -1,7 +1,7 @@
 //! In-game rendering passes for the mission loop.
 //!
 //! Contains the GPU-phase rendering functions: entity sprites, selection
-//! outlines, ground marks, ambiance overlays, and minimap.  The in-game
+//! outlines, ground marks, and minimap.  The in-game
 //! menu rendering lives in [`crate::ingame_menu`] and is driven by
 //! [`crate::game_session`].
 
@@ -23,7 +23,7 @@ use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
-use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
+use robin_engine::engine::{DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
 use robin_engine::markers::GroundMark;
 use robin_engine::mask as engine_mask;
 use robin_engine::minimap as engine_minimap;
@@ -382,41 +382,6 @@ pub(crate) fn render_door_overlays(
             }
         }
     }
-}
-
-// ─── Ambiance screen overlay ───────────────────────────────────────
-
-/// Apply a night or fog color tint to the entire screen surface.
-///
-/// - Night: darkens scene with a blue-ish tint at 50% intensity
-/// - Fog: blends toward white at 60% intensity
-/// - Day: no overlay
-///
-/// The same math used for per-sprite effects in `frame_holder.rs` is applied
-/// to the composited screen buffer, giving a consistent visual result even
-/// for elements that bypass the sprite variant system (e.g. debug rectangles,
-/// selection highlights drawn before this pass, the background map which is
-/// already loaded from the ambiance-specific directory).
-pub(crate) fn apply_ambiance_overlay(engine: &Engine, renderer: &mut Renderer) {
-    use robin_assets::frame_holder::{
-        FOG_COLOR, FOG_INTENSITY, NIGHT_FOG_COLOR_16, NIGHT_INTENSITY,
-    };
-
-    let (level, fog_color) = match engine.weather().ambiance {
-        Ambiance::Night => (NIGHT_INTENSITY, NIGHT_FOG_COLOR_16),
-        Ambiance::Fog => (FOG_INTENSITY, FOG_COLOR),
-        _ => return, // Day/Storm: no overlay
-    };
-
-    // GPU path: draw a fullscreen semi-transparent rectangle.
-    // The blend formula `screen = fog * alpha + screen * (1 - alpha)` is
-    // equivalent to the per-pixel `apply_fog_effect_viewport` math, with
-    // slightly better precision (8-bit vs 5/6/5 channels).
-    let (r, g, b) = rgb565_to_rgb8(fog_color);
-    let alpha = ((100u16 - level) * 255 / 100) as u8;
-    let w = renderer.screen_width() as i32;
-    let h = renderer.screen_height() as i32;
-    renderer.render_gpu_rect(0, 0, w, h, r, g, b, alpha);
 }
 
 // ─── View cone overlay ────────────────────────────────────────────

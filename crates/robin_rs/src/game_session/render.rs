@@ -9,11 +9,11 @@ use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerToolti
 use crate::element::Posture;
 use crate::game::Game;
 use crate::game_render::{
-    apply_ambiance_overlay, render_bg_animations_gpu, render_combat_status_bars,
-    render_debug_animation_lines, render_debug_doors, render_debug_motion_graph,
-    render_debug_surfaces_fill, render_debug_surfaces_outline, render_debug_whatsup_overlay,
-    render_door_overlays, render_entities_gpu, render_ground_marks, render_listen_ping,
-    render_minimap, render_noise_display, render_patch_fx_gpu, render_ransom_amulet_overlay,
+    render_bg_animations_gpu, render_combat_status_bars, render_debug_animation_lines,
+    render_debug_doors, render_debug_motion_graph, render_debug_surfaces_fill,
+    render_debug_surfaces_outline, render_debug_whatsup_overlay, render_door_overlays,
+    render_entities_gpu, render_ground_marks, render_listen_ping, render_minimap,
+    render_noise_display, render_patch_fx_gpu, render_ransom_amulet_overlay,
     render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
     render_view_cone_overlay,
 };
@@ -840,11 +840,6 @@ pub(super) fn render_frame(
     //  renders as GPU textures / overlays on top.
     // ═══════════════════════════════════════════════════════════
     renderer.flush_base_layer();
-
-    // Apply night/fog tint as a GPU overlay rect.  Sprites carry
-    // their own night/fog variants, so only the background needs
-    // this tint.
-    apply_ambiance_overlay(engine, renderer);
 
     // C++ parity: RHengine::PerformRefreshAllElements refreshes background
     // animations/patch FX before ShowDetectionPolygon.  Keep the cone below
