@@ -1363,6 +1363,151 @@ fn selection_mutates_canonical_state_before_a_later_native_in_the_same_callback(
 }
 
 #[test]
+fn ai_lock_and_unlock_mutate_canonical_state_in_native_call_order() {
+    let mut host = BoundGameHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 17;
+    let capabilities = NativeSessionCapabilities::new(
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&sequences, &mut selected, &sounds, &weather, &frame);
+    let mut context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        AttachedScriptBindings::empty_ref(),
+        &capabilities,
+    );
+
+    let mut lock = NativeStack::default();
+    lock.push_i32(actor);
+    lock.push_i32(1);
+    assert_eq!(
+        <NativeContext<'_, '_> as HostFunctions>::call(
+            &mut context,
+            NativeFn::LockAI as u32,
+            &mut lock,
+        )
+        .expect_return("LockAI is synchronous"),
+        0
+    );
+    let ai = context
+        .entities
+        .get_legacy_slot(0)
+        .expect("test NPC")
+        .1
+        .ai_controller()
+        .expect("test NPC AI");
+    assert!(ai.script_locked);
+    assert!(ai.remember_events);
+
+    let mut unlock = NativeStack::default();
+    unlock.push_i32(actor);
+    assert_eq!(
+        <NativeContext<'_, '_> as HostFunctions>::call(
+            &mut context,
+            NativeFn::UnlockAI as u32,
+            &mut unlock,
+        )
+        .expect_return("UnlockAI is synchronous"),
+        0
+    );
+    let ai = context
+        .entities
+        .get_legacy_slot(0)
+        .expect("test NPC")
+        .1
+        .ai_controller()
+        .expect("test NPC AI");
+    assert!(
+        !ai.script_locked,
+        "same-callback UnlockAI must observe and clear the preceding LockAI"
+    );
+    assert!(context.deferred_commands.is_empty());
+}
+
+#[test]
+fn honolulu_ai_lock_is_visible_to_same_callback_unlock() {
+    let mut host = BoundGameHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 17;
+    let capabilities = NativeSessionCapabilities::new(
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&sequences, &mut selected, &sounds, &weather, &frame);
+    let mut context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        AttachedScriptBindings::empty_ref(),
+        &capabilities,
+    );
+
+    let mut set_location = NativeStack::default();
+    set_location.push_i32(actor);
+    set_location.push_i32(0);
+    assert_eq!(
+        <NativeContext<'_, '_> as HostFunctions>::call(
+            &mut context,
+            NativeFn::SetActorLocation as u32,
+            &mut set_location,
+        )
+        .expect_return("SetActorLocation is synchronous"),
+        0
+    );
+    assert!(
+        context
+            .entities
+            .get_legacy_slot(0)
+            .expect("test NPC")
+            .1
+            .ai_controller()
+            .expect("test NPC AI")
+            .script_locked,
+        "SetActorLocation(NULL) must lock an unlocked NPC before returning"
+    );
+
+    let mut unlock = NativeStack::default();
+    unlock.push_i32(actor);
+    assert_eq!(
+        <NativeContext<'_, '_> as HostFunctions>::call(
+            &mut context,
+            NativeFn::UnlockAI as u32,
+            &mut unlock,
+        )
+        .expect_return("UnlockAI is synchronous"),
+        0
+    );
+    assert!(
+        !context
+            .entities
+            .get_legacy_slot(0)
+            .expect("test NPC")
+            .1
+            .ai_controller()
+            .expect("test NPC AI")
+            .script_locked,
+        "same-callback UnlockAI must observe the Honolulu lock"
+    );
+}
+
+#[test]
 fn scroll_status_mutates_canonical_state_before_a_later_native_in_the_same_callback() {
     let mut host = BoundGameHost::new();
     host.entities

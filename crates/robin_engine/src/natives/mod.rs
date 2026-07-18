@@ -2574,28 +2574,48 @@ impl NativeContext<'_, '_> {
         true
     }
 
-    /// Common body for the `LockAI` script native.
+    /// Common body for the `LockAI` script native and the Honolulu branch of
+    /// `SetActorLocation`.
     ///
-    /// The actual `script_lock` call is routed through
-    /// `DeferredCommand::ScriptLockAI` so the engine-side handler can
-    /// peek the actor's currently-running sequence command — we need it
-    /// to gate `Stop()`: only call `Stop()` when the current command is
-    /// not already `LockAi`.  `GameHost` doesn't see the sequence
-    /// manager directly, so the peek has to live in the engine handler.
+    /// Original `RHArtificialIntelligence::ScriptLockAI` mutates the NPC
+    /// before returning to the script. In particular, a following `UnlockAI`
+    /// in the same callback must observe the lock. The live sequence query is
+    /// needed only to preserve the `RHCOMMAND_LOCK_AI` exception: that command
+    /// must not stop itself while executing its immediate action.
     fn script_lock_ai(&mut self, actor: i32, remember_events: bool) {
-        let Some(entity) = self.get_entity_mut(actor) else {
+        let Some(owner) = self.actor_id(actor) else {
             tracing::warn!("LockAI: invalid actor handle {actor}");
             return;
         };
 
-        if entity.is_npc() {
-            self.deferred_commands.push(DeferredCommand::ScriptLockAI {
-                actor,
-                send_back: remember_events,
-            });
-        } else {
+        if !self
+            .entities
+            .get(owner)
+            .expect("LockAI resolved actor disappeared during native dispatch")
+            .is_npc()
+        {
             tracing::warn!("LockAI: tried to lock the AI of a PC ({actor})");
+            return;
         }
+
+        let from_lockai_command = self
+            .sequence_manager
+            .expect("LockAI requires a live SequenceManager query view")
+            .current_element_for_actor(owner)
+            .and_then(|(sequence_id, element_index)| {
+                self.sequence_manager
+                    .expect("LockAI requires a live SequenceManager query view")
+                    .get_element(sequence_id, element_index)
+            })
+            .is_some_and(|element| element.command == Command::LockAi);
+        let entity = self
+            .entities
+            .get_mut(owner)
+            .expect("LockAI resolved actor disappeared before mutation");
+        let ai = entity
+            .ai_controller_mut()
+            .expect("LockAI resolved an NPC without an AI controller");
+        ai.script_lock(remember_events, from_lockai_command);
     }
 
     /// Common body for the `UnlockAI` script native.
@@ -5426,12 +5446,12 @@ impl NativeContext<'_, '_> {
                                 playable: false,
                             });
                         }
-                        // Unlocked NPCs get script-locked.
+                        // Unlocked NPCs get script-locked before the native
+                        // returns, matching `SetActorLocation(NULL)` in the
+                        // Original. A later `UnlockAI` in this callback must
+                        // observe this write.
                         if is_npc && is_unlocked_npc {
-                            self.deferred_commands.push(DeferredCommand::ScriptLockAI {
-                                actor,
-                                send_back: false,
-                            });
+                            self.script_lock_ai(actor, false);
                         }
                     } else if let Some((x, y)) = self.resolve_location_pos(loc) {
                         // Read layer + sector from the resolved point
