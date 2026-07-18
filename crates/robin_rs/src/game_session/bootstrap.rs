@@ -16,7 +16,10 @@ use super::setup::{
     MissionProcessResources, load_level_and_sprite_bank, pre_decode_maps_and_resources,
     setup_mission_audio,
 };
-use super::{MissionCampaignLease, install_pending_lua_session, setup_multiplayer_session};
+use super::{
+    CampaignRestoreOwner, EngineCampaignSource, MissionCampaignLease, install_pending_lua_session,
+    setup_multiplayer_session,
+};
 use crate::Host;
 use crate::campaign::Campaign;
 use crate::game::Game;
@@ -361,6 +364,12 @@ impl MissionBootstrap {
     }
 }
 
+impl EngineCampaignSource for MissionBootstrap {
+    fn take_campaign(&mut self) -> Option<Campaign> {
+        self.loaded.engine.take_campaign()
+    }
+}
+
 /// Owns the temporary loading renderer and the presentation configuration it
 /// resolved. Consuming [`Self::close_before_renderer`] is the only way to
 /// obtain that configuration for the game renderer.
@@ -494,21 +503,21 @@ impl InteractiveLoadStage {
         }))
     }
 
-    fn load_level(
+    fn load_level<'a>(
         mut self,
         window: &mut GameWindow,
-        campaign: &mut Campaign,
+        campaign: &'a mut Campaign,
         profiles: &ProfileManager,
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
-    ) -> Result<LoadedInteractiveStage, String> {
+    ) -> Result<(LoadedInteractiveStage, MissionCampaignLease<'a>), String> {
         self.loading.status("Loading interface resources...", 0.12);
         let (ground_mark, titbit_rows, minimap_widget) =
             self.process.engine_setup_resources(&mut self.host);
         let screen_width = window.width as f32;
         let screen_height = window.height as f32;
-        let loaded = load_level_and_sprite_bank(
+        let (loaded, campaign_return) = load_level_and_sprite_bank(
             Some(window),
             &mut self.loading.renderer,
             &mut self.host,
@@ -523,16 +532,19 @@ impl InteractiveLoadStage {
             titbit_rows,
             minimap_widget,
         )?;
-        Ok(LoadedInteractiveStage {
-            bootstrap: MissionBootstrap::new(
-                MissionSpec::interactive(mission_idx, location, screen_width, screen_height),
-                self.host,
-                self.game,
-                loaded,
-            ),
-            process: self.process,
-            loading: self.loading,
-        })
+        Ok((
+            LoadedInteractiveStage {
+                bootstrap: MissionBootstrap::new(
+                    MissionSpec::interactive(mission_idx, location, screen_width, screen_height),
+                    self.host,
+                    self.game,
+                    loaded,
+                ),
+                process: Some(self.process),
+                loading: Some(self.loading),
+            },
+            campaign_return,
+        ))
     }
 }
 
@@ -541,29 +553,42 @@ impl InteractiveLoadStage {
 /// `MissionBootstrapPhase`.
 struct LoadedInteractiveStage {
     bootstrap: MissionBootstrap,
-    process: MissionProcessResources,
-    loading: MissionLoadingScreen,
+    process: Option<MissionProcessResources>,
+    loading: Option<MissionLoadingScreen>,
 }
 
 impl LoadedInteractiveStage {
     fn prepare_audio(&mut self, profiles: &ProfileManager) {
-        self.loading.status("Loading mission audio...", 0.75);
-        self.bootstrap
-            .prepare_audio(self.process.audio_backend.as_mut(), profiles);
+        self.loading
+            .as_mut()
+            .expect("interactive loading screen must exist until frontend assembly")
+            .status("Loading mission audio...", 0.75);
+        self.bootstrap.prepare_audio(
+            self.process
+                .as_mut()
+                .expect("interactive process resources must exist until frontend assembly")
+                .audio_backend
+                .as_mut(),
+            profiles,
+        );
     }
 
     fn assemble_frontend(
-        mut self,
+        &mut self,
         window: &mut GameWindow,
         profiles: &ProfileManager,
         args: &crate::main_entry::CliArgs,
-    ) -> (MissionBootstrap, InteractiveFrontendAssembly) {
+    ) -> InteractiveFrontendAssembly {
+        let loading = self
+            .loading
+            .as_mut()
+            .expect("interactive loading screen must exist until frontend assembly");
         let LoadedInteractiveResources {
             level_descriptors,
             hud_fonts,
         } = pre_decode_maps_and_resources(
             Some(window),
-            &mut self.loading.renderer,
+            &mut loading.renderer,
             &mut self.bootstrap.loaded.engine,
             profiles,
             &self.bootstrap.host,
@@ -571,11 +596,17 @@ impl LoadedInteractiveStage {
         );
         let short_briefings = self
             .process
+            .as_mut()
+            .expect("interactive process resources must exist until frontend assembly")
             .resolve_short_briefings(level_descriptors.as_ref());
         let background = self.bootstrap.loaded.pre_decoded_background.take();
         let minimap = self.bootstrap.loaded.pre_decoded_minimap.take();
 
-        let renderer_config = self.loading.close_before_renderer();
+        let renderer_config = self
+            .loading
+            .take()
+            .expect("interactive loading screen must close before renderer construction")
+            .close_before_renderer();
         let mut renderer =
             InteractiveRendererAssembly::new_after_loading_screen(window, renderer_config);
         renderer.upload_maps(
@@ -590,7 +621,9 @@ impl LoadedInteractiveStage {
             &self.bootstrap.game,
             &mut self.bootstrap.loaded.engine,
             &self.bootstrap.loaded.assets,
-            self.process,
+            self.process
+                .take()
+                .expect("interactive process resources must move into the frontend once"),
             LoadedInteractiveResources {
                 level_descriptors,
                 hud_fonts,
@@ -600,15 +633,26 @@ impl LoadedInteractiveStage {
             self.bootstrap.spec.mission_idx,
             self.bootstrap.spec.location,
         );
-        (self.bootstrap, frontend)
+        frontend
+    }
+}
+
+impl EngineCampaignSource for LoadedInteractiveStage {
+    fn take_campaign(&mut self) -> Option<Campaign> {
+        self.bootstrap.loaded.engine.take_campaign()
     }
 }
 
 /// A fully constructed interactive mission paired with the session campaign
 /// lease it must return exactly once.
 pub(super) struct BuiltInteractiveMission<'a> {
-    mission: InteractiveMission,
-    campaign_return: MissionCampaignLease<'a>,
+    owner: CampaignRestoreOwner<'a, InteractiveMission>,
+}
+
+impl EngineCampaignSource for InteractiveMission {
+    fn take_campaign(&mut self) -> Option<Campaign> {
+        self.runtime.world.manager.engine.take_campaign()
+    }
 }
 
 impl BuiltInteractiveMission<'_> {
@@ -625,15 +669,12 @@ impl BuiltInteractiveMission<'_> {
             profiles,
             args,
         };
-        self.mission.run(&mut services).await
+        self.owner.value_mut().run(&mut services).await
     }
 
-    pub(super) fn finish(mut self, outcome: Result<GameCode, String>) -> Result<GameCode, String> {
-        self.campaign_return.finish(
-            &mut self.mission.runtime.world.manager.engine,
-            outcome,
-            "interactive mission finalization",
-        )
+    pub(super) fn finish(self, outcome: Result<GameCode, String>) -> Result<GameCode, String> {
+        self.owner
+            .finish(outcome, "interactive mission finalization")
     }
 }
 
@@ -676,17 +717,17 @@ impl HeadlessLoadStage {
         }))
     }
 
-    fn load_level(
+    fn load_level<'a>(
         mut self,
-        campaign: &mut Campaign,
+        campaign: &'a mut Campaign,
         profiles: &ProfileManager,
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
-    ) -> Result<MissionBootstrap, String> {
+    ) -> Result<(MissionBootstrap, MissionCampaignLease<'a>), String> {
         let (ground_mark, titbit_rows, minimap_widget) =
             self.resources.engine_setup_resources(&mut self.host);
-        let loaded = load_level_and_sprite_bank(
+        let (loaded, campaign_return) = load_level_and_sprite_bank(
             None,
             &mut None,
             &mut self.host,
@@ -701,11 +742,14 @@ impl HeadlessLoadStage {
             titbit_rows,
             minimap_widget,
         )?;
-        Ok(MissionBootstrap::new(
-            MissionSpec::headless(mission_idx, location),
-            self.host,
-            self.game,
-            loaded,
+        Ok((
+            MissionBootstrap::new(
+                MissionSpec::headless(mission_idx, location),
+                self.host,
+                self.game,
+                loaded,
+            ),
+            campaign_return,
         ))
     }
 }
@@ -713,8 +757,13 @@ impl HeadlessLoadStage {
 /// Complete true-headless mission plus the private session return sink for its
 /// engine-owned campaign.
 pub(super) struct BuiltHeadlessMission<'a> {
-    mission: HeadlessMission,
-    campaign_return: MissionCampaignLease<'a>,
+    owner: CampaignRestoreOwner<'a, HeadlessMission>,
+}
+
+impl EngineCampaignSource for HeadlessMission {
+    fn take_campaign(&mut self) -> Option<Campaign> {
+        self.runtime.world.manager.engine.take_campaign()
+    }
 }
 
 impl BuiltHeadlessMission<'_> {
@@ -722,15 +771,12 @@ impl BuiltHeadlessMission<'_> {
         &mut self,
         args: &crate::main_entry::CliArgs,
     ) -> HeadlessMissionOutcome {
-        self.mission.run(args).await
+        self.owner.value_mut().run(args).await
     }
 
-    pub(super) fn finish(mut self, outcome: HeadlessMissionOutcome) -> Result<GameCode, String> {
-        self.campaign_return.finish(
-            &mut self.mission.runtime.world.manager.engine,
-            Ok(outcome.code),
-            outcome.exit.campaign_restore_context(),
-        )
+    pub(super) fn finish(self, outcome: HeadlessMissionOutcome) -> Result<GameCode, String> {
+        self.owner
+            .finish(Ok(outcome.code), outcome.exit.campaign_restore_context())
     }
 }
 
@@ -766,22 +812,30 @@ impl HeadlessMissionBuilder {
                 return Ok(HeadlessBuildOutcome::Finished(Ok(code)));
             }
         };
-        let mut bootstrap = loading.load_level(campaign, profiles, mission_idx, location, args)?;
-        let campaign_lease = MissionCampaignLease::new(campaign);
-        if let Err(error) = bootstrap.start_required_spellforge() {
-            let outcome = campaign_lease.finish(
-                &mut bootstrap.loaded.engine,
+        let (bootstrap, campaign_lease) =
+            loading.load_level(campaign, profiles, mission_idx, location, args)?;
+        let mut stage = CampaignRestoreOwner::new(
+            bootstrap,
+            campaign_lease,
+            "dropped headless mission builder",
+        );
+        if let Err(error) = stage.value_mut().start_required_spellforge() {
+            let outcome = stage.finish(
                 Err(error.to_string()),
                 "headless Spellforge startup failure",
             );
             return Ok(HeadlessBuildOutcome::Finished(outcome));
         }
-        bootstrap.prepare_audio(None, profiles);
-        bootstrap.start_campaign_clock(callbacks);
+        stage.value_mut().prepare_audio(None, profiles);
+        stage.value_mut().start_campaign_clock(callbacks);
+        let (bootstrap, campaign_lease) = stage.into_parts();
         let mission = bootstrap.finish_headless(args, profiles, HeadlessPolicy::replay_runner());
         Ok(HeadlessBuildOutcome::Ready(BuiltHeadlessMission {
-            mission,
-            campaign_return: campaign_lease,
+            owner: CampaignRestoreOwner::new(
+                mission,
+                campaign_lease,
+                "dropped built headless mission",
+            ),
         }))
     }
 }
@@ -827,44 +881,51 @@ impl InteractiveMissionBuilder {
                 return Ok(InteractiveBuildOutcome::Finished(Ok(code)));
             }
         };
-        let mut loaded =
+        let (loaded, campaign_lease) =
             loading.load_level(window, campaign, profiles, mission_idx, location, args)?;
-        let campaign_lease = MissionCampaignLease::new(campaign);
+        let mut stage = CampaignRestoreOwner::new(
+            loaded,
+            campaign_lease,
+            "dropped interactive mission builder",
+        );
 
-        if let Err(error) = loaded.bootstrap.start_required_spellforge() {
-            let outcome = campaign_lease.finish(
-                &mut loaded.bootstrap.loaded.engine,
+        if let Err(error) = stage.value_mut().bootstrap.start_required_spellforge() {
+            let outcome = stage.finish(
                 Err(error.to_string()),
                 "interactive Spellforge startup failure",
             );
             return Ok(InteractiveBuildOutcome::Finished(outcome));
         }
-        loaded.prepare_audio(profiles);
-        let (mut bootstrap, mut frontend) = loaded.assemble_frontend(window, profiles, args);
+        stage.value_mut().prepare_audio(profiles);
+        let mut frontend = stage.value_mut().assemble_frontend(window, profiles, args);
 
         if let Some(code) = run_lost_sherwood_gate(
             window,
-            &bootstrap.host,
-            &bootstrap.loaded.engine,
+            &stage.value().bootstrap.host,
+            &stage.value().bootstrap.loaded.engine,
             &mut frontend,
         )
         .await
         {
-            let outcome = campaign_lease.finish(
-                &mut bootstrap.loaded.engine,
-                Ok(code),
-                "lost-campaign Sherwood exit",
-            );
+            let outcome = stage.finish(Ok(code), "lost-campaign Sherwood exit");
             return Ok(InteractiveBuildOutcome::Finished(outcome));
         }
 
-        bootstrap.start_campaign_clock(callbacks);
-        bootstrap.setup_restart_or_sherwood(callbacks, args);
+        stage.value_mut().bootstrap.start_campaign_clock(callbacks);
+        stage
+            .value_mut()
+            .bootstrap
+            .setup_restart_or_sherwood(callbacks, args);
         let frontend = frontend.finish(window.width, window.height);
+        let (loaded, campaign_lease) = stage.into_parts();
+        let bootstrap = loaded.bootstrap;
         let mission = bootstrap.finish_interactive(frontend, args, profiles);
         Ok(InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
-            mission,
-            campaign_return: campaign_lease,
+            owner: CampaignRestoreOwner::new(
+                mission,
+                campaign_lease,
+                "dropped built interactive mission",
+            ),
         }))
     }
 }
@@ -872,9 +933,43 @@ impl InteractiveMissionBuilder {
 #[cfg(test)]
 mod tests {
     use super::{
-        MissionBootstrapLifecycle, MissionBootstrapPhase, MissionFrontendKind, MissionSpec,
+        CampaignRestoreOwner, EngineCampaignSource, MissionBootstrapLifecycle,
+        MissionBootstrapPhase, MissionFrontendKind, MissionSpec,
     };
+    use crate::campaign::{Campaign, CampaignValue};
+    use crate::game_session::MissionCampaignLease;
     use robin_engine::profiles::MissionLocation;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+
+    struct TestCampaignSource {
+        campaign: Option<Campaign>,
+    }
+
+    impl EngineCampaignSource for TestCampaignSource {
+        fn take_campaign(&mut self) -> Option<Campaign> {
+            self.campaign.take()
+        }
+    }
+
+    struct PendingCampaignFuture<'a> {
+        _owner: CampaignRestoreOwner<'a, TestCampaignSource>,
+    }
+
+    impl Future for PendingCampaignFuture<'_> {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
+        }
+    }
+
+    fn marked_campaign(marker: i32) -> Campaign {
+        let mut campaign = Campaign::default();
+        campaign.values[CampaignValue::Custom20] = marker;
+        campaign
+    }
 
     #[test]
     fn mission_spec_round_trips_without_process_resources() {
@@ -923,5 +1018,62 @@ mod tests {
         let mut lifecycle = MissionBootstrapLifecycle::new();
 
         lifecycle.advance(Phase::LevelInitialized, Phase::AudioPrepared);
+    }
+
+    #[test]
+    fn dropping_campaign_owner_restores_exact_allocation_once() {
+        let mut session_campaign = Campaign::default();
+        let engine_campaign = marked_campaign(0x51_51_51);
+        let production_sectors = engine_campaign.production_sectors.as_ptr();
+        let production_capacity = engine_campaign.production_sectors.capacity();
+
+        {
+            let lease = MissionCampaignLease::new(&mut session_campaign);
+            let owner = CampaignRestoreOwner::new(
+                TestCampaignSource {
+                    campaign: Some(engine_campaign),
+                },
+                lease,
+                "dropped test campaign owner",
+            );
+            drop(owner);
+        }
+
+        assert_eq!(session_campaign.values[CampaignValue::Custom20], 0x51_51_51);
+        assert_eq!(
+            session_campaign.production_sectors.as_ptr(),
+            production_sectors
+        );
+        assert_eq!(
+            session_campaign.production_sectors.capacity(),
+            production_capacity
+        );
+    }
+
+    #[test]
+    fn cancelling_pending_campaign_future_restores_exact_allocation() {
+        let mut session_campaign = Campaign::default();
+        let engine_campaign = marked_campaign(0x62_62_62);
+        let production_sectors = engine_campaign.production_sectors.as_ptr();
+
+        {
+            let owner = CampaignRestoreOwner::new(
+                TestCampaignSource {
+                    campaign: Some(engine_campaign),
+                },
+                MissionCampaignLease::new(&mut session_campaign),
+                "cancelled test campaign future",
+            );
+            let mut future = Box::pin(PendingCampaignFuture { _owner: owner });
+            let mut context = Context::from_waker(Waker::noop());
+            assert!(future.as_mut().poll(&mut context).is_pending());
+            drop(future);
+        }
+
+        assert_eq!(session_campaign.values[CampaignValue::Custom20], 0x62_62_62);
+        assert_eq!(
+            session_campaign.production_sectors.as_ptr(),
+            production_sectors
+        );
     }
 }
