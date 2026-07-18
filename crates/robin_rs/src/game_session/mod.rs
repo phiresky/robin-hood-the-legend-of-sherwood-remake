@@ -181,28 +181,102 @@ fn restore_campaign_value(campaign_ref: &mut Campaign, campaign: Campaign) {
 /// owner for saves, deterministic ticks, and Sherwood transitions.
 #[must_use = "an active mission campaign lease must be finalized"]
 pub(super) struct MissionCampaignLease<'a> {
-    session_campaign: &'a mut Campaign,
+    session_campaign: Option<&'a mut Campaign>,
 }
 
 impl<'a> MissionCampaignLease<'a> {
     pub(super) fn new(session_campaign: &'a mut Campaign) -> Self {
-        Self { session_campaign }
+        Self {
+            session_campaign: Some(session_campaign),
+        }
     }
 
-    /// Restore the campaign after all mission-local exit work has run, then
-    /// propagate the already-decided mission result unchanged.
-    pub(super) fn finish(
-        self,
-        engine: &mut engine_api::Engine,
-        outcome: Result<GameCode, String>,
-        context: &str,
-    ) -> Result<GameCode, String> {
-        self.finish_campaign(engine.take_campaign(), outcome, context)
+    pub(super) fn restore_campaign(&mut self, campaign: Option<Campaign>, context: &str) {
+        let session_campaign = self
+            .session_campaign
+            .take()
+            .unwrap_or_else(|| panic!("{context}: campaign lease was already restored"));
+        restore_required_campaign(session_campaign, campaign, context);
     }
 
-    fn finish_campaign<T>(self, campaign: Option<Campaign>, outcome: T, context: &str) -> T {
-        restore_required_campaign(self.session_campaign, campaign, context);
+    #[cfg(test)]
+    fn finish_campaign<T>(mut self, campaign: Option<Campaign>, outcome: T, context: &str) -> T {
+        self.restore_campaign(campaign, context);
         outcome
+    }
+}
+
+/// Source whose live engine owns the campaign leased from the session.
+pub(super) trait EngineCampaignSource {
+    fn take_campaign(&mut self) -> Option<Campaign>;
+}
+
+/// Couples an engine-containing mission stage to the session slot that must
+/// receive its campaign again. Every async owner uses this wrapper, so dropping
+/// a builder future or a running mission restores the campaign exactly once.
+pub(super) struct CampaignRestoreOwner<'a, T: EngineCampaignSource> {
+    value: Option<T>,
+    campaign_return: Option<MissionCampaignLease<'a>>,
+    drop_context: &'static str,
+}
+
+impl<'a, T: EngineCampaignSource> CampaignRestoreOwner<'a, T> {
+    pub(super) fn new(
+        value: T,
+        campaign_return: MissionCampaignLease<'a>,
+        drop_context: &'static str,
+    ) -> Self {
+        Self {
+            value: Some(value),
+            campaign_return: Some(campaign_return),
+            drop_context,
+        }
+    }
+
+    pub(super) fn value(&self) -> &T {
+        self.value
+            .as_ref()
+            .expect("campaign owner value must exist until ownership transfer")
+    }
+
+    pub(super) fn value_mut(&mut self) -> &mut T {
+        self.value
+            .as_mut()
+            .expect("campaign owner value must exist until ownership transfer")
+    }
+
+    fn restore(&mut self, context: &str) {
+        let Some(mut campaign_return) = self.campaign_return.take() else {
+            return;
+        };
+        let value = self
+            .value
+            .as_mut()
+            .expect("pending campaign return requires an engine-containing value");
+        campaign_return.restore_campaign(value.take_campaign(), context);
+    }
+
+    pub(super) fn finish<R>(mut self, outcome: R, context: &str) -> R {
+        self.restore(context);
+        outcome
+    }
+
+    pub(super) fn into_parts(mut self) -> (T, MissionCampaignLease<'a>) {
+        let value = self
+            .value
+            .take()
+            .expect("campaign owner value must exist during ownership transfer");
+        let campaign_return = self
+            .campaign_return
+            .take()
+            .expect("campaign lease must exist during ownership transfer");
+        (value, campaign_return)
+    }
+}
+
+impl<T: EngineCampaignSource> Drop for CampaignRestoreOwner<'_, T> {
+    fn drop(&mut self) {
+        self.restore(self.drop_context);
     }
 }
 

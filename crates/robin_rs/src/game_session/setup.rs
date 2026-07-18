@@ -3,6 +3,7 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
+use super::{CampaignRestoreOwner, EngineCampaignSource, MissionCampaignLease};
 use crate::Host;
 use crate::audio_backend::KiraAudioBackend;
 use crate::campaign::Campaign;
@@ -1160,6 +1161,12 @@ pub(super) struct LoadedMissionCore {
     pub(super) engine_rng_seed: u64,
 }
 
+impl EngineCampaignSource for Engine {
+    fn take_campaign(&mut self) -> Option<Campaign> {
+        self.take_campaign()
+    }
+}
+
 fn initial_rng_seed(
     args: &crate::main_entry::CliArgs,
     multiplayer_seed: Option<u64>,
@@ -1188,12 +1195,12 @@ fn construct_with_initial_rng_seed<T>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn load_level_and_sprite_bank(
+pub(super) fn load_level_and_sprite_bank<'a>(
     mut event_pump: Option<&mut crate::window::GameWindow>,
     loading_screen: &mut Option<crate::loading_screen::LoadingScreenRenderer>,
     host: &mut Host,
     game: &mut Game,
-    campaign_ref: &mut Campaign,
+    campaign_ref: &'a mut Campaign,
     profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
     args: &crate::main_entry::CliArgs,
@@ -1202,7 +1209,7 @@ pub(super) fn load_level_and_sprite_bank(
     ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
     titbit_row_frame_counts: Vec<u16>,
     minimap_widget: Option<engine_api::MinimapWidgetSetup>,
-) -> Result<LoadedMissionCore, String> {
+) -> Result<(LoadedMissionCore, MissionCampaignLease<'a>), String> {
     let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
     // engine reads profiles via `&assets.profile_manager` everywhere now
@@ -1433,6 +1440,11 @@ pub(super) fn load_level_and_sprite_bank(
             }
         }
     };
+    let engine_owner = CampaignRestoreOwner::new(
+        engine,
+        MissionCampaignLease::new(campaign_ref),
+        "dropped post-load engine setup",
+    );
     if rng_seed != 0 {
         tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
     }
@@ -1456,17 +1468,21 @@ pub(super) fn load_level_and_sprite_bank(
     // Generate night/fog variant dictionaries based on ambiance.
     // Runs host-side because the engine crate doesn't reference
     // `FrameHolder`.
-    crate::level_loading_host::initialize_sprite_variants(host, &engine);
+    crate::level_loading_host::initialize_sprite_variants(host, engine_owner.value());
     tick_progress(loading_screen, event_pump, 1.0);
 
-    Ok(LoadedMissionCore {
-        engine,
-        assets,
-        dev,
-        pre_decoded_background: pre_decoded_bg,
-        pre_decoded_minimap: pre_decoded_mm,
-        engine_rng_seed: rng_seed,
-    })
+    let (engine, campaign_return) = engine_owner.into_parts();
+    Ok((
+        LoadedMissionCore {
+            engine,
+            assets,
+            dev,
+            pre_decoded_background: pre_decoded_bg,
+            pre_decoded_minimap: pre_decoded_mm,
+            engine_rng_seed: rng_seed,
+        },
+        campaign_return,
+    ))
 }
 
 /// Build `ThreadedInput` + `InputTranslator`, load the active profile's
