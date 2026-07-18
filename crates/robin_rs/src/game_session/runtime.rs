@@ -285,17 +285,21 @@ impl MissionRuntime {
     /// Drivers intentionally choose when to call this: headless does so
     /// before frame-zero recorder commit, graphical does so after refresh.
     pub(super) fn run_post_initialize(&mut self) -> bool {
-        let mut display = std::mem::take(&mut self.world.host.engine_display);
-        let initialized = crate::sim_timeline::run_post_initialize_stage(
-            &mut self.world.host,
-            &mut display,
-            &self.world.assets,
-            &mut self.world.manager.engine,
-            &mut self.world.dev,
-        );
-        self.world.host.engine_display = display;
-        self.timeline.trace(FrameContractStage::PostInitialize);
-        initialized
+        let Self {
+            world, timeline, ..
+        } = self;
+        timeline.cross_post_initialize(|| {
+            let mut display = std::mem::take(&mut world.host.engine_display);
+            let initialized = crate::sim_timeline::run_post_initialize_stage(
+                &mut world.host,
+                &mut display,
+                &world.assets,
+                &mut world.manager.engine,
+                &mut world.dev,
+            );
+            world.host.engine_display = display;
+            initialized
+        })
     }
 }
 
@@ -524,6 +528,15 @@ impl TimelineRuntime {
 
     pub(super) fn trace(&mut self, stage: FrameContractStage) {
         self.execution_trace.emit(stage);
+    }
+
+    /// Execute the one-shot host dispatch, then record that the boundary was
+    /// crossed. Both mission drivers use this seam while choosing their own
+    /// presentation/recorder ordering around it.
+    pub(super) fn cross_post_initialize<T>(&mut self, dispatch: impl FnOnce() -> T) -> T {
+        let result = dispatch();
+        self.trace(FrameContractStage::PostInitialize);
+        result
     }
 
     #[cfg(test)]
@@ -764,8 +777,8 @@ mod tests {
 
     #[test]
     fn graphical_execution_trace_keeps_original_refresh_sound_post_initialize_tail() {
-        let mut trace = FrameExecutionTrace::default();
-        trace.begin(FrameContractStage::NetworkIngress);
+        let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+        timeline.begin_execution_trace(FrameContractStage::NetworkIngress);
         for stage in [
             FrameContractStage::TimelineBegin,
             FrameContractStage::InputAndMenus,
@@ -779,12 +792,15 @@ mod tests {
             FrameContractStage::AppEffects,
             FrameContractStage::Audio,
             FrameContractStage::Presentation,
-            FrameContractStage::PostInitialize,
-            FrameContractStage::Pacing,
         ] {
-            trace.emit(stage);
+            timeline.trace(stage);
         }
-        let stages = &trace.stages;
+        let mut dispatched = false;
+        timeline.cross_post_initialize(|| dispatched = true);
+        timeline.trace(FrameContractStage::Pacing);
+
+        assert!(dispatched);
+        let stages = timeline.execution_trace();
         assert_eq!(
             stages,
             &[
@@ -818,21 +834,25 @@ mod tests {
 
     #[test]
     fn headless_execution_trace_keeps_post_initialize_before_frame_zero_commit() {
-        let mut trace = FrameExecutionTrace::default();
-        trace.begin(FrameContractStage::TimelineBegin);
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
         for stage in [
             FrameContractStage::PreTickCommands,
             FrameContractStage::Simulation,
             FrameContractStage::HostRpcAndTimelineCommit,
             FrameContractStage::ModalDrain,
-            FrameContractStage::PostInitialize,
-            FrameContractStage::RecorderCommit,
-            FrameContractStage::Presentation,
-            FrameContractStage::Pacing,
         ] {
-            trace.emit(stage);
+            timeline.trace(stage);
         }
-        let stages = &trace.stages;
+        let mut dispatched = false;
+        timeline.cross_post_initialize(|| dispatched = true);
+        let mut frame = MissionFrame::new(0);
+        timeline.finish_recording(&mut frame);
+        timeline.trace(FrameContractStage::Presentation);
+        timeline.trace(FrameContractStage::Pacing);
+
+        assert!(dispatched);
+        let stages = timeline.execution_trace();
         assert_eq!(
             stages,
             &[

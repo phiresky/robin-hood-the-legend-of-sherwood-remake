@@ -200,27 +200,13 @@ pub fn apply_background_map(
         decoded.height
     );
 
-    // Upload each mask's static binary alpha once. The bg under the
-    // mask is sampled live by `mask_overlay.wgsl` at draw time, so
-    // there is no per-blit recompose / re-upload — what used to churn
-    // the amdgpu GTT pool on every patch blit. Reuploading covers
-    // both the initial load and any subsequent reload (level restart);
-    // ambiance is per-mission so no swap-mid-level path is needed.
+    // Upload each mask's static binary alpha once. Masked draws sample a
+    // pre-sprite scene snapshot, avoiding per-blit texture uploads while
+    // preserving dynamic building patches beneath actors.
     renderer.clear_mask_alpha_cache();
-    let bg_w = decoded.width as u32;
-    let bg_h = decoded.height as u32;
     let mask_count = engine.fast_grid().level.masks.len();
     for (idx, mask) in engine.fast_grid().level.masks.iter().enumerate() {
-        let bbox_min = (mask.bbox.x_min().max(0.0), mask.bbox.y_min().max(0.0));
-        renderer.upload_mask_alpha(
-            idx as u32,
-            &mask.bitmap,
-            mask.width,
-            mask.height,
-            bbox_min,
-            bg_w,
-            bg_h,
-        );
+        renderer.upload_mask_alpha(idx as u32, &mask.bitmap, mask.width, mask.height);
     }
     if mask_count > 0 {
         tracing::debug!("Uploaded {} mask alpha textures", mask_count);

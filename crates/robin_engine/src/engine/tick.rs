@@ -157,6 +157,153 @@ enum OwnerActionBarrier {
     Skip,
 }
 
+/// Synchronous position assertion against entity state and its owning
+/// sequence element.
+///
+/// Original provenance: `RHelementactor.cpp:3006-3035` performs this check
+/// directly from `Translate`: a sector-less assertion compares max-norm
+/// distance against `tolerance + 5`, while a sector assertion compares only
+/// the sector. Both paths interrupt on mismatch and terminate on success.
+struct PositionAssertionContext<'a> {
+    entities: &'a crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+}
+
+impl PositionAssertionContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let movement = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement {
+                    destination,
+                    sector,
+                    tolerance,
+                    ..
+                } => Some((*destination, *sector, *tolerance)),
+                _ => None,
+            });
+
+        let matches = movement.is_none_or(|(destination, expected_sector, tolerance)| {
+            let entity = self.entities.get(owner);
+            if let Some(expected_sector) = expected_sector {
+                entity.and_then(|entity| entity.element_data().sector()) == Some(expected_sector)
+            } else {
+                let position = entity
+                    .map(|entity| entity.element_data().position_map())
+                    .unwrap_or_default();
+                let delta_x = position.x - destination.x;
+                let delta_y = position.y - destination.y;
+                delta_x.abs().max(delta_y.abs()) < tolerance + 5.0
+            }
+        });
+
+        if matches {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_interrupted(
+                seq_id,
+                elem_idx,
+                crate::sequence::CascadeFlags::NEXT_LEVEL,
+            );
+        }
+        OwnerActionBarrier::Reach
+    }
+}
+
+/// Lift-entry arbitration owns only door metadata, the mutable spatial lift
+/// runtime, entity occupancy bookkeeping, and sequence state.
+///
+/// TODO(parity): the original actor translators group `WAIT_FREE_LIFT` with
+/// `WAIT` (`RHelementactor.cpp:3340`, `RHelementactorpc.cpp:2580`, and
+/// `RHelementactorsoldier.cpp:395`). The Rust movement planner instead uses
+/// this command as an explicit lift occupancy gate. Keep that policy local to
+/// this context until the planner/translator difference is reconciled.
+struct LiftWaitCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+    doors: &'a [crate::gate::Door],
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+}
+
+impl LiftWaitCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let gate_id = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
+                _ => None,
+            });
+        let gate_info = gate_id.and_then(|door_idx| {
+            self.doors.get(usize::from(door_idx)).map(|door| {
+                (
+                    door.sector_in,
+                    matches!(
+                        door.door_type,
+                        crate::gate::DoorType::LiftHigh | crate::gate::DoorType::LiftHighCrenel
+                    ),
+                )
+            })
+        });
+        let grid_idx = gate_info.and_then(|(sector_number, _)| {
+            self.fast_grid
+                .level
+                .sector_number_map
+                .get(&sector_number)
+                .copied()
+        });
+        let is_high = gate_info.is_some_and(|(_, is_high)| is_high);
+
+        // Authorization decrements the cooldown while blocked. Once free,
+        // occupancy is recorded before the element terminates so another
+        // actor dispatched in the same frame observes the reservation.
+        let authorized = grid_idx.is_none_or(|idx| {
+            let lift = self.fast_grid.lift_state_mut(idx as u32);
+            if is_high {
+                lift.is_authorized_downwards()
+            } else {
+                lift.is_authorized_upwards()
+            }
+        });
+
+        if authorized {
+            if let (Some((sector_number, _)), Some(idx)) = (gate_info, grid_idx) {
+                let lift = self.fast_grid.lift_state_mut(idx as u32);
+                if is_high {
+                    lift.set_occupied_downwards(true);
+                } else {
+                    lift.set_occupied_upwards(true);
+                }
+                if let Some(actor) = self
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                {
+                    actor.active_lift = Some(crate::element::ActiveLiftClimb {
+                        sector_number: u16::from(sector_number),
+                        upwards: !is_high,
+                    });
+                }
+            }
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+}
+
 /// Bow-transition command translation with only the owners it actually uses.
 ///
 /// The original command bodies read actor posture/action state, append
@@ -3343,253 +3490,19 @@ impl EngineInner {
                             }
                         }
                         Command::PassDoor => {
-                            // Cross-layer door/lift transition.
-                            //
-                            // Builds a multi-step sub-order chain via
-                            // `build_door_pass()` with correct
-                            // animations per door type (building,
-                            // ladder, wall, stairs, default).  The
-                            // movement tick processes steps one at a
-                            // time.
-                            if let crate::sequence::SequenceElementData::Movement {
-                                gate_id,
-                                flags,
-                                ..
-                            } = &elem.data
+                            let barrier = crate::engine::door_pass::PassDoorLaunchContext::new(
+                                self.script_domains.interactables.doors.as_slice(),
+                                &mut self.world.entities,
+                                &self.world.fast_grid,
+                                &mut self.orders.sequence_manager,
+                                &mut self.orders.next_order_id,
+                            )
+                            .dispatch(owner, seq_id, elem_idx);
+                            if barrier
+                                == crate::engine::door_pass::PassDoorLaunchBarrier::SkipSplice
                             {
-                                let door_idx = match gate_id {
-                                    Some(idx) => *idx,
-                                    None => {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                        continue;
-                                    }
-                                };
-
-                                // Determine direction from the actor's current side
-                                // of the door, matching the original PASS_DOOR path.
-                                let direct = {
-                                    // Snapshot door's sector_out to avoid
-                                    // overlapping borrows.
-                                    let door_sector_out = self
-                                        .scripts
-                                        .mission
-                                        .as_mut()
-                                        .and_then(|s| s.game_host_mut())
-                                        .and_then(|_| {
-                                            self.script_domains
-                                                .interactables
-                                                .doors
-                                                .get(usize::from(door_idx))
-                                        })
-                                        .map(|d| d.sector_out);
-                                    let actor_sector = self
-                                        .get_entity(owner)
-                                        .and_then(|e| e.element_data().sector());
-                                    match (door_sector_out, actor_sector) {
-                                        (Some(ds), Some(as_)) => u16::from(as_) == ds,
-                                        _ => true,
-                                    }
-                                };
-
-                                // ── Authorization check ──
-                                // Verify the actor may use the door
-                                // before building the step chain.
-                                let auth_info = match self.get_entity(owner) {
-                                    Some(e) => e.actor_auth_info(),
-                                    None => {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                        continue;
-                                    }
-                                };
-                                let allow_leave_map =
-                                    flags.contains(crate::sequence::MoveFlags::MAP);
-                                // `building_has_capacity = true`
-                                // always: building max-occupants is
-                                // `0xFFFF` at construction and its
-                                // proto load path is dead, so the
-                                // capacity check always passes.  The
-                                // parameter is kept on
-                                // `is_actor_authorized` for the door
-                                // struct's shape but has no live
-                                // consumer.
-                                let authorized = self
-                                    .scripts
-                                    .mission
-                                    .as_mut()
-                                    .and_then(|s| s.game_host_mut())
-                                    .and_then(|_| {
-                                        self.script_domains
-                                            .interactables
-                                            .doors
-                                            .get(usize::from(door_idx))
-                                    })
-                                    .map(|door| {
-                                        door.is_actor_authorized(
-                                            direct,
-                                            &auth_info,
-                                            true,
-                                            allow_leave_map,
-                                        )
-                                    })
-                                    .unwrap_or(false);
-                                if !authorized {
-                                    tracing::debug!(
-                                        entity = ?owner,
-                                        door = %door_idx,
-                                        ?direct,
-                                        "PassDoor: actor not authorized"
-                                    );
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    continue;
-                                }
-
-                                // ── Lift-sector authorization ──
-                                // Lift doors (wall/ladder
-                                // restrictions) get a separate gate.
-                                {
-                                    let lift_sector_in = self
-                                        .scripts
-                                        .mission
-                                        .as_mut()
-                                        .and_then(|s| s.game_host_mut())
-                                        .and_then(|_| {
-                                            self.script_domains
-                                                .interactables
-                                                .doors
-                                                .get(usize::from(door_idx))
-                                        })
-                                        .and_then(|d| match d.door_type {
-                                            crate::gate::DoorType::LiftHigh
-                                            | crate::gate::DoorType::LiftLow
-                                            | crate::gate::DoorType::LiftHighCrenel => {
-                                                Some(d.sector_in)
-                                            }
-                                            _ => None,
-                                        });
-                                    if let Some(sector_in) = lift_sector_in {
-                                        let lift_ok = self
-                                            .grid_sector_by_number(sector_in)
-                                            .and_then(|gs| gs.lift_type)
-                                            .map(|lt| lt.is_actor_authorized(&auth_info))
-                                            .unwrap_or(true);
-                                        if !lift_ok {
-                                            tracing::debug!(
-                                                entity = ?owner,
-                                                door = %door_idx,
-                                                ?direct,
-                                                "PassDoor: actor not authorized \
-                                                 for lift type"
-                                            );
-                                            self.orders
-                                                .sequence_manager
-                                                .element_impossible(seq_id, elem_idx);
-                                            continue;
-                                        }
-                                    }
-                                }
-
-                                // C++ Translate(RHCOMMAND_PASS_DOOR) calls
-                                // mpSprite->SetAntiCollisionOn(false) before expanding the
-                                // door-pass order chain.
-                                if let Some(entity) = self.world.entities.get_mut(owner) {
-                                    entity.position_iface_mut().set_anti_collision_on(false);
-                                }
-
-                                // Build the full step chain.  Forward
-                                // the movement flags so the animation
-                                // picker can pick the
-                                // RUNNING_WITH_SWORD variant on fast
-                                // moves.
-                                let door_pass =
-                                    self.build_door_pass(owner, door_idx, direct, *flags);
-
-                                match door_pass {
-                                    Some(built) => {
-                                        let crate::engine::door_pass::BuiltDoorPass {
-                                            pass: mut dp,
-                                            post_chain_action_recursive,
-                                        } = built;
-                                        // Apply
-                                        // `SetActionRecursive(WALKING_CROUCHED)`
-                                        // to the PassDoor sequence
-                                        // element so follow-up orders
-                                        // read the crouched action.
-                                        // See `build_door_pass` for
-                                        // the gate conditions (PC +
-                                        // non-direct ladder / wall +
-                                        // forced-crouch exit sector).
-                                        if let Some(override_action) = post_chain_action_recursive {
-                                            self.orders.sequence_manager.set_action_recursive(
-                                                seq_id,
-                                                elem_idx,
-                                                override_action,
-                                            );
-                                        }
-                                        // Pop the first Walk step and start it.
-                                        let first_walk = dp.steps.pop_front();
-                                        if let Some(crate::element::DoorPassStep::Walk {
-                                            destination,
-                                            action,
-                                            reverse,
-                                            compute_direction,
-                                            tolerance,
-                                        }) = &first_walk
-                                        {
-                                            // Store the animation from this Walk step
-                                            // so tick_entity_movement can use it.
-                                            dp.current_action = *action;
-                                            dp.current_reverse = *reverse;
-                                            self.install_special_walk_order(
-                                                owner,
-                                                seq_id,
-                                                elem_idx,
-                                                *destination,
-                                                *action,
-                                                *reverse,
-                                                *compute_direction,
-                                                *tolerance,
-                                                Some(dp),
-                                                "PassDoor initial walk",
-                                            );
-                                            tracing::debug!(
-                                                entity = ?owner,
-                                                door = %door_idx,
-                                                ?direct,
-                                                "PassDoor: started multi-step door pass"
-                                            );
-                                        } else {
-                                            tracing::warn!(
-                                                entity = ?owner,
-                                                "PassDoor: no Walk step in chain"
-                                            );
-                                            self.orders
-                                                .sequence_manager
-                                                .element_impossible(seq_id, elem_idx);
-                                            continue;
-                                        }
-                                    }
-                                    None => {
-                                        tracing::warn!(
-                                            entity = ?owner,
-                                            door = %door_idx,
-                                            "PassDoor: failed to build step chain"
-                                        );
-                                        self.orders
-                                            .sequence_manager
-                                            .element_impossible(seq_id, elem_idx);
-                                        continue;
-                                    }
-                                }
+                                continue;
                             }
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
                         }
                         // ── CHANGE_POSITION ────────────────────────
                         // Instant teleport to a new position.
@@ -3646,58 +3559,11 @@ impl EngineInner {
                         // ── ASSERT_POSITION ────────────────────────
                         // Check actor is at expected position/sector.
                         Command::AssertPosition => {
-                            if let crate::sequence::SequenceElementData::Movement {
-                                destination,
-                                sector,
-                                tolerance,
-                                ..
-                            } = &elem.data
-                            {
-                                let dest = *destination;
-                                let tgt_sector = *sector;
-                                let tol = *tolerance + 5.0;
-
-                                if tgt_sector.is_none() {
-                                    // Position check
-                                    let pos = self
-                                        .get_entity(owner)
-                                        .map(|e| e.element_data().position_map())
-                                        .unwrap_or_default();
-                                    let dx = pos.x - dest.x;
-                                    let dy = pos.y - dest.y;
-                                    if dx.abs().max(dy.abs()) >= tol {
-                                        self.orders.sequence_manager.element_interrupted(
-                                            seq_id,
-                                            elem_idx,
-                                            crate::sequence::CascadeFlags::NEXT_LEVEL,
-                                        );
-                                    } else {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_terminated(seq_id, elem_idx);
-                                    }
-                                } else {
-                                    // Sector check
-                                    let actor_sector = self
-                                        .get_entity(owner)
-                                        .and_then(|e| e.element_data().sector());
-                                    if actor_sector != tgt_sector {
-                                        self.orders.sequence_manager.element_interrupted(
-                                            seq_id,
-                                            elem_idx,
-                                            crate::sequence::CascadeFlags::NEXT_LEVEL,
-                                        );
-                                    } else {
-                                        self.orders
-                                            .sequence_manager
-                                            .element_terminated(seq_id, elem_idx);
-                                    }
-                                }
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            PositionAssertionContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
                             }
+                            .dispatch(owner, seq_id, elem_idx);
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
                         // Wait until the lift sector is authorized to
@@ -3711,106 +3577,16 @@ impl EngineInner {
                         // allows a second actor to ride the lift in
                         // the same direction as the first.
                         Command::WaitFreeLift => {
-                            // Resolve the gate → destination sector
-                            // (the door's `sector_in` is the lift
-                            // shaft).
-                            let gate_info =
-                                if let crate::sequence::SequenceElementData::Movement {
-                                    gate_id: Some(di),
-                                    ..
-                                } = &elem.data
-                                {
-                                    self.scripts
-                                        .mission
-                                        .as_mut()
-                                        .and_then(|s| s.game_host_mut())
-                                        .and_then(|_| {
-                                            self.script_domains
-                                                .interactables
-                                                .doors
-                                                .get(usize::from(*di))
-                                        })
-                                        .map(|d| {
-                                            (
-                                                d.sector_in,
-                                                matches!(
-                                                    d.door_type,
-                                                    crate::gate::DoorType::LiftHigh
-                                                        | crate::gate::DoorType::LiftHighCrenel
-                                                ),
-                                            )
-                                        })
-                                } else {
-                                    None
-                                };
-                            let grid_idx = gate_info.and_then(|(sn, _)| {
-                                self.world
-                                    .fast_grid
-                                    .level
-                                    .sector_number_map
-                                    .get(&sn)
-                                    .copied()
-                            });
-                            let is_high = gate_info.map(|(_, h)| h).unwrap_or(false);
-                            // `is_authorized_downwards` /
-                            // `is_authorized_upwards` decrement
-                            // `wait_time` as a side effect when the
-                            // lift is on cooldown.
-                            let authorised = match grid_idx {
-                                Some(idx) => {
-                                    let lift = self.world.fast_grid.lift_state_mut(idx as u32);
-                                    if is_high {
-                                        lift.is_authorized_downwards()
-                                    } else {
-                                        lift.is_authorized_upwards()
-                                    }
-                                }
-                                None => true,
-                            };
-
-                            if authorised {
-                                // Lift is free in the entering direction —
-                                // mark occupancy and proceed.
-                                // `set_occupied_*` increments
-                                // occupants, flips the direction flag,
-                                // and sets the wait_time cooldown
-                                // (100 for downwards, 80 for upwards).
-                                if let Some((sn, _)) = gate_info {
-                                    if let Some(idx) = grid_idx {
-                                        let lift = self.world.fast_grid.lift_state_mut(idx as u32);
-                                        if is_high {
-                                            lift.set_occupied_downwards(true);
-                                        } else {
-                                            lift.set_occupied_upwards(true);
-                                        }
-                                    }
-                                    // Record the climb on the actor so
-                                    // translate_ladder_wall_fall can free the
-                                    // lift if the climber is shoved off before
-                                    // reaching the other door.  `is_high` means
-                                    // the actor entered at the top and is
-                                    // climbing downwards, so `upwards = !is_high`.
-                                    if let Some(entity) = self.get_entity_mut(owner)
-                                        && let Some(actor) = entity.actor_data_mut()
-                                    {
-                                        actor.active_lift = Some(crate::element::ActiveLiftClimb {
-                                            sector_number: u16::from(sn),
-                                            upwards: !is_high,
-                                        });
-                                    }
-                                }
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                            } else {
-                                // Still occupied or cooldown active —
-                                // keep waiting; the authorization
-                                // check already decremented
-                                // `wait_time` above.
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
+                            LiftWaitCommandContext {
+                                entities: &mut self.world.entities,
+                                fast_grid: &mut self.world.fast_grid,
+                                // Runtime door state is authoritative; the
+                                // legacy mission GameHost was only used as a
+                                // presence guard around this same collection.
+                                doors: self.script_domains.interactables.doors.as_slice(),
+                                sequence_manager: &mut self.orders.sequence_manager,
                             }
+                            .dispatch(owner, seq_id, elem_idx);
                         }
                         // ── Sword strike commands ────────────────
                         Command::SwordstrikeThrustA
@@ -6875,76 +6651,6 @@ impl EngineInner {
             )
     }
 
-    pub(super) fn apply_door_pass_continue_state(
-        &mut self,
-        entity_id: EntityId,
-        action: crate::order::OrderType,
-    ) {
-        use crate::element::{ActionState, Posture};
-        use crate::order::OrderType as OT;
-
-        let posture = match action {
-            OT::ClimbingWallUp
-            | OT::ClimbingWallDown
-            | OT::ClimbingWallUpFast
-            | OT::ClimbingWallDownFast => Some(Posture::OnWall),
-            OT::ClimbingLadderUp
-            | OT::ClimbingLadderDown
-            | OT::ClimbingLadderUpFast
-            | OT::ClimbingLadderDownFast => Some(Posture::OnLadder),
-            OT::WalkingCrouched => Some(Posture::Crouched),
-            OT::WalkingUpright
-            | OT::WalkingAlerted
-            | OT::WalkingStairs
-            | OT::RunningStairs
-            | OT::RunningUpright => Some(Posture::Upright),
-            _ => None,
-        };
-        let Some(posture) = posture else {
-            return;
-        };
-
-        let lift_direction = self
-            .get_entity(entity_id)
-            .and_then(|entity| entity.element_data().sector())
-            .and_then(|sector| {
-                self.grid_sector_by_number(crate::sector::SectorNumber::new(
-                    u16::from(sector) as i16
-                ))
-            })
-            .and_then(|sector| match (posture, sector.lift_type) {
-                (Posture::OnWall, Some(crate::sector::LiftType::Wall))
-                | (Posture::OnLadder, Some(crate::sector::LiftType::Ladder)) => {
-                    Some(sector.lift_direction)
-                }
-                _ => None,
-            });
-
-        let Some(entity) = self.world.entities.get_mut(entity_id) else {
-            return;
-        };
-        if entity.actor_data().is_none() {
-            return;
-        }
-
-        entity.set_posture(posture);
-        if let Some(dir) = lift_direction {
-            entity.element_data_mut().set_direction_instantly(dir);
-        }
-        let action_state = match action {
-            OT::RunningUpright
-            | OT::RunningStairs
-            | OT::ClimbingWallUpFast
-            | OT::ClimbingWallDownFast
-            | OT::ClimbingLadderUpFast
-            | OT::ClimbingLadderDownFast => ActionState::MovingFast,
-            _ => ActionState::Moving,
-        };
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.action_state = action_state;
-        }
-    }
-
     pub(super) fn apply_door_pass_transition_done_side_effects(
         &mut self,
         assets: &LevelAssets,
@@ -9569,6 +9275,162 @@ mod bow_command_body_parity_tests {
                 .state,
             SequenceState::Impossible
         );
+    }
+
+    #[test]
+    fn position_assertion_context_interrupts_at_tolerance_boundary() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let mut assertion = SequenceElement::new_movement(
+            1,
+            Command::AssertPosition,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            destination,
+            tolerance,
+            ..
+        } = &mut assertion.data
+        {
+            *destination = crate::coordinates::MapPoint::new(5.0, 0.0);
+            *tolerance = 0.0;
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(assertion);
+
+        let barrier = PositionAssertionContext {
+            entities: &engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "RHelementactor.cpp uses >= tolerance + 5 for the max-norm mismatch"
+        );
+    }
+
+    #[test]
+    fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
+            .sector_number_map
+            .insert(sector_number, 0);
+        engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHigh,
+            sector_in: sector_number,
+            ..crate::gate::Door::default()
+        };
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        let barrier = LiftWaitCommandContext {
+            entities: &mut engine.world.entities,
+            fast_grid: &mut engine.world.fast_grid,
+            doors: std::slice::from_ref(&door),
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::InProgress
+        );
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 1);
+        assert!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_lift
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn lift_wait_context_reserves_direction_before_terminating() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
+            .sector_number_map
+            .insert(sector_number, 0);
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHigh,
+            sector_in: sector_number,
+            ..crate::gate::Door::default()
+        };
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        let barrier = LiftWaitCommandContext {
+            entities: &mut engine.world.entities,
+            fast_grid: &mut engine.world.fast_grid,
+            doors: std::slice::from_ref(&door),
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .dispatch(owner, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            SequenceState::Terminated
+        );
+        let lift = engine.world.fast_grid.lift_state_mut(0);
+        assert_eq!(lift.occupants, 1);
+        assert!(lift.occupied_downwards);
+        assert_eq!(lift.wait_time, 100);
+        let active_lift = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_lift
+            .expect("authorized actor records its active lift");
+        assert_eq!(active_lift.sector_number, 42);
+        assert!(!active_lift.upwards);
     }
 }
 

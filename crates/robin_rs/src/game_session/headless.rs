@@ -96,8 +96,8 @@ impl HeadlessMission {
     ///
     /// The method is deliberately a short ordered list of the headless
     /// contract. Modal automation and replay-completion remain explicit
-    /// policy here; campaign restoration and async host pacing remain in the
-    /// outer driver.
+    /// policy here; consuming campaign return and async host pacing remain in
+    /// the outer driver.
     pub(super) fn run_frame(&mut self, args: &crate::main_entry::CliArgs) -> HeadlessFrameResult {
         let mut frame = self.runtime.begin_frame(crate::window::process_uptime_ms());
 
