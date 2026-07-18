@@ -447,6 +447,32 @@ fn build_nested_scb() -> ScbFile {
     build_nested_scb_with_inner_native(None)
 }
 
+fn build_nested_scb_with_default_inner() -> ScbFile {
+    let mut scb = build_nested_scb();
+    let mut quads = Vec::new();
+    let mut functions = Vec::new();
+    for name in [
+        "Initialize",
+        "ActionChange",
+        "HandleEvent",
+        "ProcessMessage",
+    ] {
+        let base = quads.len() as i32;
+        let (function, body) = stub_fn(name, base);
+        functions.push(function);
+        quads.extend(body);
+    }
+    scb.classes.push(ClassEntry {
+        source_file: "test.scs".into(),
+        class_name: "DefaultInnerTarget".into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions,
+        quads,
+    });
+    scb
+}
+
 fn build_nested_scb_with_inner_this(inner_returns_this: bool) -> ScbFile {
     build_nested_scb_with_inner_native(
         inner_returns_this.then_some(crate::natives::NativeFn::ThisActor),
@@ -564,6 +590,73 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
         version: crate::scb::SCB_VERSION,
         classes: vec![startup, outer_class, inner_class],
     }
+}
+
+/// Variant where the outer callback writes an NPC custom value before
+/// yielding through `PrototypeFilterEvent`, and the nested callback reads the
+/// same entity value. This pins the shared live-state requirement across VM
+/// resume boundaries before GameHost is structurally removed.
+fn build_nested_entity_mutation_scb() -> ScbFile {
+    let mut scb = build_nested_scb();
+
+    let outer = scb
+        .classes
+        .iter_mut()
+        .find(|class| class.class_name == "OuterCaller")
+        .expect("nested fixture has OuterCaller");
+    let outer_filter = outer
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "FilterAIEvent")
+        .expect("OuterCaller has FilterAIEvent");
+    outer_filter.size_of_temporary = 12;
+    outer.quads.truncate(outer_filter.address as usize);
+    outer.quads.extend([
+        q_begin_function(0, 3),
+        q_aff1_get_param(TMP0, 0),
+        q_aff0_iconstant(TMP1, 3),
+        q_aff0_iconstant(TMP2, 77),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::SetCustomNPCValue as u32),
+        q_aff1_get_param(TMP0, 0),
+        q_aff1_get_param(TMP1, 4),
+        q_aff1_get_param(TMP2, 8),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::PrototypeFilterEvent as u32),
+        q_aff1_native_get_return(TMP0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+
+    let inner = scb
+        .classes
+        .iter_mut()
+        .find(|class| class.class_name == "InnerTarget")
+        .expect("nested fixture has InnerTarget");
+    let inner_filter = inner
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "FilterAIEvent")
+        .expect("InnerTarget has FilterAIEvent");
+    inner_filter.size_of_temporary = 8;
+    inner.quads.truncate(inner_filter.address as usize);
+    inner.quads.extend([
+        q_begin_function(0, 2),
+        q_aff1_get_param(TMP0, 0),
+        q_aff0_iconstant(TMP1, 3),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+
+    scb
 }
 
 #[test]
@@ -708,16 +801,89 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     );
 }
 
-/// Variant: when `PrototypeFilterEvent` targets a handle with no
-/// bound actor script, the recursive `call_actor_function` returns
-/// `Ok(0)` — the outer caller observes that as the native's return
-/// value.  Note: invoking on a non-scripted prototype in the original
-/// engine hit the base-class default (returns 1); our path returns 0
-/// because there's no instance at all.  This is a known divergence
-/// from the original base default; flagged here so any future
-/// "default to 1 when target unbound" decision is explicit.
 #[test]
-fn prototype_filter_event_unbound_target_returns_zero() {
+fn prototype_filter_event_missing_override_uses_actor_base_default() {
+    let scb = build_nested_scb_with_default_inner();
+    let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let outer_handle = 1;
+    let prototype_handle = 2;
+    assert!(script.bind_actor(
+        outer_handle,
+        "OuterCaller",
+        crate::natives::NativeQueryViews::default()
+    ));
+    assert!(script.bind_actor(
+        prototype_handle,
+        "DefaultInnerTarget",
+        crate::natives::NativeQueryViews::default()
+    ));
+
+    let result = script
+        .call_actor_function(
+            outer_handle,
+            "FilterAIEvent",
+            &[prototype_handle, 0, 0],
+            crate::natives::NativeQueryViews::default(),
+        )
+        .expect("nested dispatch runs cleanly");
+
+    assert_eq!(
+        result, 1,
+        "a bound actor without an override inherits FilterAIEvent's allow result"
+    );
+}
+
+#[test]
+fn nested_prototype_callback_observes_outer_native_entity_mutation() {
+    let scb = build_nested_entity_mutation_scb();
+    let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let outer_handle = crate::natives::GameHost::actor_handle_from_index(0);
+    let prototype_handle = crate::natives::GameHost::actor_handle_from_index(1);
+    script.game_host.entities.extend([
+        Some(make_scripted_soldier("OuterCaller")),
+        Some(make_scripted_soldier("InnerTarget")),
+    ]);
+    assert!(script.bind_actor(
+        outer_handle,
+        "OuterCaller",
+        crate::natives::NativeQueryViews::default()
+    ));
+    assert!(script.bind_actor(
+        prototype_handle,
+        "InnerTarget",
+        crate::natives::NativeQueryViews::default()
+    ));
+
+    let result = script
+        .call_actor_function(
+            outer_handle,
+            "FilterAIEvent",
+            &[prototype_handle, prototype_handle, 0],
+            crate::natives::NativeQueryViews::default(),
+        )
+        .expect("nested dispatch runs cleanly");
+
+    assert_eq!(
+        result, 77,
+        "the nested VM must read the entity mutation made before the outer VM yielded"
+    );
+    assert_eq!(
+        script.game_host.entities[1]
+            .as_ref()
+            .expect("prototype entity remains installed")
+            .npc_data()
+            .expect("prototype is an NPC")
+            .custom_values[3],
+        77
+    );
+}
+
+/// A prototype with no bound Rust script instance takes the original actor
+/// base-class `FilterAIEvent` result: one (allow). `RHScript` forwards the call
+/// directly to the NPC (`RHScript.cpp:6519-6537`), and the shipped ActorScript
+/// base implementation returns one rather than synthesizing a blocked event.
+#[test]
+fn prototype_filter_event_unbound_target_uses_original_allow_default() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
 
@@ -739,7 +905,7 @@ fn prototype_filter_event_unbound_target_returns_zero() {
         .expect("nested dispatch runs cleanly");
 
     assert_eq!(
-        result, 0,
-        "unbound target → call_actor_function returns 0 → outer reads 0"
+        result, 1,
+        "missing prototype override must inherit FilterAIEvent's allow default"
     );
 }
