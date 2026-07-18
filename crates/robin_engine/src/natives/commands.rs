@@ -174,8 +174,10 @@ pub enum DeferredCommand {
     /// is checked in the handler).  Used when a human actor is sent to
     /// honolulu (null location).
     RemoveUnconsciousStars { actor: i32 },
-    /// Script-lock an NPC's AI. Used when SetActorLocation sends an
-    /// NPC to honolulu (null location).
+    /// Legacy save compatibility for AI locks queued by builds before the
+    /// synchronous native-context migration. There are no live producers;
+    /// keeping this variant in place preserves all following serialized enum
+    /// discriminants. The drain applies the previously queued write once.
     ScriptLockAI { actor: i32, send_back: bool },
     /// Spawn a floating damage-number titbit above an entity.  Used by
     /// script natives (`InflictPain`, `SetPersistentProperty LIFEPOINTS`)

@@ -419,32 +419,32 @@ impl EngineInner {
                     tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
                 }
                 crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
-                    // Script-lock an NPC's AI. Two callers:
-                    //   - SetActorLocation honolulu path (NPC sent
-                    //     to a null location); always passes
-                    //     `send_back=false`.
-                    //   - LockAI script native; `send_back` is the
-                    //     remember-events arg.
-                    // ScriptLockAI suppresses `Stop()` only when the
-                    // actor's current command is already `LockAi`.
-                    // We implement that by peeking the sequence
-                    // manager for the actor's in-flight command.
-                    if let Some(owner) = self.entity_id_for_actor_handle(actor) {
-                        let from_lockai_command = self
-                            .orders
-                            .sequence_manager
-                            .current_element_for_actor(owner)
-                            .and_then(|(seq_id, elem_idx)| {
-                                self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                            })
-                            .is_some_and(|elem| elem.command == crate::element::Command::LockAi);
-                        if let Some(entity) = self.world.entities.get_mut(owner)
-                            && let Some(ai) = entity.ai_controller_mut()
-                        {
-                            ai.script_lock(send_back, from_lockai_command);
-                        }
-                    }
-                    tracing::debug!("ScriptLockAI: actor {actor}, send_back={send_back}");
+                    // Save migration only: current natives apply this write
+                    // synchronously and never enqueue the variant. Older
+                    // saves may contain an undrained request, so consume it
+                    // exactly once rather than dropping deterministic state.
+                    let owner = self.entity_id_for_actor_handle(actor).unwrap_or_else(|| {
+                        panic!("saved AI lock references missing actor {actor}")
+                    });
+                    let from_lockai_command = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(owner)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(sequence_id, element_index)
+                        })
+                        .is_some_and(|element| element.command == crate::element::Command::LockAi);
+                    let entity = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .expect("saved AI lock actor disappeared during drain");
+                    let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                        panic!("saved AI lock references non-NPC actor {actor}")
+                    });
+                    ai.script_lock(send_back, from_lockai_command);
                 }
                 cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
                     post_script.push(cmd);

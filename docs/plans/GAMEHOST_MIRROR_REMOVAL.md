@@ -25,11 +25,15 @@ bindings. Scroll status and PC selection now mutate canonical state before the
 native returns, with same-callback tests; their queued follow-up work is limited
 to engine/sequence/UI effects that require the existing callback barrier.
 
-The broader queue audit is not finished. Completed sequence launch, actor stop,
-global freeze, AI locks, posture/location side effects, patch work, and other
-deterministic variants still need Original-order characterization before they
-can move or be certified as true barriers. The next wave should migrate them in
-coherent command families with same-callback tests. Renaming the queue shell and
+The broader queue audit is not finished. Direct `LockAI` and the Honolulu branch
+of `SetActorLocation(NULL)` now mutate the canonical NPC AI before returning,
+so same-callback `UnlockAI` observes them. The serialized deferred enum slot is
+retained only to consume undrained requests from older saves; it has no live
+producer. Completed sequence launch, actor stop, global freeze,
+posture/location side effects, patch work, and other deterministic variants
+still need Original-order characterization before they can move or be
+certified as true barriers. The next wave should migrate them in coherent
+command families with same-callback tests. Renaming the queue shell and
 narrowing the legacy Lua adapter can follow once that boundary is stable.
 
 The inventory and PR sequence below are retained as the pre-refactor design
