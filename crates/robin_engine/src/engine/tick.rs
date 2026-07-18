@@ -1044,6 +1044,16 @@ impl EngineInner {
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(display, assets);
 
+        // `RHSequenceElement::SetState(Terminated)` calls the owner's
+        // `SendCondolationCard`, then `RHSequence::Ready`, synchronously
+        // (`original-code/RHsequenceelement.cpp:280-296`). `Ready` immediately
+        // starts the next command level (`RHsequence.cpp:304-313`), so an
+        // immediate Timer successor must be installed before RHEngine reaches
+        // its anonymous-timer scan at RHengine.cpp:3755-3771. Rust defers the
+        // borrow-reentrant card itself, but this barrier must stay on the
+        // sequence-manager side of that scan.
+        self.dispatch_condolations(assets);
+
         // `RHSequenceManager::Hourglass` runs before the anonymous-timer
         // scan. If a deferred command terminates and advances its sequence
         // to an immediate Timer, C++ executes that Timer re-entrantly, adds
@@ -6685,11 +6695,13 @@ impl EngineInner {
                 .element_terminated(r.sequence_id, r.element_index);
         }
 
-        // ── SendCondolationCard dispatch ─────────────────────────
-        // Drain the per-tick queue of sequence-element-terminated
-        // notifications and fire per-entity cleanup.  Runs last so
-        // every sequence state change from this tick's dispatching
-        // is captured.
+        // ── Post-timer SendCondolationCard dispatch ──────────────
+        // The pre-timer pass after `hourglass_phase_sequences` preserves the
+        // original SetState -> SendCondolationCard -> Ready ordering for work
+        // that completed before this scan. This second pass is still required:
+        // timer expiry above can itself terminate an owned sequence element
+        // and queue another card. Its continuation and immediate successors
+        // drain below, after this frame's timer iteration has finished.
         self.dispatch_condolations(assets);
 
         // ── Same-tick re-entrant stimulus dispatch ───────────────
@@ -9446,7 +9458,7 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
-    fn redundant_equip_bow_starts_successor_timer_on_the_same_tick() {
+    fn pre_timer_condolation_starts_successor_timer_before_the_scan() {
         use crate::sequence::{Field, FieldValue, Sequence};
 
         let mut engine = EngineInner::new();
@@ -9468,6 +9480,34 @@ mod bow_command_body_parity_tests {
         assert_eq!(
             engine.orders.timer_elements[0].remaining, 1,
             "the immediate Timer successor must launch before the same frame's timer scan"
+        );
+    }
+
+    #[test]
+    fn timer_expiry_condolation_starts_successor_after_the_scan() {
+        use crate::sequence::{Field, FieldValue, Sequence};
+
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let pc_id = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let mut sequence = Sequence::new();
+        let mut expiring = SequenceElement::new_generic(1, Command::Timer, Some(pc_id));
+        expiring.set_property(Field::Timer, FieldValue::Integer(1));
+        sequence.append_element(expiring);
+        let mut successor = SequenceElement::new_generic(2, Command::Timer, None);
+        successor.set_property(Field::Timer, FieldValue::Integer(2));
+        sequence.append_element(successor);
+        engine.orders.sequence_manager.launch_sequence(sequence);
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+        assert_eq!(engine.orders.timer_elements.len(), 1);
+        assert_eq!(
+            engine.orders.timer_elements[0].remaining, 2,
+            "a successor launched by timer expiry belongs to the final condolation drain and must not re-enter the timer scan in progress"
         );
     }
 
