@@ -662,8 +662,7 @@ impl SaveGameManager {
     ) -> Result<()> {
         let path = self.save_path(index);
         let save = GameSaveFile::read_from(&path)?;
-        save.apply_to_with_game(engine, host, game);
-        engine.attach_level_assets(assets);
+        save.apply_to_with_game(engine, host, game, assets)?;
         Ok(())
     }
 

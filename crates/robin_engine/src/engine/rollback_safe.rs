@@ -62,6 +62,8 @@ pub enum SnapshotRestoreError {
     WorldInvariantViolation { detail: String },
     #[error("snapshot order invariant failed: {detail}")]
     OrderInvariantViolation { detail: String },
+    #[error("snapshot level attachment failed: {detail}")]
+    AttachmentFailure { detail: String },
 }
 
 /// Cross-crate owner of the simulation engine.
@@ -184,13 +186,6 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
-    /// Reattach immutable level assets that are intentionally outside
-    /// serialized engine snapshots. Used by multiplayer snapshot adopt
-    /// and save/load restore after decoding an `Engine`.
-    pub fn attach_level_assets(&mut self, assets: &LevelAssets) {
-        self.inner.attach_level_assets(assets);
-    }
-
     /// Create a fully-initialised engine for mission play.
     ///
     /// The host is expected to have:
@@ -252,6 +247,8 @@ impl Engine {
             loaded,
             bg_pixel_dims,
         } = args.level;
+        assets.mobile_element_count = 0;
+        assets.mission_script_name = None;
         // The proto-level (motion sectors) loads before the mission
         // file (beam-mes / soldiers / civilians).  We thread
         // `bg_pixel_dims` into `initialize_from_campaign`, which calls
@@ -282,6 +279,12 @@ impl Engine {
         // correctly.
         inner.initialize(assets);
         assets.level_grid = inner.world.fast_grid.level.clone();
+        assets.mobile_element_count = inner.world.mobile_elements.len();
+        assets.mission_script_name = inner
+            .scripts
+            .mission
+            .as_ref()
+            .map(|script| script.script_name.clone());
 
         // Mission script StartUp::Initialize — `hiking_paths` was
         // just populated by the level loader.
@@ -763,11 +766,20 @@ impl Engine {
         self.inner.test_set_mission_stat(stat);
     }
 
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
+    pub fn test_assert_level_assets_attached(&self, assets: &LevelAssets) {
+        assert!(std::sync::Arc::ptr_eq(
+            &self.inner.world.fast_grid.level,
+            &assets.level_grid
+        ));
+        self.inner.scripts.assert_native_attachments_ready();
+    }
+
     // ── Save / restore ────────────────────────────────────────────
 
-    /// Build a fully-restored engine from `self` (the currently-live
-    /// engine, loaded for the matching mission) and `saved` (a
-    /// deserialised engine just read off disk).
+    /// Build a fully-restored engine from a decoded save snapshot and the
+    /// matching mission's immutable [`LevelAssets`].
     ///
     /// Wholesale sim-state replacement — legitimate because loading a
     /// save or rewinding is a deliberate, user-initiated discontinuity
@@ -775,21 +787,22 @@ impl Engine {
     /// makes the replacement explicit at every call site: the old
     /// engine is moved in, a new one comes out.
     ///
-    /// What survives from `self` is the host-populated static level
-    /// data that isn't in the save payload (`Arc`'d level geometry /
-    /// script bytecode). Everything else comes from `saved`, then runs
-    /// through [`EngineInner::post_load_fixups`] so mid-drag / mid-zoom
-    /// / mid-tick transient state from whichever session produced the
-    /// save doesn't leak into the new session.
+    /// Everything mutable comes from `saved`. Static grid, sprite, script
+    /// program, and native-binding attachments come only from `assets`, then
+    /// [`EngineInner::post_load_fixups`] removes save-load-only transient
+    /// state so it cannot leak into the resumed session.
     ///
     /// Queues `UpdateInformationBars` on the script host so the next
     /// tick recomputes the HUD state to match the loaded mission.
-    pub fn restore(&mut self, display: &mut super::HostDisplayState, saved: Engine) {
-        // TODO(snapshot-api): migrate the downstream save-file facade to
-        // `try_restore` and surface `SnapshotRestoreError` to the UI. That
-        // caller is outside this invariant-hardening slice, so retain the
-        // existing infallible facade while rejecting corruption loudly.
-        self.try_restore(display, saved)
+    pub fn restore(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        saved: Engine,
+        assets: &LevelAssets,
+    ) {
+        // Assertion-oriented wrapper for callers that have already handled
+        // snapshot compatibility. UI/file boundaries use `try_restore`.
+        self.try_restore(display, saved, assets)
             .unwrap_or_else(|error| panic!("cannot restore engine snapshot: {error}"));
     }
 
@@ -802,59 +815,64 @@ impl Engine {
         &mut self,
         display: &mut super::HostDisplayState,
         saved: Engine,
+        assets: &LevelAssets,
     ) -> Result<(), SnapshotRestoreError> {
-        self.validate_snapshot_compatibility(&saved)?;
+        self.try_restore_with_post_fixup_observer(display, saved, assets, |_| {})
+    }
 
-        // Consume the saved engine's inner into `self.inner`, keeping
-        // the previous (already-loaded) `inner` as `prev` so its Arc'd
-        // static level data can be transferred over.  Taking `&mut self`
-        // instead of `self` preserves the RAII invariant that an
-        // `Engine` always exists in a fully-initialised state — we
-        // never need a `Default` shim to satisfy `std::mem::take`.
-        let prev = std::mem::replace(&mut self.inner, saved.inner);
-        let inner = &mut self.inner;
-
-        // ── Transfer host display level data ─────────────────────
-        // This lives outside the sim snapshot and is populated by the
-        // loaded level assets, so keep it from the already-loaded
-        // engine we're restoring into.
-        inner.feedback.cutscene_camera.level_size = prev.feedback.cutscene_camera.level_size;
-        // `source_durations` lives on `LevelAssets` now; the host
-        // reinstates it alongside the rest of the level assets.
-
-        inner
-            .world
-            .fast_grid
-            .attach_level_grid(prev.world.fast_grid.level.clone());
-
-        // The decoded VM owns all mutable script state. Reattach only the
-        // immutable bytecode and native capabilities from the live level.
-        inner.scripts.reattach_from(&prev.scripts);
-        inner.migrate_legacy_script_custom_values();
-
-        // Rebuild `SequenceManager` lookup indices after replacing the
-        // sequence list.
-        inner.orders.sequence_manager.rebuild_indices();
+    fn try_restore_with_post_fixup_observer(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        saved: Engine,
+        assets: &LevelAssets,
+        post_fixup_observer: impl FnOnce(&EngineInner),
+    ) -> Result<(), SnapshotRestoreError> {
+        let mut inner = Self::prepare_snapshot(saved, assets)?;
 
         // ── Engine-owned transient reset + HUD refresh ───────────
         inner.post_load_fixups(display);
+        post_fixup_observer(&inner);
         inner.queue_update_information_bars();
+        self.inner = inner;
         Ok(())
     }
 
-    fn validate_snapshot_compatibility(&self, saved: &Engine) -> Result<(), SnapshotRestoreError> {
-        if saved.inner.script_domains.zones.scripts.len()
-            != self.inner.script_domains.zones.scripts.len()
-        {
-            return Err(SnapshotRestoreError::WorldInvariantViolation {
-                detail: format!(
-                    "snapshot script-zone runtime length {} does not match loaded world length {}",
-                    saved.inner.script_domains.zones.scripts.len(),
-                    self.inner.script_domains.zones.scripts.len(),
-                ),
-            });
-        }
-        let level = &self.inner.world.fast_grid.level;
+    /// Adopt an exact decoded network snapshot.
+    ///
+    /// Unlike save restore, adoption performs no transient resets and queues no
+    /// repair messages: every serialized simulation queue remains exactly as
+    /// sent by the host. The live engine changes only after the candidate has
+    /// passed all attachment and state validation.
+    pub fn try_adopt_snapshot(
+        &mut self,
+        snapshot: Engine,
+        assets: &LevelAssets,
+    ) -> Result<(), SnapshotRestoreError> {
+        let inner = Self::prepare_snapshot(snapshot, assets)?;
+        self.inner = inner;
+        Ok(())
+    }
+
+    fn prepare_snapshot(
+        snapshot: Engine,
+        assets: &LevelAssets,
+    ) -> Result<EngineInner, SnapshotRestoreError> {
+        Self::validate_snapshot_compatibility(&snapshot, assets)?;
+        let mut inner = snapshot.inner;
+
+        // Attachment preflight above covers every static lookup, so this phase
+        // cannot partially fail. The candidate is still detached from `self`.
+        inner.attach_preflighted_level_assets(assets);
+        inner.migrate_legacy_script_custom_values();
+        inner.orders.sequence_manager.rebuild_indices();
+        Ok(inner)
+    }
+
+    fn validate_snapshot_compatibility(
+        saved: &Engine,
+        assets: &LevelAssets,
+    ) -> Result<(), SnapshotRestoreError> {
+        let level = &assets.level_grid;
         let lengths = [
             (
                 SnapshotGridComponent::Lines,
@@ -889,8 +907,13 @@ impl Engine {
         saved
             .inner
             .world
-            .validate_snapshot_compatibility(&self.inner.world)
+            .preflight_level_assets(assets, saved.inner.script_domains.zones.scripts.len())
             .map_err(|detail| SnapshotRestoreError::WorldInvariantViolation { detail })?;
+        saved
+            .inner
+            .scripts
+            .preflight_level_assets(assets)
+            .map_err(|detail| SnapshotRestoreError::AttachmentFailure { detail })?;
         saved
             .inner
             .orders
@@ -918,6 +941,66 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scripted_snapshot_fixture() -> (
+        Engine,
+        LevelAssets,
+        std::sync::Arc<crate::script_manager::ScriptProgram>,
+        crate::sequence::SequenceId,
+    ) {
+        let scb = crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![crate::scb::ClassEntry {
+                source_file: "snapshot_attachment_test.scs".to_owned(),
+                class_name: "StartUp".to_owned(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        };
+        let program = std::sync::Arc::new(crate::script_manager::ScriptProgram::from_scb(scb));
+        let script_name = "snapshot_attachment_test".to_owned();
+        let script =
+            crate::engine::MissionScript::from_program(script_name.clone(), program.clone())
+                .expect("minimal StartUp script");
+
+        let mut assets = LevelAssets::new();
+        assets.mission_script_name = Some(script_name.clone());
+        std::sync::Arc::make_mut(&mut assets.mission_script_programs)
+            .insert(script_name, program.clone());
+
+        let mut inner = EngineInner::new();
+        inner.scripts.install_mission(script);
+        inner.scripts.attach_native_capabilities(
+            &assets,
+            &inner.world.dynamic_sight_obstacles,
+            &inner.world.static_sight_obstacle_active,
+        );
+        inner
+            .scripts
+            .mission
+            .as_mut()
+            .expect("fixture mission script")
+            .game_host
+            .commands
+            .push(crate::natives::EngineCommand::UpdateInformationBars);
+
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(crate::sequence::SequenceElement::new(
+            1,
+            crate::element::Command::Generic,
+            None,
+        ));
+        let sequence_id = inner.orders.sequence_manager.launch_sequence(sequence);
+
+        (Engine { inner }, assets, program, sequence_id)
+    }
+
+    fn decoded_engine(engine: &Engine) -> Engine {
+        serde_json::from_str(&serde_json::to_string(engine).expect("serialize engine snapshot"))
+            .expect("decode engine snapshot")
+    }
 
     #[test]
     fn failed_construction_returns_the_same_campaign_allocation() {
@@ -990,17 +1073,11 @@ mod tests {
         assert_eq!(returned.current_mission_idx, Some(0));
     }
 
-    /// `Engine::restore` must transfer host-owned level fields from
-    /// the live engine to the deserialised one when those fields live
-    /// outside the sim snapshot.
-    ///
-    /// This test plants distinctive host data on a source engine, runs
-    /// it through serde, calls `restore`, and asserts every host field
-    /// we seeded comes back. When a new host-owned field lands on
-    /// `EngineInner`, extend both the transfer block in `Engine::restore`
-    /// and the assertions below.
+    /// Serialized camera state belongs to the snapshot; the previous live
+    /// engine is not an attachment source. Only immutable `LevelAssets` are
+    /// admitted by the preparation path.
     #[test]
-    fn restore_preserves_host_level_fields() {
+    fn restore_uses_snapshot_camera_state_not_previous_engine() {
         let mut source_inner = EngineInner::new();
 
         source_inner.feedback.cutscene_camera.level_size =
@@ -1013,12 +1090,11 @@ mod tests {
         let json = serde_json::to_string(&source).expect("serialize");
         let decoded: Engine = serde_json::from_str(&json).expect("deserialize");
 
-        // `restore` mutates `source` in place so the RAII invariant
-        // that `Engine` is always fully initialized holds without
-        // needing a `Default` shim for `std::mem::take`.
         let mut restored = source;
+        restored.inner.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(99.0, 88.0);
         let mut display = crate::engine::HostDisplayState::default();
-        restored.restore(&mut display, decoded);
+        restored.restore(&mut display, decoded, &LevelAssets::new());
 
         assert_eq!(
             restored.inner.feedback.cutscene_camera.level_size,
@@ -1040,7 +1116,9 @@ mod tests {
         };
 
         let mut display = crate::engine::HostDisplayState::default();
-        let error = live.try_restore(&mut display, malformed).unwrap_err();
+        let error = live
+            .try_restore(&mut display, malformed, &LevelAssets::new())
+            .unwrap_err();
         assert_eq!(
             error,
             SnapshotRestoreError::FastGridLengthMismatch {
@@ -1072,15 +1150,188 @@ mod tests {
         };
 
         let mut display = crate::engine::HostDisplayState::default();
-        let error = live.try_restore(&mut display, malformed).unwrap_err();
+        let error = live
+            .try_restore(&mut display, malformed, &LevelAssets::new())
+            .unwrap_err();
         assert_eq!(
             error,
             SnapshotRestoreError::WorldInvariantViolation {
-                detail:
-                    "snapshot script-zone runtime length 1 does not match loaded world length 0"
-                        .to_owned(),
+                detail: "script-zone runtime length 1 does not match level zone-index length 0"
+                    .to_owned(),
             }
         );
         assert!(live.inner.script_domains.zones.scripts.is_empty());
+    }
+
+    #[test]
+    fn network_adoption_is_fully_attached_and_preserves_hash_and_script_queue() {
+        let (source, assets, program, sequence_id) = scripted_snapshot_fixture();
+        let source_hash = crate::replay::state_hash(&source);
+        let snapshot = decoded_engine(&source);
+        let mut live = Engine {
+            inner: EngineInner::new(),
+        };
+
+        live.try_adopt_snapshot(snapshot, &assets)
+            .expect("adopt compatible snapshot");
+
+        assert_eq!(crate::replay::state_hash(&live), source_hash);
+        live.inner.scripts.assert_native_attachments_ready();
+        let script = live.inner.scripts.mission.as_ref().expect("adopted script");
+        assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
+        assert!(std::sync::Arc::ptr_eq(
+            &script.bindings.profile_manager,
+            &assets.profile_manager
+        ));
+        assert_eq!(script.game_host.commands.len(), 1);
+        assert!(matches!(
+            script.game_host.commands.first(),
+            Some(crate::natives::EngineCommand::UpdateInformationBars)
+        ));
+        assert_eq!(
+            live.inner
+                .orders
+                .sequence_manager
+                .get_sequence(sequence_id)
+                .map(|sequence| sequence.id),
+            Some(sequence_id),
+            "serialized sequences must be addressable after lookup indices rebuild"
+        );
+    }
+
+    #[test]
+    fn save_restore_attaches_before_fixups_and_appends_save_only_hud_repair() {
+        let (mut source, assets, program, _) = scripted_snapshot_fixture();
+        source.inner.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(4096.0, 4096.0);
+        source
+            .inner
+            .feedback
+            .cutscene_camera
+            .display
+            .background_transform
+            .zoom_to_up = true;
+        source.inner.feedback.cutscene_camera.zoom_init_done = true;
+        let snapshot = decoded_engine(&source);
+        let mut live = Engine {
+            inner: EngineInner::new(),
+        };
+        let mut display = super::super::HostDisplayState::default();
+
+        let observed_fixups_before_hud_repair = std::cell::Cell::new(false);
+        live.try_restore_with_post_fixup_observer(&mut display, snapshot, &assets, |inner| {
+            observed_fixups_before_hud_repair.set(true);
+            assert_eq!(
+                inner.orders.messenger.count(),
+                3,
+                "zoom-end, stature, and select-action must already be queued"
+            );
+            assert_eq!(
+                inner
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .expect("restored script during fixup observation")
+                    .game_host
+                    .commands
+                    .len(),
+                1,
+                "save-only HUD repair must not be queued until engine fixups finish"
+            );
+        })
+        .expect("restore compatible save snapshot");
+        assert!(observed_fixups_before_hud_repair.get());
+
+        live.inner.scripts.assert_native_attachments_ready();
+        let script = live
+            .inner
+            .scripts
+            .mission
+            .as_ref()
+            .expect("restored script");
+        assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
+        assert_eq!(
+            script.game_host.commands.len(),
+            2,
+            "saved queue must survive and save-load must append one HUD repair"
+        );
+        let messages = live.inner.orders.messenger.drain();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            messages[0].msg_type,
+            crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::ZoomUpEnd)
+        );
+        assert_eq!(
+            messages[1].msg_type,
+            crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature)
+        );
+        assert!(matches!(
+            messages[2].msg_type,
+            crate::messenger::MessageType::Pc(crate::messenger::PcMessage::SelectAction, _)
+        ));
+        assert_eq!(display.display_op, crate::engine::DisplayOpCode::Redraw);
+    }
+
+    #[test]
+    fn failed_attachment_preflight_does_not_mutate_live_engine() {
+        let (source, mut assets, _, _) = scripted_snapshot_fixture();
+        let snapshot = decoded_engine(&source);
+        assets.mission_script_programs = std::sync::Arc::new(std::collections::BTreeMap::new());
+
+        let mut live_inner = EngineInner::new();
+        live_inner.control.frame_counter = 77;
+        let mut live = Engine { inner: live_inner };
+        let before_hash = crate::replay::state_hash(&live);
+
+        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        assert!(matches!(
+            error,
+            SnapshotRestoreError::AttachmentFailure { ref detail }
+                if detail.contains("missing mission script program 'snapshot_attachment_test'")
+        ));
+        assert_eq!(crate::replay::state_hash(&live), before_hash);
+        assert_eq!(live.frame_counter(), 77);
+    }
+
+    #[test]
+    fn adoption_rejects_wrong_loaded_mission_identity() {
+        let (source, mut assets, _, _) = scripted_snapshot_fixture();
+        let snapshot = decoded_engine(&source);
+        assets.mission_script_name = Some("different_mission".to_owned());
+        let mut live = Engine {
+            inner: EngineInner::new(),
+        };
+
+        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        assert!(matches!(
+            error,
+            SnapshotRestoreError::AttachmentFailure { ref detail }
+                if detail.contains("does not match loaded mission script 'different_mission'")
+        ));
+        assert!(live.inner.scripts.mission.is_none());
+    }
+
+    #[test]
+    fn adoption_rejects_mobile_count_from_level_assets_atomically() {
+        let mut assets = LevelAssets::new();
+        assets.mobile_element_count = 1;
+        let snapshot = Engine {
+            inner: EngineInner::new(),
+        };
+        let mut live_inner = EngineInner::new();
+        live_inner.control.frame_counter = 91;
+        let mut live = Engine { inner: live_inner };
+        let before_hash = crate::replay::state_hash(&live);
+
+        let error = live.try_adopt_snapshot(snapshot, &assets).unwrap_err();
+        assert_eq!(
+            error,
+            SnapshotRestoreError::WorldInvariantViolation {
+                detail: "snapshot mobile-element count 0 does not match loaded level count 1"
+                    .to_owned()
+            }
+        );
+        assert_eq!(crate::replay::state_hash(&live), before_hash);
+        assert_eq!(live.frame_counter(), 91);
     }
 }
