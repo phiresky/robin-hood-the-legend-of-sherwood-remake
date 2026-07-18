@@ -1020,9 +1020,6 @@ pub(crate) fn render_entities_gpu(
         if !entity.is_active() || entity.element_data().hidden_in_building {
             continue;
         }
-        if entity.fx_data().is_some_and(|fx| fx.patch_index.is_some()) {
-            continue;
-        }
         // FX entities early-return when `is_to_be_displayed` is false;
         // non-FX kinds always pass.
         if !entity.is_to_be_displayed(display_anim) {
@@ -2119,19 +2116,6 @@ pub(crate) fn render_bg_animations_gpu(
         return;
     }
     render_fx_entities_gpu(bg_animation_ids.iter().copied(), engine, host, renderer);
-}
-
-pub(crate) fn render_patch_fx_gpu(
-    engine: &Engine,
-    host: &Host,
-    _assets: &LevelAssets,
-    renderer: &mut Renderer,
-) {
-    let patch_ids = engine.patch_fx_ids();
-    if patch_ids.is_empty() {
-        return;
-    }
-    render_fx_entities_gpu(patch_ids, engine, host, renderer);
 }
 
 fn render_fx_entities_gpu<I>(entity_ids: I, engine: &Engine, host: &Host, renderer: &mut Renderer)

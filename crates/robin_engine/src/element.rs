@@ -2431,6 +2431,21 @@ impl Entity {
         }
     }
 
+    /// Whether this is an ordinary elevation-zero FX that belongs in the
+    /// dedicated background-animation pass.
+    ///
+    /// This mirrors `RHEngine::AddElement`: only `IsFXBase()` elements at
+    /// elevation zero are removed from the normal display-order lists.
+    /// Targets are FX-derived but not FX-base, and mobile child sprites are
+    /// managed by their mobile owner, so both remain in the sorted list.
+    pub fn is_background_animation(&self) -> bool {
+        matches!(
+            self,
+            Self::Fx(e)
+                if e.fx.mobile_index.is_none() && e.element.position().z == 0.0
+        )
+    }
+
     /// For FX-kind entities (Fx / Target) the per-frame draw is
     /// suppressed when the player has disabled "Display Animations"
     /// in the graphics options, unless one of the override conditions

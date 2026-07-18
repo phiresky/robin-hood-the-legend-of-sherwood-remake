@@ -2593,20 +2593,8 @@ impl EngineInner {
     pub fn bg_animation_ids(&self) -> Vec<EntityId> {
         self.world
             .entities
-            .fxs()
-            .filter_map(|(id, fx)| {
-                (fx.element.position().z == 0.0 && fx.fx.mobile_index.is_none())
-                    .then_some(id.into())
-            })
-            .collect()
-    }
-
-    /// Patch FX entity ids.
-    pub fn patch_fx_ids(&self) -> Vec<EntityId> {
-        self.world
-            .entities
-            .fxs()
-            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(id.into()))
+            .occupied()
+            .filter_map(|(id, entity)| entity.is_background_animation().then_some(id))
             .collect()
     }
 

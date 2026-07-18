@@ -24,6 +24,83 @@ pub struct PreDecodedMinimap {
     pub pixels: Vec<u16>,
 }
 
+/// Apply the position fields embedded in an animation sprite reference.
+///
+/// `RHSprite::LoadPositionInfoFromFile(RHFRAMEKIND_ANIMATION)` treats the
+/// serialized X/Y as the sprite's top-left, then builds its 3D anchor from
+/// `(x + center.x, y + center.y + elevation, elevation)`. Keeping that
+/// authored elevation is also what decides whether an FX belongs to the
+/// background-animation list or the normal sorted display list.
+fn apply_animation_sprite_placement(
+    sprite: &mut crate::sprite::Sprite,
+    raw: &crate::level_data::RawSpriteRef,
+) {
+    let map_position = MapPoint::new(
+        raw.position_x as f32 + sprite.center.x,
+        raw.position_y as f32 + sprite.center.y,
+    );
+    sprite.apply_placement(
+        map_position,
+        0,
+        None,
+        0,
+        crate::element::GameMaterial::default(),
+        None,
+        None,
+    );
+
+    let elevation = raw.elevation as f32;
+    sprite
+        .position_iface
+        .set_position(crate::coordinates::WorldPoint3D {
+            x: map_position.x,
+            y: map_position.y + elevation,
+            z: elevation,
+        });
+}
+
+#[cfg(test)]
+mod animation_placement_tests {
+    use super::apply_animation_sprite_placement;
+    use crate::coordinates::{MapPoint, SpriteAnchor};
+    use crate::level_data::RawSpriteRef;
+    use crate::sprite::Sprite;
+
+    #[test]
+    fn animation_position_uses_top_left_center_and_authored_elevation() {
+        let mut sprite = Sprite {
+            center: SpriteAnchor::new(12.0, 18.0),
+            ..Default::default()
+        };
+        let raw = RawSpriteRef {
+            frame_profile_name: String::new(),
+            profile_name: String::new(),
+            position_x: 100,
+            position_y: 200,
+            elevation: 30,
+        };
+
+        apply_animation_sprite_placement(&mut sprite, &raw);
+
+        assert_eq!(
+            sprite.position_iface.map_position(),
+            MapPoint::new(112.0, 218.0)
+        );
+        assert_eq!(
+            sprite.position_iface.get_position(),
+            crate::coordinates::WorldPoint3D::new(112.0, 248.0, 30.0)
+        );
+        assert_eq!(
+            sprite.position_iface.map_position().x - sprite.center.x,
+            raw.position_x as f32
+        );
+        assert_eq!(
+            sprite.position_iface.map_position().y - sprite.center.y,
+            raw.position_y as f32
+        );
+    }
+}
+
 /// Minimap bitmap metadata produced by the host after GPU upload and
 /// consumed by [`super::Engine::apply_level_bitmaps_loaded`] to finish
 /// the minimap-widget wiring (hit mask, map size, initial position).
@@ -319,6 +396,9 @@ fn spawn_mission_patch_fx_entities(
                     Ok(info) => {
                         sprite.scripts = info.scripts.clone();
                         sprite.conversion = info.conversion.clone();
+                        sprite.center = info.center;
+                        sprite.current_width = info.size.x as u16;
+                        sprite.current_height = info.size.y as u16;
                         sprite.frame_profile_name = fname.clone();
                         sprite.profile_cache_key = cache_key;
                     }
@@ -339,18 +419,7 @@ fn spawn_mission_patch_fx_entities(
         }
 
         let initially_active = raw.start_animation_valid;
-        sprite.apply_placement(
-            MapPoint::new(
-                raw.element_fx.sprite.position_x as f32,
-                raw.element_fx.sprite.position_y as f32,
-            ),
-            0,
-            None,
-            0,
-            crate::element::GameMaterial::default(),
-            None,
-            None,
-        );
+        apply_animation_sprite_placement(&mut sprite, &raw.element_fx.sprite);
         if initially_active {
             if let Some(row) = sprite.row_for_action(crate::order::OrderType::PATCH_INITIAL) {
                 sprite.current_row = row;
@@ -1485,6 +1554,9 @@ impl EngineInner {
                             Ok(info) => {
                                 sprite.scripts = info.scripts.clone();
                                 sprite.conversion = info.conversion.clone();
+                                sprite.center = info.center;
+                                sprite.current_width = info.size.x as u16;
+                                sprite.current_height = info.size.y as u16;
                                 sprite.frame_profile_name = fname.clone();
                                 sprite.profile_cache_key = cache_key;
                             }
@@ -1504,18 +1576,7 @@ impl EngineInner {
 
                 // Determine initial active state from start_animation_valid.
                 let initially_active = raw.start_animation_valid;
-                sprite.apply_placement(
-                    MapPoint::new(
-                        raw.element_fx.sprite.position_x as f32,
-                        raw.element_fx.sprite.position_y as f32,
-                    ),
-                    0,
-                    None,
-                    0,
-                    crate::element::GameMaterial::default(),
-                    None,
-                    None,
-                );
+                apply_animation_sprite_placement(&mut sprite, &raw.element_fx.sprite);
 
                 // When `start_animation_valid`, park the FX element on the
                 // initial animation row.  Without this, the patch starts on
@@ -1612,6 +1673,9 @@ impl EngineInner {
                             Ok(info) => {
                                 sprite.scripts = info.scripts.clone();
                                 sprite.conversion = info.conversion.clone();
+                                sprite.center = info.center;
+                                sprite.current_width = info.size.x as u16;
+                                sprite.current_height = info.size.y as u16;
                                 sprite.frame_profile_name = fname.clone();
                                 sprite.profile_cache_key = cache_key;
                             }
@@ -1624,15 +1688,7 @@ impl EngineInner {
                         tracing::error!("Failed to resolve animation RHS path for '{fname}': {e}");
                     }
                 }
-                sprite.apply_placement(
-                    MapPoint::new(raw.sprite.position_x as f32, raw.sprite.position_y as f32),
-                    0,
-                    None,
-                    0,
-                    crate::element::GameMaterial::default(),
-                    None,
-                    None,
-                );
+                apply_animation_sprite_placement(&mut sprite, &raw.sprite);
                 let entity = Entity::Fx(crate::element::ElementFx {
                     element: crate::element::ElementData {
                         kind: crate::element::ElementKind::Fx,
@@ -1660,9 +1716,6 @@ impl EngineInner {
                         },
                     },
                 });
-                // Proto-level background animations always load at
-                // layer 0 / Z 0, so the background animation accessor
-                // derives them directly from the entity store.
                 let _ = self.add_entity(entity);
             }
 
