@@ -2490,18 +2490,11 @@ impl EngineInner {
                 .map(|p| (p.get_door(), p.get_door_direction()))
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (adj_src_pos, adj_src_sector) = {
-                let host = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|_h| {
-                    crate::engine::movement::adapt_source_to_current_door(
-                        &self.script_domains.interactables.doors,
-                        door_handle,
-                        door_direction,
-                    )
-                });
+                let adapted = crate::engine::movement::adapt_source_to_current_door(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                );
                 match adapted {
                     Some((adj, sector, _layer)) => (adj, sector),
                     None => (MapPoint::new(pc_pos.x, pc_pos.y), u16::from(pcs)),
@@ -2509,33 +2502,27 @@ impl EngineInner {
             };
             // PC authorisation for the gate A*.  Seek/melee routing
             // never sets the leave-map flag, so `allow_leave_map = false`.
-            let pc_auth = self.get_entity(pc_id).map(|e| e.actor_auth_info());
+            let pc_auth = self
+                .get_entity(pc_id)
+                .expect("swordfight routing PC disappeared after source snapshot")
+                .actor_auth_info();
             let level = self.world.fast_grid.level.clone();
-            let gate_path = {
-                let host = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .and_then(|s| s.game_host_mut());
-                host.and_then(|_h| {
-                    crate::gate::find_path_gates(
-                        &self.script_domains.interactables.doors,
-                        (adj_src_pos.x, adj_src_pos.y),
-                        adj_src_sector,
-                        (target_pos.x, target_pos.y),
-                        ts.into(),
-                        pc_auth.as_ref(),
-                        false,
-                        &|sector| {
-                            level
-                                .sectors
-                                .iter()
-                                .find(|candidate| candidate.sector_number == sector)
-                                .and_then(|candidate| candidate.lift_type)
-                        },
-                    )
-                })
-            };
+            let gate_path = crate::gate::find_path_gates(
+                &self.script_domains.interactables.doors,
+                (adj_src_pos.x, adj_src_pos.y),
+                adj_src_sector,
+                (target_pos.x, target_pos.y),
+                ts.into(),
+                Some(&pc_auth),
+                false,
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            );
             // Detect a swordfight-line pair between the PC's sector
             // and the target's sector — the "across gates" snap case.
             // Computed regardless of whether `find_path_gates`

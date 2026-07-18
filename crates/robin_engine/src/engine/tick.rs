@@ -157,6 +157,41 @@ enum OwnerActionBarrier {
     Skip,
 }
 
+fn required_canonical_door<'a>(
+    doors: &'a [crate::gate::Door],
+    door_id: crate::gate::DoorIndex,
+    context: &'static str,
+) -> &'a crate::gate::Door {
+    doors
+        .get(usize::from(door_id))
+        .unwrap_or_else(|| panic!("{context} references missing canonical door {door_id}"))
+}
+
+fn required_canonical_door_mut<'a>(
+    doors: &'a mut [crate::gate::Door],
+    door_id: crate::gate::DoorIndex,
+    context: &'static str,
+) -> &'a mut crate::gate::Door {
+    doors
+        .get_mut(usize::from(door_id))
+        .unwrap_or_else(|| panic!("{context} references missing canonical door {door_id}"))
+}
+
+fn required_unlock_door_id(
+    element: Option<&crate::sequence::SequenceElement>,
+    seq_id: crate::sequence::SequenceId,
+    elem_idx: usize,
+) -> crate::gate::DoorIndex {
+    let element = element.unwrap_or_else(|| {
+        panic!("UnlockDoor sequence element {seq_id:?}/{elem_idx} disappeared during dispatch")
+    });
+    match element.get_property(crate::sequence::Field::Door) {
+        Some(crate::sequence::FieldValue::DoorId(id)) => *id,
+        Some(crate::sequence::FieldValue::Integer(id)) => crate::gate::DoorIndex(*id),
+        _ => panic!("UnlockDoor sequence element {seq_id:?}/{elem_idx} has no Door property"),
+    }
+}
+
 /// Synchronous position assertion against entity state and its owning
 /// sequence element.
 ///
@@ -1473,6 +1508,34 @@ mod sequence_phase_context_tests {
             })
         ));
         assert!(phase.pop_action().is_none());
+    }
+}
+
+#[cfg(test)]
+mod canonical_door_invariant_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "UnlockDoor dispatch references missing canonical door 4")]
+    fn required_door_lookup_rejects_stale_unlock_target() {
+        required_canonical_door(&[], crate::gate::DoorIndex(4), "UnlockDoor dispatch");
+    }
+
+    #[test]
+    #[should_panic(expected = "UnlockDoor completion references missing canonical door 9")]
+    fn required_mutable_door_lookup_rejects_stale_completion_target() {
+        required_canonical_door_mut(&mut [], crate::gate::DoorIndex(9), "UnlockDoor completion");
+    }
+
+    #[test]
+    #[should_panic(expected = "has no Door property")]
+    fn unlock_dispatch_rejects_missing_required_door_property() {
+        let element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::UnlockDoor,
+            None,
+        );
+        required_unlock_door_id(Some(&element), crate::sequence::SequenceId(3), 0);
     }
 }
 
@@ -3580,9 +3643,8 @@ impl EngineInner {
                             LiftWaitCommandContext {
                                 entities: &mut self.world.entities,
                                 fast_grid: &mut self.world.fast_grid,
-                                // Runtime door state is authoritative; the
-                                // legacy mission GameHost was only used as a
-                                // presence guard around this same collection.
+                                // Runtime door state is authoritative and does
+                                // not depend on mission-script presence.
                                 doors: self.script_domains.interactables.doors.as_slice(),
                                 sequence_manager: &mut self.orders.sequence_manager,
                             }
@@ -5403,43 +5465,25 @@ impl EngineInner {
                         // read from the `Field::Door` property set
                         // by `build_gate_movement_sequence`.
                         Command::UnlockDoor => {
-                            let door_id = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .and_then(|e| e.get_property(crate::sequence::Field::Door))
-                                .and_then(|v| match v {
-                                    crate::sequence::FieldValue::DoorId(id) => Some(*id),
-                                    crate::sequence::FieldValue::Integer(id) => {
-                                        Some(crate::gate::DoorIndex(*id))
-                                    }
-                                    _ => None,
-                                });
-                            let Some(id) = door_id else {
-                                // No target door — can't proceed; just
-                                // terminate so the sequence doesn't stall.
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                                continue;
-                            };
+                            let id = required_unlock_door_id(
+                                self.orders.sequence_manager.get_element(seq_id, elem_idx),
+                                seq_id,
+                                elem_idx,
+                            );
                             // Pick UnlockingDoor vs UnlockingTrap
                             // by door type.
-                            let anim_type = self
-                                .scripts
-                                .mission
-                                .as_ref()
-                                .and_then(|s| s.game_host())
-                                .and_then(|_| {
-                                    self.script_domains.interactables.doors.get(usize::from(id))
-                                })
-                                .map(|d| match d.door_type {
-                                    crate::gate::DoorType::BuildingTrap => {
-                                        crate::order::OrderType::UnlockingTrap
-                                    }
-                                    _ => crate::order::OrderType::UnlockingDoor,
-                                })
-                                .unwrap_or(crate::order::OrderType::UnlockingDoor);
+                            let anim_type = match required_canonical_door(
+                                &self.script_domains.interactables.doors,
+                                id,
+                                "UnlockDoor dispatch",
+                            )
+                            .door_type
+                            {
+                                crate::gate::DoorType::BuildingTrap => {
+                                    crate::order::OrderType::UnlockingTrap
+                                }
+                                _ => crate::order::OrderType::UnlockingDoor,
+                            };
                             tracing::debug!(
                                 door_id = %id,
                                 entity = ?owner,
@@ -6671,40 +6715,29 @@ impl EngineInner {
             return;
         };
 
-        let Some((layer_in, layer_out, sector_in, sector_out, point_in, point_mid, point_out)) =
-            self.scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .and_then(|_| {
-                    self.script_domains
-                        .interactables
-                        .doors
-                        .get(usize::from(door_index))
-                })
-                .map(|door| {
-                    (
-                        door.layer_in,
-                        door.layer_out,
-                        door.sector_in,
-                        door.sector_out,
-                        MapPoint {
-                            x: door.point_in.x,
-                            y: door.point_in.y,
-                        },
-                        MapPoint {
-                            x: door.point_mid.x,
-                            y: door.point_mid.y,
-                        },
-                        MapPoint {
-                            x: door.point_out.x,
-                            y: door.point_out.y,
-                        },
-                    )
-                })
-        else {
-            return;
-        };
+        let door = required_canonical_door(
+            &self.script_domains.interactables.doors,
+            door_index,
+            "PassDoor transition side effects",
+        );
+        let (layer_in, layer_out, sector_in, sector_out, point_in, point_mid, point_out) = (
+            door.layer_in,
+            door.layer_out,
+            door.sector_in,
+            door.sector_out,
+            MapPoint {
+                x: door.point_in.x,
+                y: door.point_in.y,
+            },
+            MapPoint {
+                x: door.point_mid.x,
+                y: door.point_mid.y,
+            },
+            MapPoint {
+                x: door.point_out.x,
+                y: door.point_out.y,
+            },
+        );
 
         let lift_direction = self
             .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector_in)))
@@ -6862,16 +6895,11 @@ impl EngineInner {
         };
 
         let Some((snap_point, posture, action_state, sector_in)) = (|| {
-            let _game_host = self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())?;
-            let door = self
-                .script_domains
-                .interactables
-                .doors
-                .get(usize::from(door_index))?;
+            let door = required_canonical_door(
+                &self.script_domains.interactables.doors,
+                door_index,
+                "PassDoor transition completion",
+            );
             let snap = match action {
                 OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
                     x: door.point_mid.x,
@@ -7014,23 +7042,16 @@ impl EngineInner {
         }
 
         for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
-            if let Some(_game_host) = self
-                .scripts
-                .mission
-                .as_mut()
-                .and_then(|s| s.game_host_mut())
-                && let Some(door) = self
-                    .script_domains
-                    .interactables
-                    .doors
-                    .get_mut(usize::from(door_id))
-            {
-                door.locked_pc = false;
-                tracing::debug!(
-                    door_id = %door_id,
-                    "UnlockDoor: lockpick animation complete, door unlocked"
-                );
-            }
+            let door = required_canonical_door_mut(
+                &mut self.script_domains.interactables.doors,
+                door_id,
+                "UnlockDoor completion",
+            );
+            door.locked_pc = false;
+            tracing::debug!(
+                door_id = %door_id,
+                "UnlockDoor: lockpick animation complete, door unlocked"
+            );
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
