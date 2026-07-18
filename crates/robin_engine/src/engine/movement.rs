@@ -5439,7 +5439,12 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .and_then(|elem| elem.owner)
             {
-                self.apply_door_pass_continue_state(owner, order.order_type);
+                super::door_pass::apply_door_pass_continue_state(
+                    &mut self.world.entities,
+                    &self.world.fast_grid,
+                    owner,
+                    order.order_type,
+                );
             }
             self.orders
                 .sequence_manager

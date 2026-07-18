@@ -138,7 +138,12 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        self.apply_door_pass_continue_state(entity_id, action);
+        super::door_pass::apply_door_pass_continue_state(
+            &mut self.world.entities,
+            &self.world.fast_grid,
+            entity_id,
+            action,
+        );
 
         if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(actor) = entity.actor_data_mut() {
