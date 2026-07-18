@@ -27,12 +27,15 @@ snapshot prepare/adopt/restore path. We therefore did not add the proposed
 while protocol version 8 intentionally permits the in-memory state-hash layout
 change; historical replay compatibility is not retained.
 
-The logical/API split is not finished. The latest sequence wave extracted
-attention and stealth/posture contexts and reduced `hourglass_phase_sequences`
-from 2,708 to 2,645 lines, but that method still reaches across most owners.
-Transition plus mission/message helpers also commonly accept `&mut
-EngineInner`. Continue sequence dispatch by coherent command family, then move
-transition and mission-gate helpers to explicit minimal borrows.
+The logical/API split is substantially implemented but remains an incremental
+cleanup track. Sequence work now has focused attention, stealth/posture, and
+shield command contexts; the shield family preserves refresh `Seek`
+registration and next-hourglass dispatch timing. Eight direct owner-command
+helpers remain on `EngineInner` (sword strike, swordfight enter/quit/parry and
+stop-parry, damage reception, fall, and wasp sting), while several larger
+inline command families and transition/mission helpers still reach across
+multiple owners. Continue those by coherent command family when their behavior
+is under active change, with explicit minimal borrows and ordering tests.
 
 The field inventory below is the pre-refactor design record. The staged plan
 now doubles as a record of completed physical moves and remaining logical API
