@@ -5,6 +5,8 @@
 //! escapes the phase or crosses into simulation.
 
 use super::flow::{FrameControl, MissionExit, MissionServices};
+use super::interactive::MissionInput;
+use super::runtime::FrameContractStage;
 use super::*;
 
 /// Values produced by graphical network ingress at the frame boundary.
@@ -62,6 +64,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     let hud = &mut frontend.hud;
     let presentation = &mut frontend.presentation;
     let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
+    runtime.begin_execution_trace(FrameContractStage::NetworkIngress);
     if let Some(start_at) = runtime.mp_start_gate {
         if current_epoch_ms() >= start_at {
             runtime.mp_start_gate = None;
@@ -219,11 +222,45 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     }
 }
 
+/// Apply process-side input and banner effects produced by save/load I/O.
+/// These intentionally remain after operation processing and before replay or
+/// multiplayer command injection.
+fn apply_post_save_ui_state(
+    callbacks: &mut RustCallbacks,
+    game: &mut crate::game::Game,
+    input: &mut MissionInput,
+) {
+    if std::mem::take(&mut callbacks.pending_reset_input) {
+        input.reset_after_engine_request();
+    }
+    if let Some(kind) = callbacks.pending_save_banner.take() {
+        let text = match kind {
+            SaveBannerKind::Saved => "Game saved.",
+            SaveBannerKind::Loaded => "Game loaded.",
+        };
+        // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
+        // MT_MSG_GAME_LOADED once the localized text ownership is explicit.
+        game.display_message(text.to_string(), 100);
+    }
+}
+
 /// Collect input, drive operation/save flows, and finalize the pre-tick
 /// command stream.
 pub(super) struct InteractiveFramePreparation<'mission, 'services, 'app> {
     mission: &'mission mut InteractiveMission,
     services: &'services mut MissionServices<'app>,
+    state: Option<PreparationPhaseState>,
+}
+
+struct PreparationPhaseState {
+    frame: MissionFrame,
+    mp_clock_pause: bool,
+    pause_closed_this_frame: bool,
+    rewind_active: bool,
+    shift_held: bool,
+    step_forward_pressed: bool,
+    step_back_pressed: bool,
+    modal_rendered_this_frame: bool,
 }
 
 impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services, 'app> {
@@ -231,19 +268,34 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         mission: &'mission mut InteractiveMission,
         services: &'services mut MissionServices<'app>,
     ) -> Self {
-        Self { mission, services }
+        Self {
+            mission,
+            services,
+            state: None,
+        }
     }
 
     /// Collect input, drive operation/save flows, and finalize the pre-tick
     /// command stream.
-    pub(super) async fn run(self) -> Result<FramePreparation, String> {
-        let Self { mission, services } = self;
+    pub(super) async fn run(mut self) -> Result<FramePreparation, String> {
+        if let Some(control) = self.collect_input_and_menus().await? {
+            return Ok(FramePreparation::Control(control));
+        }
+        if let Some(control) = self.process_operation_and_save().await? {
+            return Ok(FramePreparation::Control(control));
+        }
+        self.finalize_pre_tick()
+    }
+
+    async fn collect_input_and_menus(&mut self) -> Result<Option<FrameControl>, String> {
+        let mission = &mut *self.mission;
+        let services = &mut *self.services;
         let window = &mut *services.window;
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
         let FrameStart {
             mut frame,
-            mut mp_clock_pause,
+            mp_clock_pause,
         } = begin_interactive_frame(mission);
         let modal_rendered_this_frame = false;
         // Preserve the existing statement order while migrating ownership. These
@@ -293,12 +345,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         .await?
         {
             HandlerAction::Continue => {
-                return Ok(FramePreparation::Control(FrameControl::RestartIteration));
+                runtime.trace(FrameContractStage::EarlyRestart);
+                return Ok(Some(FrameControl::RestartIteration));
             }
             HandlerAction::Exit(code) => {
-                return Ok(FramePreparation::Control(FrameControl::Exit(
-                    MissionExit::new(code),
-                )));
+                runtime.trace(FrameContractStage::Exit);
+                return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
             }
             HandlerAction::Proceed => {}
         }
@@ -401,9 +453,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         }
 
         if input.threaded.is_ended() {
-            return Ok(FramePreparation::Control(FrameControl::Exit(
-                MissionExit::new(GameCode::Quit),
-            )));
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(Some(FrameControl::Exit(MissionExit::new(GameCode::Quit))));
         }
 
         match handle_sherwood_hud_buttons(
@@ -425,12 +476,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         .await
         {
             HandlerAction::Continue => {
-                return Ok(FramePreparation::Control(FrameControl::RestartIteration));
+                runtime.trace(FrameContractStage::EarlyRestart);
+                return Ok(Some(FrameControl::RestartIteration));
             }
             HandlerAction::Exit(code) => {
-                return Ok(FramePreparation::Control(FrameControl::Exit(
-                    MissionExit::new(code),
-                )));
+                runtime.trace(FrameContractStage::Exit);
+                return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
             }
             HandlerAction::Proceed => {}
         }
@@ -1163,7 +1214,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             .await
             {
                 HandlerAction::Continue => {
-                    return Ok(FramePreparation::Control(FrameControl::RestartIteration));
+                    runtime.trace(FrameContractStage::EarlyRestart);
+                    return Ok(Some(FrameControl::RestartIteration));
                 }
                 HandlerAction::Exit(code) => {
                     execute_app_effects(
@@ -1175,9 +1227,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                             .as_mut()
                             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
                     );
-                    return Ok(FramePreparation::Control(FrameControl::Exit(
-                        MissionExit::new(code),
-                    )));
+                    runtime.trace(FrameContractStage::Exit);
+                    return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
                 }
                 HandlerAction::Proceed => {}
             }
@@ -1218,7 +1269,57 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         )
         .await;
 
+        runtime.trace(FrameContractStage::InputAndMenus);
+
+        self.state = Some(PreparationPhaseState {
+            frame,
+            mp_clock_pause,
+            pause_closed_this_frame,
+            rewind_active,
+            shift_held,
+            step_forward_pressed,
+            step_back_pressed,
+            modal_rendered_this_frame,
+        });
+        Ok(None)
+    }
+
+    async fn process_operation_and_save(&mut self) -> Result<Option<FrameControl>, String> {
+        let services = &mut *self.services;
+        let callbacks = &mut *services.callbacks;
+        let profiles = services.profiles;
+        let PreparationPhaseState {
+            frame,
+            mp_clock_pause,
+            pause_closed_this_frame,
+            rewind_active,
+            shift_held,
+            step_forward_pressed,
+            step_back_pressed,
+            modal_rendered_this_frame,
+        } = self.state.take().expect("input phase must complete first");
+        let InteractiveMission { runtime, frontend } = &mut *self.mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            ..
+        } = runtime;
+        let MissionWorld {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        } = world;
+        let input = &mut frontend.input;
+        let audio = &mut frontend.audio;
+        let resources = &mut frontend.resources;
+        let ui = &mut frontend.ui;
+        let hud = &mut frontend.hud;
+        let presentation = &mut frontend.presentation;
+
         // ── Process game operations (save/load/quit/win/lose) ──
+        runtime.trace(FrameContractStage::OperationAndSave);
         //
         // The Game state machine queues save/load intents on the
         // callbacks; `perform_pending_save_load` then flushes them to
@@ -1311,9 +1412,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
-            return Ok(FramePreparation::Control(FrameControl::Exit(
-                MissionExit::new(exit_code),
-            )));
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
         }
         let save_load_processed = perform_pending_save_load(
             host,
@@ -1336,9 +1436,10 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // and re-queue the Load on the fresh engine.
         if callbacks.pending_level_load.is_some() {
             game.operation.set(GameCode::LevelLoad);
-            return Ok(FramePreparation::Control(FrameControl::Exit(
-                MissionExit::new(GameCode::LevelLoad),
-            )));
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(Some(FrameControl::Exit(MissionExit::new(
+                GameCode::LevelLoad,
+            ))));
         }
 
         // ── Post-load slot-type sync ──
@@ -1352,34 +1453,51 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             game.post_load_resolution_resync();
         }
 
-        // ── Reset input state after load ──
-        // Clear the translator's key-edge state so half-pressed keys
-        // at save time don't emit stale edge-detection events on the
-        // next frame.  Host-side `InputState` is already wiped by
-        // `Host::post_load_reset` during `apply_to`; this clears the
-        // mirror that lives on the input translator itself.
-        if std::mem::take(&mut callbacks.pending_reset_input) {
-            input.reset_after_engine_request();
-        }
+        apply_post_save_ui_state(callbacks, game, input);
 
-        // ── Save/load banner ──
-        // `perform_pending_save_load` queues GAME_SAVED/GAME_LOADED
-        // on every successful non-Restart/non-Sherwood save or load.
-        // Threaded onto `game.message_text` / `message_delay` through
-        // `Game::display_message`.
-        if let Some(kind) = callbacks.pending_save_banner.take() {
-            let text = match kind {
-                SaveBannerKind::Saved => "Game saved.",
-                SaveBannerKind::Loaded => "Game loaded.",
-            };
-            // 100 ticks — `display_message` is a fire-and-forget
-            // delay that the presentation.renderer polls (the hook lives in
-            // `render_frame` and calls
-            // `hud_text::render_transient_message`).  IDs
-            // `MT_MSG_GAME_SAVED` / `MT_MSG_GAME_LOADED` should be
-            // wired for localisation later.
-            game.display_message(text.to_string(), 100);
-        }
+        self.state = Some(PreparationPhaseState {
+            frame,
+            mp_clock_pause,
+            pause_closed_this_frame,
+            rewind_active,
+            shift_held,
+            step_forward_pressed,
+            step_back_pressed,
+            modal_rendered_this_frame,
+        });
+        Ok(None)
+    }
+
+    fn finalize_pre_tick(&mut self) -> Result<FramePreparation, String> {
+        let PreparationPhaseState {
+            mut frame,
+            mut mp_clock_pause,
+            pause_closed_this_frame: _,
+            rewind_active,
+            shift_held,
+            step_forward_pressed,
+            step_back_pressed,
+            modal_rendered_this_frame,
+        } = self
+            .state
+            .take()
+            .expect("operation/save phase must complete first");
+        let InteractiveMission { runtime, frontend } = &mut *self.mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            control,
+        } = runtime;
+        let MissionWorld {
+            host,
+            game: _,
+            manager,
+            assets,
+            ..
+        } = world;
+        let manual_pause = &mut control.manual_pause;
+        let input = &mut frontend.input;
+        let ui = &mut frontend.ui;
 
         // ── Replay: inject recorded commands + desync check ──
         // `ModalDismiss` commands are split out of the recorded stream
@@ -1404,6 +1522,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // inputs here keeps them on the same `sim_frame` without
         // mutating sim state at arbitrary points in the frame.
         if host.net.is_some() && !rewind_active {
+            runtime.trace(FrameContractStage::SecondNetworkDrain);
             if let Some(net) = host.net.as_ref() {
                 net.publish_frame(manager.sim_frame);
             }
@@ -1699,6 +1818,10 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             }
         }
 
+        if paused || rewind_active {
+            runtime.trace(FrameContractStage::PausedOrRewind);
+        }
+        runtime.trace(FrameContractStage::PreTickCommands);
         Ok(FramePreparation::Ready(PreparedFrame {
             frame,
             rewind_active,

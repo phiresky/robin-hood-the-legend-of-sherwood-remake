@@ -243,7 +243,7 @@ impl EngineInner {
             OrderType::GettingFreeFromWasp,
             0.0,
             0.0,
-            self.alloc_order_id(),
+            self.orders.allocate_order_id(),
         )
         .with_completion(crate::order::OrderCompletion::WaspStruggleCycle {
             cycles_remaining: bee_time,

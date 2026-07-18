@@ -7,103 +7,36 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
-/// Unwind-safe owner for one engine-to-script dispatch transaction.
+/// Script-originated effects removed from the VM adapter before processing.
 ///
-/// The mission script is temporarily removed from `EngineInner`, which gives
-/// the session exclusive ownership. Entities, AI, grid, campaign, and mission
-/// statistics stay in `EngineInner` and are borrowed by each native resume.
-/// This is not serializable or hashable: legal snapshots only exist after the
-/// exact script and engine state have been restored to their canonical owners.
-///
-struct ScriptSession<'engine, 'assets> {
-    engine: &'engine mut EngineInner,
-    assets: &'assets LevelAssets,
-    script: Option<MissionScript>,
+/// Draining first ends the `MissionScript` borrow. Effect handlers may then
+/// synchronously re-enter script dispatch while the canonical VM remains in
+/// `ScriptRuntime`; no engine state or script owner is parked elsewhere.
+#[derive(Default)]
+struct PendingScriptEffects {
+    sound: Vec<crate::natives::SoundCommand>,
+    engine: Vec<crate::natives::EngineCommand>,
+    completed_sequences: Vec<crate::sequence::Sequence>,
+    deferred: Vec<crate::natives::DeferredCommand>,
 }
 
-impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
-    fn begin(engine: &'engine mut EngineInner, assets: &'assets LevelAssets) -> Option<Self> {
-        engine.scripts.assert_native_attachments_ready();
-        let script = engine.scripts.mission.take()?;
-        script.assert_no_active_call_frames();
-        Some(Self {
-            engine,
-            assets,
-            script: Some(script),
-        })
-    }
-
-    /// Run one ordered callback batch against one bundle of canonical owners.
-    /// Nested `PendingNestedCall` yields resume against that same bundle.
-    fn dispatch<R>(
-        &mut self,
-        callback: impl FnOnce(
-            &mut MissionScript,
-            &mut crate::engine::ScriptDomains,
-            &crate::natives::NativeSessionCapabilities<'_>,
-        ) -> R,
-    ) -> R {
-        let campaign = Some(&mut self.engine.mission_domain.campaign)
-            .expect("active mission entered a script call without its campaign");
-        let capabilities = crate::natives::NativeSessionCapabilities::new(
-            &mut self.engine.world.entities,
-            &mut self.engine.ai.global,
-            &mut self.engine.world.fast_grid,
-        )
-        .with_queries(
-            &self.engine.orders.sequence_manager,
-            &self.engine.players.seats[0].selection,
-            &self.engine.feedback.sound_sim.sources,
-            &self.engine.world.weather,
-            &self.engine.control.frame_counter,
-        )
-        .with_campaign(campaign, &mut self.engine.mission_domain.mission_stat);
-        let script = self
-            .script
-            .as_mut()
-            .expect("script session lost its leased mission script");
-        let result = callback(script, &mut self.engine.script_domains, &capabilities);
-
-        self.script
-            .as_ref()
-            .expect("script session lost its leased mission script")
-            .assert_no_active_call_frames();
-        result
-    }
-
-    fn restore_script(&mut self) {
-        let Some(script) = self.script.take() else {
-            return;
-        };
-        script.assert_no_active_call_frames();
-        assert!(
-            self.engine.scripts.mission.is_none(),
-            "a second mission script was installed during an active script session"
-        );
-        self.engine.scripts.mission = Some(script);
-    }
-
-    fn finish<R>(mut self, result: R) -> R {
-        self.restore_script();
-        self.engine.sync_game_host_post_script(self.assets);
-        result
-    }
-}
-
-impl Drop for ScriptSession<'_, '_> {
-    fn drop(&mut self) {
-        // Do not dispatch queued effects while unwinding: that could run a
-        // second script callback during panic cleanup. Ownership and call
-        // context are nevertheless restored exactly.
-        self.restore_script();
+impl PendingScriptEffects {
+    fn drain(script: &mut MissionScript) -> Self {
+        let game_host = &mut script.game_host;
+        Self {
+            sound: std::mem::take(&mut game_host.sound_commands),
+            engine: game_host.drain_commands(),
+            completed_sequences: game_host.take_completed_sequences(),
+            deferred: std::mem::take(&mut game_host.deferred_commands),
+        }
     }
 }
 
 impl EngineInner {
     /// Canonical entry boundary for global, actor, zone, target, scroll, and
-    /// waypoint script callbacks. The closure preserves each call family's
-    /// existing statement order; the session owns all transfer/restoration
-    /// mechanics and drains effects only after reinstalling the script.
+    /// waypoint script callbacks. The VM and every native capability are
+    /// disjoint borrows of their sole owners; nothing is removed from
+    /// `EngineInner`, including while nested callbacks resume the outer VM.
     pub(super) fn with_script_session<R>(
         &mut self,
         assets: &LevelAssets,
@@ -114,9 +47,41 @@ impl EngineInner {
         ) -> R,
     ) -> Option<R> {
         self.refresh_script_sight_bindings();
-        let mut session = ScriptSession::begin(self, assets)?;
-        let result = session.dispatch(callback);
-        Some(session.finish(result))
+        self.scripts.assert_native_attachments_ready();
+        let result = {
+            let EngineInner {
+                mission_domain,
+                control,
+                ai,
+                world,
+                script_domains,
+                orders,
+                scripts,
+                players,
+                feedback,
+            } = self;
+            let script = scripts.mission.as_mut()?;
+            script.assert_no_active_call_frames();
+            let campaign = &mut mission_domain.campaign;
+            let capabilities = crate::natives::NativeSessionCapabilities::new(
+                &mut world.entities,
+                &mut ai.global,
+                &mut world.fast_grid,
+            )
+            .with_queries(
+                &orders.sequence_manager,
+                &players.seats[0].selection,
+                &feedback.sound_sim.sources,
+                &world.weather,
+                &control.frame_counter,
+            )
+            .with_campaign(campaign, &mut mission_domain.mission_stat);
+            let result = callback(script, script_domains, &capabilities);
+            script.assert_no_active_call_frames();
+            result
+        };
+        self.drain_script_effects(assets);
+        Some(result)
     }
 
     /// Normalize campaign/custom values from the legacy GameHost save shape
@@ -206,21 +171,25 @@ impl EngineInner {
         );
     }
 
-    /// Apply changes from GameHost back to the engine after a script call.
-    /// Syncs entity active state, processes sound commands, and checks
-    /// whether patches invalidated the background.
-    pub(crate) fn sync_game_host_post_script(&mut self, assets: &LevelAssets) {
-        // We need to take the script out briefly so we can mutably borrow
-        // both GameHost fields and engine fields simultaneously.
-        let mut script = match self.scripts.mission.take() {
-            Some(s) => s,
+    /// Drain and apply script-originated effects after a callback batch.
+    ///
+    /// The queue batch is removed under a short `ScriptRuntime` borrow before
+    /// any effect is executed. Handlers can therefore re-enter the same live
+    /// VM synchronously without a take/restore ownership transaction.
+    pub(crate) fn drain_script_effects(&mut self, assets: &LevelAssets) {
+        let effects = match self.scripts.mission.as_mut() {
+            Some(script) => PendingScriptEffects::drain(script),
             None => return,
         };
+        let PendingScriptEffects {
+            sound,
+            engine: engine_commands,
+            completed_sequences,
+            deferred,
+        } = effects;
 
-        let mut engine_commands = Vec::new();
-        // Deferred commands that must run AFTER `self.scripts.mission` is put
-        // back (currently `ProcessPatchEffects`, which looks patches up via
-        // `self.scripts.mission`). Populated inside the host block below.
+        // Commands whose handlers can synchronously call the mission VM are
+        // kept until the first-pass state effects have completed.
         let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
         // RHScript::SendMessage launches a standalone RHCOMMAND_SEND_MESSAGE
         // sequence element. Keep requests in native-call order and launch
@@ -228,454 +197,437 @@ impl EngineInner {
         // ProcessMessage callback can re-enter the script system this frame.
         let mut script_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
 
-        if let Some(game_host) = script.game_host_mut() {
-            // ── Sound commands ──
-            // Commands that don't need an AudioBackend are processed now.
-            // The remaining ones are queued for main_entry to flush.
-            for cmd in game_host.sound_commands.drain(..) {
-                match cmd {
-                    crate::natives::SoundCommand::SuspendAll => {
-                        // SuspendAllSoundSources stops the audio
-                        // channels but the paired `ResumeAll` must be
-                        // able to restart every source that was active
-                        // at suspend time.  We clear `active` so the
-                        // hourglass stops channels, but first stash the
-                        // active set on `sound_sim` so `ResumeAll` can
-                        // restore it.
-                        let mut stashed: Vec<u32> = Vec::new();
-                        for i in 0..self.feedback.sound_sim.sources.num_sources() {
-                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(i)
-                                && src.active
-                            {
-                                stashed.push(i as u32);
-                                src.active = false;
-                            }
-                        }
-                        self.feedback.sound_sim.suspended_active_sources = stashed;
-                        self.feedback.sound_sim.playing_sources.clear();
-                    }
-                    crate::natives::SoundCommand::ResumeAll => {
-                        // Restore `active` on every source that was
-                        // active at the last suspend — preserves the
-                        // active flag across suspend/resume.
-                        let stashed =
-                            std::mem::take(&mut self.feedback.sound_sim.suspended_active_sources);
-                        for idx in stashed {
-                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx as usize)
-                            {
-                                src.active = true;
-                            }
-                        }
-                        let pos = self.feedback.cutscene_camera.view_position;
-                        let zoom = self.feedback.cutscene_camera.zoom_factor;
-                        self.feedback.pending_side_effects.sounds.push(
-                            super::SoundCommand::ResumeAllSources {
-                                position: pos,
-                                zoom,
-                            },
-                        );
-                        // For every still-active `Single` / `Volatile`
-                        // source that's being resumed, re-arm the
-                        // deterministic finish so the drain in
-                        // `perform_hourglass` applies the same
-                        // transition the host used to drive from
-                        // `stop_sound_source`.
-                        schedule_source_finishes_for_all_active(
-                            &mut self.feedback.sound_sim,
-                            &assets.source_durations,
-                            self.control.frame_counter,
-                        );
-                    }
-                    crate::natives::SoundCommand::Activate(h) => {
-                        // Mark active sim-side (participates in rollback hash),
-                        // then emit the side-effect so the host audio backend
-                        // picks up the source and starts a channel.  Symmetric
-                        // with the Deactivate path below.
-                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+        // ── Sound commands ──
+        // Commands that don't need an AudioBackend are processed now.
+        // The remaining ones are queued for main_entry to flush.
+        for cmd in sound {
+            match cmd {
+                crate::natives::SoundCommand::SuspendAll => {
+                    // SuspendAllSoundSources stops the audio
+                    // channels but the paired `ResumeAll` must be
+                    // able to restart every source that was active
+                    // at suspend time.  We clear `active` so the
+                    // hourglass stops channels, but first stash the
+                    // active set on `sound_sim` so `ResumeAll` can
+                    // restore it.
+                    let mut stashed: Vec<u32> = Vec::new();
+                    for i in 0..self.feedback.sound_sim.sources.num_sources() {
+                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(i)
+                            && src.active
                         {
-                            // Re-activation cancels any previously
-                            // scheduled finish so we don't prematurely
-                            // kill a freshly-restarted source.
-                            self.feedback
-                                .sound_sim
-                                .playing_sources
-                                .retain(|p| p.source_index as usize != idx);
-                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                                src.active = true;
-                                schedule_source_finish(
-                                    &src.source_kind,
-                                    src.id,
-                                    idx,
-                                    self.control.frame_counter,
-                                    &assets.source_durations,
-                                    &mut self.feedback.sound_sim.playing_sources,
-                                );
-                            }
-                            self.feedback
-                                .pending_side_effects
-                                .sounds
-                                .push(super::SoundCommand::ActivateSource(idx));
+                            stashed.push(i as u32);
+                            src.active = false;
                         }
                     }
-                    crate::natives::SoundCommand::Deactivate(h) => {
-                        // Mark inactive; hourglass will stop the channel.
-                        // Drop any pending scheduled finish — the source
-                        // is no longer playing and a stale `finish_frame`
-                        // would fire as a no-op on an already-inactive
-                        // source, but clearing it keeps the queue small
-                        // and unambiguous across rollback snapshots.
-                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
-                        {
-                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                                src.active = false;
-                            }
-                            self.feedback
-                                .sound_sim
-                                .playing_sources
-                                .retain(|p| p.source_index as usize != idx);
+                    self.feedback.sound_sim.suspended_active_sources = stashed;
+                    self.feedback.sound_sim.playing_sources.clear();
+                }
+                crate::natives::SoundCommand::ResumeAll => {
+                    // Restore `active` on every source that was
+                    // active at the last suspend — preserves the
+                    // active flag across suspend/resume.
+                    let stashed =
+                        std::mem::take(&mut self.feedback.sound_sim.suspended_active_sources);
+                    for idx in stashed {
+                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx as usize) {
+                            src.active = true;
                         }
                     }
-                    crate::natives::SoundCommand::Destroy(h) => {
-                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
-                        {
-                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                                src.active = false;
-                            }
-                            self.feedback.sound_sim.sources.delete(idx);
-                            self.feedback
-                                .sound_sim
-                                .playing_sources
-                                .retain(|p| p.source_index as usize != idx);
+                    let pos = self.feedback.cutscene_camera.view_position;
+                    let zoom = self.feedback.cutscene_camera.zoom_factor;
+                    self.feedback.pending_side_effects.sounds.push(
+                        super::SoundCommand::ResumeAllSources {
+                            position: pos,
+                            zoom,
+                        },
+                    );
+                    // For every still-active `Single` / `Volatile`
+                    // source that's being resumed, re-arm the
+                    // deterministic finish so the drain in
+                    // `perform_hourglass` applies the same
+                    // transition the host used to drive from
+                    // `stop_sound_source`.
+                    schedule_source_finishes_for_all_active(
+                        &mut self.feedback.sound_sim,
+                        &assets.source_durations,
+                        self.control.frame_counter,
+                    );
+                }
+                crate::natives::SoundCommand::Activate(h) => {
+                    // Mark active sim-side (participates in rollback hash),
+                    // then emit the side-effect so the host audio backend
+                    // picks up the source and starts a channel.  Symmetric
+                    // with the Deactivate path below.
+                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
+                        // Re-activation cancels any previously
+                        // scheduled finish so we don't prematurely
+                        // kill a freshly-restarted source.
+                        self.feedback
+                            .sound_sim
+                            .playing_sources
+                            .retain(|p| p.source_index as usize != idx);
+                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                            src.active = true;
+                            schedule_source_finish(
+                                &src.source_kind,
+                                src.id,
+                                idx,
+                                self.control.frame_counter,
+                                &assets.source_durations,
+                                &mut self.feedback.sound_sim.playing_sources,
+                            );
                         }
+                        self.feedback
+                            .pending_side_effects
+                            .sounds
+                            .push(super::SoundCommand::ActivateSource(idx));
                     }
                 }
-            }
-
-            // ── Camera / UI commands ──
-            engine_commands = game_host.drain_commands();
-
-            // ── Completed sequences (from Record*/Thanx) ──
-            for seq in game_host.take_completed_sequences() {
-                self.launch_sequence(seq);
-            }
-
-            // ── Deferred game-logic commands ──
-            // NB: `ProcessPatchEffects` reads `self.scripts.mission`, which is
-            // currently taken out of `self` — so that arm is deferred to
-            // `post_script` and processed after the script is put back.
-            for cmd in game_host.deferred_commands.drain(..) {
-                match cmd {
-                    crate::natives::DeferredCommand::SendMessage {
-                        actor,
-                        message,
-                        arg1,
-                        arg2,
-                    } => script_messages.push((actor, message, arg1, arg2)),
-                    crate::natives::DeferredCommand::SelectPC { actor, select } => {
-                        // Scripted scene: targets the LOCAL seat.
-                        if actor == 0 {
-                            // NULL actor → select/deselect all
-                            if select {
-                                self.select_all_pcs(assets, 0);
-                            } else {
-                                self.unselect_all_pcs(0);
-                            }
-                        } else if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            if select {
-                                // Script-path SelectPC uses `speak=false`
-                                // — script already owns the sound flow.
-                                self.select_pc(assets, 0, id, true, false);
-                            } else {
-                                self.players.seats[0].selection.retain(|&x| x != id);
-                            }
+                crate::natives::SoundCommand::Deactivate(h) => {
+                    // Mark inactive; hourglass will stop the channel.
+                    // Drop any pending scheduled finish — the source
+                    // is no longer playing and a stale `finish_frame`
+                    // would fire as a no-op on an already-inactive
+                    // source, but clearing it keeps the queue small
+                    // and unambiguous across rollback snapshots.
+                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
+                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                            src.active = false;
                         }
+                        self.feedback
+                            .sound_sim
+                            .playing_sources
+                            .retain(|p| p.source_index as usize != idx);
                     }
-                    crate::natives::DeferredCommand::StopActor { actor } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.stop_owner(id, crate::sequence::SequencePriority::Script);
+                }
+                crate::natives::SoundCommand::Destroy(h) => {
+                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
+                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                            src.active = false;
                         }
-                    }
-                    crate::natives::DeferredCommand::FreezeAll { freeze } => {
-                        self.set_actors_frozen(freeze);
-                    }
-                    crate::natives::DeferredCommand::HandleDeath { actor } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.handle_death(assets, id);
-                        }
-                    }
-                    crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.add_damage_number(id, damage);
-                        }
-                    }
-                    crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.say_ouch(assets, id, Some(damage));
-                        }
-                    }
-                    crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.apply_scripted_life_points(assets, id, amount);
-                        }
-                    }
-                    crate::natives::DeferredCommand::SetScriptedConcussion {
-                        actor,
-                        amount,
-                        force_value,
-                    } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            // Clamp negative `i32` from the script stack to 0
-                            // before casting; `combat::set_concussion` clamps
-                            // the upper bound to `CONCUSSION_MAX`.
-                            let value = amount.max(0).min(u16::MAX as i32) as u16;
-                            self.apply_concussion(assets, id, value, force_value);
-                        }
-                    }
-                    crate::natives::DeferredCommand::QuitSwordfight { actor } => {
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.quit_swordfight(assets, id);
-                        }
-                    }
-                    crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
-                        // The titbit is only dropped when the actor is *not*
-                        // currently unconscious — `remove_unconscious_stars_if`
-                        // takes `is_still_unconscious` and short-circuits
-                        // otherwise.  Read the live human-data flag now.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.world.entities.get(id)
-                        {
-                            let still_unconscious =
-                                entity.human_data().is_some_and(|h| h.unconscious);
-                            self.feedback.titbit_manager.remove_unconscious_stars_if(
-                                crate::titbit::ElementHandle(id.index()),
-                                still_unconscious,
-                            );
-                        }
-                    }
-                    crate::natives::DeferredCommand::SetPlayable { actor, playable } => {
-                        // PC playable state (pc.playable) was already set on
-                        // the entity by the native call. Forward
-                        // MSG_ENABLE/DISABLE_CHARACTER to the messenger
-                        // carrying the actor's entity id so the handler
-                        // can drop the PC from the selection and update
-                        // Sherwood interface-hidden state.
-                        let msg_type = if playable {
-                            crate::messenger::PcMessage::EnableCharacter
-                        } else {
-                            crate::messenger::PcMessage::DisableCharacter
-                        };
-                        let pc_id = self.entity_id_for_actor_handle(actor);
-                        self.orders.messenger.send(Message::pc(msg_type, pc_id));
-                        tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
-                    }
-                    crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
-                        // Script-lock an NPC's AI. Two callers:
-                        //   - SetActorLocation honolulu path (NPC sent
-                        //     to a null location); always passes
-                        //     `send_back=false`.
-                        //   - LockAI script native; `send_back` is the
-                        //     remember-events arg.
-                        // ScriptLockAI suppresses `Stop()` only when the
-                        // actor's current command is already `LockAi`.
-                        // We implement that by peeking the sequence
-                        // manager for the actor's in-flight command.
-                        if let Some(owner) = self.entity_id_for_actor_handle(actor) {
-                            let from_lockai_command = self
-                                .orders
-                                .sequence_manager
-                                .current_element_for_actor(owner)
-                                .and_then(|(seq_id, elem_idx)| {
-                                    self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                                })
-                                .is_some_and(|elem| {
-                                    elem.command == crate::element::Command::LockAi
-                                });
-                            if let Some(entity) = self.world.entities.get_mut(owner)
-                                && let Some(ai) = entity.ai_controller_mut()
-                            {
-                                ai.script_lock(send_back, from_lockai_command);
-                            }
-                        }
-                        tracing::debug!("ScriptLockAI: actor {actor}, send_back={send_back}");
-                    }
-                    cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
-                        post_script.push(cmd);
-                    }
-                    crate::natives::DeferredCommand::PutActorInBuilding { actor, building } => {
-                        self.put_actor_in_building(actor, building);
-                    }
-                    crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
-                        // Rewind the actor's sprite to frame 0 of its current row.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.world.entities.get_mut(id)
-                        {
-                            entity.sprite_mut().reset_sprite_frame(false);
-                        }
-                    }
-                    crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
-                        // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
-                        // loop: drops QA titbits + clears macro_store slot.
-                        if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
-                            for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
-                                self.remove_quick_action_titbits_for(pc_id, slot);
-                                if let Some(state) = self.players.macro_store.get_mut(pc_id) {
-                                    state.clear_slot(slot as usize);
-                                }
-                            }
-                        }
-                    }
-                    crate::natives::DeferredCommand::LaunchWait { actor } => {
-                        // Build a fresh `SequenceElement(1, Wait, owner)`
-                        // at `Wait` priority and hand it to the sequence
-                        // manager so the instruct arbitration displaces
-                        // any lower-or-equal-priority sequence the actor
-                        // was running.  Called from `SetActorPosture`,
-                        // `SetActorActionState` (every arm), etc., right
-                        // after the script stamps the new posture/action-state.
-                        if let Some(owner) = self.entity_id_for_actor_handle(actor) {
-                            let mut elem = crate::sequence::SequenceElement::new(
-                                1,
-                                crate::element::Command::Wait,
-                                Some(owner),
-                            );
-                            elem.priority = crate::sequence::SequencePriority::Wait;
-                            self.orders.sequence_manager.launch_element(elem);
-                        } else {
-                            tracing::warn!("LaunchWait: invalid actor handle {actor}");
-                        }
-                    }
-                    crate::natives::DeferredCommand::StopActorAtPriority { actor, priority } => {
-                        // `Stop(priority)` invoked outside the StopActor
-                        // native; currently driven by `SetActorPosture` ID_KO
-                        // at `Injury` priority.  Routes through the engine's
-                        // wrapper so movement/path-request teardown stays
-                        // in sync with the sequence-manager stop.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.stop_owner(id, priority);
-                        }
-                    }
-                    crate::natives::DeferredCommand::BroadcastLoseConsciousness { actor } => {
-                        // `Think(EVENT_LOSE_CONSCIOUSNESS) +
-                        // BroadcastBodyDetectable()` invoked from
-                        // `SetActorPosture` ID_KO/ID_TIED arms.  Both are
-                        // NPC-only (guarded by `is_npc()`); we no-op when
-                        // the entity has no AI controller.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            // Queue stimulus first so the AI's next think
-                            // tick observes the "lose consciousness" event
-                            // before the detect-me broadcast lands on
-                            // friends — ordering matters here.
-                            if let Some(entity) = self.world.entities.get_mut(id)
-                                && let Some(ai) = entity.ai_controller_mut()
-                            {
-                                ai.pending_stimuli.push(crate::ai::Stimulus::new(
-                                    crate::ai::StimulusType::EventLoseConsciousness,
-                                ));
-                            }
-                            // Only NPCs broadcast their body — guard via
-                            // `is_npc()` to avoid touching a PC or non-actor
-                            // slot.
-                            if let Some(entity) = self.world.entities.get(id)
-                                && entity.is_npc()
-                            {
-                                self.broadcast_body_detectable(id);
-                            }
-                        }
-                    }
-                    crate::natives::DeferredCommand::BroadcastResurrection { actor } => {
-                        // From the `SetActorPosture` ID_UPRIGHT/LYING NPC
-                        // branch.  The engine-side `broadcast_resurrection`
-                        // walks every other NPC and clears the resurrected
-                        // NPC from their `DETECTABLE_BODY` list.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.world.entities.get(id)
-                            && entity.is_npc()
-                        {
-                            self.broadcast_resurrection(id);
-                        }
-                    }
-                    crate::natives::DeferredCommand::AddHiddenTitbitForActor { actor } => {
-                        // From the `SetActorPosture` ID_ANONYMOUS_ARCHER
-                        // arm: add a HIDDEN titbit for the actor.  The
-                        // script bypasses the stealth-command transition
-                        // that normally adds the HIDDEN titbit
-                        // (`engine/tick.rs:5318`), so we replicate the
-                        // add here.  Phase resolution (`HiddenCharacter`)
-                        // requires a PC profile; for an NPC the original
-                        // would deref a non-PC as PC (UB), so we guard
-                        // and log instead — script callers in shipping
-                        // levels only target PCs.
-                        let Some(id) = self.entity_id_for_actor_handle(actor) else {
-                            continue;
-                        };
-                        let Some(entity) = self.world.entities.get(id) else {
-                            continue;
-                        };
-                        let phase = if let crate::element::Entity::Pc(pc) = entity {
-                            let profile = assets
-                                .profile_manager
-                                .get_character(pc.pc.profile_index)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "AddHiddenTitbitForActor: PC {} has unknown profile_index {}",
-                                        id.index(), pc.pc.profile_index
-                                    )
-                                });
-                            crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename)
-                                .to_phase()
-                        } else {
-                            tracing::warn!(
-                                "AddHiddenTitbitForActor: actor {actor} is not a PC; \
-                                 skipping HIDDEN titbit (original would deref non-PC as PC)"
-                            );
-                            continue;
-                        };
-                        let handle = crate::titbit::ElementHandle(id.index());
-                        self.feedback.titbit_manager.add_titbit(
-                            crate::coordinates::WorldPoint3D::default(),
-                            0,
-                            crate::titbit::TitbitKind::Hidden,
-                            handle,
-                            phase,
-                            handle,
-                            false,
-                            0,
-                            true,
-                            None,
-                            None,
-                        );
-                    }
-                    crate::natives::DeferredCommand::RelaunchPathAtNewSpeed { actor } => {
-                        // From the `SetPathWalkingFlags` relaunch tail:
-                        // re-issue GoTo at the freshly-changed walking
-                        // flags so the speed change takes effect
-                        // mid-segment instead of waiting for the next
-                        // waypoint pickup.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.relaunch_path_at_new_speed(assets, id);
-                        }
-                    }
-                    crate::natives::DeferredCommand::SetPatrolShouldRun {
-                        actor: _,
-                        should_run: _,
-                    } => {
-                        // Spellforge `SetPatrolShouldRun` — no engine
-                        // handler yet. The patrol walk/run toggle
-                        // lives on the patrol descriptor; wiring it
-                        // up is tracked alongside the Lua mission
-                        // bring-up.
-                        // TODO: stamp `patrol.should_run` and re-issue
-                        // the in-flight GoTo via the existing
-                        // `RelaunchPathAtNewSpeed` flow.
+                        self.feedback.sound_sim.sources.delete(idx);
+                        self.feedback
+                            .sound_sim
+                            .playing_sources
+                            .retain(|p| p.source_index as usize != idx);
                     }
                 }
             }
         }
 
-        // Put the script back before applying engine commands (which may
-        // need to look up entities, etc.) and before post-script deferred
-        // commands that read `self.scripts.mission`.
-        self.scripts.mission = Some(script);
+        // ── Completed sequences (from Record*/Thanx) ──
+        for seq in completed_sequences {
+            self.launch_sequence(seq);
+        }
+
+        // ── Deferred game-logic commands ──
+        // Re-entrant handlers are deferred until the first-pass effects
+        // have released all temporary borrows.
+        for cmd in deferred {
+            match cmd {
+                crate::natives::DeferredCommand::SendMessage {
+                    actor,
+                    message,
+                    arg1,
+                    arg2,
+                } => script_messages.push((actor, message, arg1, arg2)),
+                crate::natives::DeferredCommand::SelectPC { actor, select } => {
+                    // Scripted scene: targets the LOCAL seat.
+                    if actor == 0 {
+                        // NULL actor → select/deselect all
+                        if select {
+                            self.select_all_pcs(assets, 0);
+                        } else {
+                            self.unselect_all_pcs(0);
+                        }
+                    } else if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        if select {
+                            // Script-path SelectPC uses `speak=false`
+                            // — script already owns the sound flow.
+                            self.select_pc(assets, 0, id, true, false);
+                        } else {
+                            self.players.seats[0].selection.retain(|&x| x != id);
+                        }
+                    }
+                }
+                crate::natives::DeferredCommand::StopActor { actor } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.stop_owner(id, crate::sequence::SequencePriority::Script);
+                    }
+                }
+                crate::natives::DeferredCommand::FreezeAll { freeze } => {
+                    self.set_actors_frozen(freeze);
+                }
+                crate::natives::DeferredCommand::HandleDeath { actor } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.handle_death(assets, id);
+                    }
+                }
+                crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.add_damage_number(id, damage);
+                    }
+                }
+                crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.say_ouch(assets, id, Some(damage));
+                    }
+                }
+                crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.apply_scripted_life_points(assets, id, amount);
+                    }
+                }
+                crate::natives::DeferredCommand::SetScriptedConcussion {
+                    actor,
+                    amount,
+                    force_value,
+                } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        // Clamp negative `i32` from the script stack to 0
+                        // before casting; `combat::set_concussion` clamps
+                        // the upper bound to `CONCUSSION_MAX`.
+                        let value = amount.max(0).min(u16::MAX as i32) as u16;
+                        self.apply_concussion(assets, id, value, force_value);
+                    }
+                }
+                crate::natives::DeferredCommand::QuitSwordfight { actor } => {
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.quit_swordfight(assets, id);
+                    }
+                }
+                crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
+                    // The titbit is only dropped when the actor is *not*
+                    // currently unconscious — `remove_unconscious_stars_if`
+                    // takes `is_still_unconscious` and short-circuits
+                    // otherwise.  Read the live human-data flag now.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor)
+                        && let Some(entity) = self.world.entities.get(id)
+                    {
+                        let still_unconscious = entity.human_data().is_some_and(|h| h.unconscious);
+                        self.feedback.titbit_manager.remove_unconscious_stars_if(
+                            crate::titbit::ElementHandle(id.index()),
+                            still_unconscious,
+                        );
+                    }
+                }
+                crate::natives::DeferredCommand::SetPlayable { actor, playable } => {
+                    // PC playable state (pc.playable) was already set on
+                    // the entity by the native call. Forward
+                    // MSG_ENABLE/DISABLE_CHARACTER to the messenger
+                    // carrying the actor's entity id so the handler
+                    // can drop the PC from the selection and update
+                    // Sherwood interface-hidden state.
+                    let msg_type = if playable {
+                        crate::messenger::PcMessage::EnableCharacter
+                    } else {
+                        crate::messenger::PcMessage::DisableCharacter
+                    };
+                    let pc_id = self.entity_id_for_actor_handle(actor);
+                    self.orders.messenger.send(Message::pc(msg_type, pc_id));
+                    tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
+                }
+                crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
+                    // Script-lock an NPC's AI. Two callers:
+                    //   - SetActorLocation honolulu path (NPC sent
+                    //     to a null location); always passes
+                    //     `send_back=false`.
+                    //   - LockAI script native; `send_back` is the
+                    //     remember-events arg.
+                    // ScriptLockAI suppresses `Stop()` only when the
+                    // actor's current command is already `LockAi`.
+                    // We implement that by peeking the sequence
+                    // manager for the actor's in-flight command.
+                    if let Some(owner) = self.entity_id_for_actor_handle(actor) {
+                        let from_lockai_command = self
+                            .orders
+                            .sequence_manager
+                            .current_element_for_actor(owner)
+                            .and_then(|(seq_id, elem_idx)| {
+                                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                            })
+                            .is_some_and(|elem| elem.command == crate::element::Command::LockAi);
+                        if let Some(entity) = self.world.entities.get_mut(owner)
+                            && let Some(ai) = entity.ai_controller_mut()
+                        {
+                            ai.script_lock(send_back, from_lockai_command);
+                        }
+                    }
+                    tracing::debug!("ScriptLockAI: actor {actor}, send_back={send_back}");
+                }
+                cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
+                    post_script.push(cmd);
+                }
+                crate::natives::DeferredCommand::PutActorInBuilding { actor, building } => {
+                    self.put_actor_in_building(actor, building);
+                }
+                crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
+                    // Rewind the actor's sprite to frame 0 of its current row.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor)
+                        && let Some(entity) = self.world.entities.get_mut(id)
+                    {
+                        entity.sprite_mut().reset_sprite_frame(false);
+                    }
+                }
+                crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
+                    // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
+                    // loop: drops QA titbits + clears macro_store slot.
+                    if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
+                        for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
+                            self.remove_quick_action_titbits_for(pc_id, slot);
+                            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
+                                state.clear_slot(slot as usize);
+                            }
+                        }
+                    }
+                }
+                crate::natives::DeferredCommand::LaunchWait { actor } => {
+                    // Build a fresh `SequenceElement(1, Wait, owner)`
+                    // at `Wait` priority and hand it to the sequence
+                    // manager so the instruct arbitration displaces
+                    // any lower-or-equal-priority sequence the actor
+                    // was running.  Called from `SetActorPosture`,
+                    // `SetActorActionState` (every arm), etc., right
+                    // after the script stamps the new posture/action-state.
+                    if let Some(owner) = self.entity_id_for_actor_handle(actor) {
+                        let mut elem = crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::Wait,
+                            Some(owner),
+                        );
+                        elem.priority = crate::sequence::SequencePriority::Wait;
+                        self.orders.sequence_manager.launch_element(elem);
+                    } else {
+                        tracing::warn!("LaunchWait: invalid actor handle {actor}");
+                    }
+                }
+                crate::natives::DeferredCommand::StopActorAtPriority { actor, priority } => {
+                    // `Stop(priority)` invoked outside the StopActor
+                    // native; currently driven by `SetActorPosture` ID_KO
+                    // at `Injury` priority.  Routes through the engine's
+                    // wrapper so movement/path-request teardown stays
+                    // in sync with the sequence-manager stop.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.stop_owner(id, priority);
+                    }
+                }
+                crate::natives::DeferredCommand::BroadcastLoseConsciousness { actor } => {
+                    // `Think(EVENT_LOSE_CONSCIOUSNESS) +
+                    // BroadcastBodyDetectable()` invoked from
+                    // `SetActorPosture` ID_KO/ID_TIED arms.  Both are
+                    // NPC-only (guarded by `is_npc()`); we no-op when
+                    // the entity has no AI controller.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        // Queue stimulus first so the AI's next think
+                        // tick observes the "lose consciousness" event
+                        // before the detect-me broadcast lands on
+                        // friends — ordering matters here.
+                        if let Some(entity) = self.world.entities.get_mut(id)
+                            && let Some(ai) = entity.ai_controller_mut()
+                        {
+                            ai.pending_stimuli.push(crate::ai::Stimulus::new(
+                                crate::ai::StimulusType::EventLoseConsciousness,
+                            ));
+                        }
+                        // Only NPCs broadcast their body — guard via
+                        // `is_npc()` to avoid touching a PC or non-actor
+                        // slot.
+                        if let Some(entity) = self.world.entities.get(id)
+                            && entity.is_npc()
+                        {
+                            self.broadcast_body_detectable(id);
+                        }
+                    }
+                }
+                crate::natives::DeferredCommand::BroadcastResurrection { actor } => {
+                    // From the `SetActorPosture` ID_UPRIGHT/LYING NPC
+                    // branch.  The engine-side `broadcast_resurrection`
+                    // walks every other NPC and clears the resurrected
+                    // NPC from their `DETECTABLE_BODY` list.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor)
+                        && let Some(entity) = self.world.entities.get(id)
+                        && entity.is_npc()
+                    {
+                        self.broadcast_resurrection(id);
+                    }
+                }
+                crate::natives::DeferredCommand::AddHiddenTitbitForActor { actor } => {
+                    // From the `SetActorPosture` ID_ANONYMOUS_ARCHER
+                    // arm: add a HIDDEN titbit for the actor.  The
+                    // script bypasses the stealth-command transition
+                    // that normally adds the HIDDEN titbit
+                    // (`engine/tick.rs:5318`), so we replicate the
+                    // add here.  Phase resolution (`HiddenCharacter`)
+                    // requires a PC profile; for an NPC the original
+                    // would deref a non-PC as PC (UB), so we guard
+                    // and log instead — script callers in shipping
+                    // levels only target PCs.
+                    let Some(id) = self.entity_id_for_actor_handle(actor) else {
+                        continue;
+                    };
+                    let Some(entity) = self.world.entities.get(id) else {
+                        continue;
+                    };
+                    let phase = if let crate::element::Entity::Pc(pc) = entity {
+                        let profile = assets
+                            .profile_manager
+                            .get_character(pc.pc.profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "AddHiddenTitbitForActor: PC {} has unknown profile_index {}",
+                                    id.index(),
+                                    pc.pc.profile_index
+                                )
+                            });
+                        crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename)
+                            .to_phase()
+                    } else {
+                        tracing::warn!(
+                            "AddHiddenTitbitForActor: actor {actor} is not a PC; \
+                                 skipping HIDDEN titbit (original would deref non-PC as PC)"
+                        );
+                        continue;
+                    };
+                    let handle = crate::titbit::ElementHandle(id.index());
+                    self.feedback.titbit_manager.add_titbit(
+                        crate::coordinates::WorldPoint3D::default(),
+                        0,
+                        crate::titbit::TitbitKind::Hidden,
+                        handle,
+                        phase,
+                        handle,
+                        false,
+                        0,
+                        true,
+                        None,
+                        None,
+                    );
+                }
+                crate::natives::DeferredCommand::RelaunchPathAtNewSpeed { actor } => {
+                    // From the `SetPathWalkingFlags` relaunch tail:
+                    // re-issue GoTo at the freshly-changed walking
+                    // flags so the speed change takes effect
+                    // mid-segment instead of waiting for the next
+                    // waypoint pickup.
+                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                        self.relaunch_path_at_new_speed(assets, id);
+                    }
+                }
+                crate::natives::DeferredCommand::SetPatrolShouldRun {
+                    actor: _,
+                    should_run: _,
+                } => {
+                    // Spellforge `SetPatrolShouldRun` — no engine
+                    // handler yet. The patrol walk/run toggle
+                    // lives on the patrol descriptor; wiring it
+                    // up is tracked alongside the Lua mission
+                    // bring-up.
+                    // TODO: stamp `patrol.should_run` and re-issue
+                    // the in-flight GoTo via the existing
+                    // `RelaunchPathAtNewSpeed` flow.
+                }
+            }
+        }
 
         for cmd in post_script {
             match cmd {
@@ -3913,7 +3865,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn script_session_error_restores_callback_and_engine_ownership() {
+    fn script_callback_error_keeps_canonical_owners_in_place() {
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
         engine.world.entities.push(None);
@@ -3937,25 +3889,25 @@ mod script_context_tests {
 
     #[test]
     #[should_panic(expected = "simulated script panic")]
-    fn script_session_unwind_restores_callback_and_engine_ownership() {
+    fn script_callback_unwind_keeps_canonical_owners_in_place() {
         struct VerifyRestoredOnUnwind(*const EngineInner);
 
         impl Drop for VerifyRestoredOnUnwind {
             fn drop(&mut self) {
                 // SAFETY: the pointer targets the engine local below, which
-                // outlives this verifier. ScriptSession is created later and
-                // therefore restores the engine before this Drop runs.
+                // outlives this verifier. All callback capability borrows have
+                // ended before unwinding reaches this Drop implementation.
                 let engine = unsafe { &*self.0 };
                 assert_eq!(engine.world.entities.len(), 1);
                 let script = engine.scripts.mission.as_ref().unwrap();
                 assert_eq!(script.active_call_frame_count(), 0);
                 assert!(
                     engine.script_domains.mission_ui.outline_display,
-                    "canonical domain mutation survives session unwind"
+                    "canonical domain mutation survives callback unwind"
                 );
                 assert!(
                     engine.ai.global.golden_eye_mode,
-                    "canonical AI-global mutation survives session unwind"
+                    "canonical AI-global mutation survives callback unwind"
                 );
             }
         }
@@ -4136,7 +4088,7 @@ impl EngineInner {
     /// Dispatch a single native function from outside the script VM
     /// (HTTP-RPC, debug console, etc.).
     ///
-    /// Goes through the same [`ScriptSession`] boundary script callbacks use,
+    /// Goes through the same disjoint-owner boundary script callbacks use,
     /// so any side-effect commands the
     /// native queues (camera, dialog, sequence Start/Thanx, sound,
     /// deferred game-logic) are drained as if a script had made the

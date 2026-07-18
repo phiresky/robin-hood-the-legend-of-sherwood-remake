@@ -6046,7 +6046,7 @@ impl EngineInner {
         }
 
         // ── Entity active state (FX animations) ──
-        // Populated here once; kept in sync by sync_game_host_post_script.
+        // Populated here once; script effects mutate the canonical owners.
         self.refresh_script_sight_bindings();
     }
 

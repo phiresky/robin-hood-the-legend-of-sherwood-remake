@@ -2,7 +2,8 @@
 
 use super::modal_state::ActiveModal;
 use super::runtime::{
-    FrameCommitPolicy, FrameOutcome, FramePacing, MissionRuntime, MissionWorld, TickPolicy,
+    FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionRuntime, MissionWorld,
+    TickPolicy,
 };
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
 use crate::game_operation::GameCode;
@@ -127,6 +128,9 @@ impl HeadlessMission {
         if self.policy.auto_dismiss_modals {
             let _ = dismiss_pending_modals(&mut self.runtime.world.host);
         }
+        self.runtime
+            .timeline
+            .trace(FrameContractStage::PreTickCommands);
         let tick_paused = self.runtime.control.manual_pause;
         let tick_exit_code = self.runtime.run_tick(TickPolicy {
             skip_tick: tick_paused,
@@ -134,6 +138,7 @@ impl HeadlessMission {
         });
         self.runtime.drain_host_rpc();
         self.drain_headless_modals_and_steps(&mut frame);
+        self.runtime.timeline.trace(FrameContractStage::ModalDrain);
 
         // Original ordering differs here: graphical crosses this boundary
         // after presentation, but headless must do so before frame-zero
@@ -153,6 +158,9 @@ impl HeadlessMission {
         }
 
         self.runtime.timeline.begin_presentation();
+        self.runtime
+            .timeline
+            .trace(FrameContractStage::Presentation);
         let (exit_code, exit) = if let Some(code) = tick_exit_code {
             (Some(code), Some(HeadlessFrameExit::Mission))
         } else if self.policy.exit_when_replay_finishes && replay_finished {
@@ -163,6 +171,10 @@ impl HeadlessMission {
         } else {
             (None, None)
         };
+        if exit_code.is_some() {
+            self.runtime.timeline.trace(FrameContractStage::Exit);
+        }
+        self.runtime.timeline.trace(FrameContractStage::Pacing);
         let outcome = self.runtime.timeline.plan_frame_outcome(
             crate::window::process_uptime_ms(),
             FramePacing {
@@ -255,6 +267,7 @@ impl HeadlessMission {
 
     fn commit_frame(&mut self, frame: &mut super::runtime::MissionFrame, paused: bool) {
         if paused {
+            self.runtime.timeline.finish_recording(frame);
             return;
         }
         let MissionRuntime {
@@ -268,8 +281,8 @@ impl HeadlessMission {
                 store_rewind_commands: true,
             },
         );
-        timeline.record_commands(frame.recorder_hash, &frame.commands.commands, true);
-        timeline.finish_recording(std::mem::take(&mut frame.modal_dismissals), true);
+        timeline.record_commands(frame, true);
+        timeline.finish_recording(frame);
         world.manager.sim_frame += 1;
     }
 }

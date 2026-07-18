@@ -2921,14 +2921,6 @@ impl EngineInner {
         Some(&self.mission_domain.campaign).is_some_and(|c| self.is_sherwood_mission(c, profiles))
     }
 
-    /// Allocate a fresh order tag.  Lives on `EngineInner` so rollback
-    /// snapshots reproduce the same id sequence (replaces a fanout of
-    /// process-wide `static AtomicU32` counters that diverged across
-    /// live and replayed timelines).
-    pub(crate) fn alloc_order_id(&mut self) -> std::num::NonZeroU32 {
-        self.orders.allocate_order_id()
-    }
-
     /// Build a fresh `Order` (via `alloc_order_id` for the id) and push
     /// it.  Shorthand for the common engine-side pattern of allocating
     /// a unique id, building an Order at `(x, y)` with `order_type`,
@@ -2944,7 +2936,7 @@ impl EngineInner {
         x: f32,
         y: f32,
     ) -> std::num::NonZeroU32 {
-        let id = self.alloc_order_id();
+        let id = self.orders.allocate_order_id();
         self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,

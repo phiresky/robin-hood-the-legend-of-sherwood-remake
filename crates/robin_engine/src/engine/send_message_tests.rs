@@ -204,7 +204,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
             arg2: -7,
         });
     let frame_before = engine.control.frame_counter;
-    engine.sync_game_host_post_script(&assets);
+    engine.drain_script_effects(&assets);
 
     assert_eq!(
         engine.control.frame_counter, frame_before,
@@ -297,7 +297,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
         arg2: 0,
     });
 
-    engine.sync_game_host_post_script(&assets);
+    engine.drain_script_effects(&assets);
 
     assert_eq!(engine.control.frame_counter, frame_before);
     assert_eq!(

@@ -101,7 +101,7 @@ impl EngineInner {
         // animation driver (reading `order.order_id`) and the melee
         // tick (reading `active_melee.order_id`), wedging the strike
         // at `MotionState::Start`.
-        let mut order = crate::order::Order::new(anim, tx, ty, self.alloc_order_id());
+        let mut order = crate::order::Order::new(anim, tx, ty, self.orders.allocate_order_id());
         order.target_actor = Some(target.index());
         order.compute_direction = false;
         let order_id = order.order_id;
@@ -241,7 +241,7 @@ impl EngineInner {
         };
         if queue_raise {
             // Queue raising-sword transition animation onto the owning element.
-            let id = self.alloc_order_id();
+            let id = self.orders.allocate_order_id();
             let mut order = crate::order::Order::new(
                 crate::order::OrderType::TransitionRaisingSword,
                 0.0,
@@ -421,7 +421,7 @@ impl EngineInner {
             false
         };
         if queue_lower {
-            let id = self.alloc_order_id();
+            let id = self.orders.allocate_order_id();
             self.orders.sequence_manager.push_order_on(
                 seq_id,
                 elem_idx,
@@ -484,7 +484,7 @@ impl EngineInner {
             } else {
                 crate::order::OrderType::TransitionWaitingSwordParryingSword
             };
-            let id = self.alloc_order_id();
+            let id = self.orders.allocate_order_id();
             self.orders.sequence_manager.push_order_on(
                 seq_id,
                 elem_idx,
@@ -497,7 +497,7 @@ impl EngineInner {
         } else {
             crate::order::OrderType::ParryingSword
         };
-        let id = self.alloc_order_id();
+        let id = self.orders.allocate_order_id();
         self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,
@@ -537,7 +537,7 @@ impl EngineInner {
             return;
         }
 
-        let id = self.alloc_order_id();
+        let id = self.orders.allocate_order_id();
         self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,
