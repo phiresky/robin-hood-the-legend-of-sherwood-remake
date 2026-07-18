@@ -64,7 +64,7 @@ mod simulation_gate;
 mod snapshot;
 mod soldier_helpers;
 mod special_motion;
-mod state;
+pub(crate) mod state;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
@@ -184,6 +184,10 @@ pub struct EngineInner {
 
     /// Authoritative entities and the spatial state indexed alongside them.
     pub(crate) world: WorldState,
+
+    /// Deterministic world-script domains temporarily leased to native
+    /// dispatch while the legacy script transaction is active.
+    pub(crate) script_domains: state::ScriptDomains,
 
     /// Deterministic orders, sequences, timers, messages, and existing
     /// deferred-gameplay queues.
@@ -392,7 +396,8 @@ impl EngineInner {
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
-        self.world.attach_level_assets(assets);
+        self.world
+            .attach_level_assets(assets, self.script_domains.zones.scripts.len());
         if let Some(script) = self.mission_script.as_mut() {
             if !script.script_name.is_empty() {
                 let program = assets
@@ -433,6 +438,7 @@ impl EngineInner {
             control: SimulationControl::new(0),
             ai: AiRuntime::new(),
             world: WorldState::new(),
+            script_domains: state::ScriptDomains::default(),
             orders: OrderRuntime::new(),
 
             script_globals: Vec::new(),
@@ -3442,15 +3448,18 @@ impl EngineInner {
         self.mission_script.as_mut()?.game_host_mut()
     }
 
-    /// True iff the script host's `men_to_blazon_conversion_mode` flag
-    /// is set.  Read by titbit rendering to suppress the per-PC
+    /// True iff men-to-blazon conversion mode is active. Read by titbit
+    /// rendering to suppress the per-PC
     /// WorkIcon while the conversion screen is up.
     pub fn is_men_to_blazon_conversion_mode(&self) -> bool {
-        self.mission_script
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .map(|h| h.men_to_blazon_conversion_mode)
-            .unwrap_or(false)
+        self.script_domains.mission_ui.men_to_blazon_conversion_mode
+    }
+
+    /// Number of temporary blazon highlights active on this frame.
+    pub fn active_blinking_blazons(&self) -> u32 {
+        self.script_domains
+            .mission_ui
+            .active_blinking_blazons(self.control.frame_counter)
     }
 
     /// Refresh the per-patch `display_doors` flag for this frame's
@@ -3462,12 +3471,16 @@ impl EngineInner {
     /// `GameHost.patches` is not hashed, so this mutation is rollback-
     /// safe; the helper exists to keep the wrapper invariant clean.
     pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
-        if let Some(game_host) = self.mission_script_game_host_mut() {
-            for patch in game_host.patches.iter_mut() {
+        if let Some(_game_host) = self.mission_script_game_host_mut() {
+            for patch in self.script_domains.interactables.patches.iter_mut() {
                 patch.display_doors = false;
             }
             if let Some(idx) = selected_patch_idx
-                && let Some(patch) = game_host.patches.get_mut(idx as usize)
+                && let Some(patch) = self
+                    .script_domains
+                    .interactables
+                    .patches
+                    .get_mut(idx as usize)
             {
                 patch.display_doors = true;
             }
@@ -3485,13 +3498,11 @@ impl EngineInner {
         }
     }
 
-    /// Toggle the script host's `men_to_blazon_conversion_mode` flag.
-    /// Read by the `IsMenToBlazonConversionMode` native and the
+    /// Toggle the engine-owned men-to-blazon conversion mode. Read by the
+    /// `IsMenToBlazonConversionMode` native and the
     /// blazon-bar recomputation in `UpdateInformationBars`.
     pub(crate) fn set_men_to_blazon_conversion_mode(&mut self, enabled: bool) {
-        if let Some(game_host) = self.mission_script_game_host_mut() {
-            game_host.men_to_blazon_conversion_mode = enabled;
-        }
+        self.script_domains.mission_ui.men_to_blazon_conversion_mode = enabled;
     }
 
     /// Run the mission script's `PostInitialize` hook once, then no-op.
@@ -3516,6 +3527,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.post_initialize(queries);
         script.swap_engine_state(
@@ -3524,6 +3536,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -3700,7 +3713,7 @@ impl EngineInner {
         // reset in `Host::post_load_reset` too.
 
         // Per-frame / per-tick scratch flags.
-        self.mission_domain.force_check = false;
+        self.script_domains.mission_ui.force_check = false;
         self.control.chorus_timer = 0;
         self.control.fast_forward = false;
         self.orders.pending_move_requests.clear();

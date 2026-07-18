@@ -57,8 +57,9 @@ fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
     engine
         .mission_script()
         .and_then(|s| s.game_host())
-        .and_then(|h| {
-            h.doors
+        .and_then(|_| {
+            engine
+                .doors()
                 .iter()
                 .enumerate()
                 .find(|(_, door)| {
@@ -339,7 +340,7 @@ pub fn choose_mouse_pointer_for_no_action(
             let first_door = engine
                 .mission_script()
                 .and_then(|s| s.game_host())
-                .and_then(|h| h.patches.get(patch_idx as usize))
+                .and_then(|_| engine.patches().get(patch_idx as usize))
                 .and_then(|p| p.door_indices.first().copied());
             // Door-cursor pointer freezes the cursor animation.
             host.input.increment_cursor_animation = false;

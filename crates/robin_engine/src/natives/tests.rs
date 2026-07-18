@@ -42,6 +42,21 @@ fn run_native(index: u32, args: &[i32]) -> StopReason {
     vm.run(&prog)
 }
 
+fn seed_zone(host: &mut GameHost, zone_idx: usize, handles: &[i32]) {
+    host.engine_domains
+        .zones
+        .scripts
+        .resize_with(zone_idx + 1, crate::sector::ScriptSectorData::new);
+    host.engine_domains.zones.scripts[zone_idx].occupant_indices = handles
+        .iter()
+        .map(|handle| {
+            crate::entity_id::EntityId::Civilian(crate::entity_id::CivilianId(
+                GameHost::actor_handle_index(*handle).expect("actor handle") as u32,
+            ))
+        })
+        .collect();
+}
+
 fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
     <GameHost as HostFunctions>::call(host, native as u32, stack)
         .expect_return("non-nested native test")
@@ -250,12 +265,107 @@ fn door_sector_goal_resolves_click_polygon_door_index() {
         ..Default::default()
     };
     door.rebuild_click_bbox();
-    host.doors.push(door);
+    host.engine_domains.interactables.doors.push(door);
 
     assert_eq!(
         host.door_index_for_goal_sector(99, (20.0, 20.0)),
         Some(crate::gate::DoorIndex(0))
     );
+}
+
+#[test]
+fn door_mutation_is_visible_to_later_native_in_same_callback() {
+    let mut host = GameHost::new();
+    host.engine_domains.interactables.doors.push(Door {
+        active: false,
+        locked_pc: true,
+        ..Default::default()
+    });
+    let door = GameHost::door_handle_from_index(0);
+
+    let mut unlock = NativeStack::default();
+    unlock.push_i32(door);
+    unlock.push_i32(0);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::SetDoorLockedPC, &mut unlock),
+        0
+    );
+
+    let mut query = NativeStack::default();
+    query.push_i32(door);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsDoorLockedPC, &mut query),
+        0
+    );
+    assert!(
+        host.engine_domains.interactables.doors[0].active,
+        "the Original activates a door when script unlocks it"
+    );
+}
+
+#[test]
+fn patch_mutation_is_visible_to_later_native_in_same_callback() {
+    let mut host = GameHost::new();
+    host.engine_domains.interactables.patches.push(Patch {
+        active: true,
+        initially_active: true,
+        ..Default::default()
+    });
+    let patch = GameHost::patch_handle_from_index(0);
+
+    let mut apply = NativeStack::default();
+    apply.push_i32(patch);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::ApplyPatch, &mut apply),
+        1
+    );
+
+    let mut query = NativeStack::default();
+    query.push_i32(patch);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsPatchApplied, &mut query),
+        1
+    );
+    assert!(matches!(
+        host.deferred_commands.as_slice(),
+        [DeferredCommand::ProcessPatchEffects { patch_index, .. }]
+            if usize::from(*patch_index) == 0
+    ));
+}
+
+#[test]
+fn mission_ui_mutations_are_visible_in_same_callback() {
+    let mut host = GameHost::new();
+
+    let mut set_outline = NativeStack::default();
+    set_outline.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::SetOutlineDisplay, &mut set_outline),
+        0
+    );
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::GetOutlineDisplay,
+            &mut NativeStack::default(),
+        ),
+        1
+    );
+    assert!(host.engine_domains.mission_ui.outline_display);
+    assert!(matches!(
+        host.commands.as_slice(),
+        [EngineCommand::SetOutlineDisplay { display: true }]
+    ));
+
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::ForceCheckVictory,
+            &mut NativeStack::default(),
+        ),
+        0
+    );
+    assert!(host.engine_domains.mission_ui.force_check);
 }
 
 // --- Sequence manager ---
@@ -478,7 +588,10 @@ fn is_inside_building_specific() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let building = GameHost::building_handle_from_index(2);
-    host.actor_building.insert(actor, building);
+    host.engine_domains
+        .buildings
+        .actor_building
+        .insert(actor, building);
     let prog = call_native_return(98, &[actor, building]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
@@ -488,7 +601,9 @@ fn is_inside_building_specific() {
 fn is_inside_building_wrong() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.actor_building
+    host.engine_domains
+        .buildings
+        .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
     let prog = call_native_return(98, &[actor, GameHost::building_handle_from_index(6)]);
     let mut vm = Vm::new().with_host(Box::new(host));
@@ -499,7 +614,9 @@ fn is_inside_building_wrong() {
 fn is_inside_building_null_checks_any() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.actor_building
+    host.engine_domains
+        .buildings
+        .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
     // NULL building (0): checks if in ANY building
     let prog = call_native_return(98, &[actor, 0]);
@@ -520,9 +637,10 @@ fn is_inside_zone() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        1,
+        &[
             GameHost::actor_handle_from_index(2),
             actor,
             GameHost::actor_handle_from_index(6),
@@ -538,9 +656,10 @@ fn is_inside_zone_not_present() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        1,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(6),
         ],
@@ -563,9 +682,10 @@ fn actors_in_sector() {
         ..Default::default()
     };
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        0,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(4),
             GameHost::actor_handle_from_index(6),
@@ -587,9 +707,10 @@ fn actors_in_sector() {
         script_location_count: 2,
         ..Default::default()
     };
-    host2.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host2,
+        0,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(4),
             GameHost::actor_handle_from_index(6),
@@ -649,9 +770,15 @@ fn are_all_pcs_inside() {
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
     ];
-    host.zone_occupants
-        .insert(5, (0..3).map(GameHost::actor_handle_from_index).collect());
-    let prog = call_native_return(230, &[5]);
+    let loc = GameHost::location_handle_from_index(0);
+    seed_zone(
+        &mut host,
+        0,
+        &(0..3)
+            .map(GameHost::actor_handle_from_index)
+            .collect::<Vec<_>>(),
+    );
+    let prog = call_native_return(230, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
 }
@@ -665,8 +792,9 @@ fn are_all_pcs_inside_not_all() {
         Some(native_test_pc(Vec::new(), Vec::new())),
     ];
     let handles: Vec<_> = (0..3).map(GameHost::actor_handle_from_index).collect();
-    host.zone_occupants.insert(5, vec![handles[0], handles[2]]); // PC 2 missing
-    let prog = call_native_return(230, &[5]);
+    let loc = GameHost::location_handle_from_index(0);
+    seed_zone(&mut host, 0, &[handles[0], handles[2]]); // PC 2 missing
+    let prog = call_native_return(230, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }

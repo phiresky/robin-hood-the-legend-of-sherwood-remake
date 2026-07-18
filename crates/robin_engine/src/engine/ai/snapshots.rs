@@ -601,7 +601,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|s| s.game_host())
-            .map(|h| h.doors.as_slice())
+            .map(|_| self.script_domains.interactables.doors.as_slice())
             .unwrap_or(&[]);
         let mut forecasts = std::collections::HashMap::with_capacity(self.world.pc_ids.len());
         forecasts.extend(self.world.pc_ids.iter().filter_map(|&pc_id| {
@@ -860,7 +860,7 @@ impl EngineInner {
                     .mission_script
                     .as_ref()
                     .and_then(|ms| ms.game_host())
-                    .map(|h| h.doors.as_slice())
+                    .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
                 let door_pass = s

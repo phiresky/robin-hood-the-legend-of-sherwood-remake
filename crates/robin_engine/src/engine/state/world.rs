@@ -6,7 +6,6 @@ use crate::{
     entities::Entities,
     fast_find_grid::FastFindGrid,
     pathfinder::PathFinder,
-    sector::ScriptSectorData,
     sight_obstacle::SightObstacle,
 };
 
@@ -23,7 +22,6 @@ pub(crate) struct WorldState {
     pub(crate) pathfinder: PathFinder,
     pub(crate) weather: WeatherState,
     pub(crate) shield: ShieldState,
-    pub(crate) script_zones: Vec<ScriptSectorData>,
     pub(crate) dynamic_sight_obstacles: Vec<SightObstacle>,
     pub(crate) static_sight_obstacle_active: Vec<bool>,
 }
@@ -37,7 +35,6 @@ impl WorldState {
             pathfinder: PathFinder::default(),
             weather: WeatherState::new(),
             shield: ShieldState::default(),
-            script_zones: Vec::new(),
             dynamic_sight_obstacles: Vec::new(),
             static_sight_obstacle_active: Vec::new(),
         }
@@ -48,9 +45,9 @@ impl WorldState {
     /// All indexed relationships are validated before the engine can tick.
     /// Missing sprite runtimes and topology mismatches are invariant failures,
     /// not opportunities to fabricate empty/default data.
-    pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
+    pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets, script_zone_count: usize) {
         self.fast_grid.attach_level_grid(assets.level_grid.clone());
-        self.validate_level_attachments(assets);
+        self.validate_level_attachments(assets, script_zone_count);
 
         for (id, entity) in self.entities.occupied_mut() {
             entity
@@ -63,14 +60,18 @@ impl WorldState {
         }
     }
 
-    pub(crate) fn validate_level_attachments(&self, assets: &LevelAssets) {
+    pub(crate) fn validate_level_attachments(
+        &self,
+        assets: &LevelAssets,
+        script_zone_count: usize,
+    ) {
         self.validate_pc_index();
 
         assert_eq!(
-            self.script_zones.len(),
+            script_zone_count,
             assets.script_zone_grid_indices.len(),
             "script-zone runtime length {} does not match level zone-index length {}",
-            self.script_zones.len(),
+            script_zone_count,
             assets.script_zone_grid_indices.len(),
         );
         for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
@@ -105,13 +106,6 @@ impl WorldState {
     pub(crate) fn validate_snapshot_compatibility(&self, loaded: &Self) -> Result<(), String> {
         self.validate_pc_index_inner()?;
 
-        if self.script_zones.len() != loaded.script_zones.len() {
-            return Err(format!(
-                "snapshot script-zone runtime length {} does not match loaded world length {}",
-                self.script_zones.len(),
-                loaded.script_zones.len(),
-            ));
-        }
         if self.static_sight_obstacle_active.len() != loaded.static_sight_obstacle_active.len() {
             return Err(format!(
                 "snapshot static sight-obstacle runtime length {} does not match loaded world length {}",
@@ -224,7 +218,7 @@ mod tests {
 
     #[test]
     fn empty_world_accepts_empty_level_attachments() {
-        WorldState::new().validate_level_attachments(&LevelAssets::new());
+        WorldState::new().validate_level_attachments(&LevelAssets::new(), 0);
     }
 
     #[test]
@@ -232,9 +226,8 @@ mod tests {
         expected = "script-zone runtime length 1 does not match level zone-index length 0"
     )]
     fn script_zone_parallel_length_mismatch_fails_loudly() {
-        let mut world = WorldState::new();
-        world.script_zones.push(ScriptSectorData::new());
-        world.validate_level_attachments(&LevelAssets::new());
+        let world = WorldState::new();
+        world.validate_level_attachments(&LevelAssets::new(), 1);
     }
 
     #[test]
@@ -244,7 +237,7 @@ mod tests {
     fn static_obstacle_parallel_length_mismatch_fails_loudly() {
         let mut world = WorldState::new();
         world.static_sight_obstacle_active.push(true);
-        world.validate_level_attachments(&LevelAssets::new());
+        world.validate_level_attachments(&LevelAssets::new(), 0);
     }
 
     #[test]
@@ -254,7 +247,7 @@ mod tests {
     fn pathfinder_parallel_length_mismatch_fails_loudly() {
         let mut world = WorldState::new();
         world.pathfinder.states.push(Vec::new());
-        world.validate_level_attachments(&LevelAssets::new());
+        world.validate_level_attachments(&LevelAssets::new(), 0);
     }
 
     #[test]
@@ -262,7 +255,7 @@ mod tests {
     fn missing_pc_index_target_fails_loudly() {
         let mut world = WorldState::new();
         world.pc_ids.push(EntityId::Pc(crate::entity_id::PcId(0)));
-        world.validate_level_attachments(&LevelAssets::new());
+        world.validate_level_attachments(&LevelAssets::new(), 0);
     }
 
     #[test]
@@ -270,10 +263,9 @@ mod tests {
         expected = "script zone 0 references grid sector 0, but the level has 0 sectors"
     )]
     fn out_of_bounds_script_zone_index_fails_loudly() {
-        let mut world = WorldState::new();
-        world.script_zones.push(ScriptSectorData::new());
+        let world = WorldState::new();
         let mut assets = LevelAssets::new();
         assets.script_zone_grid_indices = std::sync::Arc::new(vec![0]);
-        world.validate_level_attachments(&assets);
+        world.validate_level_attachments(&assets, 1);
     }
 }

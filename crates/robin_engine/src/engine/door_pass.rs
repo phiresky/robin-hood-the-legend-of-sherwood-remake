@@ -570,8 +570,12 @@ impl EngineInner {
     ) -> Option<BuiltDoorPass> {
         // Snapshot door geometry and type (releases borrow on mission_script).
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let game_host = self.mission_script.as_mut()?.game_host_mut()?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let _game_host = self.mission_script.as_mut()?.game_host_mut()?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             (
                 door.door_type,
                 door.point_mid,
@@ -776,11 +780,16 @@ impl EngineInner {
 
         // Snapshot door data before mutable borrows.
         let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            let door = match game_host.doors.get(usize::from(door_index)) {
+            let door = match self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+            {
                 Some(d) => d,
                 None => return,
             };
@@ -820,14 +829,19 @@ impl EngineInner {
                 left_building = true;
                 // Leaving a building — remove from occupant list.
                 let bld_idx = gs.and_then(|s| s.building_index);
-                if let Some(bi) = bld_idx
-                    && let Some(ref mut script) = self.mission_script
-                    && let Some(game_host) = script.game_host_mut()
-                {
-                    if let Some(occupants) = game_host.building_occupants.get_mut(usize::from(bi)) {
+                if let Some(bi) = bld_idx {
+                    if let Some(occupants) = self
+                        .script_domains
+                        .buildings
+                        .occupants
+                        .get_mut(usize::from(bi))
+                    {
                         occupants.retain(|&a| a != actor_handle);
                     }
-                    game_host.actor_building.remove(&actor_handle);
+                    self.script_domains
+                        .buildings
+                        .actor_building
+                        .remove(&actor_handle);
                 }
                 // Drop this entity from the matching `AiGlobalState`
                 // house's live occupant list.  Keyed by sector number
@@ -863,24 +877,28 @@ impl EngineInner {
                 if is_pc && let Some(bi) = bld_idx {
                     if let Some(carried_id) = carried_to_unhide {
                         let carried_h = crate::natives::GameHost::actor_handle(carried_id);
-                        if let Some(ref mut script) = self.mission_script
-                            && let Some(game_host) = script.game_host_mut()
                         {
-                            if let Some(occupants) =
-                                game_host.building_occupants.get_mut(usize::from(bi))
+                            if let Some(occupants) = self
+                                .script_domains
+                                .buildings
+                                .occupants
+                                .get_mut(usize::from(bi))
                             {
                                 occupants.retain(|&a| a != carried_h);
                             }
-                            game_host.actor_building.remove(&carried_h);
+                            self.script_domains
+                                .buildings
+                                .actor_building
+                                .remove(&carried_h);
                         }
                     }
                     // Snapshot the post-removal occupant list so we can
                     // probe each occupant without holding the script borrow.
                     let occupants: Vec<i32> = self
-                        .mission_script
-                        .as_ref()
-                        .and_then(|s| s.game_host())
-                        .and_then(|gh| gh.building_occupants.get(usize::from(bi)))
+                        .script_domains
+                        .buildings
+                        .occupants
+                        .get(usize::from(bi))
                         .cloned()
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
@@ -1011,17 +1029,17 @@ impl EngineInner {
             if let Some(bi) = bld_idx {
                 let bld_handle =
                     crate::natives::GameHost::building_handle_from_index(usize::from(bi));
-                if let Some(ref mut script) = self.mission_script
-                    && let Some(game_host) = script.game_host_mut()
-                {
-                    if usize::from(bi) >= game_host.building_occupants.len() {
-                        game_host
-                            .building_occupants
-                            .resize(usize::from(bi) + 1, Vec::new());
-                    }
-                    game_host.building_occupants[usize::from(bi)].push(actor_handle);
-                    game_host.actor_building.insert(actor_handle, bld_handle);
+                if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
+                    self.script_domains
+                        .buildings
+                        .occupants
+                        .resize(usize::from(bi) + 1, Vec::new());
                 }
+                self.script_domains.buildings.occupants[usize::from(bi)].push(actor_handle);
+                self.script_domains
+                    .buildings
+                    .actor_building
+                    .insert(actor_handle, bld_handle);
             }
             // Add this entity to the matching `AiGlobalState` house's
             // live occupant list.  If no house exists for this
@@ -1062,26 +1080,26 @@ impl EngineInner {
                     let carried_h = crate::natives::GameHost::actor_handle(carried_id);
                     let bld_handle =
                         crate::natives::GameHost::building_handle_from_index(usize::from(bi));
-                    if let Some(ref mut script) = self.mission_script
-                        && let Some(game_host) = script.game_host_mut()
-                    {
-                        if usize::from(bi) >= game_host.building_occupants.len() {
-                            game_host
-                                .building_occupants
-                                .resize(usize::from(bi) + 1, Vec::new());
-                        }
-                        game_host.building_occupants[usize::from(bi)].push(carried_h);
-                        game_host.actor_building.insert(carried_h, bld_handle);
+                    if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
+                        self.script_domains
+                            .buildings
+                            .occupants
+                            .resize(usize::from(bi) + 1, Vec::new());
                     }
+                    self.script_domains.buildings.occupants[usize::from(bi)].push(carried_h);
+                    self.script_domains
+                        .buildings
+                        .actor_building
+                        .insert(carried_h, bld_handle);
                 }
                 // Re-enable corpses already inside the building: walk
                 // the occupant list and unhide humans that are
                 // (dead || unconscious) && not currently carried.
                 let occupants: Vec<i32> = self
-                    .mission_script
-                    .as_ref()
-                    .and_then(|s| s.game_host())
-                    .and_then(|gh| gh.building_occupants.get(usize::from(bi)))
+                    .script_domains
+                    .buildings
+                    .occupants
+                    .get(usize::from(bi))
                     .cloned()
                     .unwrap_or_default();
                 for occ_h in occupants {
@@ -1134,8 +1152,12 @@ impl EngineInner {
         direct: bool,
     ) {
         let Some((target_sector, lift_type, lift_direction)) = (|| {
-            let game_host = self.mission_script.as_ref()?.game_host()?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let _game_host = self.mission_script.as_ref()?.game_host()?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             let target_sector = if direct {
                 door.sector_in
             } else {
@@ -1264,11 +1286,16 @@ impl EngineInner {
     fn apply_door_patch(&mut self, assets: &LevelAssets, door_index: crate::gate::DoorIndex) {
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            match game_host.doors.get(usize::from(door_index)) {
+            match self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+            {
                 Some(door) => door.patch_index,
                 None => return,
             }
@@ -1287,17 +1314,21 @@ impl EngineInner {
         // closing.  The matching `finish_transition` fires when the
         // patch's FX animation ends (see `tick_entity_animations`).
         let was_applied = {
-            let game_host = match self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            let _game_host = match self.mission_script.as_ref().and_then(|s| s.game_host()) {
                 Some(h) => h,
                 None => return,
             };
-            match game_host.patches.get(patch_idx) {
+            match self.script_domains.interactables.patches.get(patch_idx) {
                 Some(p) => p.applied,
                 None => return,
             }
         };
-        if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
-            && let Some(door) = game_host.doors.get_mut(usize::from(door_index))
+        if let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+            && let Some(door) = self
+                .script_domains
+                .interactables
+                .doors
+                .get_mut(usize::from(door_index))
         {
             if was_applied {
                 door.gate_state.request_close();
@@ -1308,11 +1339,11 @@ impl EngineInner {
 
         // Apply the patch and collect effects.
         let effects = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
-            let patch = match game_host.patches.get_mut(patch_idx) {
+            let patch = match self.script_domains.interactables.patches.get_mut(patch_idx) {
                 Some(p) => p,
                 None => return,
             };

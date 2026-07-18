@@ -254,12 +254,6 @@ impl EngineInner {
                 game_host.background_invalidated = false;
             }
 
-            // ── ForceCheckVictory ──
-            if game_host.force_check {
-                self.mission_domain.force_check = true;
-                game_host.force_check = false;
-            }
-
             // ── Camera / UI commands ──
             engine_commands = game_host.drain_commands();
 
@@ -830,6 +824,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
 
             // ── Phase 1: Per-actor Initialize ──
@@ -950,6 +945,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -1002,6 +998,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             if let Err(e) = script.finalize(abandoned, queries) {
                 tracing::warn!("Script Finalize failed: {e}");
@@ -1012,6 +1009,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
     }
@@ -1087,6 +1085,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for (handle, new_anim, old_anim) in &changes {
@@ -1106,6 +1105,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1167,6 +1167,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         // Per-scroll `Hourglass` is distinct from the engine script
@@ -1184,6 +1185,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1252,6 +1254,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.call_scroll_function(handle, "IsTaken", &[pc_handle], queries);
         script.swap_engine_state(
@@ -1260,6 +1263,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -1294,7 +1298,7 @@ impl EngineInner {
         };
 
         let mut init_count = 0u32;
-        for (zone_idx, zone_data) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone_data) in self.script_domains.zones.scripts.iter().enumerate() {
             let class_name = match &zone_data.script_class_name {
                 Some(name) => name.clone(),
                 None => continue,
@@ -1400,8 +1404,9 @@ impl EngineInner {
                 // into apex sectors — once converted, the SECTOR_SCRIPT
                 // flag is dropped so the engine stops scanning them.
                 if self
-                    .world
-                    .script_zones
+                    .script_domains
+                    .zones
+                    .scripts
                     .get(zone_idx)
                     .is_some_and(|z| z.transformed_to_apex)
                 {
@@ -1449,8 +1454,8 @@ impl EngineInner {
         entries: &[(usize, crate::entity_id::EntityId, i32)],
     ) {
         for &(zone_idx, entity_idx, _) in entries {
-            self.world.script_zones[zone_idx].enter(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
@@ -1463,7 +1468,7 @@ impl EngineInner {
     /// path, where occupant lists must be wiped before re-scanning
     /// against teleported positions.
     pub(crate) fn empty_all_script_sectors(&mut self) {
-        for zone in &mut self.world.script_zones {
+        for zone in &mut self.script_domains.zones.scripts {
             zone.remove_all_occupants();
         }
     }
@@ -1517,6 +1522,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for &(zone_idx, _, handle) in &entries {
@@ -1531,6 +1537,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -1568,11 +1575,11 @@ impl EngineInner {
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
-                if self.world.script_zones[zone_idx].transformed_to_apex {
+                if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                     continue;
                 }
                 let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
-                let was_inside = self.world.script_zones[zone_idx].is_inside(eidx);
+                let was_inside = self.script_domains.zones.scripts[zone_idx].is_inside(eidx);
                 let is_inside = active && gs.layer == layer && gs.contains_point(pos);
 
                 if is_inside && !was_inside {
@@ -1598,7 +1605,7 @@ impl EngineInner {
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if self.world.script_zones[zone_idx].is_inside(carried_id) {
+            if self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if enter_events
@@ -1619,7 +1626,7 @@ impl EngineInner {
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if !self.world.script_zones[zone_idx].is_inside(carried_id) {
+            if !self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if exit_events
@@ -1638,15 +1645,15 @@ impl EngineInner {
 
         // Phase 2: Update occupant lists and apply production work icons.
         for &(zone_idx, entity_idx, _) in &enter_events {
-            self.world.script_zones[zone_idx].enter(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
         }
         for &(zone_idx, entity_idx, _) in &exit_events {
-            self.world.script_zones[zone_idx].leave(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].leave(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, false);
             }
@@ -1662,6 +1669,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for &(zone_idx, _, handle) in &enter_events {
@@ -1681,6 +1689,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1700,7 +1709,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.world.script_zones.len());
+            .saturating_sub(self.script_domains.zones.scripts.len());
 
         let Some(ref mut script) = self.mission_script else {
             return;
@@ -1733,11 +1742,11 @@ impl EngineInner {
                 continue;
             }
             let zone_idx = loc_idx - points_count;
-            if zone_idx >= self.world.script_zones.len() {
+            if zone_idx >= self.script_domains.zones.scripts.len() {
                 tracing::warn!("RegisterAsProductionSector: zone {zone_idx} out of range");
                 continue;
             }
-            self.world.script_zones[zone_idx].production_sector_type = prod_type_enum;
+            self.script_domains.zones.scripts[zone_idx].production_sector_type = prod_type_enum;
 
             // Attach to the campaign's SectorProduction so its `speed` is set.
             if let Some(campaign) = self.mission_domain.campaign.as_mut()
@@ -1885,6 +1894,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
 
             // Per-actor ProcessMessage
@@ -1935,6 +1945,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -1973,6 +1984,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             for &(target_handle, pc_handle, fn_name) in calls {
                 if let Err(e) =
@@ -1987,6 +1999,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -2074,6 +2087,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.call_actor_function(handle, "FilterAIEvent", &[source, code], queries);
         script.swap_engine_state(
@@ -2082,6 +2096,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -2136,7 +2151,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|ms| ms.game_host())
-            .map(|gh| gh.doors.as_slice());
+            .map(|_| self.script_domains.interactables.doors.as_slice());
         let ai_global = &mut self.ai.global;
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return false;
@@ -2224,6 +2239,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for (handle, source, code) in &notifications {
@@ -2238,6 +2254,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -2547,7 +2564,7 @@ impl EngineInner {
                     let points_count = assets
                         .script_location_positions
                         .len()
-                        .saturating_sub(self.world.script_zones.len());
+                        .saturating_sub(self.script_domains.zones.scripts.len());
                     let Some(loc_idx) = crate::natives::GameHost::location_index(location_handle)
                     else {
                         tracing::warn!(
@@ -2562,7 +2579,7 @@ impl EngineInner {
                         continue;
                     } else {
                         let zone_idx = loc_idx - points_count;
-                        if let Some(zone) = self.world.script_zones.get_mut(zone_idx) {
+                        if let Some(zone) = self.script_domains.zones.scripts.get_mut(zone_idx) {
                             if zone.script_associated {
                                 tracing::warn!(
                                     "DefineFlatTrajectoryZone(loc={location_handle}): \
@@ -2909,25 +2926,19 @@ impl EngineInner {
                     // states here so the log/trace reflects what the
                     // next HUD frame will show.
                     if let Some(campaign) = self.mission_domain.campaign.as_ref() {
-                        // `Game::is_men_to_blazon_conversion` is mirrored
-                        // onto `GameHost::men_to_blazon_conversion_mode`
-                        // (the `SetMenToBlazonConversionMode` setter
-                        // writes both; see `Game::set_men_to_blazon_conversion`).
-                        // Read the host copy here so the blazon bar can
+                        // `Game::is_men_to_blazon_conversion` is reflected in
+                        // the engine-owned mission UI domain by the
+                        // `SetMenToBlazonConversionMode` player command.
+                        // Read that state here so the blazon bar can
                         // switch to next-mission targeting during
                         // conversion mode without needing a `&Game`
                         // borrow at the engine tick.
-                        let (men_to_blazon, blinking) = self
-                            .mission_script
-                            .as_ref()
-                            .and_then(|s| s.game_host())
-                            .map(|h| {
-                                (
-                                    h.men_to_blazon_conversion_mode,
-                                    h.active_blinking_blazons(self.control.frame_counter),
-                                )
-                            })
-                            .unwrap_or((false, 0));
+                        let men_to_blazon =
+                            self.script_domains.mission_ui.men_to_blazon_conversion_mode;
+                        let blinking = self
+                            .script_domains
+                            .mission_ui
+                            .active_blinking_blazons(self.control.frame_counter);
                         let bb = crate::widget_state::blazon_bar::build_blazon_bar_state(
                             campaign,
                             &assets.profile_manager,
@@ -3054,17 +3065,19 @@ impl EngineInner {
             let Some(ref script) = self.mission_script else {
                 return;
             };
-            let Some(game_host) = script.game_host() else {
+            let Some(_game_host) = script.game_host() else {
                 return;
             };
-            let gate_handle = game_host
-                .building_gates
+            let gate_handle = self
+                .script_domains
+                .buildings
+                .gates
                 .get(bld_idx)
                 .and_then(|g| g.first())
                 .copied();
             let point_in = gate_handle
                 .and_then(crate::natives::GameHost::door_index)
-                .and_then(|di| game_host.doors.get(di))
+                .and_then(|di| self.script_domains.interactables.doors.get(di))
                 .map(|d| d.point_in);
             let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
                 if gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16) {
@@ -3161,25 +3174,27 @@ impl EngineInner {
                     }
                 }
                 // Push the carried into the occupants list.
-                if let Some(ref mut script) = self.mission_script
-                    && let Some(gh) = script.game_host_mut()
-                {
-                    if bld_idx >= gh.building_occupants.len() {
-                        gh.building_occupants.resize(bld_idx + 1, Vec::new());
-                    }
-                    gh.building_occupants[bld_idx].push(carried_h);
-                    gh.actor_building.insert(carried_h, building);
+                if bld_idx >= self.script_domains.buildings.occupants.len() {
+                    self.script_domains
+                        .buildings
+                        .occupants
+                        .resize(bld_idx + 1, Vec::new());
                 }
+                self.script_domains.buildings.occupants[bld_idx].push(carried_h);
+                self.script_domains
+                    .buildings
+                    .actor_building
+                    .insert(carried_h, building);
             }
 
             // Re-enable corpses already inside the building: walk the
             // occupants list and SetActive(true) on humans that are
             // (is_dead || unconscious) && carrier.is_none().
             let occupants: Vec<i32> = self
-                .mission_script
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .and_then(|gh| gh.building_occupants.get(bld_idx))
+                .script_domains
+                .buildings
+                .occupants
+                .get(bld_idx)
                 .cloned()
                 .unwrap_or_default();
             for occ_h in occupants {
@@ -3393,6 +3408,119 @@ mod script_context_tests {
     }
 
     #[test]
+    fn legacy_game_host_interactables_migrate_to_engine_domains_once() {
+        let mut engine = EngineInner::new();
+        engine.mission_script = Some(empty_mission_script());
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                locked_pc: true,
+                ..Default::default()
+            });
+        engine
+            .script_domains
+            .interactables
+            .patches
+            .push(crate::patch::Patch {
+                active: true,
+                applied: true,
+                initially_active: true,
+                ..Default::default()
+            });
+
+        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
+        let interactables = snapshot["script_domains"]["interactables"]
+            .as_object()
+            .cloned()
+            .expect("current interactable domain");
+        snapshot["mission_script"]["game_host"]["doors"] = interactables["doors"].clone();
+        snapshot["mission_script"]["game_host"]["patches"] = interactables["patches"].clone();
+        snapshot["script_domains"]["interactables"]["doors"] = serde_json::json!([]);
+        snapshot["script_domains"]["interactables"]["patches"] = serde_json::json!([]);
+
+        let restored: EngineInner =
+            serde_json::from_value(snapshot).expect("normalize legacy interactables");
+        assert_eq!(restored.script_domains.interactables.doors.len(), 1);
+        assert!(restored.script_domains.interactables.doors[0].locked_pc);
+        assert_eq!(restored.script_domains.interactables.patches.len(), 1);
+        assert!(restored.script_domains.interactables.patches[0].applied);
+        assert!(
+            restored
+                .mission_script
+                .as_ref()
+                .expect("mission script survives migration")
+                .game_host
+                .engine_domains
+                .interactables
+                .doors
+                .is_empty(),
+            "legacy storage must be consumed instead of retained as a mirror"
+        );
+    }
+
+    #[test]
+    fn legacy_game_host_mission_ui_migrates_without_overwriting_force_check() {
+        let mut engine = EngineInner::new();
+        engine.mission_script = Some(empty_mission_script());
+        engine.script_domains.mission_ui.outline_display = true;
+        engine.script_domains.mission_ui.force_check = true;
+        engine
+            .script_domains
+            .mission_ui
+            .men_to_blazon_conversion_mode = true;
+        engine
+            .script_domains
+            .mission_ui
+            .set_blinking_blazons(3, 100);
+
+        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
+        let ui = snapshot["script_domains"]["mission_ui"]
+            .as_object()
+            .cloned()
+            .expect("current mission UI domain");
+        let host = snapshot["mission_script"]["game_host"]
+            .as_object_mut()
+            .expect("legacy GameHost object");
+        host.insert("force_check".into(), serde_json::json!(false));
+        for field in [
+            "outline_display",
+            "men_to_blazon_conversion_mode",
+            "blinking_blazons",
+            "blink_expire_frame",
+        ] {
+            host.insert(field.into(), ui[field].clone());
+        }
+        snapshot["script_domains"]["mission_ui"] =
+            serde_json::to_value(crate::engine::state::MissionUiState::default())
+                .expect("serialize default mission UI");
+
+        let restored: EngineInner =
+            serde_json::from_value(snapshot).expect("normalize legacy mission UI");
+        let ui = &restored.script_domains.mission_ui;
+        assert!(ui.outline_display);
+        assert!(
+            ui.force_check,
+            "top-level legacy force_check remains authoritative"
+        );
+        assert!(ui.men_to_blazon_conversion_mode);
+        assert_eq!(ui.blinking_blazons, 3);
+        assert_eq!(ui.blink_expire_frame, 150);
+        assert!(
+            restored
+                .mission_script
+                .as_ref()
+                .expect("mission script survives migration")
+                .game_host
+                .engine_domains
+                .mission_ui
+                .is_default_for_legacy_merge(),
+            "legacy UI storage must be consumed instead of retained as a mirror"
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "contradicts canonical value")]
     fn contradictory_legacy_custom_campaign_value_is_rejected() {
         let mut engine = EngineInner::new();
@@ -3441,12 +3569,14 @@ mod script_context_tests {
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
     ) -> Result<(), &'static str> {
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut context = script.script_context(
             entities,
             ai_global,
             fast_grid,
             campaign,
             mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             Some(99),
         );
@@ -3703,6 +3833,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
                 queries,
                 this_actor,
             );

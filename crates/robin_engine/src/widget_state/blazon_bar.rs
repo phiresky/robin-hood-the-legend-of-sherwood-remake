@@ -36,7 +36,7 @@ pub struct BlazonBarState {
     pub to_be_collected: u32,
     /// Number of trailing castle blazons currently flashing to the
     /// "normal" sprite.  Passed in from the caller's
-    /// [`crate::natives::GameHost::active_blinking_blazons`] one-shot
+    /// [`crate::engine::Engine::active_blinking_blazons`] one-shot
     /// latch.
     pub blinking: u32,
     /// Extra blazons the men-to-blazon conversion preview should add to
@@ -50,7 +50,7 @@ pub struct BlazonBarState {
 /// `None` when the bar should be hidden.
 ///
 /// `blinking` is the currently-armed blink count, read from
-/// [`crate::natives::GameHost::active_blinking_blazons`] by the caller.
+/// [`crate::engine::Engine::active_blinking_blazons`] by the caller.
 /// `additional` is derived here from `peasants_to_convert / quotation`
 /// whenever men-to-blazon conversion is active.
 pub fn build_blazon_bar_state(

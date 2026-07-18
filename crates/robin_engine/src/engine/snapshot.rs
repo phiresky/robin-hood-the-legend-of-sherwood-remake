@@ -1,12 +1,12 @@
 //! Stable serialization boundary for [`EngineInner`].
 //!
 //! The in-memory engine is going to be split into cohesive owned state groups.
-//! Save files and multiplayer bincode snapshots must not change merely because
-//! fields move. This flat schema deliberately repeats the current field names,
-//! types, attributes, and declaration order. Future in-memory regrouping maps
-//! through this boundary instead of deriving a new external schema from the
-//! runtime layout. Deterministic hashing follows the current runtime ownership
-//! layout and is intentionally separate from this compatibility adapter.
+//! JSON save fields remain compatible while in-memory ownership changes. This
+//! flat schema deliberately repeats the historical top-level field names and
+//! normalizes legacy nested owners. Bincode rollback/replay bytes are locked
+//! within a build, but historical replay compatibility is intentionally not a
+//! constraint on the runtime layout. Deterministic hashing likewise follows
+//! the current runtime ownership layout.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStruct};
 
@@ -74,10 +74,13 @@ struct FlatEngineSnapshot {
     pending_concussion_side_effects:
         Vec<(crate::element::EntityId, crate::combat::ConcussionOutcome)>,
     mission_script: Option<super::MissionScript>,
-    script_zone_data: Vec<crate::sector::ScriptSectorData>,
+    #[serde(default)]
+    script_zone_data: Option<Vec<crate::sector::ScriptSectorData>>,
     dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
     static_sight_obstacle_active: Vec<bool>,
     campaign: Option<crate::campaign::Campaign>,
+    #[serde(default)]
+    script_domains: Option<super::state::ScriptDomains>,
 }
 
 impl Serialize for EngineInner {
@@ -85,7 +88,7 @@ impl Serialize for EngineInner {
     where
         S: Serializer,
     {
-        let mut snapshot = serializer.serialize_struct("EngineInner", 51)?;
+        let mut snapshot = serializer.serialize_struct("EngineInner", 52)?;
         snapshot.serialize_field("sim_config", &self.sim_config)?;
         snapshot.serialize_field("mission", &self.mission_domain.state)?;
         snapshot.serialize_field("frame_counter", &self.control.frame_counter)?;
@@ -103,7 +106,7 @@ impl Serialize for EngineInner {
         )?;
         snapshot.serialize_field("next_order_id", &self.orders.next_order_id)?;
         snapshot.serialize_field("chorus_timer", &self.control.chorus_timer)?;
-        snapshot.serialize_field("force_check", &self.mission_domain.force_check)?;
+        snapshot.serialize_field("force_check", &self.script_domains.mission_ui.force_check)?;
         snapshot.serialize_field("messenger", &self.orders.messenger)?;
         snapshot.serialize_field("fast_grid", &self.world.fast_grid)?;
         snapshot.serialize_field("pathfinder", &self.world.pathfinder)?;
@@ -148,7 +151,10 @@ impl Serialize for EngineInner {
             &self.orders.pending_concussion_side_effects,
         )?;
         snapshot.serialize_field("mission_script", &self.mission_script)?;
-        snapshot.serialize_field("script_zone_data", &self.world.script_zones)?;
+        snapshot.serialize_field(
+            "script_zone_data",
+            &Option::<&Vec<crate::sector::ScriptSectorData>>::None,
+        )?;
         snapshot.serialize_field(
             "dynamic_sight_obstacles",
             &self.world.dynamic_sight_obstacles,
@@ -158,6 +164,7 @@ impl Serialize for EngineInner {
             &self.world.static_sight_obstacle_active,
         )?;
         snapshot.serialize_field("campaign", &self.mission_domain.campaign)?;
+        snapshot.serialize_field("script_domains", &Some(&self.script_domains))?;
         snapshot.end()
     }
 }
@@ -168,12 +175,71 @@ impl<'de> Deserialize<'de> for EngineInner {
         D: Deserializer<'de>,
     {
         let snapshot = FlatEngineSnapshot::deserialize(deserializer)?;
+        let mut mission_script = snapshot.mission_script;
+        let legacy_script_domains = mission_script
+            .as_mut()
+            .and_then(super::MissionScript::take_legacy_script_domains);
+        let mut script_domains = snapshot.script_domains.unwrap_or_default();
+        if let Some(legacy) = legacy_script_domains {
+            if let Some(buildings) = legacy.buildings {
+                let current = &script_domains.buildings;
+                if !current.occupants.is_empty()
+                    || !current.arrow_reserves.is_empty()
+                    || !current.actor_building.is_empty()
+                    || !current.active.is_empty()
+                    || !current.gates.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy building state",
+                    ));
+                }
+                script_domains.buildings = buildings;
+            }
+            if let Some(interactables) = legacy.interactables {
+                if !script_domains.interactables.doors.is_empty()
+                    || !script_domains.interactables.patches.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy interactable state",
+                    ));
+                }
+                script_domains.interactables = interactables;
+            }
+            if let Some(mission_ui) = legacy.mission_ui {
+                if !script_domains.mission_ui.is_default_for_legacy_merge() {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy mission UI state",
+                    ));
+                }
+                script_domains.mission_ui = mission_ui;
+            }
+            if let Some(scrolls) = legacy.scrolls {
+                let current = &script_domains.scrolls;
+                if !current.status.is_empty()
+                    || !current.attachments.is_empty()
+                    || !current.attachment_dirty.is_empty()
+                {
+                    return Err(serde::de::Error::custom(
+                        "Engine snapshot contains contradictory new and legacy scroll state",
+                    ));
+                }
+                script_domains.scrolls = scrolls;
+            }
+        }
+        if let Some(legacy_zones) = snapshot.script_zone_data {
+            if !script_domains.zones.scripts.is_empty() {
+                return Err(serde::de::Error::custom(
+                    "Engine snapshot contains contradictory new and legacy script zones",
+                ));
+            }
+            script_domains.zones.scripts = legacy_zones;
+        }
+        script_domains.mission_ui.force_check |= snapshot.force_check;
         Ok(Self {
             sim_config: snapshot.sim_config,
             mission_domain: MissionDomain {
                 state: snapshot.mission,
                 cheat_used_flags: snapshot.cheat_used_flags,
-                force_check: snapshot.force_check,
                 short_briefings: snapshot.short_briefings,
                 mission_stat: snapshot.mission_stat,
                 dead_pc: snapshot.dead_pc,
@@ -199,10 +265,10 @@ impl<'de> Deserialize<'de> for EngineInner {
                 pathfinder: snapshot.pathfinder,
                 weather: snapshot.weather,
                 shield: snapshot.shield,
-                script_zones: snapshot.script_zone_data,
                 dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
                 static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             },
+            script_domains,
             script_globals: snapshot.script_globals,
             orders: OrderRuntime {
                 next_order_id: snapshot.next_order_id,
@@ -233,7 +299,7 @@ impl<'de> Deserialize<'de> for EngineInner {
                 cutscene_camera: snapshot.cutscene_camera,
                 pending_side_effects: snapshot.pending_side_effects,
             },
-            mission_script: snapshot.mission_script,
+            mission_script,
         })
     }
 }

@@ -77,9 +77,8 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     }
 }
 
-fn door_click_polygon_at(game_host: &crate::natives::GameHost, click: MapPoint) -> Option<u32> {
-    game_host
-        .doors
+fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
+    doors
         .iter()
         .enumerate()
         .find(|(_, door)| door.is_door() && door.click_polygon_contains(click.x, click.y))
@@ -252,7 +251,7 @@ pub(crate) enum GoalShape {
     /// at after passing through.  When the far-side sector is a
     /// building, a `CHANGE_POSITION` teleport is emitted.
     Door {
-        /// Index of the goal door in `game_host.doors`.
+        /// Index of the goal door in `self.script_domains.interactables.doors`.
         door_index: crate::gate::DoorIndex,
         /// The approach point (near side of the goal door).
         far_side_point: MapPoint,
@@ -1054,7 +1053,9 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|h| door_click_polygon_at(h, click_point));
+                .and_then(|_| {
+                    door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
+                });
             let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
             let is_door_click = is_door_click_sector || clicked_door_index.is_some();
 
@@ -1404,8 +1405,12 @@ impl EngineInner {
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (pc_pos, path_src_sector, _path_src_layer) = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|h| {
-                    adapt_source_to_current_door(&h.doors, door_handle, door_direction)
+                let adapted = host.and_then(|_h| {
+                    adapt_source_to_current_door(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
                 });
                 match adapted {
                     Some((adj, sector, layer)) => (adj, sector, layer),
@@ -1431,9 +1436,9 @@ impl EngineInner {
             let level = self.world.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                host.and_then(|h| {
+                host.and_then(|_h| {
                     crate::gate::find_path_to_door(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
                         path_src_sector,
                         crate::gate::DoorIndex(door_idx),
@@ -1466,9 +1471,9 @@ impl EngineInner {
                 };
                 let level = self.world.fast_grid.level.clone();
                 let game_host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                game_host.and_then(|h| {
+                game_host.and_then(|_h| {
                     crate::gate::find_path_gates(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
                         path_src_sector,
                         (effective_click.x, effective_click.y),
@@ -1692,7 +1697,12 @@ impl EngineInner {
             gate_path.iter().enumerate().find_map(|(i, step)| {
                 let host = self.mission_script.as_ref().and_then(|s| s.game_host());
                 let is_jump = host
-                    .and_then(|h| h.doors.get(usize::from(step.door_index)))
+                    .and_then(|_| {
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(step.door_index))
+                    })
                     .map(|d| d.is_jump())
                     .unwrap_or(false);
                 if is_jump { Some(i) } else { None }
@@ -1738,7 +1748,7 @@ impl EngineInner {
         }
 
         let (gate_shots, starting_sector) = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
                 Some(h) => h,
                 None => return,
             };
@@ -1748,7 +1758,12 @@ impl EngineInner {
             // CHANGE_POSITION branch) or not.
             let start_sector = gate_path
                 .first()
-                .and_then(|first| game_host.doors.get(usize::from(first.door_index)))
+                .and_then(|first| {
+                    self.script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(first.door_index))
+                })
                 .map(|d| {
                     if gate_path[0].direct {
                         u16::from(d.sector_out)
@@ -1759,7 +1774,11 @@ impl EngineInner {
             let shots: Vec<GateShot> = gate_path
                 .iter()
                 .filter_map(|step| {
-                    let door = game_host.doors.get(usize::from(step.door_index))?;
+                    let door = self
+                        .script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(step.door_index))?;
                     let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
                         (
                             door.point_out,
@@ -2265,9 +2284,14 @@ impl EngineInner {
                             .unwrap_or((None, 0.0, trailing_flags));
                         let point_in = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
-                            host.and_then(|h| h.doors.get(usize::from(last_shot.door_index)))
-                                .map(|d| d.point_in)
-                                .unwrap_or(last_shot.exit)
+                            host.and_then(|_| {
+                                self.script_domains
+                                    .interactables
+                                    .doors
+                                    .get(usize::from(last_shot.door_index))
+                            })
+                            .map(|d| d.point_in)
+                            .unwrap_or(last_shot.exit)
                         };
                         let mut seek_move = SequenceElement::new_movement(
                             level,
@@ -2339,9 +2363,14 @@ impl EngineInner {
                     // was selected.
                     let goal_door_pc_lockable = {
                         let host = self.mission_script.as_ref().and_then(|s| s.game_host());
-                        host.and_then(|h| h.doors.get(usize::from(door_index)))
-                            .map(|d| d.locked_pc && d.unlockable)
-                            .unwrap_or(false)
+                        host.and_then(|_| {
+                            self.script_domains
+                                .interactables
+                                .doors
+                                .get(usize::from(door_index))
+                        })
+                        .map(|d| d.locked_pc && d.unlockable)
+                        .unwrap_or(false)
                     };
                     if !move_after_last_door {
                         // "Stop at the door" variant — caller set
@@ -2374,7 +2403,12 @@ impl EngineInner {
 
                         let (dx, dy) = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
-                            let d = host.and_then(|h| h.doors.get(usize::from(door_index)));
+                            let d = host.and_then(|_| {
+                                self.script_domains
+                                    .interactables
+                                    .doors
+                                    .get(usize::from(door_index))
+                            });
                             match d {
                                 Some(d) => {
                                     (d.point_out.x - d.point_in.x, d.point_out.y - d.point_in.y)
@@ -2453,7 +2487,12 @@ impl EngineInner {
                     if goal_door_pc_lockable && has_lockpick {
                         let (cam_pt, direct) = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
-                            let d = host.and_then(|h| h.doors.get(usize::from(door_index)));
+                            let d = host.and_then(|_| {
+                                self.script_domains
+                                    .interactables
+                                    .doors
+                                    .get(usize::from(door_index))
+                            });
                             // Use the path-direction the gate was
                             // approached in.  When the goal door was
                             // excluded from `gate_path` the caller
@@ -3325,7 +3364,12 @@ impl EngineInner {
                         self.mission_script
                             .as_ref()
                             .and_then(|s| s.game_host())
-                            .and_then(|host| host.doors.get(usize::from(dp.door_index)))
+                            .and_then(|_| {
+                                self.script_domains
+                                    .interactables
+                                    .doors
+                                    .get(usize::from(dp.door_index))
+                            })
                             .map(|door| door.sector_in)
                     })
                     .and_then(|sector_in| {
@@ -5910,11 +5954,11 @@ impl EngineInner {
             let patch_usize = patch_index.get() as usize;
 
             let (is_active, apply_sector_idx) = {
-                let Some(game_host) = self.mission_script.as_ref().and_then(|s| s.game_host())
+                let Some(_game_host) = self.mission_script.as_ref().and_then(|s| s.game_host())
                 else {
                     return;
                 };
-                let Some(patch) = game_host.patches.get(patch_usize) else {
+                let Some(patch) = self.script_domains.interactables.patches.get(patch_usize) else {
                     continue;
                 };
                 (patch.is_active(), patch.apply_sector_index)
@@ -5946,11 +5990,16 @@ impl EngineInner {
             let inside_apply = apply_sector.contains_point(new_pos);
 
             let effects = {
-                let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
                 else {
                     return;
                 };
-                let Some(patch) = game_host.patches.get_mut(patch_usize) else {
+                let Some(patch) = self
+                    .script_domains
+                    .interactables
+                    .patches
+                    .get_mut(patch_usize)
+                else {
                     continue;
                 };
                 if inside_apply {

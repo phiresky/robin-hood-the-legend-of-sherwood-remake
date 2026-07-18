@@ -292,7 +292,7 @@ pub fn resolve_left_click(
         && let Some(patch) = engine
             .mission_script()
             .and_then(|s| s.game_host())
-            .and_then(|h| h.patches.get(patch_idx as usize))
+            .and_then(|_| engine.patches().get(patch_idx as usize))
     {
         if patch.locked {
             // Locked patch: the first selected PC speaks "unable to do

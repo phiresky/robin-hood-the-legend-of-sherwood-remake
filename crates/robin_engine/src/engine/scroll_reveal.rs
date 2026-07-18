@@ -132,18 +132,18 @@ impl BeggarRemark {
 impl EngineInner {
     // ─── Scroll status accessors ─────────────────────────────────
 
-    /// Current status of a scroll entity.  Reads
-    /// `GameHost::scroll_status` (the single source of truth for
-    /// scroll state — script natives read/write it directly).
+    /// Current status of a scroll entity. Reads the engine-owned scroll
+    /// domain that is leased to script natives during a script transaction.
     /// Returns [`ScrollStatus::Invisible`] for scrolls that have no
     /// entry or when the mission script is unavailable.
     pub fn scroll_status(&self, scroll: EntityId) -> ScrollStatus {
         let handle = crate::natives::GameHost::actor_handle(scroll);
         let raw = self
-            .mission_script
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .and_then(|gh| gh.scroll_status.get(&handle).copied())
+            .script_domains
+            .scrolls
+            .status
+            .get(&handle)
+            .copied()
             .unwrap_or(0);
         ScrollStatus::from_i32(raw)
     }
@@ -151,11 +151,10 @@ impl EngineInner {
     /// Update a scroll's status and refresh its minimap dot.
     pub(crate) fn set_scroll_status(&mut self, scroll: EntityId, status: ScrollStatus) {
         let handle = crate::natives::GameHost::actor_handle(scroll);
-        if let Some(script) = self.mission_script.as_mut()
-            && let Some(gh) = script.game_host_mut()
-        {
-            gh.scroll_status.insert(handle, status as i32);
-        }
+        self.script_domains
+            .scrolls
+            .status
+            .insert(handle, status as i32);
         if let Some(entity) = self.get_entity_mut(scroll) {
             entity.element_data_mut().custom_minimap_dot = status.custom_minimap_dot();
         }

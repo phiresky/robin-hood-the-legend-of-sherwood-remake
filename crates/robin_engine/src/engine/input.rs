@@ -2321,18 +2321,23 @@ impl EngineInner {
         }
     }
 
-    // Safe: read-only — scans `mission_script.game_host.patches` and
+    // Safe: read-only — scans `mission_script.self.script_domains.interactables.patches` and
     // returns the owning patch index; performs no engine mutation, so
     // stays `&self` even though called from the host cursor path.
     pub fn find_patch_for_grid_sector(
         &self,
         sector_idx: crate::fast_find_grid::SectorIndex,
     ) -> Option<u32> {
-        let game_host = self.mission_script.as_ref()?.game_host()?;
+        let _game_host = self.mission_script.as_ref()?.game_host()?;
         let raw = u32::from(sector_idx);
-        let pos = game_host.patches.iter().position(|p| {
-            p.old_sector_indices.contains(&raw) || p.new_sector_indices.contains(&raw)
-        });
+        let pos = self
+            .script_domains
+            .interactables
+            .patches
+            .iter()
+            .position(|p| {
+                p.old_sector_indices.contains(&raw) || p.new_sector_indices.contains(&raw)
+            });
         match pos {
             Some(i) => Some(i as u32),
             None => panic!(
@@ -2355,15 +2360,20 @@ impl EngineInner {
     /// path on either side of the wiring.  Returns `None` when no
     /// mission script / game host is loaded.
     pub fn find_patch_for_door(&self, door_idx: u32) -> Option<u32> {
-        let game_host = self.mission_script.as_ref()?.game_host()?;
+        let _game_host = self.mission_script.as_ref()?.game_host()?;
         // Fast path: door_triggered link cached on the door.
-        if let Some(door) = game_host.doors.get(door_idx as usize)
+        if let Some(door) = self
+            .script_domains
+            .interactables
+            .doors
+            .get(door_idx as usize)
             && let Some(p) = door.patch_index
         {
             return Some(u32::from(p));
         }
         // Fallback: scan triggers_door patches' door lists.
-        game_host
+        self.script_domains
+            .interactables
             .patches
             .iter()
             .position(|p| p.door_indices.contains(&door_idx))
@@ -2392,7 +2402,12 @@ impl EngineInner {
                     .mission_script
                     .as_ref()
                     .and_then(|s| s.game_host())
-                    .and_then(|h| h.patches.get(patch_idx as usize))
+                    .and_then(|_| {
+                        self.script_domains
+                            .interactables
+                            .patches
+                            .get(patch_idx as usize)
+                    })
                     .unwrap_or_else(|| panic!("choose_door_cursor: patch {patch_idx} not found"))
                     .is_locked();
                 return if patch_locked {
@@ -2408,7 +2423,12 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|s| s.game_host())
-            .and_then(|h| h.doors.get(door_idx as usize))
+            .and_then(|_| {
+                self.script_domains
+                    .interactables
+                    .doors
+                    .get(door_idx as usize)
+            })
             .map(|d| {
                 (
                     d.is_locked_pc(),

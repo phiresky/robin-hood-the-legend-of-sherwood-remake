@@ -2132,11 +2132,12 @@ impl EngineInner {
         // Resolve the attached scroll entity id. The script-side
         // `scroll_attachments` map is keyed by actor script handle.
         let npc_handle = crate::natives::GameHost::actor_handle(target);
-        let scroll_handle: Option<i32> = self
-            .mission_script
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .and_then(|h| h.scroll_attachments.get(&npc_handle).copied());
+        let scroll_handle = self
+            .script_domains
+            .scrolls
+            .attachments
+            .get(&npc_handle)
+            .copied();
         let Some(scroll_handle) = scroll_handle else {
             tracing::warn!(
                 ?actor,
@@ -2487,9 +2488,9 @@ impl EngineInner {
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (adj_src_pos, adj_src_sector) = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|h| {
+                let adapted = host.and_then(|_h| {
                     crate::engine::movement::adapt_source_to_current_door(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         door_handle,
                         door_direction,
                     )
@@ -2505,9 +2506,9 @@ impl EngineInner {
             let level = self.world.fast_grid.level.clone();
             let gate_path = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                host.and_then(|h| {
+                host.and_then(|_h| {
                     crate::gate::find_path_gates(
-                        &h.doors,
+                        &self.script_domains.interactables.doors,
                         (adj_src_pos.x, adj_src_pos.y),
                         adj_src_sector,
                         (target_pos.x, target_pos.y),
@@ -3946,16 +3947,10 @@ mod tests {
         let npc_id = engine.add_entity(Entity::Civilian(npc));
 
         let scroll_id = spawn_scroll(&mut engine, true);
-        engine
-            .mission_script
-            .as_mut()
-            .unwrap()
-            .game_host
-            .scroll_attachments
-            .insert(
-                crate::natives::GameHost::actor_handle(npc_id),
-                crate::natives::GameHost::actor_handle(scroll_id),
-            );
+        engine.script_domains.scrolls.attachments.insert(
+            crate::natives::GameHost::actor_handle(npc_id),
+            crate::natives::GameHost::actor_handle(scroll_id),
+        );
 
         (engine, assets, pc_id, npc_id, scroll_id)
     }

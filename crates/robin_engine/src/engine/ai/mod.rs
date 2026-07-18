@@ -706,7 +706,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         .mission_script
         .as_ref()
         .and_then(|s| s.game_host())
-        .map(|gh| gh.doors.as_slice())
+        .map(|_| engine.script_domains.interactables.doors.as_slice())
         .unwrap_or(&[]);
 
     // Pre-scan nets for `compute_nets_covering_me` reverse index:
@@ -1176,7 +1176,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .map(|h| h.doors.as_slice())
+                .map(|_| self.script_domains.interactables.doors.as_slice())
                 .unwrap_or(&[]);
             tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
         }
@@ -1188,7 +1188,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .map(|h| h.doors.as_slice())
+                .map(|_| self.script_domains.interactables.doors.as_slice())
                 .unwrap_or(&[]);
             tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
                 &self.world.entities,
@@ -1245,7 +1245,7 @@ impl EngineInner {
                     .mission_script
                     .as_ref()
                     .and_then(|ms| ms.game_host())
-                    .map(|h| h.doors.as_slice())
+                    .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
                 let door_pass = s
@@ -2443,8 +2443,8 @@ impl EngineInner {
         // it.  Trap doors (`BuildingTrap`) remain excluded — those
         // sectors aren't regular building interiors and shouldn't
         // carry rally points.
-        if let Some(game_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
-            for (idx, door) in game_host.doors.iter().enumerate() {
+        if let Some(_game_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
                 }
@@ -2523,17 +2523,18 @@ impl EngineInner {
                 .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                 .and_then(|gs| gs.building_index);
 
-            // Read `arrow_reserve` off the parallel `GameHost` array
+            // Read `arrow_reserve` from the engine-owned building domain
             // (populated from the GUYS/CAVE tenant chunk at level
             // load).  `max_occupants` still has no proto source — we
             // leave it at the `0xFFFF` default (unlimited) matching
             // `BuildingData::default()`.
             let arrow_reserve = building_index
                 .and_then(|bi| {
-                    self.mission_script
-                        .as_ref()
-                        .and_then(|s| s.game_host())
-                        .and_then(|h| h.arrow_reserves.get(usize::from(bi)).copied())
+                    self.script_domains
+                        .buildings
+                        .arrow_reserves
+                        .get(usize::from(bi))
+                        .copied()
                 })
                 .unwrap_or(false);
 
@@ -7518,6 +7519,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
@@ -7549,6 +7551,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);

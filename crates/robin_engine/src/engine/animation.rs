@@ -2731,8 +2731,9 @@ impl EngineInner {
             .mission_script
             .as_mut()
             .and_then(|s| s.game_host_mut())
-            .map(|game_host| {
-                game_host
+            .map(|_| {
+                self.script_domains
+                    .interactables
                     .patches
                     .iter()
                     .map(|p| (p.applied, p.in_transition))
@@ -2760,7 +2761,12 @@ impl EngineInner {
                     .mission_script
                     .as_ref()
                     .and_then(|script| script.game_host())
-                    .and_then(|host| host.doors.get(usize::from(dp.door_index)))
+                    .and_then(|_| {
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(dp.door_index))
+                    })
                     .map(|door| door.sector_in)?;
                 let direction = self
                     .world
@@ -3606,11 +3612,17 @@ impl EngineInner {
         // flag and apply the patch's final effects.
         for patch_idx in completed_patch_transitions {
             let effects = {
-                let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+                let _game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                {
                     Some(h) => h,
                     None => continue,
                 };
-                let patch = match game_host.patches.get_mut(usize::from(patch_idx)) {
+                let patch = match self
+                    .script_domains
+                    .interactables
+                    .patches
+                    .get_mut(usize::from(patch_idx))
+                {
                     Some(p) => p,
                     None => continue,
                 };
@@ -3626,8 +3638,8 @@ impl EngineInner {
             // passable/impassable answer instead of inspecting patch
             // internals.  "Applied" == "Open"; the state changes
             // atomically at apply-final time.
-            if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
-                for door in game_host.doors.iter_mut() {
+            if let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+                for door in self.script_domains.interactables.doors.iter_mut() {
                     if door.patch_index == Some(patch_idx) {
                         door.gate_state.finish_transition();
                         tracing::debug!(

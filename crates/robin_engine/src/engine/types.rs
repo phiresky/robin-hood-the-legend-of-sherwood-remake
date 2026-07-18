@@ -969,7 +969,7 @@ pub struct PendingLevelData {
     /// iff its ambience bitmask overlaps the mission's ambience.
     pub light_sectors: Vec<crate::level_data::RawLightSector>,
     /// Jump-gate `Door` specs produced by `load_jump_lines_from_proto`,
-    /// pushed into `game_host.doors` once `populate_game_host_from_level`
+    /// pushed into `self.script_domains.interactables.doors` once `populate_game_host_from_level`
     /// has run.  The proto-stream jump-init phase now runs *before* the
     /// mission script is loaded (so beam-me / soldier sector validations
     /// see the populated grid), but `game_host` doesn't exist that early
@@ -1082,6 +1082,11 @@ pub struct MissionScript {
     /// the campaign is back on `EngineInner` and this is `None`.
     #[state_hash(skip)]
     campaign_lease: Option<CampaignIdentity>,
+    /// Domains recovered from a pre-Wave-6 GameHost snapshot. Each optional
+    /// domain is consumed once by the outer Engine snapshot deserializer and
+    /// merged with the already-migrated domains from the same save.
+    #[state_hash(skip)]
+    legacy_script_domains: Option<LegacyScriptDomains>,
 }
 
 const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 3;
@@ -1158,12 +1163,44 @@ struct CompatibleGameHost {
     computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
     recording: Option<crate::sequence::RecordingSession>,
     sequence_id: Option<i32>,
+    scroll_status: Option<BTreeMap<i32, i32>>,
+    scroll_attachments: Option<BTreeMap<i32, i32>>,
+    scroll_attachment_dirty: Option<std::collections::BTreeSet<i32>>,
+    building_occupants: Option<Vec<Vec<i32>>>,
+    arrow_reserves: Option<Vec<bool>>,
+    actor_building: Option<BTreeMap<i32, i32>>,
+    building_active: Option<Vec<bool>>,
+    building_gates: Option<Vec<Vec<i32>>>,
+    doors: Option<Vec<crate::gate::Door>>,
+    patches: Option<Vec<crate::patch::Patch>>,
+    force_check: Option<bool>,
+    outline_display: Option<bool>,
+    men_to_blazon_conversion_mode: Option<bool>,
+    blinking_blazons: Option<u32>,
+    blink_expire_frame: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LegacyScriptCustomValues {
     pub campaign: BTreeMap<i32, i32>,
     pub npc: BTreeMap<(i32, i32), i32>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct LegacyScriptDomains {
+    pub(crate) buildings: Option<super::state::BuildingState>,
+    pub(crate) interactables: Option<super::state::InteractableState>,
+    pub(crate) mission_ui: Option<super::state::MissionUiState>,
+    pub(crate) scrolls: Option<super::state::ScrollState>,
+}
+
+impl LegacyScriptDomains {
+    fn is_empty(&self) -> bool {
+        self.buildings.is_none()
+            && self.interactables.is_none()
+            && self.mission_ui.is_none()
+            && self.scrolls.is_none()
+    }
 }
 
 #[derive(Deserialize)]
@@ -1173,6 +1210,101 @@ struct LegacyNpcValues(
 );
 
 impl CompatibleGameHost {
+    fn legacy_mission_ui<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::MissionUiState>, E> {
+        let present = [
+            self.force_check.is_some(),
+            self.outline_display.is_some(),
+            self.men_to_blazon_conversion_mode.is_some(),
+            self.blinking_blazons.is_some(),
+            self.blink_expire_frame.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete mission-UI field set",
+            ));
+        }
+        Ok(Some(super::state::MissionUiState {
+            force_check: self.force_check.expect("validated above"),
+            outline_display: self.outline_display.expect("validated above"),
+            men_to_blazon_conversion_mode: self
+                .men_to_blazon_conversion_mode
+                .expect("validated above"),
+            blinking_blazons: self.blinking_blazons.expect("validated above"),
+            blink_expire_frame: self.blink_expire_frame.expect("validated above"),
+        }))
+    }
+
+    fn legacy_interactables<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::InteractableState>, E> {
+        match (&self.doors, &self.patches) {
+            (None, None) => Ok(None),
+            (Some(doors), Some(patches)) => Ok(Some(super::state::InteractableState {
+                doors: doors.clone(),
+                patches: patches.clone(),
+            })),
+            _ => Err(E::custom(
+                "legacy GameHost has an incomplete interactable-domain field set",
+            )),
+        }
+    }
+
+    fn legacy_buildings<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::BuildingState>, E> {
+        let present = [
+            self.building_occupants.is_some(),
+            self.arrow_reserves.is_some(),
+            self.actor_building.is_some(),
+            self.building_active.is_some(),
+            self.building_gates.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete building-domain field set",
+            ));
+        }
+        Ok(Some(super::state::BuildingState {
+            occupants: self.building_occupants.clone().expect("validated above"),
+            arrow_reserves: self.arrow_reserves.clone().expect("validated above"),
+            actor_building: self.actor_building.clone().expect("validated above"),
+            active: self.building_active.clone().expect("validated above"),
+            gates: self.building_gates.clone().expect("validated above"),
+        }))
+    }
+
+    fn legacy_scrolls<E: serde::de::Error>(&self) -> Result<Option<super::state::ScrollState>, E> {
+        let present = [
+            self.scroll_status.is_some(),
+            self.scroll_attachments.is_some(),
+            self.scroll_attachment_dirty.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete scroll-domain field set",
+            ));
+        }
+        Ok(Some(super::state::ScrollState {
+            status: self.scroll_status.clone().expect("validated above"),
+            attachments: self.scroll_attachments.clone().expect("validated above"),
+            attachment_dirty: self
+                .scroll_attachment_dirty
+                .clone()
+                .expect("validated above"),
+        }))
+    }
+
     fn legacy_state<E: serde::de::Error>(&self) -> Result<Option<ScriptState>, E> {
         let fields_present = [
             self.globals.is_some(),
@@ -1264,6 +1396,17 @@ impl<'de> Deserialize<'de> for MissionScript {
             }
         };
 
+        let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
+        let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
+        let legacy_interactables = snapshot.game_host.legacy_interactables::<D::Error>()?;
+        let legacy_mission_ui = snapshot.game_host.legacy_mission_ui::<D::Error>()?;
+        let legacy_script_domains = LegacyScriptDomains {
+            buildings: legacy_buildings,
+            interactables: legacy_interactables,
+            mission_ui: legacy_mission_ui,
+            scrolls: legacy_scrolls,
+        };
+
         Ok(Self {
             script_name: snapshot.script_name,
             manager: snapshot.manager,
@@ -1287,6 +1430,8 @@ impl<'de> Deserialize<'de> for MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
             campaign_lease: None,
+            legacy_script_domains: (!legacy_script_domains.is_empty())
+                .then_some(legacy_script_domains),
         })
     }
 }
@@ -1410,6 +1555,10 @@ impl std::fmt::Debug for MissionScript {
 }
 
 impl MissionScript {
+    pub(crate) fn take_legacy_script_domains(&mut self) -> Option<LegacyScriptDomains> {
+        self.legacy_script_domains.take()
+    }
+
     /// Build a [`MissionScript`] from an already-parsed `.scb` payload.
     pub fn from_scb(scb: crate::scb::ScbFile) -> Result<Self, String> {
         Self::from_manager(String::new(), ScriptManager::new(scb))
@@ -1443,6 +1592,7 @@ impl MissionScript {
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
             campaign_lease: None,
+            legacy_script_domains: None,
         })
     }
 
@@ -2086,13 +2236,14 @@ impl MissionScript {
     /// campaign-style side effects (e.g. `ConfiscateMoney` crediting
     /// collected money) land on the engine's per-mission counter rather
     /// than a private GameHost copy.
-    pub fn swap_engine_state(
+    pub(crate) fn swap_engine_state(
         &mut self,
         entities: &mut crate::entities::Entities,
         ai_global: &mut crate::ai::AiGlobalState,
         fast_grid: &mut crate::fast_find_grid::FastFindGrid,
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
+        script_domains: &mut super::state::ScriptDomains,
     ) {
         match self.campaign_lease.take() {
             None => {
@@ -2109,6 +2260,7 @@ impl MissionScript {
         std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
         std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
+        std::mem::swap(&mut self.game_host.engine_domains, script_domains);
     }
 
     /// Borrow the live engine state for one script/native dispatch.
@@ -2125,6 +2277,7 @@ impl MissionScript {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_domains: &'a mut super::state::ScriptDomains,
         queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> ScriptContext<'a> {
@@ -2137,6 +2290,7 @@ impl MissionScript {
             fast_grid,
             campaign,
             mission_stat,
+            script_domains,
             queries,
             script_this,
         )
@@ -2275,6 +2429,7 @@ pub(crate) struct ScriptContext<'a> {
     campaign: &'a mut Option<crate::campaign::Campaign>,
     campaign_identity: CampaignIdentity,
     mission_stat: &'a mut crate::mission_stat::MissionStat,
+    script_domains: &'a mut super::state::ScriptDomains,
     saved_script_this: Option<i32>,
 }
 
@@ -2288,6 +2443,7 @@ impl<'a> ScriptContext<'a> {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_domains: &'a mut super::state::ScriptDomains,
         queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> Self {
@@ -2296,6 +2452,7 @@ impl<'a> ScriptContext<'a> {
         std::mem::swap(&mut game_host.fast_grid, fast_grid);
         let campaign_identity = lend_required_campaign(campaign, &mut game_host.campaign);
         std::mem::swap(&mut game_host.mission_stat, mission_stat);
+        std::mem::swap(&mut game_host.engine_domains, script_domains);
 
         let saved_script_this =
             script_this.map(|value| std::mem::replace(&mut game_host.script_this, value));
@@ -2311,6 +2468,7 @@ impl<'a> ScriptContext<'a> {
             campaign,
             campaign_identity,
             mission_stat,
+            script_domains,
             saved_script_this,
         }
     }
@@ -2339,6 +2497,7 @@ impl Drop for ScriptContext<'_> {
         std::mem::swap(&mut self.game_host.ai_global, self.ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, self.fast_grid);
         std::mem::swap(&mut self.game_host.mission_stat, self.mission_stat);
+        std::mem::swap(&mut self.game_host.engine_domains, self.script_domains);
         reclaim_required_campaign(
             self.campaign,
             &mut self.game_host.campaign,
@@ -2367,6 +2526,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
@@ -2378,6 +2538,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             campaign,
             &mut mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             None,
         );
@@ -2482,6 +2643,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
@@ -2493,6 +2655,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             &mut engine_campaign,
             &mut mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             None,
         );
@@ -2587,7 +2750,7 @@ pub struct InputState {
     pub selected_sector_idx: Option<crate::fast_find_grid::SectorIndex>,
     /// Index into `GameHost::patches` for the patch whose overlay sector
     /// the mouse is hovering, if any.  Persisted on InputState so the
-    /// cursor / render hooks don't re-scan `game_host.patches` each
+    /// cursor / render hooks don't re-scan `self.script_domains.interactables.patches` each
     /// frame.
     pub selected_patch_idx: Option<u32>,
     /// Index into `GameHost::doors` for a door whose click polygon is

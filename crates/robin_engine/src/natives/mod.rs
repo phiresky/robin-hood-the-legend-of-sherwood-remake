@@ -71,8 +71,6 @@ pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
@@ -128,17 +126,10 @@ pub struct GameHost {
     #[serde(skip)]
     #[state_hash(skip)]
     test_script_state: ScriptState,
-    /// Set by `ForceCheckVictory` native — tells the engine to run
-    /// `CheckVictoryCondition` on the next frame instead of waiting
-    /// for the 3-second interval.
-    pub force_check: bool,
     /// If true, print each call to stderr as it happens.
     pub verbose: bool,
     /// Deferred commands for the engine to process after script execution.
     pub commands: Vec<EngineCommand>,
-    /// Current outline display state (readable by GetOutlineDisplay).
-    pub outline_display: bool,
-
     /// Entity storage, swapped in from EngineInner before script execution
     /// and swapped back out after.  Empty when no script is running.
     pub entities: Vec<Option<Entity>>,
@@ -156,6 +147,13 @@ pub struct GameHost {
     /// pickup path.
     pub mission_stat: crate::mission_stat::MissionStat,
 
+    /// Engine-owned script domains parked here only while the legacy script
+    /// transaction is active. The canonical value is serialized by
+    /// `EngineInner`, never as part of the native dispatcher.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub(crate) engine_domains: crate::engine::state::ScriptDomains,
+
     /// Handle of the entity whose script is currently running.
     pub script_this: i32,
 
@@ -171,12 +169,6 @@ pub struct GameHost {
     pub completed_sequences: Vec<Sequence>,
 
     // ── Door / patch / building / sound state for script natives ────
-    /// Door state. Script handles are tagged 0-based indices (0 = null).
-    /// Populated by the engine when loading a level.
-    pub doors: Vec<Door>,
-    /// Patch state. Script handles are tagged 0-based indices (0 = null).
-    /// Populated by the engine when loading a level.
-    pub patches: Vec<Patch>,
     /// Queued sound commands for the engine to process after script execution.
     pub sound_commands: Vec<SoundCommand>,
     /// Set to true when a patch change requires background redraw.
@@ -184,29 +176,6 @@ pub struct GameHost {
 
     /// Currently executing scroll entity handle (for ThisScroll). 0 = none.
     pub current_scroll: i32,
-    /// Scroll status per entity handle.
-    pub scroll_status: BTreeMap<i32, i32>,
-    /// NPC handle → attached scroll handle (0 or absent = detached).
-    pub scroll_attachments: BTreeMap<i32, i32>,
-    /// NPCs whose attached scroll changed value since the last titbit
-    /// sync — drained by `sync_speak_titbits` to force a SPEAK titbit
-    /// remove+add pulse. `AttachScroll` strips the previous SPEAK titbit
-    /// and installs a fresh one whenever the attached scroll pointer
-    /// differs (matters for any titbit-index-bound consumer).
-    pub scroll_attachment_dirty: BTreeSet<i32>,
-
-    /// Building occupants. Index = building index. Value = actor handles.
-    pub building_occupants: Vec<Vec<i32>>,
-    /// Parallel to `building_occupants` (same indexing): whether each
-    /// building carries an arrow reserve the player can collect.
-    /// Loaded from the GUYS/CAVE tenant chunk at level-load and
-    /// propagated into `ai::House::arrow_reserve` by
-    /// `EngineInner::initialize_buildings`.
-    pub arrow_reserves: Vec<bool>,
-    /// Actor handle → building handle (which building they're in).
-    pub actor_building: BTreeMap<i32, i32>,
-    /// Script zone occupants. Key = location handle, value = actor handles.
-    pub zone_occupants: BTreeMap<i32, Vec<i32>>,
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -216,23 +185,6 @@ pub struct GameHost {
     /// that don't use the objectives system (i.e. all vanilla missions
     /// — only Spellforge mods touch it).
     pub pending_objective_changes: Vec<ObjectiveChange>,
-
-    /// Building active state. Index = building index.
-    pub building_active: Vec<bool>,
-    /// Building → gate (door) handles. Index = building index.
-    pub building_gates: Vec<Vec<i32>>,
-
-    /// Whether the game is in "men to blazon" conversion UI mode (Sherwood).
-    pub men_to_blazon_conversion_mode: bool,
-
-    /// Number of trailing "castle" blazons on the blazon bar that should
-    /// flash to "normal" after a tactical-mission overflow.  Set by
-    /// `SetBlinkingBlazons`; zero means no blink is active.
-    pub blinking_blazons: u32,
-    /// EngineInner frame at which the blink latch clears.  `u32::MAX`
-    /// when no blink is armed.  The blazon-set refresh decrements over
-    /// `BLINK_TIMEOUT` (50) ticks.
-    pub blink_expire_frame: u32,
 
     /// Recursion depth of the nested-script-call stack.  Each actor
     /// script normally has its own VMCore (giving an implicit per-core
@@ -262,38 +214,23 @@ impl GameHost {
         Self {
             #[cfg(test)]
             test_script_state: ScriptState::default(),
-            force_check: false,
             verbose: false,
             entities: Vec::new(),
             ai_global: AiGlobalState::default(),
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             campaign: None,
             mission_stat: crate::mission_stat::MissionStat::default(),
+            engine_domains: crate::engine::state::ScriptDomains::default(),
             commands: Vec::new(),
-            outline_display: false,
             script_this: 0,
             production_registrations: Vec::new(),
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
-            doors: Vec::new(),
-            patches: Vec::new(),
             sound_commands: Vec::new(),
             background_invalidated: false,
             current_scroll: 0,
-            scroll_status: BTreeMap::new(),
-            scroll_attachments: BTreeMap::new(),
-            scroll_attachment_dirty: BTreeSet::new(),
-            building_occupants: Vec::new(),
-            arrow_reserves: Vec::new(),
-            actor_building: BTreeMap::new(),
-            zone_occupants: BTreeMap::new(),
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
-            building_active: Vec::new(),
-            building_gates: Vec::new(),
-            men_to_blazon_conversion_mode: false,
-            blinking_blazons: 0,
-            blink_expire_frame: u32::MAX,
             nested_call_depth: 0,
         }
     }
@@ -362,30 +299,6 @@ impl GameHost {
     pub fn verbose(mut self) -> Self {
         self.verbose = true;
         self
-    }
-
-    /// Arm the blazon-bar blink latch for `BLINK_TIMEOUT` frames.
-    /// The last `n` castle blazons flash to the "normal" sprite, then
-    /// revert once the blazon-set refresh counts the timeout down to
-    /// zero.  `n == 0` disarms the latch.
-    pub fn set_blinking_blazons(&mut self, n: u32, frame_counter: u32) {
-        const BLINK_TIMEOUT: u32 = 50;
-        self.blinking_blazons = n;
-        self.blink_expire_frame = if n == 0 {
-            u32::MAX
-        } else {
-            frame_counter.saturating_add(BLINK_TIMEOUT)
-        };
-    }
-
-    /// The blink count that the blazon bar should display this frame.
-    /// Returns 0 once the blazon-set refresh timeout would have fired.
-    pub fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
-        if frame_counter < self.blink_expire_frame {
-            self.blinking_blazons
-        } else {
-            0
-        }
     }
 
     /// Look up an entity by actor handle. Returns None for null or invalid handles.
@@ -531,6 +444,23 @@ impl GameHost {
 }
 
 impl NativeContext<'_> {
+    fn zone_index(&self, loc: i32) -> Option<usize> {
+        GameHost::location_index(loc)?.checked_sub(self.bindings.script_point_count)
+    }
+
+    fn zone_occupant_handles(&self, loc: i32) -> Option<Vec<i32>> {
+        let zone = self
+            .zone_index(loc)
+            .and_then(|idx| self.engine_domains.zones.scripts.get(idx))?;
+        Some(
+            zone.occupant_indices
+                .iter()
+                .copied()
+                .map(GameHost::actor_handle)
+                .collect(),
+        )
+    }
+
     fn frame_counter(&self) -> u32 {
         self.queries.frame_counter()
     }
@@ -700,11 +630,18 @@ impl NativeContext<'_> {
         goal_sector: u16,
         goal: (f32, f32),
     ) -> Option<crate::gate::DoorIndex> {
-        self.doors.iter().enumerate().find_map(|(idx, door)| {
-            let matches_endpoint = door.sector_out == goal_sector || door.sector_in == goal_sector;
-            let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
-            (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
-        })
+        self.engine_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .find_map(|(idx, door)| {
+                let matches_endpoint =
+                    door.sector_out == goal_sector || door.sector_in == goal_sector;
+                let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+                (matches_endpoint || matches_click_sector)
+                    .then_some(crate::gate::DoorIndex(idx as u32))
+            })
     }
 
     /// Walks the gate path from `(source_sector, source)` to
@@ -766,7 +703,11 @@ impl NativeContext<'_> {
             let pi = entity.position_iface();
             (pi.get_door(), pi.get_door_direction())
         }) && let Some((adapted_source, adapted_sector, adapted_layer)) =
-            crate::engine::adapt_source_to_current_door(&self.doors, door_handle, door_direction)
+            crate::engine::adapt_source_to_current_door(
+                &self.engine_domains.interactables.doors,
+                door_handle,
+                door_direction,
+            )
         {
             source = (adapted_source.x, adapted_source.y);
             source_sector = adapted_sector;
@@ -828,7 +769,7 @@ impl NativeContext<'_> {
             self.door_index_for_goal_sector(goal_sector, goal)
                 .and_then(|door_idx| {
                     find_path_into_door(
-                        &self.doors,
+                        &self.engine_domains.interactables.doors,
                         source,
                         source_sector,
                         door_idx,
@@ -839,7 +780,7 @@ impl NativeContext<'_> {
                 })
         } else {
             find_path_gates(
-                &self.doors,
+                &self.engine_domains.interactables.doors,
                 source,
                 source_sector,
                 goal,
@@ -878,14 +819,16 @@ impl NativeContext<'_> {
 
         // First-jump gate index — controls TO_JUMP flag.
         let first_jump = gate_steps.iter().enumerate().find_map(|(i, step)| {
-            self.doors
+            self.engine_domains
+                .interactables
+                .doors
                 .get(usize::from(step.door_index))
                 .filter(|d| d.is_jump())
                 .map(|_| i)
         });
 
         // Snapshot per-gate data into a local struct so the per-gate
-        // emission loop can run without re-borrowing `self.doors`.
+        // emission loop can run without re-borrowing `self.engine_domains.interactables.doors`.
         #[derive(Clone, Copy)]
         struct GateShot {
             door_index: crate::gate::DoorIndex,
@@ -906,7 +849,11 @@ impl NativeContext<'_> {
         let gate_shots: Vec<GateShot> = gate_steps
             .iter()
             .filter_map(|step| {
-                let door = self.doors.get(usize::from(step.door_index))?;
+                let door = self
+                    .engine_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(step.door_index))?;
                 let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
                     (
                         door.point_out,
@@ -1249,6 +1196,8 @@ impl NativeContext<'_> {
                 && let Some(last_shot) = gate_shots.last()
             {
                 let point_in = self
+                    .engine_domains
+                    .interactables
                     .doors
                     .get(usize::from(last_shot.door_index))
                     .map(|d| d.point_in)
@@ -1608,7 +1557,9 @@ impl NativeContext<'_> {
         }
         if let Some(n) = tactical_overflow {
             let frame_counter = self.frame_counter();
-            self.set_blinking_blazons(n, frame_counter);
+            self.engine_domains
+                .mission_ui
+                .set_blinking_blazons(n, frame_counter);
         }
 
         // `UpdateInformationBars` / `UpdateBlazons` only fire in
@@ -2362,6 +2313,10 @@ impl GameHost {
         Self::make_script_handle(SCRIPT_HANDLE_DOOR_TAG, index)
     }
 
+    pub fn patch_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_PATCH_TAG, index)
+    }
+
     pub fn location_handle_from_index(index: usize) -> i32 {
         Self::make_script_handle(SCRIPT_HANDLE_LOCATION_TAG, index)
     }
@@ -2412,22 +2367,22 @@ impl GameHost {
 
     fn get_door(&self, handle: i32) -> Option<&Door> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
-            .and_then(|idx| self.doors.get(idx))
+            .and_then(|idx| self.engine_domains.interactables.doors.get(idx))
     }
 
     fn get_door_mut(&mut self, handle: i32) -> Option<&mut Door> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
-            .and_then(|idx| self.doors.get_mut(idx))
+            .and_then(|idx| self.engine_domains.interactables.doors.get_mut(idx))
     }
 
     fn get_patch(&self, handle: i32) -> Option<&Patch> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
-            .and_then(|idx| self.patches.get(idx))
+            .and_then(|idx| self.engine_domains.interactables.patches.get(idx))
     }
 
     fn get_patch_mut(&mut self, handle: i32) -> Option<&mut Patch> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
-            .and_then(|idx| self.patches.get_mut(idx))
+            .and_then(|idx| self.engine_domains.interactables.patches.get_mut(idx))
     }
 }
 
@@ -2719,7 +2674,7 @@ impl NativeContext<'_> {
             match f {
                 // --- victory ---
                 ForceCheckVictory => {
-                    self.force_check = true;
+                    self.engine_domains.mission_ui.force_check = true;
                     0
                 }
 
@@ -3316,13 +3271,13 @@ impl NativeContext<'_> {
                 }
                 GetDoorScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.doors.len(),
+                    self.engine_domains.interactables.doors.len(),
                     "door",
                     SCRIPT_HANDLE_DOOR_TAG,
                 ),
                 GetPatchScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.patches.len(),
+                    self.engine_domains.interactables.patches.len(),
                     "patch",
                     SCRIPT_HANDLE_PATCH_TAG,
                 ),
@@ -3538,15 +3493,15 @@ impl NativeContext<'_> {
                 SetOutlineDisplay => {
                     let val = stack.pop_i32();
                     let display = val != 0;
-                    if self.outline_display != display {
-                        self.outline_display = display;
+                    if self.engine_domains.mission_ui.outline_display != display {
+                        self.engine_domains.mission_ui.outline_display = display;
                         self.commands
                             .push(EngineCommand::SetOutlineDisplay { display });
                     }
                     0
                 }
                 GetOutlineDisplay => {
-                    if self.outline_display {
+                    if self.engine_domains.mission_ui.outline_display {
                         1
                     } else {
                         0
@@ -3965,7 +3920,7 @@ impl NativeContext<'_> {
                     // 300px of the target; if none, return 0.
                     let max_sq_dist = 300.0_f32 * 300.0;
                     let mut best: Option<(f32, f32, f32, u16, u16)> = None;
-                    for door in &self.doors {
+                    for door in &self.engine_domains.interactables.doors {
                         let ddx = door.point_mid.x - lx;
                         let ddy = door.point_mid.y - ly;
                         let sq = ddx * ddx + ddy * ddy;
@@ -5535,7 +5490,7 @@ impl NativeContext<'_> {
                     // Geometric polygon point-in-test recomputed
                     // every call so results stay correct immediately
                     // after teleport natives ("works also after
-                    // teleports").  The cached `zone_occupants` map
+                    // teleports"). The authoritative occupant list
                     // is only refreshed on explicit
                     // Add/CleanFromScriptZone natives or on the
                     // next-frame tick, so we recompute here when we
@@ -5561,7 +5516,7 @@ impl NativeContext<'_> {
                         }
                         // Ray-casting point-in-polygon, identical to
                         // `GridSector::contains_point` (the production
-                        // path used by `tick_zone_occupants`).
+                        // path used by the per-frame zone scan).
                         if zone.points.len() < 3 {
                             return 0;
                         }
@@ -5587,8 +5542,7 @@ impl NativeContext<'_> {
                         // pre-load test fixtures that never installed
                         // polygons).
                         i32::from(
-                            self.zone_occupants
-                                .get(&loc)
+                            self.zone_occupant_handles(loc)
                                 .is_some_and(|occ| occ.contains(&actor)),
                         )
                     }
@@ -5601,10 +5555,17 @@ impl NativeContext<'_> {
                     }
                     if bld == 0 {
                         // NULL building: check if actor is inside ANY building
-                        i32::from(self.actor_building.contains_key(&actor))
+                        i32::from(
+                            self.engine_domains
+                                .buildings
+                                .actor_building
+                                .contains_key(&actor),
+                        )
                     } else {
                         // Check if actor is in the specific building
-                        i32::from(self.actor_building.get(&actor) == Some(&bld))
+                        i32::from(
+                            self.engine_domains.buildings.actor_building.get(&actor) == Some(&bld),
+                        )
                     }
                 }
                 UnBlip => {
@@ -5914,7 +5875,12 @@ impl NativeContext<'_> {
                         npc_entity.element_data().position().z,
                     );
 
-                    let viewer_building = self.actor_building.get(&npc_h).copied();
+                    let viewer_building = self
+                        .engine_domains
+                        .buildings
+                        .actor_building
+                        .get(&npc_h)
+                        .copied();
                     let viewer_building_sector = viewer_building
                         .and_then(|h| crate::position_interface::SectorHandle::new(h as u16));
                     let viewer_in_building = viewer_building.is_some();
@@ -5927,7 +5893,12 @@ impl NativeContext<'_> {
                         .expect("Sees validated a human target, which must have actor data")
                         .action_state;
                     let tgt_active = target_entity.element_data().active;
-                    let target_building = self.actor_building.get(&target_h).copied();
+                    let target_building = self
+                        .engine_domains
+                        .buildings
+                        .actor_building
+                        .get(&target_h)
+                        .copied();
                     let tgt_building_sector = target_building
                         .and_then(|h| crate::position_interface::SectorHandle::new(h as u16));
                     let tgt_in_building = target_building.is_some();
@@ -7229,7 +7200,11 @@ impl NativeContext<'_> {
                 ApplyPatch => {
                     let h = stack.pop_i32();
                     if let Some(patch_index) = Self::patch_index(h)
-                        && let Some(patch) = self.patches.get_mut(patch_index)
+                        && let Some(patch) = self
+                            .engine_domains
+                            .interactables
+                            .patches
+                            .get_mut(patch_index)
                     {
                         let effects = patch.apply();
                         if !effects.is_empty()
@@ -7248,7 +7223,11 @@ impl NativeContext<'_> {
                 ResetPatch => {
                     let h = stack.pop_i32();
                     if let Some(patch_index) = Self::patch_index(h)
-                        && let Some(patch) = self.patches.get_mut(patch_index)
+                        && let Some(patch) = self
+                            .engine_domains
+                            .interactables
+                            .patches
+                            .get_mut(patch_index)
                     {
                         let effects = patch.force_reset();
                         if !effects.is_empty()
@@ -7392,13 +7371,18 @@ impl NativeContext<'_> {
                 CleanFromHisBuildingBeforeTeleport => {
                     let actor_h = stack.pop_i32();
                     // Remove actor from their current building's occupant list
-                    if let Some(&bld_h) = self.actor_building.get(&actor_h) {
+                    if let Some(&bld_h) = self.engine_domains.buildings.actor_building.get(&actor_h)
+                    {
                         if let Some(idx) = Self::building_index(bld_h)
-                            && let Some(occupants) = self.building_occupants.get_mut(idx)
+                            && let Some(occupants) =
+                                self.engine_domains.buildings.occupants.get_mut(idx)
                         {
                             occupants.retain(|&a| a != actor_h);
                         }
-                        self.actor_building.remove(&actor_h);
+                        self.engine_domains
+                            .buildings
+                            .actor_building
+                            .remove(&actor_h);
                         1
                     } else {
                         tracing::warn!(
@@ -7414,9 +7398,14 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    if let Some(occupants) = self.zone_occupants.get_mut(&loc_h) {
-                        if let Some(pos) = occupants.iter().position(|&a| a == actor_h) {
-                            occupants.remove(pos);
+                    let actor_id = self.actor_id(actor_h);
+                    let zone_idx = self.zone_index(loc_h);
+                    if let (Some(actor_id), Some(zone)) = (
+                        actor_id,
+                        zone_idx.and_then(|idx| self.engine_domains.zones.scripts.get_mut(idx)),
+                    ) {
+                        if zone.is_inside(actor_id) {
+                            zone.leave(actor_id);
                             1
                         } else {
                             tracing::warn!(
@@ -7439,7 +7428,16 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    self.zone_occupants.entry(loc_h).or_default().push(actor_h);
+                    let Some(actor_id) = self.actor_id(actor_h) else {
+                        return 0;
+                    };
+                    let Some(zone_idx) = self.zone_index(loc_h) else {
+                        return 0;
+                    };
+                    let Some(zone) = self.engine_domains.zones.scripts.get_mut(zone_idx) else {
+                        return 0;
+                    };
+                    zone.enter(actor_id);
                     1
                 }
                 SetCorpseExistsInBuilding => {
@@ -7452,11 +7450,17 @@ impl NativeContext<'_> {
                     let bld_h = stack.pop_i32();
                     let actor_h = stack.pop_i32();
                     if let Some(idx) = Self::building_index(bld_h) {
-                        if idx >= self.building_occupants.len() {
-                            self.building_occupants.resize(idx + 1, Vec::new());
+                        if idx >= self.engine_domains.buildings.occupants.len() {
+                            self.engine_domains
+                                .buildings
+                                .occupants
+                                .resize(idx + 1, Vec::new());
                         }
-                        self.building_occupants[idx].push(actor_h);
-                        self.actor_building.insert(actor_h, bld_h);
+                        self.engine_domains.buildings.occupants[idx].push(actor_h);
+                        self.engine_domains
+                            .buildings
+                            .actor_building
+                            .insert(actor_h, bld_h);
                     }
                     // EngineInner applies positioning (inactive + special layer +
                     // building sector + gate point_in + DisableAllActionsTemp
@@ -7473,11 +7477,11 @@ impl NativeContext<'_> {
                     let bld_h = stack.pop_i32();
                     let active = val != 0;
                     if let Some(idx) = Self::building_index(bld_h) {
-                        if idx < self.building_active.len() {
-                            self.building_active[idx] = active;
+                        if idx < self.engine_domains.buildings.active.len() {
+                            self.engine_domains.buildings.active[idx] = active;
                         }
                         // Activate/deactivate all gates for this building
-                        if let Some(gates) = self.building_gates.get(idx).cloned() {
+                        if let Some(gates) = self.engine_domains.buildings.gates.get(idx).cloned() {
                             for &gate_h in &gates {
                                 if let Some(door) = self.get_door_mut(gate_h) {
                                     door.set_active(active);
@@ -7503,7 +7507,7 @@ impl NativeContext<'_> {
                     // appears to rely on it.
                     let bld_h = stack.pop_i32();
                     Self::building_index(bld_h)
-                        .and_then(|idx| self.building_occupants.get(idx))
+                        .and_then(|idx| self.engine_domains.buildings.occupants.get(idx))
                         .and_then(|occ| occ.first().copied())
                         .unwrap_or(0)
                 }
@@ -7513,8 +7517,7 @@ impl NativeContext<'_> {
                         return 0;
                     }
                     let all_inside = self.pc_handles().iter().all(|&pc| {
-                        self.zone_occupants
-                            .get(&loc_h)
+                        self.zone_occupant_handles(loc_h)
                             .is_some_and(|occ| occ.contains(&pc))
                     });
                     i32::from(all_inside)
@@ -7528,7 +7531,7 @@ impl NativeContext<'_> {
                         return 0;
                     }
                     let has_living_enemy =
-                        self.zone_occupants.get(&loc_h).is_some_and(|occupants| {
+                        self.zone_occupant_handles(loc_h).is_some_and(|occupants| {
                             occupants
                                 .iter()
                                 .any(|&handle| match self.get_entity(handle) {
@@ -7561,8 +7564,7 @@ impl NativeContext<'_> {
                         if is_dead {
                             true
                         } else {
-                            self.zone_occupants
-                                .get(&loc_h)
+                            self.zone_occupant_handles(loc_h)
                                 .is_some_and(|occ| occ.contains(&pc))
                         }
                     });
@@ -7681,7 +7683,12 @@ impl NativeContext<'_> {
                             );
                             return 0;
                         }
-                        self.scroll_status.get(&scroll_h).copied().unwrap_or(0)
+                        self.engine_domains
+                            .scrolls
+                            .status
+                            .get(&scroll_h)
+                            .copied()
+                            .unwrap_or(0)
                     }
                 }
                 SetScrollStatus => {
@@ -7740,8 +7747,14 @@ impl NativeContext<'_> {
                     }
                     if scroll_h == 0 {
                         // Branch 2: detach.
-                        if self.scroll_attachments.remove(&npc_h).is_some() {
-                            self.scroll_attachment_dirty.insert(npc_h);
+                        if self
+                            .engine_domains
+                            .scrolls
+                            .attachments
+                            .remove(&npc_h)
+                            .is_some()
+                        {
+                            self.engine_domains.scrolls.attachment_dirty.insert(npc_h);
                         }
                     } else {
                         // Branch 3: log if not an object/scroll, but match the
@@ -7757,9 +7770,13 @@ impl NativeContext<'_> {
                         }
                         // Branch 4: replace-or-insert; mark dirty when the value
                         // changes so the SPEAK titbit gets re-installed.
-                        let prev = self.scroll_attachments.insert(npc_h, scroll_h);
+                        let prev = self
+                            .engine_domains
+                            .scrolls
+                            .attachments
+                            .insert(npc_h, scroll_h);
                         if prev != Some(scroll_h) {
-                            self.scroll_attachment_dirty.insert(npc_h);
+                            self.engine_domains.scrolls.attachment_dirty.insert(npc_h);
                         }
                     }
                     0
@@ -7895,7 +7912,7 @@ impl NativeContext<'_> {
                     })
                 }
                 IsMenToBlazonConversionMode => {
-                    if self.men_to_blazon_conversion_mode {
+                    if self.engine_domains.mission_ui.men_to_blazon_conversion_mode {
                         1
                     } else {
                         0
@@ -7974,8 +7991,7 @@ impl NativeContext<'_> {
                         );
                         return 0;
                     }
-                    self.zone_occupants
-                        .get(&loc)
+                    self.zone_occupant_handles(loc)
                         .map_or(0, |occ| occ.len() as i32)
                 }
                 GetActorInSector => {
@@ -7990,7 +8006,7 @@ impl NativeContext<'_> {
                         tracing::warn!("Script Error: GetActorInSector on non-sector handle {loc}");
                         return 0;
                     }
-                    match self.zone_occupants.get(&loc) {
+                    match self.zone_occupant_handles(loc) {
                         Some(occ) => {
                             if idx >= 0 && (idx as usize) < occ.len() {
                                 occ[idx as usize]
@@ -8435,10 +8451,17 @@ impl GameHost {
         goal_sector: u16,
         goal: (f32, f32),
     ) -> Option<crate::gate::DoorIndex> {
-        self.doors.iter().enumerate().find_map(|(idx, door)| {
-            let matches_endpoint = door.sector_out == goal_sector || door.sector_in == goal_sector;
-            let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
-            (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
-        })
+        self.engine_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .find_map(|(idx, door)| {
+                let matches_endpoint =
+                    door.sector_out == goal_sector || door.sector_in == goal_sector;
+                let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+                (matches_endpoint || matches_click_sector)
+                    .then_some(crate::gate::DoorIndex(idx as u32))
+            })
     }
 }

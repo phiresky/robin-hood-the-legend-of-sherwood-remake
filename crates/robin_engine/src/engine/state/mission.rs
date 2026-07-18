@@ -13,7 +13,6 @@ use crate::{
 pub(crate) struct MissionDomain {
     pub(crate) state: MissionState,
     pub(crate) cheat_used_flags: u32,
-    pub(crate) force_check: bool,
     pub(crate) short_briefings: ShortBriefings,
     pub(crate) mission_stat: MissionStat,
     pub(crate) dead_pc: Option<EntityId>,
@@ -25,7 +24,6 @@ impl MissionDomain {
         Self {
             state: MissionState::default(),
             cheat_used_flags: 0,
-            force_check: false,
             short_briefings: ShortBriefings::default(),
             mission_stat: MissionStat::default(),
             dead_pc: None,
@@ -47,7 +45,6 @@ mod tests {
         assert!(!mission.state.quit_lost);
         assert!(!mission.state.quit_interrupted);
         assert_eq!(mission.cheat_used_flags, 0);
-        assert!(!mission.force_check);
         assert_eq!(mission.short_briefings.count(true), 0);
         assert_eq!(mission.short_briefings.count(false), 0);
         assert_eq!(mission.mission_stat, MissionStat::default());

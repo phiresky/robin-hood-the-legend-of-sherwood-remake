@@ -672,7 +672,7 @@ impl EngineInner {
             // Register script zone sectors on the fast-find grid so we can
             // do point-in-polygon occupant checks during gameplay.
             std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).clear();
-            self.world.script_zones.clear();
+            self.script_domains.zones.scripts.clear();
             for sec in &so.sectors {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
                 // avoid integer-aligned vertices confusing point-in-polygon
@@ -745,8 +745,8 @@ impl EngineInner {
                     sec.layer,
                 );
                 std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).push(grid_idx);
-                let zone_idx = self.world.script_zones.len();
-                self.world.script_zones.push(script_data);
+                let zone_idx = self.script_domains.zones.scripts.len();
+                self.script_domains.zones.scripts.push(script_data);
 
                 // Each polygon edge becomes a `LINE_SCRIPT | LINE_CROSS`
                 // line carrying a back-pointer to the owning script zone
@@ -1211,7 +1211,7 @@ impl EngineInner {
         // Rewire building-door sector_in/layer_in to point at the empty
         // BUILDING grid sectors that `initialize_motion_from_level_data` will
         // create later.  This has to run *before* `populate_game_host_from_level`
-        // so the `game_host.doors` list stores the rewritten values.  The matching
+        // so the `self.script_domains.interactables.doors` list stores the rewritten values.  The matching
         // grid sectors are registered later, in the motion-init pass, using
         // the sector numbers we stash on constructor-local pending data.
         self.rewire_building_doors(
@@ -3326,10 +3326,10 @@ impl EngineInner {
         // Install mission-defined reinforcement doors: construct one
         // `Door(Reinforcement)` per REIN entry and insert it into the
         // gate-graph table.  The Rust port keeps a single
-        // `game_host.doors` list plus a filtered
+        // `self.script_domains.interactables.doors` list plus a filtered
         // `ai_global.reinforcement_doors` cache built below.  This has
         // to run after `populate_game_host_from_level` so that
-        // `game_host.doors` exists, and before the cache filter so
+        // `self.script_domains.interactables.doors` exists, and before the cache filter so
         // `ai_global.reinforcement_doors` picks up these entries
         // alongside any proto-level doors with
         // `door_type == Reinforcement`.
@@ -3342,7 +3342,7 @@ impl EngineInner {
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
             let mut installed = 0usize;
             if let Some(script) = self.mission_script.as_mut()
-                && let Some(game_host) = script.game_host_mut()
+                && let Some(_game_host) = script.game_host_mut()
             {
                 for raw in &tactic.reinforcement_points {
                     // The referenced sector must be motion+area.  We use
@@ -3385,28 +3385,31 @@ impl EngineInner {
                             crate::gate::DoorType::Reinforcement,
                         );
 
-                    game_host.doors.push(crate::gate::Door {
-                        gate_type: crate::gate::GateType::Door,
-                        door_type: crate::gate::DoorType::Reinforcement,
-                        point_in: inside,
-                        point_mid: border,
-                        point_out: outside,
-                        layer_in: raw.layer,
-                        layer_out: special_layer,
-                        sector_in: crate::sector::SectorNumber::new(raw.sector as i16),
-                        sector_out: sector_out_of_map,
-                        action_direct_1: act_d1,
-                        action_direct_2: act_d2,
-                        action_indirect_1: act_i1,
-                        action_indirect_2: act_i2,
-                        ..Default::default()
-                    });
+                    self.script_domains
+                        .interactables
+                        .doors
+                        .push(crate::gate::Door {
+                            gate_type: crate::gate::GateType::Door,
+                            door_type: crate::gate::DoorType::Reinforcement,
+                            point_in: inside,
+                            point_mid: border,
+                            point_out: outside,
+                            layer_in: raw.layer,
+                            layer_out: special_layer,
+                            sector_in: crate::sector::SectorNumber::new(raw.sector as i16),
+                            sector_out: sector_out_of_map,
+                            action_direct_1: act_d1,
+                            action_direct_2: act_d2,
+                            action_indirect_1: act_i1,
+                            action_indirect_2: act_i2,
+                            ..Default::default()
+                        });
                     // AdaptPoints is a no-op for `Reinforcement` doors
                     // (only BuildingTrap / LiftHigh[Crenel] on wall lifts
                     // shift `point_in`), but penalty still has to be
                     // computed so A* gate-graph routing through these
                     // out-of-map doors has a finite cost.
-                    if let Some(door) = game_host.doors.last_mut() {
+                    if let Some(door) = self.script_domains.interactables.doors.last_mut() {
                         door.compute_door_penalty();
                     }
                     installed += 1;
@@ -3414,17 +3417,17 @@ impl EngineInner {
                 // Rebuild gate-link connectivity so the new reinforcement
                 // doors are routed through by `find_path_gates`.
                 if installed > 0 {
-                    crate::gate::build_gate_links(&mut game_host.doors);
+                    crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
                 }
             }
             if installed > 0 {
                 tracing::debug!(
-                    "Installed {installed} mission-REIN reinforcement doors into game_host.doors",
+                    "Installed {installed} mission-REIN reinforcement doors into self.script_domains.interactables.doors",
                 );
             }
         }
 
-        // Drain proto-stream jump-gate Door specs into `game_host.doors`.
+        // Drain proto-stream jump-gate Door specs into `self.script_domains.interactables.doors`.
         // The `consume_pending_motion_data` pass that produced these specs
         // ran before `populate_game_host_from_level` (so beam-me sector
         // checks see a populated grid), so the Door push has to happen
@@ -3523,8 +3526,9 @@ impl EngineInner {
             .mission_script
             .as_mut()
             .and_then(|s| s.game_host_mut())
-            .map(|game_host| {
-                game_host
+            .map(|_| {
+                self.script_domains
+                    .interactables
                     .doors
                     .iter()
                     .enumerate()
@@ -3567,8 +3571,9 @@ impl EngineInner {
             .mission_script
             .as_mut()
             .and_then(|s| s.game_host_mut())
-            .map(|game_host| {
-                game_host
+            .map(|_| {
+                self.script_domains
+                    .interactables
                     .doors
                     .iter()
                     .enumerate()
@@ -3703,7 +3708,7 @@ impl EngineInner {
     ///
     /// We can't defer the rewrite until `initialize_motion_from_level_data`
     /// runs, because the load pipeline calls `populate_game_host_from_level`
-    /// first (to build `game_host.doors` + `ai_global.door_seek_infos`).  So this
+    /// first (to build `self.script_domains.interactables.doors` + `ai_global.door_seek_infos`).  So this
     /// pre-pass runs during the initial load, right after the level file is
     /// parsed, computes the same sector number each building would get in
     /// the motion-init pass, and patches the raw doors in place.  The motion
@@ -4614,7 +4619,7 @@ impl EngineInner {
                 .map(|s| s.sector_number);
 
             // Stash the jump-gate Door spec for later push into
-            // `game_host.doors`: compute the midpoint of each line as
+            // `self.script_domains.interactables.doors`: compute the midpoint of each line as
             // the in/out point and use each line's home sector as the
             // in/out sector.
             //
@@ -4731,7 +4736,7 @@ impl EngineInner {
     }
 
     /// Drain constructor-local pending jump-gate specs and push each entry as a
-    /// `Door` (gate_type=Jump) into `game_host.doors`, then rebuild
+    /// `Door` (gate_type=Jump) into `self.script_domains.interactables.doors`, then rebuild
     /// gate-link connectivity.  Must run after
     /// `populate_game_host_from_level` so `game_host` exists, and after
     /// every other proto/mission door has been registered so the
@@ -4741,7 +4746,7 @@ impl EngineInner {
         if specs.is_empty() {
             return;
         }
-        let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
+        let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
             tracing::warn!(
                 "register_pending_jump_gates: no game_host — {} jump-gate Door(s) dropped",
                 specs.len(),
@@ -4750,29 +4755,34 @@ impl EngineInner {
         };
         let count = specs.len();
         for spec in specs {
-            game_host.doors.push(crate::gate::Door {
-                gate_type: crate::gate::GateType::Jump,
-                door_type: crate::gate::DoorType::Default,
-                point_out: spec.point_out,
-                point_in: spec.point_in,
-                point_mid: MapPoint::new(
-                    (spec.point_in.x + spec.point_out.x) * 0.5,
-                    (spec.point_in.y + spec.point_out.y) * 0.5,
-                ),
-                layer_out: spec.layer_out,
-                layer_in: spec.layer_in,
-                sector_out: spec.sector_out,
-                sector_in: spec.sector_in,
-                jump_line_out: Some(spec.jump_line_out),
-                jump_line_in: Some(spec.jump_line_in),
-                jump_line_in_helper_needed: spec.jump_line_in_helper_needed,
-                jump_line_out_helper_needed: spec.jump_line_out_helper_needed,
-                penalty: spec.penalty,
-                ..Default::default()
-            });
+            self.script_domains
+                .interactables
+                .doors
+                .push(crate::gate::Door {
+                    gate_type: crate::gate::GateType::Jump,
+                    door_type: crate::gate::DoorType::Default,
+                    point_out: spec.point_out,
+                    point_in: spec.point_in,
+                    point_mid: MapPoint::new(
+                        (spec.point_in.x + spec.point_out.x) * 0.5,
+                        (spec.point_in.y + spec.point_out.y) * 0.5,
+                    ),
+                    layer_out: spec.layer_out,
+                    layer_in: spec.layer_in,
+                    sector_out: spec.sector_out,
+                    sector_in: spec.sector_in,
+                    jump_line_out: Some(spec.jump_line_out),
+                    jump_line_in: Some(spec.jump_line_in),
+                    jump_line_in_helper_needed: spec.jump_line_in_helper_needed,
+                    jump_line_out_helper_needed: spec.jump_line_out_helper_needed,
+                    penalty: spec.penalty,
+                    ..Default::default()
+                });
         }
-        crate::gate::build_gate_links(&mut game_host.doors);
-        tracing::debug!("Registered {count} jump-gate Door(s) into game_host.doors");
+        crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
+        tracing::debug!(
+            "Registered {count} jump-gate Door(s) into self.script_domains.interactables.doors"
+        );
     }
 
     /// Resolve each patch's old/new mask refs (layer + per-layer index)
@@ -4788,7 +4798,7 @@ impl EngineInner {
         if refs.is_empty() {
             return;
         }
-        let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
+        let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
             return;
         };
         let mut missing_old = 0u32;
@@ -4796,7 +4806,7 @@ impl EngineInner {
         let mut missing_values: std::collections::BTreeSet<(u16, u16)> =
             std::collections::BTreeSet::new();
         for (patch_idx, (old_refs, new_refs)) in refs.iter().enumerate() {
-            let Some(patch) = game_host.patches.get_mut(patch_idx) else {
+            let Some(patch) = self.script_domains.interactables.patches.get_mut(patch_idx) else {
                 continue;
             };
             for mref in old_refs {
@@ -4858,7 +4868,7 @@ impl EngineInner {
             .mission_script
             .as_ref()
             .and_then(|s| s.game_host())
-            .map(|h| h.doors.len())
+            .map(|_| self.script_domains.interactables.doors.len())
             .unwrap_or(0);
         if door_count == 0 {
             return;
@@ -4867,12 +4877,13 @@ impl EngineInner {
         // Snapshot door endpoints so we can borrow `self.world.fast_grid` mutably
         // without also holding a reference into the script host.
         let endpoints: Vec<(u32, crate::sector::SectorNumber)> = {
-            let game_host = self
+            let _game_host = self
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .expect("door_count > 0 implies game host present");
-            game_host
+            self.script_domains
+                .interactables
                 .doors
                 .iter()
                 .enumerate()
@@ -4929,7 +4940,7 @@ impl EngineInner {
             Some(s) => s,
             None => return,
         };
-        let game_host = match script.game_host_mut() {
+        let _game_host = match script.game_host_mut() {
             Some(h) => h,
             None => return,
         };
@@ -4948,8 +4959,9 @@ impl EngineInner {
                 crate::level_data::RawBuildingEntry::Building { doors } => (doors, true),
                 crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => (doors, false),
             };
-            let first_handle =
-                crate::natives::GameHost::door_handle_from_index(game_host.doors.len());
+            let first_handle = crate::natives::GameHost::door_handle_from_index(
+                self.script_domains.interactables.doors.len(),
+            );
             for raw in raw_doors {
                 // Standalone (non-building) doors must be Default (0),
                 // Gate (3), or Trap (7).
@@ -4972,49 +4984,52 @@ impl EngineInner {
                 };
                 let (act_d1, act_d2, act_i1, act_i2) =
                     crate::gate::Door::default_actions_for_type(door_type);
-                game_host.doors.push(crate::gate::Door {
-                    gate_type: crate::gate::GateType::Door,
-                    active: raw.active,
-                    door_type,
-                    locked_pc: raw.locked_pc,
-                    locked_npc_villain: raw.locked_npc_villain,
-                    locked_npc_civilian: raw.locked_npc_civilian,
-                    unlockable: raw.unlockable,
-                    locked_pc_after_patch: raw.locked_pc_after_patch,
-                    locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
-                    locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
-                    unlockable_after_patch: raw.unlockable_after_patch,
-                    special_authorisation_pc: false,
-                    authorised_pc_direct: 0,
-                    authorised_pc_indirect: 0,
-                    point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                    point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                    point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
-                    layer_out: raw.layer_out,
-                    layer_in: raw.layer_in,
-                    sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
-                    sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
-                    gate_links: Vec::new(),
-                    click_polygon: raw
-                        .door_sector
-                        .points
-                        .iter()
-                        .map(|&(x, y)| (x as f32, y as f32))
-                        .collect(),
-                    click_bbox: crate::coordinates::MapBBox::new(),
-                    penalty: 0.0,
-                    patch_index: None,
-                    gate_state: crate::gate::GateState::default(),
-                    jump_line_out: None,
-                    jump_line_in: None,
-                    jump_line_in_helper_needed: false,
-                    jump_line_out_helper_needed: false,
-                    action_direct_1: act_d1,
-                    action_direct_2: act_d2,
-                    action_indirect_1: act_i1,
-                    action_indirect_2: act_i2,
-                });
-                if let Some(door) = game_host.doors.last_mut() {
+                self.script_domains
+                    .interactables
+                    .doors
+                    .push(crate::gate::Door {
+                        gate_type: crate::gate::GateType::Door,
+                        active: raw.active,
+                        door_type,
+                        locked_pc: raw.locked_pc,
+                        locked_npc_villain: raw.locked_npc_villain,
+                        locked_npc_civilian: raw.locked_npc_civilian,
+                        unlockable: raw.unlockable,
+                        locked_pc_after_patch: raw.locked_pc_after_patch,
+                        locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
+                        locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
+                        unlockable_after_patch: raw.unlockable_after_patch,
+                        special_authorisation_pc: false,
+                        authorised_pc_direct: 0,
+                        authorised_pc_indirect: 0,
+                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                        layer_out: raw.layer_out,
+                        layer_in: raw.layer_in,
+                        sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
+                        sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        gate_links: Vec::new(),
+                        click_polygon: raw
+                            .door_sector
+                            .points
+                            .iter()
+                            .map(|&(x, y)| (x as f32, y as f32))
+                            .collect(),
+                        click_bbox: crate::coordinates::MapBBox::new(),
+                        penalty: 0.0,
+                        patch_index: None,
+                        gate_state: crate::gate::GateState::default(),
+                        jump_line_out: None,
+                        jump_line_in: None,
+                        jump_line_in_helper_needed: false,
+                        jump_line_out_helper_needed: false,
+                        action_direct_1: act_d1,
+                        action_direct_2: act_d2,
+                        action_indirect_1: act_i1,
+                        action_indirect_2: act_i2,
+                    });
+                if let Some(door) = self.script_domains.interactables.doors.last_mut() {
                     // Apply the `adapt_points` shift before computing the
                     // penalty: building-trap / wall-lift entries have their
                     // `point_in` offset from `point_mid`.  Non-lift building
@@ -5028,12 +5043,15 @@ impl EngineInner {
                 }
             }
             if is_building {
-                let last_handle = game_host.doors.len() as i32;
+                let last_handle = self.script_domains.interactables.doors.len() as i32;
                 let gates: Vec<i32> = (first_handle..=last_handle).collect();
-                if bld_idx >= game_host.building_gates.len() {
-                    game_host.building_gates.resize(bld_idx + 1, Vec::new());
+                if bld_idx >= self.script_domains.buildings.gates.len() {
+                    self.script_domains
+                        .buildings
+                        .gates
+                        .resize(bld_idx + 1, Vec::new());
                 }
-                game_host.building_gates[bld_idx] = gates;
+                self.script_domains.buildings.gates[bld_idx] = gates;
                 bld_idx += 1;
             }
         }
@@ -5057,39 +5075,42 @@ impl EngineInner {
                 };
                 let (act_d1, act_d2, act_i1, act_i2) =
                     crate::gate::Door::default_actions_for_type(door_type);
-                game_host.doors.push(crate::gate::Door {
-                    gate_type: crate::gate::GateType::Door,
-                    active: raw.active,
-                    door_type,
-                    locked_pc: raw.locked_pc,
-                    locked_npc_villain: raw.locked_npc_villain,
-                    locked_npc_civilian: raw.locked_npc_civilian,
-                    unlockable: raw.unlockable,
-                    locked_pc_after_patch: raw.locked_pc_after_patch,
-                    locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
-                    locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
-                    unlockable_after_patch: raw.unlockable_after_patch,
-                    point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                    point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                    point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
-                    layer_out: raw.layer_out,
-                    layer_in: raw.layer_in,
-                    sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
-                    sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
-                    click_polygon: raw
-                        .door_sector
-                        .points
-                        .iter()
-                        .map(|&(x, y)| (x as f32, y as f32))
-                        .collect(),
-                    click_bbox: crate::coordinates::MapBBox::new(),
-                    action_direct_1: act_d1,
-                    action_direct_2: act_d2,
-                    action_indirect_1: act_i1,
-                    action_indirect_2: act_i2,
-                    ..Default::default()
-                });
-                if let Some(door) = game_host.doors.last_mut() {
+                self.script_domains
+                    .interactables
+                    .doors
+                    .push(crate::gate::Door {
+                        gate_type: crate::gate::GateType::Door,
+                        active: raw.active,
+                        door_type,
+                        locked_pc: raw.locked_pc,
+                        locked_npc_villain: raw.locked_npc_villain,
+                        locked_npc_civilian: raw.locked_npc_civilian,
+                        unlockable: raw.unlockable,
+                        locked_pc_after_patch: raw.locked_pc_after_patch,
+                        locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
+                        locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
+                        unlockable_after_patch: raw.unlockable_after_patch,
+                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                        layer_out: raw.layer_out,
+                        layer_in: raw.layer_in,
+                        sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
+                        sector_in: crate::sector::SectorNumber::new(raw.sector_in as i16),
+                        click_polygon: raw
+                            .door_sector
+                            .points
+                            .iter()
+                            .map(|&(x, y)| (x as f32, y as f32))
+                            .collect(),
+                        click_bbox: crate::coordinates::MapBBox::new(),
+                        action_direct_1: act_d1,
+                        action_direct_2: act_d2,
+                        action_indirect_1: act_i1,
+                        action_indirect_2: act_i2,
+                        ..Default::default()
+                    });
+                if let Some(door) = self.script_domains.interactables.doors.last_mut() {
                     // Order: `adapt_points` then penalty.  LiftHigh /
                     // LiftHighCrenel doors on wall lifts get their
                     // `point_in` nudged toward `point_mid`; other lift
@@ -5104,11 +5125,17 @@ impl EngineInner {
         // Build gate links: connect doors that share a sector.
         // Jump gates are appended later by `load_jump_lines_from_proto`,
         // which re-invokes `build_gate_links` to cover them too.
-        crate::gate::build_gate_links(&mut game_host.doors);
-        let total_links: usize = game_host.doors.iter().map(|d| d.gate_links.len()).sum();
+        crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
+        let total_links: usize = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .map(|d| d.gate_links.len())
+            .sum();
         tracing::info!(
             "Built gate connectivity graph: {} doors, {} links",
-            game_host.doors.len(),
+            self.script_domains.interactables.doors.len(),
             total_links,
         );
 
@@ -5128,7 +5155,7 @@ impl EngineInner {
             // landing it on the out-of-map layer.
             let special_layer = self.world.fast_grid.level.special_layer;
             let mut door_sectors_registered = 0u32;
-            for (door_idx, door) in game_host.doors.iter().enumerate() {
+            for (door_idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
                 if door.click_polygon.is_empty() {
                     continue;
                 }
@@ -5176,7 +5203,7 @@ impl EngineInner {
 
         tracing::info!(
             "GameHost: populated {} doors from level data",
-            game_host.doors.len(),
+            self.script_domains.interactables.doors.len(),
         );
 
         // The legacy implementation lift sectors expose high/low exit points for
@@ -5192,7 +5219,7 @@ impl EngineInner {
         }
         let mut lift_endpoints_cached = 0usize;
         let mut lift_endpoints_partial = 0usize;
-        for (door_idx, door) in game_host.doors.iter().enumerate() {
+        for (door_idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
             for sector_number in [door.sector_out, door.sector_in] {
                 let Some(&grid_idx) = self
                     .world
@@ -5212,7 +5239,7 @@ impl EngineInner {
                 let door_idx = door_idx as u32;
                 let lowest = gs
                     .lowest_door_index
-                    .and_then(|prev| game_host.doors.get(prev as usize))
+                    .and_then(|prev| self.script_domains.interactables.doors.get(prev as usize))
                     .map(|prev| prev.point_in.y)
                     .is_none_or(|prev_y| door.point_in.y > prev_y);
                 if lowest {
@@ -5441,45 +5468,48 @@ impl EngineInner {
             let old_mask_indices: Vec<crate::mask::MaskIndex> = Vec::new();
             let new_mask_indices: Vec<crate::mask::MaskIndex> = Vec::new();
 
-            game_host.patches.push(crate::patch::Patch {
-                active: raw.active,
-                // `initially_active` is unconditionally overridden to
-                // `true` (a debug-leftover line, but it is what the
-                // shipped binary does), so script-driven `ForceReset`
-                // re-activates the patch as the game expects.
-                initially_active: true,
-                definitive: raw.definitive,
-                animated: true, // default
-                door_triggered: raw.door_triggered,
-                triggers_door: raw.triggers_door,
-                integrate_in_background: raw.integrate_in_background,
-                animation_flags: crate::patch::AnimationFlags {
-                    start_valid: raw.start_animation_valid,
-                    transition_valid: raw.transition_animation_valid,
-                    end_valid: raw.end_animation_valid,
-                },
-                use_changing_obstacles: raw.pathfinder_changing_obstacles != 0,
-                pathfinder_layer: raw.pathfinder_layer.unwrap_or(0),
-                pathfinder_sector: raw.pathfinder_sector.unwrap_or(0),
-                pathfinder_changing_obstacles: raw.pathfinder_changing_obstacles,
-                // C++ reads muwLayer twice (mid-stream and again at end of
-                // patch); the late `final_layer` clobbers the early read,
-                // so that's the authoritative value used by `AddPatch`
-                // and `mpSelectedPatch->GetLayer()`.
-                layer: raw.final_layer,
-                sector: raw.sector,
-                waypoint: MapPoint::new(raw.waypoint.0 as f32, raw.waypoint.1 as f32),
-                old_sight_obstacle_indices: old_sight,
-                new_sight_obstacle_indices: new_sight,
-                old_sector_indices,
-                new_sector_indices,
-                old_line_indices,
-                new_line_indices,
-                old_mask_indices,
-                new_mask_indices,
-                apply_sector_index: apply_sector_idx,
-                ..Default::default()
-            });
+            self.script_domains
+                .interactables
+                .patches
+                .push(crate::patch::Patch {
+                    active: raw.active,
+                    // `initially_active` is unconditionally overridden to
+                    // `true` (a debug-leftover line, but it is what the
+                    // shipped binary does), so script-driven `ForceReset`
+                    // re-activates the patch as the game expects.
+                    initially_active: true,
+                    definitive: raw.definitive,
+                    animated: true, // default
+                    door_triggered: raw.door_triggered,
+                    triggers_door: raw.triggers_door,
+                    integrate_in_background: raw.integrate_in_background,
+                    animation_flags: crate::patch::AnimationFlags {
+                        start_valid: raw.start_animation_valid,
+                        transition_valid: raw.transition_animation_valid,
+                        end_valid: raw.end_animation_valid,
+                    },
+                    use_changing_obstacles: raw.pathfinder_changing_obstacles != 0,
+                    pathfinder_layer: raw.pathfinder_layer.unwrap_or(0),
+                    pathfinder_sector: raw.pathfinder_sector.unwrap_or(0),
+                    pathfinder_changing_obstacles: raw.pathfinder_changing_obstacles,
+                    // C++ reads muwLayer twice (mid-stream and again at end of
+                    // patch); the late `final_layer` clobbers the early read,
+                    // so that's the authoritative value used by `AddPatch`
+                    // and `mpSelectedPatch->GetLayer()`.
+                    layer: raw.final_layer,
+                    sector: raw.sector,
+                    waypoint: MapPoint::new(raw.waypoint.0 as f32, raw.waypoint.1 as f32),
+                    old_sight_obstacle_indices: old_sight,
+                    new_sight_obstacle_indices: new_sight,
+                    old_sector_indices,
+                    new_sector_indices,
+                    old_line_indices,
+                    new_line_indices,
+                    old_mask_indices,
+                    new_mask_indices,
+                    apply_sector_index: apply_sector_idx,
+                    ..Default::default()
+                });
         }
 
         // Wire door↔patch connections.  In C++ (`RHpatch.cpp:300-308`)
@@ -5497,14 +5527,14 @@ impl EngineInner {
                 .iter()
                 .filter_map(|&raw_idx| {
                     let idx = raw_idx as u32;
-                    if (idx as usize) < game_host.doors.len() {
+                    if (idx as usize) < self.script_domains.interactables.doors.len() {
                         Some(idx)
                     } else {
                         tracing::warn!(
                             "Patch {}: door_index {} out of range (have {} doors)",
                             patch_idx,
                             idx,
-                            game_host.doors.len()
+                            self.script_domains.interactables.doors.len()
                         );
                         None
                     }
@@ -5520,7 +5550,7 @@ impl EngineInner {
             }
             if raw.door_triggered {
                 for &door_idx in &patch_door_indices {
-                    game_host.doors[door_idx as usize].patch_index =
+                    self.script_domains.interactables.doors[door_idx as usize].patch_index =
                         crate::patch::PatchIndex::new(patch_idx as u32);
                 }
                 if !patch_door_indices.is_empty() {
@@ -5528,7 +5558,7 @@ impl EngineInner {
                 }
             }
             if raw.triggers_door
-                && let Some(patch) = game_host.patches.get_mut(patch_idx)
+                && let Some(patch) = self.script_domains.interactables.patches.get_mut(patch_idx)
             {
                 let n = patch_door_indices.len();
                 patch.door_indices = patch_door_indices;
@@ -5547,7 +5577,7 @@ impl EngineInner {
         // Transfer the entity handle mapping computed during entity spawning.
         tracing::info!(
             "GameHost: populated {} patches from level data ({} with FX entities)",
-            game_host.patches.len(),
+            self.script_domains.interactables.patches.len(),
             assets
                 .patch_entity_handles
                 .iter()
@@ -5557,23 +5587,32 @@ impl EngineInner {
 
         // ── Building occupants from tenant data ──
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
-            if bld_idx >= game_host.building_occupants.len() {
-                game_host.building_occupants.resize(bld_idx + 1, Vec::new());
+            if bld_idx >= self.script_domains.buildings.occupants.len() {
+                self.script_domains
+                    .buildings
+                    .occupants
+                    .resize(bld_idx + 1, Vec::new());
             }
             // Parallel array: propagate the `arrow_reserve` flag off the
             // same tenant chunk so `initialize_buildings` can copy it
             // into `ai::House::arrow_reserve`.  Consumer: AI's
             // `FleeingRunForArrowReserves` substate.
-            if bld_idx >= game_host.arrow_reserves.len() {
-                game_host.arrow_reserves.resize(bld_idx + 1, false);
+            if bld_idx >= self.script_domains.buildings.arrow_reserves.len() {
+                self.script_domains
+                    .buildings
+                    .arrow_reserves
+                    .resize(bld_idx + 1, false);
             }
-            game_host.arrow_reserves[bld_idx] = tenants.arrow_reserve;
+            self.script_domains.buildings.arrow_reserves[bld_idx] = tenants.arrow_reserve;
             for &elem_idx in &tenants.tenant_element_indices {
                 let actor_h =
                     crate::natives::GameHost::actor_handle_from_index(usize::from(elem_idx));
-                game_host.building_occupants[bld_idx].push(actor_h);
+                self.script_domains.buildings.occupants[bld_idx].push(actor_h);
                 let bld_h = crate::natives::GameHost::building_handle_from_index(bld_idx);
-                game_host.actor_building.insert(actor_h, bld_h);
+                self.script_domains
+                    .buildings
+                    .actor_building
+                    .insert(actor_h, bld_h);
             }
         }
 
@@ -5596,7 +5635,7 @@ impl EngineInner {
             Vec<crate::sector_production::Occupant>,
         > = std::collections::HashMap::new();
 
-        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone) in self.script_domains.zones.scripts.iter().enumerate() {
             let prod_type = zone.production_sector_type;
             if prod_type == crate::sector_production::Type::Unknown
                 || prod_type == crate::sector_production::Type::Relic
@@ -5738,7 +5777,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.world.script_zones.len());
+            .saturating_sub(self.script_domains.zones.scripts.len());
 
         struct SectorPlan {
             prod_type: PT,
@@ -5757,7 +5796,7 @@ impl EngineInner {
         // Build a zone-type → (layer, sector) map for attaching sectors.
         let mut zone_location: std::collections::HashMap<PT, (u16, u16)> =
             std::collections::HashMap::new();
-        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone) in self.script_domains.zones.scripts.iter().enumerate() {
             let pt = zone.production_sector_type;
             if pt == PT::Unknown {
                 continue;

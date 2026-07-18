@@ -739,6 +739,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
                 if let Err(e) = script.hourglass(game_seconds, queries) {
                     tracing::warn!("Script Hourglass error: {e}");
@@ -749,6 +750,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
             }
 
@@ -758,9 +760,9 @@ impl EngineInner {
             // Check victory/defeat conditions every 3 game-seconds
             // (or immediately if force_check was set by a native call).
             if game_seconds.is_multiple_of(VICTORY_CHECK_INTERVAL)
-                || self.mission_domain.force_check
+                || self.script_domains.mission_ui.force_check
             {
-                self.mission_domain.force_check = false;
+                self.script_domains.mission_ui.force_check = false;
 
                 // Take the script out to avoid borrow conflicts with `self`.
                 if let Some(mut script) = self.mission_script.take() {
@@ -771,6 +773,7 @@ impl EngineInner {
                         &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
+                        &mut self.script_domains,
                     );
                     let victory_result = script.check_victory_condition(game_seconds, queries);
                     script.swap_engine_state(
@@ -779,6 +782,7 @@ impl EngineInner {
                         &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
+                        &mut self.script_domains,
                     );
 
                     // Put the script back before syncing side-effects.
@@ -2069,7 +2073,12 @@ impl EngineInner {
                                         .mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(door_idx))
+                                        })
                                         .map(|d| d.sector_out);
                                     let actor_sector = self
                                         .get_entity(owner)
@@ -2107,7 +2116,12 @@ impl EngineInner {
                                     .mission_script
                                     .as_mut()
                                     .and_then(|s| s.game_host_mut())
-                                    .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                    .and_then(|_| {
+                                        self.script_domains
+                                            .interactables
+                                            .doors
+                                            .get(usize::from(door_idx))
+                                    })
                                     .map(|door| {
                                         door.is_actor_authorized(
                                             direct,
@@ -2138,7 +2152,12 @@ impl EngineInner {
                                         .mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(door_idx)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(door_idx))
+                                        })
                                         .and_then(|d| match d.door_type {
                                             crate::gate::DoorType::LiftHigh
                                             | crate::gate::DoorType::LiftLow
@@ -2398,7 +2417,12 @@ impl EngineInner {
                                     self.mission_script
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
-                                        .and_then(|h| h.doors.get(usize::from(*di)))
+                                        .and_then(|_| {
+                                            self.script_domains
+                                                .interactables
+                                                .doors
+                                                .get(usize::from(*di))
+                                        })
                                         .map(|d| {
                                             (
                                                 d.sector_in,
@@ -5476,7 +5500,9 @@ impl EngineInner {
                                 .mission_script
                                 .as_ref()
                                 .and_then(|s| s.game_host())
-                                .and_then(|h| h.doors.get(usize::from(id)))
+                                .and_then(|_| {
+                                    self.script_domains.interactables.doors.get(usize::from(id))
+                                })
                                 .map(|d| match d.door_type {
                                     crate::gate::DoorType::BuildingTrap => {
                                         crate::order::OrderType::UnlockingTrap
@@ -6887,7 +6913,12 @@ impl EngineInner {
             self.mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|host| host.doors.get(usize::from(door_index)))
+                .and_then(|_| {
+                    self.script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(door_index))
+                })
                 .map(|door| {
                     (
                         door.layer_in,
@@ -7068,11 +7099,15 @@ impl EngineInner {
         };
 
         let Some((snap_point, posture, action_state, sector_in)) = (|| {
-            let game_host = self
+            let _game_host = self
                 .mission_script
                 .as_mut()
                 .and_then(|s| s.game_host_mut())?;
-            let door = game_host.doors.get(usize::from(door_index))?;
+            let door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))?;
             let snap = match action {
                 OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
                     x: door.point_mid.x,
@@ -7215,8 +7250,12 @@ impl EngineInner {
         }
 
         for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
-            if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
-                && let Some(door) = game_host.doors.get_mut(usize::from(door_id))
+            if let Some(_game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                && let Some(door) = self
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get_mut(usize::from(door_id))
             {
                 door.locked_pc = false;
                 tracing::debug!(

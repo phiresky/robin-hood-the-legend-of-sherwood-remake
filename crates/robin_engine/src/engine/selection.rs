@@ -88,13 +88,7 @@ impl EngineInner {
             .map(|p| p.vip)
             .unwrap_or(false);
         if is_vip {
-            let men_to_blazon = self
-                .mission_script
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .map(|h| h.men_to_blazon_conversion_mode)
-                .unwrap_or(false);
-            if men_to_blazon {
+            if self.script_domains.mission_ui.men_to_blazon_conversion_mode {
                 return false;
             }
         }

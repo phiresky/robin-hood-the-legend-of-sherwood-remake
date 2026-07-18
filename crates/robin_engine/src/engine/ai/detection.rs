@@ -717,6 +717,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
                 for (target_handle, pc_handle) in listenable_calls {
                     if let Err(e) = script.call_target_function(
@@ -734,6 +735,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
             }
             self.sync_game_host_post_script(assets);

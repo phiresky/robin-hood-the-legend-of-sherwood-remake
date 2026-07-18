@@ -212,7 +212,7 @@ impl EngineInner {
     /// is the caller) leave the flag as-is — the `false` clearing
     /// lives on the corpse-removal branch.
     ///
-    /// The door iteration reads from the live `game_host.doors` table.
+    /// The door iteration reads from the live `self.script_domains.interactables.doors` table.
     fn disable_anticollision_iff_blocking_door(&mut self, corpse: EntityId) {
         let Some(entity) = self.get_entity(corpse) else {
             return;
@@ -234,8 +234,8 @@ impl EngineInner {
         };
 
         let mut blocks = false;
-        if let Some(host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
-            for door in &host.doors {
+        if let Some(_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            for door in &self.script_domains.interactables.doors {
                 if !door.is_door() {
                     continue;
                 }

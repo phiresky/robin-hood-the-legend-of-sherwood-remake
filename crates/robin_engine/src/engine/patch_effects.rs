@@ -141,8 +141,12 @@ impl EngineInner {
             .get(usize::from(patch_index))
             .copied()
             .flatten();
-        let game_host = script.game_host_mut()?;
-        let patch = game_host.patches.get(usize::from(patch_index))?;
+        let _game_host = script.game_host_mut()?;
+        let patch = self
+            .script_domains
+            .interactables
+            .patches
+            .get(usize::from(patch_index))?;
 
         Some(PatchContext {
             door_indices: patch.door_indices.clone(),
@@ -169,10 +173,10 @@ impl EngineInner {
             return;
         }
         if let Some(ref mut script) = self.mission_script
-            && let Some(game_host) = script.game_host_mut()
+            && let Some(_game_host) = script.game_host_mut()
         {
             for &di in &ctx.door_indices {
-                if let Some(door) = game_host.doors.get_mut(di as usize) {
+                if let Some(door) = self.script_domains.interactables.doors.get_mut(di as usize) {
                     door.swap_rights_patch();
                 }
             }
