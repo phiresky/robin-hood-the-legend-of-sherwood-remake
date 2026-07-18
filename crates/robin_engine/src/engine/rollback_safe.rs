@@ -487,17 +487,6 @@ impl Engine {
         self.inner.replace_campaign(campaign);
     }
 
-    /// Mutable access to the mission script's `GameHost`. Exposed
-    /// so the host's Lua scripting layer (`robin_rs::lua_session`)
-    /// can drive custom-mission Lua events against the same
-    /// `GameHost` the `.scb` VM uses. Only safe to call from
-    /// script-event windows while the engine's canonical native capabilities
-    /// are attached — see the doc on
-    /// [`EngineInner::mission_script_game_host_mut`].
-    pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
-        self.inner.mission_script_game_host_mut()
-    }
-
     /// Run a host-side mission-script extension against the live `GameHost`
     /// while the Engine-owned simulation RNG is installed.
     ///

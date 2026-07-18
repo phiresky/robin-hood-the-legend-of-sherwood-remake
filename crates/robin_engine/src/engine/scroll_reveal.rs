@@ -23,7 +23,7 @@ use super::{EngineInner, LevelAssets};
 use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 
-/// Scroll reveal status.  Persisted in `GameHost::scroll_status`
+/// Scroll reveal status. Persisted in the canonical script-domain scroll state
 /// (keyed by actor script handle); the script natives
 /// `GetScrollStatus` / `SetScrollStatus` read/write it directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

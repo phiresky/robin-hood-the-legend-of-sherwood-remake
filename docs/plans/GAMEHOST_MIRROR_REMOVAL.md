@@ -19,14 +19,17 @@ production_points           deferred_commands
 pending_objective_changes
 ```
 
-The broader semantic cleanup is not finished. Several queues still defer
-deterministic mutations which the running script can query, including scroll
-status and PC selection, so same-callback set/get behavior can be stale.
-Dynamic sight obstacles and active flags are also copied into attached script
-bindings before a session; these mutable arrays must become live borrowed
-capabilities. The next wave must classify each queue against Original ordering,
-move query-visible deterministic operations synchronous with characterization
-tests, and leave only genuine outputs/deferred barriers. Renaming the shell and
+The first semantic cleanup wave is also complete. Dynamic sight obstacles and
+active flags are live borrowed world capabilities rather than copied script
+bindings. Scroll status and PC selection now mutate canonical state before the
+native returns, with same-callback tests; their queued follow-up work is limited
+to engine/sequence/UI effects that require the existing callback barrier.
+
+The broader queue audit is not finished. Completed sequence launch, actor stop,
+global freeze, AI locks, posture/location side effects, patch work, and other
+deterministic variants still need Original-order characterization before they
+can move or be certified as true barriers. The next wave should migrate them in
+coherent command families with same-callback tests. Renaming the queue shell and
 narrowing the legacy Lua adapter can follow once that boundary is stable.
 
 The inventory and PR sequence below are retained as the pre-refactor design
@@ -573,8 +576,9 @@ The canonical-owner migration is complete because:
 - save/load, rollback, multiplayer snapshot adoption, the full workspace test
   suite, the Robin binary build, and a freshly recorded replay pass.
 
-This is not the semantic end state: mutable sight data must stop being copied
-into bindings, and query-visible deterministic queues must be made synchronous.
+This is not the semantic end state: remaining deterministic queues still need
+same-callback visibility audits, even though sight, scroll status, and selection
+now use live canonical state.
 
 ## Long-term script-adapter end state
 

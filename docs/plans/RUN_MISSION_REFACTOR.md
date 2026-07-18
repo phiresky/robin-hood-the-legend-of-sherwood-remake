@@ -1,5 +1,19 @@
 # `run_mission` ownership and lifecycle refactor
 
+## Implementation status (2026-07-18)
+
+The ownership and lifecycle target is implemented. The latest phase cleanup
+also reduced `collect_input_and_menus` from 993 to 469 lines,
+`finalize_pre_tick` from 365 to 118, and `drive_modals` from 618 to 119. Focused
+helpers now own live gameplay input, pre-tick replay/network boundaries,
+scripted modal lanes, leave-mission prompts, save/reset effects, and terminal
+debriefing control mapping. Graphical/headless phase traces and consuming
+campaign return remain unchanged.
+
+Future cleanup is local rather than architectural: split the remaining live
+gameplay-action dispatcher, terminal debriefing renderer/picker flow, and the
+event/HUD portion still inside input collection.
+
 ## Decision summary
 
 Refactor the mission loop around composition, not around one larger `impl`.

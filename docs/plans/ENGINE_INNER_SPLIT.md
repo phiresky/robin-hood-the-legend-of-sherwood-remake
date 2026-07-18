@@ -27,11 +27,12 @@ snapshot prepare/adopt/restore path. We therefore did not add the proposed
 while protocol version 8 intentionally permits the in-memory state-hash layout
 change; historical replay compatibility is not retained.
 
-The logical/API split is not finished. `hourglass_phase_sequences` remains a
-large root method which reaches across most owners, and transition plus
-mission/message helpers still commonly accept `&mut EngineInner`. The next
-wave should extract sequence dispatch first, followed by transition and
-mission-gate contexts with explicit minimal borrows.
+The logical/API split is not finished. The latest sequence wave extracted
+attention and stealth/posture contexts and reduced `hourglass_phase_sequences`
+from 2,708 to 2,645 lines, but that method still reaches across most owners.
+Transition plus mission/message helpers also commonly accept `&mut
+EngineInner`. Continue sequence dispatch by coherent command family, then move
+transition and mission-gate helpers to explicit minimal borrows.
 
 The field inventory below is the pre-refactor design record. The staged plan
 now doubles as a record of completed physical moves and remaining logical API
