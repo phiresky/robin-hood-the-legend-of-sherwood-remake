@@ -4,6 +4,7 @@ mod bootstrap;
 mod debriefing;
 mod dispatch;
 mod flow;
+mod frame_simulate;
 mod headless;
 mod input_handlers;
 mod interactive;
@@ -25,6 +26,7 @@ use debriefing::{
 };
 use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
+use frame_simulate::{FrameSimulationFlags, FrameSimulationOutcome, InteractiveFrameSimulation};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
 use interactive::{InteractiveFrontend, InteractiveMission, RenderViewState};
 use modal_state::{
