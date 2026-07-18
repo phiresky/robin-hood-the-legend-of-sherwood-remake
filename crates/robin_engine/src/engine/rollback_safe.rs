@@ -501,25 +501,32 @@ impl Engine {
     /// inventing a second RNG. The closure must not retain the host reference.
     pub fn with_mission_script_game_host_and_rng<R>(
         &mut self,
+        assets: &LevelAssets,
         f: impl FnOnce(
             Option<(
                 &mut crate::natives::GameHost,
                 &mut crate::natives::ScriptState,
+                &mut crate::engine::ScriptDomains,
                 &crate::natives::AttachedScriptBindings,
                 crate::natives::NativeQueryViews<'_>,
             )>,
         ) -> R,
     ) -> R {
         self.inner.with_sim_rng(|inner| {
-            let queries = native_query_views!(inner);
-            f(inner.scripts.mission.as_mut().map(|script| {
-                (
-                    &mut script.game_host,
-                    &mut script.state,
-                    &script.bindings,
-                    queries,
-                )
-            }))
+            if inner.scripts.mission.is_none() {
+                return f(None);
+            }
+            inner
+                .with_script_session(assets, |script, script_domains, queries| {
+                    f(Some((
+                        &mut script.game_host,
+                        &mut script.state,
+                        script_domains,
+                        &script.bindings,
+                        queries,
+                    )))
+                })
+                .expect("mission script disappeared while opening the Lua script session")
         })
     }
 
@@ -580,8 +587,8 @@ impl Engine {
         self.inner.call_external_native(assets, native_name, args)
     }
 
-    /// Like [`Self::call_external_native`], but with an explicit
-    /// `script_this` override (restored after the call).
+    /// Like [`Self::call_external_native`], but with an explicit transient
+    /// `ThisActor` receiver.
     pub fn call_external_native_with_this(
         &mut self,
         assets: &LevelAssets,

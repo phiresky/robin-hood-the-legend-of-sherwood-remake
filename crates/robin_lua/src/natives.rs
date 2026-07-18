@@ -35,6 +35,7 @@
 use std::cell::Cell;
 
 use mlua::{Function, Lua, Table, Value};
+use robin_engine::engine::ScriptDomains;
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
     AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeQueryViews,
@@ -53,13 +54,9 @@ use crate::state::MissionLuaState;
 pub(crate) struct HostPtr {
     host: Cell<*mut GameHost>,
     script_state: Cell<*mut ScriptState>,
+    script_domains: Cell<*mut ScriptDomains>,
     bindings: Cell<*const AttachedScriptBindings>,
-    sequence_manager: Cell<*const robin_engine::sequence::SequenceManager>,
-    selected_pcs: Cell<*const robin_engine::element::EntityId>,
-    selected_pc_count: usize,
-    sound_sources: Cell<*const robin_engine::sound_source::SoundSourceManager>,
-    weather: Cell<*const robin_engine::engine::WeatherState>,
-    frame_counter: Cell<*const u32>,
+    queries: Cell<NativeQueryViews<'static>>,
 }
 
 // SAFETY: `HostPtr` is only accessed from the thread that called
@@ -71,36 +68,26 @@ impl HostPtr {
     pub(crate) fn new(
         host: *mut GameHost,
         script_state: *mut ScriptState,
+        script_domains: *mut ScriptDomains,
         bindings: *const AttachedScriptBindings,
         queries: NativeQueryViews<'_>,
     ) -> Self {
-        let selected_pcs = queries.selected_pcs_option();
+        // SAFETY: HostPtr is installed only for the lexical
+        // MissionLuaState::with_host_state_and_bindings scope. It is removed
+        // before that scope returns, so none of the references carried by
+        // NativeQueryViews can outlive their owners. Keeping the opaque view
+        // intact is important: rebuilding it from its public query accessors
+        // would silently discard hidden capabilities such as the borrowed
+        // campaign and mission-stat owners.
+        let queries = unsafe {
+            std::mem::transmute::<NativeQueryViews<'_>, NativeQueryViews<'static>>(queries)
+        };
         Self {
             host: Cell::new(host),
             script_state: Cell::new(script_state),
+            script_domains: Cell::new(script_domains),
             bindings: Cell::new(bindings),
-            sequence_manager: Cell::new(
-                queries
-                    .sequence_manager_option()
-                    .map_or(std::ptr::null(), |value| value as *const _),
-            ),
-            selected_pcs: Cell::new(selected_pcs.map_or(std::ptr::null(), |value| value.as_ptr())),
-            selected_pc_count: selected_pcs.map_or(0, |value| value.len()),
-            sound_sources: Cell::new(
-                queries
-                    .sound_sources_option()
-                    .map_or(std::ptr::null(), |value| value as *const _),
-            ),
-            weather: Cell::new(
-                queries
-                    .weather_option()
-                    .map_or(std::ptr::null(), |value| value as *const _),
-            ),
-            frame_counter: Cell::new(
-                queries
-                    .frame_counter_option()
-                    .map_or(std::ptr::null(), |value| value as *const _),
-            ),
+            queries: Cell::new(queries),
         }
     }
 
@@ -134,6 +121,15 @@ impl HostPtr {
         ptr
     }
 
+    fn script_domains_ptr(&self) -> *mut ScriptDomains {
+        let ptr = self.script_domains.get();
+        assert!(
+            !ptr.is_null(),
+            "robin_lua: native invoked with no ScriptDomains capability attached; wrap the call site in MissionLuaState::with_host"
+        );
+        ptr
+    }
+
     fn bindings_ptr(&self) -> *const AttachedScriptBindings {
         let ptr = self.bindings.get();
         assert!(
@@ -144,30 +140,12 @@ impl HostPtr {
     }
 
     unsafe fn query_views(&self) -> NativeQueryViews<'_> {
-        let sequence_manager = self.sequence_manager.get();
-        if sequence_manager.is_null() {
-            return NativeQueryViews::default();
-        }
-        let selected_pcs = self.selected_pcs.get();
-        let sound_sources = self.sound_sources.get();
-        let weather = self.weather.get();
-        let frame_counter = self.frame_counter.get();
-        assert!(
-            !selected_pcs.is_null()
-                && !sound_sources.is_null()
-                && !weather.is_null()
-                && !frame_counter.is_null(),
-            "robin_lua: incomplete native query capabilities"
-        );
-        // SAFETY: all pointers originate from the borrowed NativeQueryViews
-        // installed for this with_host scope and are removed before it ends.
+        // SAFETY: new erased this view's lifetime only for the enclosing
+        // with_host scope. Rebind the copied view to this short borrow so it
+        // cannot escape through the Lua native adapter.
         unsafe {
-            NativeQueryViews::new(
-                &*sequence_manager,
-                std::slice::from_raw_parts(selected_pcs, self.selected_pc_count),
-                &*sound_sources,
-                &*weather,
-                &*frame_counter,
+            std::mem::transmute::<NativeQueryViews<'static>, NativeQueryViews<'_>>(
+                self.queries.get(),
             )
         }
     }
@@ -460,10 +438,11 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // which is the only place this shim runs.
         let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
         let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
+        let script_domains: &mut ScriptDomains = unsafe { &mut *host_ptr.script_domains_ptr() };
         let bindings: &AttachedScriptBindings = unsafe { &*host_ptr.bindings_ptr() };
         let queries = unsafe { host_ptr.query_views() };
         let mut native_context =
-            NativeContext::with_bindings(host, script_state, bindings, queries);
+            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
         let mut stack = NativeStack::default();
         // Push in argument order — the engine's `pop_i32()` pulls
         // them off in *reverse*, so the last arg ends up on top of
@@ -682,6 +661,7 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // duration of the surrounding `with_host` scope.
         let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
         let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
+        let script_domains: &mut ScriptDomains = unsafe { &mut *script_domains_ptr(lua)? };
         let bindings: &AttachedScriptBindings = unsafe { &*bindings_ptr(lua)? };
         let queries = lua
             .app_data_ref::<HostPtr>()
@@ -689,7 +669,7 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
             .clone();
         let queries = unsafe { queries.query_views() };
         let mut native_context =
-            NativeContext::with_bindings(host, script_state, bindings, queries);
+            NativeContext::with_bindings(host, script_state, script_domains, bindings, queries);
         let mut stack = NativeStack::default();
         // RecordSendMessage(actor, message) pops `message` first
         // (top of stack), then `actor`. So push actor, then
@@ -730,6 +710,13 @@ fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {
         )
     })?;
     Ok(ptr.script_state_ptr())
+}
+
+fn script_domains_ptr(lua: &Lua) -> mlua::Result<*mut ScriptDomains> {
+    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
+        mlua::Error::RuntimeError("native called with no ScriptDomains attached".into())
+    })?;
+    Ok(ptr.script_domains_ptr())
 }
 
 fn bindings_ptr(lua: &Lua) -> mlua::Result<*const AttachedScriptBindings> {

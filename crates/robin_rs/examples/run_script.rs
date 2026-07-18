@@ -66,7 +66,8 @@ fn main() -> std::process::ExitCode {
 
     let mut game_host = GameHost::new().verbose();
     let mut script_state = ScriptState::default();
-    let context = NativeContext::new(&mut game_host, &mut script_state);
+    let mut script_domains = robin_rs::engine::ScriptDomains::default();
+    let context = NativeContext::new(&mut game_host, &mut script_state, &mut script_domains);
     let mut vm_state = Vm::new().with_host(context);
     vm_state
         .vm
