@@ -2230,9 +2230,10 @@ impl MissionScript {
         }
     }
 
-    /// Swap entity, AI, campaign, and mission-stat state into/out of the
-    /// GameHost.  Call once before script execution and once after to
-    /// restore.  `mission_stat` is swapped so script natives that emit
+    /// Legacy transfer primitive used by the engine's `ScriptSession`.
+    /// Session entry calls it once before script execution and its structural
+    /// restoration path calls it once after. Do not open-code that pair at
+    /// callback sites. `mission_stat` is swapped so script natives that emit
     /// campaign-style side effects (e.g. `ConfiscateMoney` crediting
     /// collected money) land on the engine's per-mission counter rather
     /// than a private GameHost copy.
@@ -2261,39 +2262,6 @@ impl MissionScript {
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
         std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
         std::mem::swap(&mut self.game_host.engine_domains, script_domains);
-    }
-
-    /// Borrow the live engine state for one script/native dispatch.
-    ///
-    /// The returned context restores both the engine-owned state and an
-    /// optional `script_this` override when it is dropped, including while
-    /// unwinding or propagating an error.  Keeping this transaction here also
-    /// means dispatch sites cannot accidentally add an early return between
-    /// the old pair of [`Self::swap_engine_state`] calls.
-    pub(crate) fn script_context<'a>(
-        &'a mut self,
-        entities: &'a mut crate::entities::Entities,
-        ai_global: &'a mut crate::ai::AiGlobalState,
-        fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
-        campaign: &'a mut Option<crate::campaign::Campaign>,
-        mission_stat: &'a mut crate::mission_stat::MissionStat,
-        script_domains: &'a mut super::state::ScriptDomains,
-        queries: crate::natives::NativeQueryViews<'a>,
-        script_this: Option<i32>,
-    ) -> ScriptContext<'a> {
-        ScriptContext::new(
-            &mut self.game_host,
-            &mut self.state,
-            &self.bindings,
-            entities,
-            ai_global,
-            fast_grid,
-            campaign,
-            mission_stat,
-            script_domains,
-            queries,
-            script_this,
-        )
     }
 
     /// Call the script's `Hourglass` function (once per game-second).
@@ -2418,6 +2386,8 @@ impl MissionScript {
 /// plus explicit effects as native groups are migrated.  Until then this guard
 /// makes the legacy transaction safe on every Rust exit path.
 #[must_use = "dropping the script context restores the borrowed engine state"]
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) struct ScriptContext<'a> {
     game_host: &'a mut GameHost,
     script_state: &'a mut ScriptState,
@@ -2433,6 +2403,8 @@ pub(crate) struct ScriptContext<'a> {
     saved_script_this: Option<i32>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 impl<'a> ScriptContext<'a> {
     fn new(
         game_host: &'a mut GameHost,
@@ -2488,6 +2460,7 @@ impl<'a> ScriptContext<'a> {
     }
 }
 
+#[cfg(test)]
 impl Drop for ScriptContext<'_> {
     fn drop(&mut self) {
         if let Some(saved) = self.saved_script_this {

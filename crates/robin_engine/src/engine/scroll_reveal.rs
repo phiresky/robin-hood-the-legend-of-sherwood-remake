@@ -169,7 +169,7 @@ impl EngineInner {
     ///    refreshes the minimap dot.
     ///
     /// `scroll_handle` and `pc_handle` are actor script handles.
-    pub(crate) fn take_scroll(&mut self, pc: EntityId, scroll: EntityId) {
+    pub(crate) fn take_scroll(&mut self, assets: &LevelAssets, pc: EntityId, scroll: EntityId) {
         // Flip the taken flag.
         if let Some(entity) = self.get_entity_mut(scroll)
             && let Some(obj) = entity.object_data_mut()
@@ -192,12 +192,8 @@ impl EngineInner {
         // at Opened.
         let scroll_handle = crate::natives::GameHost::actor_handle(scroll);
         let pc_handle = crate::natives::GameHost::actor_handle(pc);
-        let queries = native_query_views!(self);
         let script_result = self
-            .scripts
-            .mission
-            .as_mut()
-            .map(|script| {
+            .with_script_session(assets, |script, queries| {
                 script.call_scroll_function(scroll_handle, "IsTaken", &[pc_handle], queries)
             })
             .transpose();
