@@ -145,6 +145,416 @@ impl SequencePhase {
     }
 }
 
+/// Whether an extracted owner-command dispatcher reaches the synchronous
+/// successor splice at the bottom of the action loop.
+///
+/// Several legacy command paths deliberately `continue` after updating their
+/// sequence element. Keeping that distinction in the return type prevents a
+/// helper extraction from silently changing same-call action ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerActionBarrier {
+    Reach,
+    Skip,
+}
+
+/// Bow-transition command translation with only the owners it actually uses.
+///
+/// The original command bodies read actor posture/action state, append
+/// transition orders, and update the sequence element. They do not need the
+/// mission, scripts, AI, players, feedback, or spatial world domains.
+struct BowTransitionContext<'a> {
+    entities: &'a crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl BowTransitionContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let command_body_already_queued = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| {
+                element.orders.iter().any(|order| {
+                    use crate::order::OrderType as OT;
+                    match command {
+                        Command::EquipBow => matches!(
+                            order.order_type,
+                            OT::TransitionEquipBow | OT::TransitionEquipBowAnonymous
+                        ),
+                        Command::EquipBowDown => {
+                            order.order_type == OT::TransitionLoweringBowLeaningOut
+                        }
+                        Command::UnequipBow => matches!(
+                            order.order_type,
+                            OT::TransitionUnloadBow
+                                | OT::TransitionUnloadBowAnonymous
+                                | OT::TransitionUnequipBow
+                                | OT::TransitionUnequipBowAnonymous
+                        ),
+                        Command::RaiseBow => matches!(
+                            order.order_type,
+                            OT::TransitionRaisingBow | OT::TransitionRaisingBowAnonymous
+                        ),
+                        Command::LowerBow => matches!(
+                            order.order_type,
+                            OT::TransitionLoweringBow | OT::TransitionLoweringBowAnonymous
+                        ),
+                        _ => false,
+                    }
+                })
+            });
+
+        if !command_body_already_queued {
+            let owner_entity = self
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("bow command owner missing: {owner:?}"));
+            let posture = owner_entity.element_data().posture;
+            let owner_action_state = owner_entity
+                .actor_data()
+                .map(|actor| actor.action_state)
+                .unwrap_or_else(|| panic!("bow command owner missing actor data: {owner:?}"));
+            if matches!(command, Command::EquipBow | Command::EquipBowDown)
+                && owner_action_state.is_bow()
+            {
+                // C++ `Translate(EQUIP_BOW*)` terminates non-transition
+                // command bodies when the actor is already aiming.
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                return OwnerActionBarrier::Skip;
+            }
+
+            let anonymous = posture == crate::element::Posture::AnonymousArcher;
+            let target_xy = self
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.orders.back())
+                .map(|order| (order.target_x, order.target_y))
+                .unwrap_or((0.0, 0.0));
+
+            use crate::element::ActionState;
+            use crate::order::OrderType;
+            match command {
+                Command::EquipBow => {
+                    if anonymous {
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionEquipBowAnonymous,
+                            0.0,
+                            0.0,
+                        );
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionLoadingBowAnonymous,
+                            0.0,
+                            0.0,
+                        );
+                    } else {
+                        self.push_order(seq_id, elem_idx, OrderType::TransitionEquipBow, 0.0, 0.0);
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionLoadingBow,
+                            0.0,
+                            0.0,
+                        );
+                    }
+                    self.set_action_state_after_transition(
+                        seq_id,
+                        elem_idx,
+                        ActionState::AimingWithBow,
+                    );
+                }
+                Command::EquipBowDown => {
+                    self.push_order(seq_id, elem_idx, OrderType::TransitionEquipBow, 0.0, 0.0);
+                    self.push_order(seq_id, elem_idx, OrderType::TransitionLoadingBow, 0.0, 0.0);
+                    self.push_order(
+                        seq_id,
+                        elem_idx,
+                        OrderType::TransitionLoweringBowLeaningOut,
+                        0.0,
+                        0.0,
+                    );
+                    self.set_action_state_after_transition(
+                        seq_id,
+                        elem_idx,
+                        ActionState::AimingWithBowDown,
+                    );
+                }
+                Command::UnequipBow => {
+                    let (x, y) = target_xy;
+                    if anonymous {
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionUnloadBowAnonymous,
+                            x,
+                            y,
+                        );
+                        self.push_order(
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionUnequipBowAnonymous,
+                            x,
+                            y,
+                        );
+                    } else {
+                        self.push_order(seq_id, elem_idx, OrderType::TransitionUnloadBow, x, y);
+                        self.push_order(seq_id, elem_idx, OrderType::TransitionUnequipBow, x, y);
+                    }
+                    self.set_action_state_after_transition(seq_id, elem_idx, ActionState::Waiting);
+                }
+                Command::RaiseBow => {
+                    self.push_order(
+                        seq_id,
+                        elem_idx,
+                        if anonymous {
+                            OrderType::TransitionRaisingBowAnonymous
+                        } else {
+                            OrderType::TransitionRaisingBow
+                        },
+                        0.0,
+                        0.0,
+                    );
+                    self.set_action_state_after_transition(
+                        seq_id,
+                        elem_idx,
+                        ActionState::AimingWithBowUp,
+                    );
+                }
+                Command::LowerBow => {
+                    self.push_order(
+                        seq_id,
+                        elem_idx,
+                        if anonymous {
+                            OrderType::TransitionLoweringBowAnonymous
+                        } else {
+                            OrderType::TransitionLoweringBow
+                        },
+                        0.0,
+                        0.0,
+                    );
+                    self.set_action_state_after_transition(
+                        seq_id,
+                        elem_idx,
+                        ActionState::AimingWithBow,
+                    );
+                }
+                _ => unreachable!("non-bow command passed to bow transition context"),
+            }
+        }
+
+        let has_orders = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| !element.orders.is_empty());
+        if has_orders {
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+        target_x: f32,
+        target_y: f32,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let mut order = crate::order::Order::new(order_type, target_x, target_y, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
+
+    fn set_action_state_after_transition(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        state: crate::element::ActionState,
+    ) {
+        let element = self
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .expect("bow transition sequence element disappeared during dispatch");
+        element.action_state_after_transition = state;
+    }
+}
+
+/// Script-target activation collection with no mutable world access.
+struct TargetActivationContext<'a> {
+    entities: &'a crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    pending_activations: &'a mut Vec<(i32, i32, &'static str)>,
+}
+
+impl TargetActivationContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        antagonist: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let method = match command {
+            Command::ActivateApple => "ActivatedByApple",
+            Command::ActivateArrow => "ActivatedByArrow",
+            Command::ActivateHandle => "ActivatedByHand",
+            Command::ActivateHeal => "ActivatedByHeal",
+            Command::ActivateLever => "ActivatedByLever",
+            Command::ActivateMoney => "ActivatedByMoney",
+            Command::ActivateSearch => "ActivatedBySearch",
+            Command::ActivateStone => "ActivatedByStone",
+            Command::ActivateSword => "ActivatedBySword",
+            _ => unreachable!("non-activation command passed to target activation context"),
+        };
+        debug_assert!(
+            self.entities
+                .get(owner)
+                .is_some_and(|entity| entity.kind().is_fx_target()),
+            "{method} dispatched on non-FX-target owner {owner:?}",
+        );
+        let target_handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
+        let pc_handle = antagonist
+            .map(crate::natives::ScriptHandleCodec::actor_handle)
+            .unwrap_or(0);
+        self.pending_activations
+            .push((target_handle, pc_handle, method));
+        self.sequence_manager.element_terminated(seq_id, elem_idx);
+    }
+}
+
+/// Actor/FX animation and target-interaction translation.
+struct TargetAnimationContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl TargetAnimationContext<'_> {
+    fn dispatch_play_animation(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        animation: Option<crate::order::OrderType>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let Some(animation) = animation else {
+            tracing::warn!(
+                entity = ?owner,
+                cmd = ?command,
+                "PlayAnim*: missing/invalid AnimationId — terminating",
+            );
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+
+        let Some(owner_entity) = self.entities.get(owner) else {
+            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+        if owner_entity.is_human() {
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
+            order.compute_direction = false;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        if !owner_entity.kind().is_fx_target() {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        let progression_ordinal = match command {
+            Command::PlayAnim => crate::sprite::FrameProgression::Default as u32,
+            Command::PlayAnimLoop => crate::sprite::FrameProgression::Cyclically as u32,
+            Command::PlayAnimFreeze => crate::sprite::FrameProgression::FreezeWhenTerminated as u32,
+            Command::PlayAnimFrozen => crate::sprite::FrameProgression::FrozenLastFrame as u32,
+            _ => unreachable!("non-animation command passed to target animation context"),
+        };
+        let entity = self
+            .entities
+            .get_mut(owner)
+            .expect("FX target disappeared during PlayAnim dispatch");
+        let direction = entity.element_data().direction() as u16;
+        if let crate::element::Entity::Target(target) = entity {
+            target.target.progression = progression_ordinal;
+        }
+        let sprite = &mut entity.element_data_mut().sprite;
+        if sprite.has_animation(animation) {
+            sprite.force_animation(animation, direction);
+            sprite.reset_sprite_frame(false);
+        } else {
+            tracing::warn!(
+                ?owner,
+                ?animation,
+                profile = %sprite.frame_profile_name,
+                "PlayAnim*: animation unmapped for this sprite profile — skipping",
+            );
+        }
+        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+}
+
+/// PC-side FX-target orders need read-only entity classification plus the two
+/// order fields they mutate; they never need mutable world access.
+struct TargetInteractionContext<'a> {
+    entities: &'a crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl TargetInteractionContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner_command: Command,
+        target: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let Some(target) = target else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+        if !self
+            .entities
+            .get(target)
+            .is_some_and(|entity| entity.kind().is_fx_target())
+        {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+        let order_type = match owner_command {
+            Command::HitTarget => crate::order::OrderType::HittingTarget,
+            Command::HandleTarget => crate::order::OrderType::HandlingTarget,
+            Command::UseLever => crate::order::OrderType::UsingLever,
+            Command::TakeTarget => crate::order::OrderType::TakingTarget,
+            Command::SearchCmd => crate::order::OrderType::Searching,
+            _ => unreachable!("non-target command passed to target interaction context"),
+        };
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let order = crate::order::Order::new(order_type, 0.0, 0.0, id).with_antagonist(target);
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+}
+
 #[cfg(test)]
 mod sequence_phase_context_tests {
     use super::*;
@@ -2896,220 +3306,14 @@ impl EngineInner {
                         | Command::UnequipBow
                         | Command::RaiseBow
                         | Command::LowerBow => {
-                            let command_body_already_queued = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .is_some_and(|e| {
-                                    e.orders.iter().any(|o| {
-                                        use crate::order::OrderType as OT;
-                                        match elem.command {
-                                            Command::EquipBow => matches!(
-                                                o.order_type,
-                                                OT::TransitionEquipBow
-                                                    | OT::TransitionEquipBowAnonymous
-                                            ),
-                                            Command::EquipBowDown => {
-                                                o.order_type == OT::TransitionLoweringBowLeaningOut
-                                            }
-                                            Command::UnequipBow => matches!(
-                                                o.order_type,
-                                                OT::TransitionUnloadBow
-                                                    | OT::TransitionUnloadBowAnonymous
-                                                    | OT::TransitionUnequipBow
-                                                    | OT::TransitionUnequipBowAnonymous
-                                            ),
-                                            Command::RaiseBow => matches!(
-                                                o.order_type,
-                                                OT::TransitionRaisingBow
-                                                    | OT::TransitionRaisingBowAnonymous
-                                            ),
-                                            Command::LowerBow => matches!(
-                                                o.order_type,
-                                                OT::TransitionLoweringBow
-                                                    | OT::TransitionLoweringBowAnonymous
-                                            ),
-                                            _ => false,
-                                        }
-                                    })
-                                });
-                            let append_command_body = !command_body_already_queued;
-                            if append_command_body {
-                                let owner_entity = self.get_entity(owner).unwrap_or_else(|| {
-                                    panic!("bow command owner missing: {owner:?}")
-                                });
-                                let posture = owner_entity.element_data().posture;
-                                let owner_action_state = owner_entity
-                                    .actor_data()
-                                    .map(|actor| actor.action_state)
-                                    .unwrap_or_else(|| {
-                                        panic!("bow command owner missing actor data: {owner:?}")
-                                    });
-                                if matches!(elem.command, Command::EquipBow | Command::EquipBowDown)
-                                    && owner_action_state.is_bow()
-                                {
-                                    // C++ `Translate(EQUIP_BOW*)` terminates
-                                    // non-transition command bodies when the
-                                    // actor is already aiming with the bow.
-                                    self.orders
-                                        .sequence_manager
-                                        .element_terminated(seq_id, elem_idx);
-                                    continue;
-                                }
-                                let anonymous = posture == crate::element::Posture::AnonymousArcher;
-                                let push = |engine: &mut EngineInner,
-                                            ot: crate::order::OrderType,
-                                            x: f32,
-                                            y: f32| {
-                                    let id = engine.orders.allocate_order_id();
-                                    let mut order = crate::order::Order::new(ot, x, y, id);
-                                    order.compute_direction = false;
-                                    engine
-                                        .orders
-                                        .sequence_manager
-                                        .push_order_on(seq_id, elem_idx, order);
-                                };
-                                let target_xy = self
-                                    .orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .and_then(|e| e.orders.back())
-                                    .map(|o| (o.target_x, o.target_y))
-                                    .unwrap_or((0.0, 0.0));
-
-                                use crate::element::ActionState;
-                                use crate::order::OrderType;
-                                match elem.command {
-                                    Command::EquipBow => {
-                                        if anonymous {
-                                            push(
-                                                self,
-                                                OrderType::TransitionEquipBowAnonymous,
-                                                0.0,
-                                                0.0,
-                                            );
-                                            push(
-                                                self,
-                                                OrderType::TransitionLoadingBowAnonymous,
-                                                0.0,
-                                                0.0,
-                                            );
-                                        } else {
-                                            push(self, OrderType::TransitionEquipBow, 0.0, 0.0);
-                                            push(self, OrderType::TransitionLoadingBow, 0.0, 0.0);
-                                        }
-                                        if let Some(elem) = self
-                                            .orders
-                                            .sequence_manager
-                                            .get_element_mut(seq_id, elem_idx)
-                                        {
-                                            elem.action_state_after_transition =
-                                                ActionState::AimingWithBow;
-                                        }
-                                    }
-                                    Command::EquipBowDown => {
-                                        push(self, OrderType::TransitionEquipBow, 0.0, 0.0);
-                                        push(self, OrderType::TransitionLoadingBow, 0.0, 0.0);
-                                        push(
-                                            self,
-                                            OrderType::TransitionLoweringBowLeaningOut,
-                                            0.0,
-                                            0.0,
-                                        );
-                                        if let Some(elem) = self
-                                            .orders
-                                            .sequence_manager
-                                            .get_element_mut(seq_id, elem_idx)
-                                        {
-                                            elem.action_state_after_transition =
-                                                ActionState::AimingWithBowDown;
-                                        }
-                                    }
-                                    Command::UnequipBow => {
-                                        let (x, y) = target_xy;
-                                        if anonymous {
-                                            push(
-                                                self,
-                                                OrderType::TransitionUnloadBowAnonymous,
-                                                x,
-                                                y,
-                                            );
-                                            push(
-                                                self,
-                                                OrderType::TransitionUnequipBowAnonymous,
-                                                x,
-                                                y,
-                                            );
-                                        } else {
-                                            push(self, OrderType::TransitionUnloadBow, x, y);
-                                            push(self, OrderType::TransitionUnequipBow, x, y);
-                                        }
-                                        if let Some(elem) = self
-                                            .orders
-                                            .sequence_manager
-                                            .get_element_mut(seq_id, elem_idx)
-                                        {
-                                            elem.action_state_after_transition =
-                                                ActionState::Waiting;
-                                        }
-                                    }
-                                    Command::RaiseBow => {
-                                        if anonymous {
-                                            push(
-                                                self,
-                                                OrderType::TransitionRaisingBowAnonymous,
-                                                0.0,
-                                                0.0,
-                                            );
-                                        } else {
-                                            push(self, OrderType::TransitionRaisingBow, 0.0, 0.0);
-                                        }
-                                        if let Some(elem) = self
-                                            .orders
-                                            .sequence_manager
-                                            .get_element_mut(seq_id, elem_idx)
-                                        {
-                                            elem.action_state_after_transition =
-                                                ActionState::AimingWithBowUp;
-                                        }
-                                    }
-                                    Command::LowerBow => {
-                                        if anonymous {
-                                            push(
-                                                self,
-                                                OrderType::TransitionLoweringBowAnonymous,
-                                                0.0,
-                                                0.0,
-                                            );
-                                        } else {
-                                            push(self, OrderType::TransitionLoweringBow, 0.0, 0.0);
-                                        }
-                                        if let Some(elem) = self
-                                            .orders
-                                            .sequence_manager
-                                            .get_element_mut(seq_id, elem_idx)
-                                        {
-                                            elem.action_state_after_transition =
-                                                ActionState::AimingWithBow;
-                                        }
-                                    }
-                                    _ => unreachable!(),
-                                }
+                            let barrier = BowTransitionContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
-
-                            let has_orders = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .is_some_and(|e| !e.orders.is_empty());
-                            if has_orders {
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
+                                continue;
                             }
                         }
                         // ── Hide behind shield ──────────────────
@@ -5719,53 +5923,18 @@ impl EngineInner {
                         | Command::ActivateSearch
                         | Command::ActivateStone
                         | Command::ActivateSword => {
-                            // The target dispatches each `Activate*`
-                            // to its own
-                            // `IElementTargetScript::ActivatedBy*`.
-                            //
-                            // The antagonist carried on the sequence
-                            // element is the PC who initiated the
-                            // action.  We collect the call here and
-                            // dispatch after the action loop so the
-                            // script can safely borrow
-                            // `self.world.entities`.
-                            let method = match cmd {
-                                Command::ActivateApple => "ActivatedByApple",
-                                Command::ActivateArrow => "ActivatedByArrow",
-                                Command::ActivateHandle => "ActivatedByHand",
-                                Command::ActivateHeal => "ActivatedByHeal",
-                                Command::ActivateLever => "ActivatedByLever",
-                                Command::ActivateMoney => "ActivatedByMoney",
-                                Command::ActivateSearch => "ActivatedBySearch",
-                                Command::ActivateStone => "ActivatedByStone",
-                                Command::ActivateSword => "ActivatedBySword",
-                                _ => unreachable!(),
-                            };
                             let antagonist = match &elem.data {
                                 crate::sequence::SequenceElementData::Interaction {
                                     antagonist,
                                 } => *antagonist,
                                 _ => None,
                             };
-                            // Owner must be an FX target — the
-                            // launch sites assert it and the
-                            // `Activate*` dispatch is only valid for
-                            // FX targets.  A malformed sequence
-                            // panics — match that here.
-                            debug_assert!(
-                                self.get_entity(owner)
-                                    .is_some_and(|e| e.kind().is_fx_target()),
-                                "{method} dispatched on non-FX-target owner {owner:?}",
-                            );
-                            let target_handle =
-                                crate::natives::ScriptHandleCodec::actor_handle(owner);
-                            let pc_handle = antagonist
-                                .map(crate::natives::ScriptHandleCodec::actor_handle)
-                                .unwrap_or(0);
-                            pending_target_activations.push((target_handle, pc_handle, method));
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(seq_id, elem_idx);
+                            TargetActivationContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                pending_activations: &mut pending_target_activations,
+                            }
+                            .dispatch(owner, cmd, antagonist, seq_id, elem_idx);
                         }
 
                         // Script-recorded PlayAnim / PlayAnimLoop /
@@ -5778,7 +5947,8 @@ impl EngineInner {
                         | Command::PlayAnimLoop
                         | Command::PlayAnimFreeze
                         | Command::PlayAnimFrozen => {
-                            let anim = match elem.get_property(crate::sequence::Field::AnimationId)
+                            let animation = match elem
+                                .get_property(crate::sequence::Field::AnimationId)
                             {
                                 Some(crate::sequence::FieldValue::Animation(anim)) => Some(*anim),
                                 Some(crate::sequence::FieldValue::Integer(v)) => {
@@ -5786,93 +5956,15 @@ impl EngineInner {
                                 }
                                 _ => None,
                             };
-                            let Some(anim) = anim else {
-                                tracing::warn!(
-                                    entity = ?owner,
-                                    cmd = ?cmd,
-                                    "PlayAnim*: missing/invalid AnimationId — terminating",
-                                );
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                                continue;
-                            };
-
-                            let Some(owner_entity) = self.get_entity(owner) else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_impossible(seq_id, elem_idx);
-                                continue;
-                            };
-                            if owner_entity.is_human() {
-                                let mut order = crate::order::Order::new(
-                                    anim,
-                                    0.0,
-                                    0.0,
-                                    self.orders.allocate_order_id(),
-                                );
-                                order.compute_direction = false;
-                                self.orders
-                                    .sequence_manager
-                                    .push_order_on(seq_id, elem_idx, order);
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
+                            let barrier = TargetAnimationContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                            }
+                            .dispatch_play_animation(owner, cmd, animation, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
                                 continue;
                             }
-
-                            let is_fx_target = owner_entity.kind().is_fx_target();
-                            if !is_fx_target {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                                continue;
-                            }
-
-                            // Progression tags — stored as raw u32
-                            // ordinal on `TargetData.progression`,
-                            // matching the `FrameProgression` enum.
-                            let progression_ordinal = match cmd {
-                                Command::PlayAnim => {
-                                    crate::sprite::FrameProgression::Default as u32
-                                }
-                                Command::PlayAnimLoop => {
-                                    crate::sprite::FrameProgression::Cyclically as u32
-                                }
-                                Command::PlayAnimFreeze => {
-                                    crate::sprite::FrameProgression::FreezeWhenTerminated as u32
-                                }
-                                Command::PlayAnimFrozen => {
-                                    crate::sprite::FrameProgression::FrozenLastFrame as u32
-                                }
-                                _ => unreachable!(),
-                            };
-                            if let Some(entity) = self.get_entity_mut(owner) {
-                                let direction = entity.element_data().direction() as u16;
-                                if let crate::element::Entity::Target(t) = entity {
-                                    t.target.progression = progression_ordinal;
-                                }
-                                let sprite = &mut entity.element_data_mut().sprite;
-                                // Scripts occasionally address FX
-                                // targets with actor-only animations
-                                // (e.g. TG_Panel +
-                                // TransitionSittingWaitingUpright);
-                                // log and skip rather than panic.
-                                if sprite.has_animation(anim) {
-                                    sprite.force_animation(anim, direction);
-                                    sprite.reset_sprite_frame(false);
-                                } else {
-                                    tracing::warn!(
-                                        ?owner,
-                                        ?anim,
-                                        profile = %sprite.frame_profile_name,
-                                        "PlayAnim*: animation unmapped for this sprite profile — skipping",
-                                    );
-                                }
-                            }
-                            self.orders
-                                .sequence_manager
-                                .element_terminated(seq_id, elem_idx);
                         }
 
                         // PC-side target interaction commands.  Each
@@ -5892,52 +5984,21 @@ impl EngineInner {
                         | Command::UseLever
                         | Command::TakeTarget
                         | Command::SearchCmd => {
-                            let antagonist = match &elem.data {
+                            let target = match &elem.data {
                                 crate::sequence::SequenceElementData::Interaction {
                                     antagonist,
                                 } => *antagonist,
                                 _ => None,
                             };
-                            let Some(target_id) = antagonist else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
-                                continue;
-                            };
-                            // Only FX targets route through the
-                            // script dispatcher. `SearchCmd` on a
-                            // corpse and `UseLever` on a mobile take
-                            // different paths that aren't handled here.
-                            let antag_is_fx_target = self
-                                .get_entity(target_id)
-                                .is_some_and(|e| e.kind().is_fx_target());
-                            if !antag_is_fx_target {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            let barrier = TargetInteractionContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                            }
+                            .dispatch(cmd, target, seq_id, elem_idx);
+                            if barrier == OwnerActionBarrier::Skip {
                                 continue;
                             }
-                            let anim_type = match cmd {
-                                Command::HitTarget => crate::order::OrderType::HittingTarget,
-                                Command::HandleTarget => crate::order::OrderType::HandlingTarget,
-                                Command::UseLever => crate::order::OrderType::UsingLever,
-                                Command::TakeTarget => crate::order::OrderType::TakingTarget,
-                                Command::SearchCmd => crate::order::OrderType::Searching,
-                                _ => unreachable!(),
-                            };
-                            let order = crate::order::Order::new(
-                                anim_type,
-                                0.0,
-                                0.0,
-                                self.orders.allocate_order_id(),
-                            )
-                            .with_antagonist(target_id);
-                            self.orders
-                                .sequence_manager
-                                .push_order_on(seq_id, elem_idx, order);
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         _ => {
@@ -9381,6 +9442,32 @@ mod bow_command_body_parity_tests {
         assert!(
             elem.orders.is_empty(),
             "redundant EquipBow must not queue equip/load orders"
+        );
+    }
+
+    #[test]
+    fn redundant_equip_bow_starts_successor_timer_on_the_same_tick() {
+        use crate::sequence::{Field, FieldValue, Sequence};
+
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let pc_id = engine.add_entity(make_aiming_pc(ActionState::AimingWithBow));
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::EquipBow, Some(pc_id)));
+        let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+        timer.set_property(Field::Timer, FieldValue::Integer(2));
+        sequence.append_element(timer);
+        engine.orders.sequence_manager.launch_sequence(sequence);
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+        assert_eq!(engine.orders.timer_elements.len(), 1);
+        assert_eq!(
+            engine.orders.timer_elements[0].remaining, 1,
+            "the immediate Timer successor must launch before the same frame's timer scan"
         );
     }
 

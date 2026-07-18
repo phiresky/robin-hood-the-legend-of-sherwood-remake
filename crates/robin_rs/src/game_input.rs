@@ -291,7 +291,6 @@ pub fn resolve_left_click(
     if let Some(patch_idx) = host.input.selected_patch_idx
         && let Some(patch) = engine
             .mission_script()
-            .and_then(|s| s.game_host())
             .and_then(|_| engine.patches().get(patch_idx as usize))
     {
         if patch.locked {

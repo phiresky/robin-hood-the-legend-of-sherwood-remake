@@ -74,9 +74,9 @@ pub(crate) fn render_door_overlays(
     use crate::profiles::Action;
     use crate::sector::SectorType;
 
-    let Some(_game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
+    if engine.mission_script().is_none() {
         return;
-    };
+    }
 
     let draw_geo_polygon = |renderer: &mut Renderer, pts: &[MapPoint], color: u32, alpha: u32| {
         if pts.len() < 3 {
@@ -1386,7 +1386,7 @@ fn transition_crenel_climb_up_mask_position(
     if door_pass.current_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel {
         return None;
     }
-    let _game_host = engine.mission_script().and_then(|m| m.game_host())?;
+    engine.mission_script()?;
     let door = engine.doors().get(usize::from(door_pass.door_index))?;
     let point_mid = door.point_mid;
     let point_out = door.point_out;
@@ -2414,9 +2414,9 @@ pub(crate) fn render_debug_doors(
     if !dev.debug.door_display {
         return;
     }
-    let Some(_game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
+    if engine.mission_script().is_none() {
         return;
-    };
+    }
 
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
