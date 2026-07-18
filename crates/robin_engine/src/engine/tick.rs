@@ -1207,6 +1207,302 @@ impl NpcStateCommandContext<'_> {
     }
 }
 
+/// NPC look/lean and attentive-mode translation against only entity state,
+/// sequence state, and order-id allocation.
+///
+/// Original provenance: `RHelementactorsoldier.cpp:329-386` appends these
+/// orders synchronously from `Translate`. The sequence phase must therefore
+/// still reach its after-action splice immediately after this context returns.
+struct NpcAttentionCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl NpcAttentionCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        match command {
+            Command::LookLeft | Command::LookRight | Command::LeanOut => {
+                let order_type = self.entities.get(owner).map(|entity| {
+                    let attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
+                    match command {
+                        Command::LookLeft if attentive => {
+                            crate::order::OrderType::LookingLeftAlerted
+                        }
+                        Command::LookLeft => crate::order::OrderType::LookingLeft,
+                        Command::LookRight if attentive => {
+                            crate::order::OrderType::LookingRightAlerted
+                        }
+                        Command::LookRight => crate::order::OrderType::LookingRight,
+                        Command::LeanOut => {
+                            crate::order::OrderType::TransitionWaitingAlertedLeaningOut
+                        }
+                        _ => unreachable!(),
+                    }
+                });
+                if let Some(order_type) = order_type {
+                    self.push_order(seq_id, elem_idx, order_type);
+                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                } else {
+                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                }
+            }
+            Command::EnterAttentiveMode
+            | Command::LeaveAttentiveMode
+            | Command::LeaveAttentiveModeOfficer => {
+                let posture_after_transition = self
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .map(|element| element.posture_after_transition)
+                    .unwrap_or_default();
+                if self.dispatch_attentive(
+                    owner,
+                    command,
+                    posture_after_transition,
+                    seq_id,
+                    elem_idx,
+                ) {
+                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                } else {
+                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                }
+            }
+            _ => unreachable!("non-attention command passed to NPC attention context"),
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    fn dispatch_attentive(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        posture_after_transition: crate::element::Posture,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> bool {
+        let target_attentive = command == Command::EnterAttentiveMode;
+        let animation = match command {
+            Command::EnterAttentiveMode => {
+                crate::order::OrderType::TransitionWaitingUprightWaitingAlerted
+            }
+            Command::LeaveAttentiveMode => {
+                crate::order::OrderType::TransitionWaitingAlertedWaitingUpright
+            }
+            Command::LeaveAttentiveModeOfficer => {
+                crate::order::OrderType::TransitionWaitingAlertedWaitingUprightOfficer
+            }
+            _ => unreachable!(),
+        };
+
+        // The officer salute-and-drop transition is unconditional in the
+        // original translator and in the pre-split Rust path.
+        if command == Command::LeaveAttentiveModeOfficer {
+            self.push_order(seq_id, elem_idx, animation);
+            return true;
+        }
+
+        let posture_upright_after = posture_after_transition == crate::element::Posture::Upright;
+        let Some(entity) = self.entities.get(owner) else {
+            return false;
+        };
+        let currently_attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
+        let idle = self
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(current_seq, current_idx)| {
+                self.sequence_manager.get_element(current_seq, current_idx)
+            })
+            .map(|element| element.command == Command::Wait)
+            .unwrap_or(true);
+        let needs_change = currently_attentive != target_attentive;
+        let can_play_transition = posture_upright_after && idle && needs_change;
+
+        // TODO(parity): `RHElementActorSoldier::Translate` at
+        // `RHelementactorsoldier.cpp:329-370` does not inspect the current Wait
+        // element, and its normal Leave arm animates whenever posture-after is
+        // Upright. Verify whether instruct arbitration makes Rust's retained
+        // `idle && needs_change` gate redundant before changing tick behavior.
+        tracing::trace!(
+            owner = owner.index(),
+            ?command,
+            ?posture_after_transition,
+            posture_upright_after,
+            currently_attentive,
+            target_attentive,
+            needs_change,
+            idle,
+            can_play_transition,
+            "dispatch attentive transition"
+        );
+
+        if can_play_transition {
+            self.push_order(seq_id, elem_idx, animation);
+            true
+        } else {
+            if let Some(enemy) = self.entities.get_mut(owner).and_then(Entity::enemy_ai_mut) {
+                enemy.attentive = target_attentive;
+            }
+            false
+        }
+    }
+
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
+}
+
+/// Stealth-posture command translation with the exact mutable domains it
+/// touches: entities, the owning sequence, order allocation, and HIDDEN
+/// titbits. Character profiles are read only to derive the HIDDEN phase.
+struct StealthCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+    titbit_manager: &'a mut crate::titbit::TitbitManager,
+    profiles: &'a crate::profiles::ProfileManager,
+}
+
+impl StealthCommandContext<'_> {
+    fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        use crate::element::ActionState;
+
+        let Some(entity) = self.entities.get(owner) else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        };
+        let posture = entity.element_data().posture;
+        let action_state = entity
+            .actor_data()
+            .map(|actor| actor.action_state)
+            .unwrap_or(ActionState::Waiting);
+        let is_swordfighting = action_state.is_sword();
+
+        if !crate::stealth::can_execute_stealth_command(
+            command,
+            posture,
+            action_state,
+            is_swordfighting,
+        ) {
+            tracing::debug!(
+                ?owner,
+                ?command,
+                ?posture,
+                ?action_state,
+                "stealth command rejected: preconditions not met"
+            );
+            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        }
+
+        let Some(transition) = crate::stealth::stealth_transition(command) else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        };
+        let hidden_phase = if transition.result_posture.is_hidden() {
+            let Some(Entity::Pc(pc)) = self.entities.get(owner) else {
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                return OwnerActionBarrier::Reach;
+            };
+            let profile = self
+                .profiles
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "stealth command owner {} has unknown profile_index {}",
+                        owner.index(),
+                        pc.pc.profile_index
+                    )
+                });
+            Some(crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename).to_phase())
+        } else {
+            None
+        };
+
+        let old_posture = posture;
+        let entity = self
+            .entities
+            .get_mut(owner)
+            .expect("stealth command owner disappeared during dispatch");
+        entity.set_posture(transition.result_posture);
+        if let Some(actor) = entity.actor_data_mut() {
+            actor.action_state = transition.result_action_state;
+        }
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+
+        tracing::debug!(
+            ?owner,
+            ?command,
+            posture = ?transition.result_posture,
+            animation = ?transition.animation,
+            "stealth transition applied"
+        );
+
+        use crate::coordinates::WorldPoint3D;
+        use crate::titbit::{ElementHandle, TitbitKind};
+        let handle = ElementHandle(owner.index());
+        if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
+            self.titbit_manager.add_titbit(
+                WorldPoint3D::default(),
+                0,
+                TitbitKind::Hidden,
+                handle,
+                hidden_phase.expect("hidden phase resolved before entering hidden posture"),
+                handle,
+                false,
+                0,
+                true,
+                None,
+                None,
+            );
+        } else if !transition.result_posture.is_hidden() && old_posture.is_hidden() {
+            self.titbit_manager
+                .remove_titbit(TitbitKind::Hidden, handle);
+        }
+
+        // TODO(parity): C++ applies posture/action, HIDDEN, and nearby-coin
+        // side effects on transition-animation DONE
+        // (`RHelementactorpc.cpp:6005-6034`). Rust has historically snapped
+        // them during command dispatch while leaving the animation order on
+        // the terminated element. Move all four effects together only after
+        // the animation completion path can retain that order safely.
+        if transition.result_posture == crate::element::Posture::SimulatingBeggar
+            && old_posture != crate::element::Posture::SimulatingBeggar
+        {
+            super::beggar::set_flags_of_near_coins_on_ground(self.entities, owner, true);
+        } else if old_posture == crate::element::Posture::SimulatingBeggar
+            && transition.result_posture != crate::element::Posture::SimulatingBeggar
+        {
+            super::beggar::set_flags_of_near_coins_on_ground(self.entities, owner, false);
+        }
+
+        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+}
+
 /// Direct actor abilities whose translation is confined to entity state,
 /// sequence state, order-id allocation, and immutable animation profiles.
 /// Campaign-backed ammo checks are evaluated by the caller and passed as a
@@ -3749,91 +4045,26 @@ impl EngineInner {
                         // overwrote the first and only one of the
                         // two head turns played.
                         Command::LookLeft | Command::LookRight | Command::LeanOut => {
-                            // Push a `LookingLeft[Alerted]` /
-                            // `LookingRight[Alerted]` /
-                            // `TransitionWaitingAlertedLeaningOut`
-                            // order onto the sequence element's queue
-                            // and mark the actor's `active_ai_anim`
-                            // so the sprite plays the head-turn
-                            // animation.
-                            //
-                            // The order queue is what `refresh_view` reads
-                            // through `current_order_for_actor(npc)` to
-                            // decide whether to hold `eye_status` at
-                            // `LookToTheLeft`/`Right`; without the queue
-                            // entry, `refresh_view` can't validate the
-                            // look-sidewards eye status and snaps it back
-                            // to `LookForward`, which means the vision
-                            // cone never rotates even though the sprite
-                            // animation plays.  So both sides are needed.
-                            let order_type = if let Some(entity) = self.world.entities.get(owner) {
-                                let attentive = entity.enemy_ai().is_some_and(|e| e.attentive);
-                                let ot = match elem.command {
-                                    Command::LookLeft => {
-                                        if attentive {
-                                            crate::order::OrderType::LookingLeftAlerted
-                                        } else {
-                                            crate::order::OrderType::LookingLeft
-                                        }
-                                    }
-                                    Command::LookRight => {
-                                        if attentive {
-                                            crate::order::OrderType::LookingRightAlerted
-                                        } else {
-                                            crate::order::OrderType::LookingRight
-                                        }
-                                    }
-                                    _ => {
-                                        crate::order::OrderType::TransitionWaitingAlertedLeaningOut
-                                    }
-                                };
-                                Some(ot)
-                            } else {
-                                None
-                            };
-                            let queued = if let Some(ot) = order_type {
-                                let owner_alive = self.get_entity(owner).is_some();
-                                if owner_alive {
-                                    self.push_new_order(seq_id, elem_idx, ot, 0.0, 0.0);
-                                    true
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-                            if queued {
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            let barrier = NpcAttentionCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
                         }
 
                         // ── Attentive-mode transitions ───────────
                         Command::EnterAttentiveMode
                         | Command::LeaveAttentiveMode
                         | Command::LeaveAttentiveModeOfficer => {
-                            let posture_after = elem.posture_after_transition;
-                            let queued_anim = self.dispatch_attentive_transition(
-                                owner,
-                                elem.command,
-                                posture_after,
-                                seq_id,
-                                elem_idx,
-                            );
-                            if queued_anim {
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            let barrier = NpcAttentionCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
                         }
 
                         // ── Wasp sting ─────────────────────────
@@ -3850,13 +4081,15 @@ impl EngineInner {
                         | Command::LeaveHelpingClimb
                         | Command::LeaveSpy
                         | Command::LeaveTree => {
-                            self.dispatch_stealth_command(
-                                assets,
-                                owner,
-                                elem.command,
-                                seq_id,
-                                elem_idx,
-                            );
+                            let barrier = StealthCommandContext {
+                                entities: &mut self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                                titbit_manager: &mut self.feedback.titbit_manager,
+                                profiles: &assets.profile_manager,
+                            }
+                            .dispatch(owner, cmd, seq_id, elem_idx);
+                            debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
                         }
 
                         // ── Shield commands ─────────────────────
@@ -6346,162 +6579,6 @@ impl EngineInner {
         self.drain_pending_immediate_actions_sync(display, assets);
     }
 
-    // ─── Stealth command dispatch ───────────────────────────────
-
-    /// Execute a stealth posture command (CrouchDown, CrouchUp,
-    /// EnterBeggar, LeaveBeggar, LeaveSpy, LeaveTree).
-    ///
-    /// Validates the transition, changes posture + action state,
-    /// and marks the sequence element terminated.
-    fn dispatch_stealth_command(
-        &mut self,
-        assets: &LevelAssets,
-        owner: EntityId,
-        command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
-        use crate::element::ActionState;
-        use crate::stealth;
-
-        let entity = match self.world.entities.get(owner) {
-            Some(e) => e,
-            None => {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
-                return;
-            }
-        };
-
-        let posture = entity.element_data().posture;
-        let action_state = entity
-            .actor_data()
-            .map(|a| a.action_state)
-            .unwrap_or(ActionState::Waiting);
-        let is_swordfighting = entity
-            .actor_data()
-            .map(|a| a.action_state.is_sword())
-            .unwrap_or(false);
-
-        if !stealth::can_execute_stealth_command(command, posture, action_state, is_swordfighting) {
-            tracing::debug!(
-                ?owner,
-                ?command,
-                ?posture,
-                ?action_state,
-                "stealth command rejected: preconditions not met"
-            );
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-            return;
-        }
-
-        let transition = match stealth::stealth_transition(command) {
-            Some(t) => t,
-            None => {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
-                return;
-            }
-        };
-
-        // Resolve the HIDDEN-titbit phase from the PC's identity
-        // before we take a mutable borrow on `self.world.entities`.
-        let hidden_phase = if transition.result_posture.is_hidden() {
-            let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get(owner) else {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
-                return;
-            };
-            Some(&self.mission_domain.campaign).unwrap_or_else(|| {
-                panic!("dispatch_stealth_command: campaign missing for entity {owner:?}")
-            });
-            let profile = assets
-                .profile_manager
-                .get_character(pc.pc.profile_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "dispatch_stealth_command: PC entity {} has unknown profile_index {}",
-                        owner.index(),
-                        pc.pc.profile_index
-                    )
-                });
-            Some(crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename).to_phase())
-        } else {
-            None
-        };
-
-        // Apply posture + action state change, queue the transition
-        // animation: the dispatch registers a transition sequence
-        // element whose `animation` maps to an order, and the order
-        // drives the sprite animation.
-        if let Some(entity) = self.world.entities.get_mut(owner) {
-            let old_posture = entity.element_data().posture;
-            entity.set_posture(transition.result_posture);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = transition.result_action_state;
-            }
-            self.push_new_order(seq_id, elem_idx, transition.animation, 0.0, 0.0);
-            tracing::debug!(
-                ?owner,
-                ?command,
-                posture = ?transition.result_posture,
-                animation = ?transition.animation,
-                "stealth transition applied"
-            );
-
-            // HIDDEN titbit lifecycle: add on entering Spy/Tree,
-            // remove on leaving.
-            use crate::coordinates::WorldPoint3D;
-            use crate::titbit::{ElementHandle, TitbitKind};
-            let handle = ElementHandle(owner.index());
-            if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
-                self.feedback.titbit_manager.add_titbit(
-                    WorldPoint3D::default(),
-                    0,
-                    TitbitKind::Hidden,
-                    handle,
-                    hidden_phase.expect("hidden_phase resolved above when entering hidden posture"),
-                    handle, // element_manager
-                    false,  // run
-                    0,      // forced_id (auto)
-                    true,   // display_titbits_enabled
-                    None,   // supplier_display_order
-                    None,   // supplier_layer
-                );
-            } else if !transition.result_posture.is_hidden() && old_posture.is_hidden() {
-                self.feedback
-                    .titbit_manager
-                    .remove_titbit(TitbitKind::Hidden, handle);
-            }
-
-            // Beggar-disguise near-coin flag toggle.  The original
-            // toggles the flag on the
-            // TRANSITION_WAITING_UPRIGHT_SIMULATING_BEGGAR animation
-            // DONE (and `false` on the reverse transition).  We snap
-            // the posture at command-dispatch time (the actual anim
-            // plays out of `order_queue`), so the flag toggle moves
-            // here where the posture change is authoritative.
-            if transition.result_posture == crate::element::Posture::SimulatingBeggar
-                && old_posture != crate::element::Posture::SimulatingBeggar
-            {
-                self.set_beggar_flags_of_near_coins_on_ground(owner, true);
-            } else if old_posture == crate::element::Posture::SimulatingBeggar
-                && transition.result_posture != crate::element::Posture::SimulatingBeggar
-            {
-                self.set_beggar_flags_of_near_coins_on_ground(owner, false);
-            }
-        }
-
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
-    }
-
     /// Auto-leave disguise/stealth posture if the entity is in one and
     /// the incoming command requires Upright posture.
     ///
@@ -6627,7 +6704,7 @@ impl EngineInner {
         }
 
         // Set `posture_after_transition` so downstream dispatch
-        // (e.g. `dispatch_attentive_transition`) decides whether to
+        // (e.g. `NpcAttentionCommandContext`) decides whether to
         // run the command's real transition or snap.
         if let Some((seq_id, elem_idx)) = dispatching
             && let Some(elem) = self
@@ -9196,6 +9273,113 @@ mod bow_command_body_parity_tests {
             ]
         );
         assert!(element.orders.iter().all(|order| !order.compute_direction));
+    }
+
+    #[test]
+    fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
+        let mut engine = EngineInner::new();
+        let mut soldier_entity = make_bow_soldier(Posture::Upright, ActionState::Waiting);
+        let Entity::Soldier(soldier) = &mut soldier_entity else {
+            unreachable!();
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(soldier_entity);
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has enemy AI")
+            .attentive = true;
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+
+        let barrier = NpcAttentionCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+        }
+        .dispatch(owner, Command::LookLeft, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::LookingLeftAlerted)
+        );
+        assert!(!element.current_order().unwrap().compute_direction);
+    }
+
+    #[test]
+    fn stealth_context_crouches_and_preserves_terminated_order() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::CrouchDown, Some(owner)));
+
+        let barrier = StealthCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            titbit_manager: &mut engine.feedback.titbit_manager,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::CrouchDown, seq_id, 0);
+
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::Crouched);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::Waiting
+        );
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, SequenceState::Terminated);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::TransitionCrouchingDown),
+            "the pre-split path terminates synchronously but retains the transition order"
+        );
+    }
+
+    #[test]
+    fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
+        use crate::sequence::{Field, FieldValue, Sequence};
+
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::CrouchDown, Some(owner)));
+        let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+        timer.set_property(Field::Timer, FieldValue::Integer(2));
+        sequence.append_element(timer);
+        engine.orders.sequence_manager.launch_sequence(sequence);
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+        assert_eq!(engine.orders.timer_elements.len(), 1);
+        assert_eq!(
+            engine.orders.timer_elements[0].remaining, 1,
+            "the stealth context must reach the synchronous splice before the timer scan"
+        );
     }
 
     #[test]
