@@ -518,6 +518,11 @@ impl TimelineRuntime {
         self.execution_trace.emit(stage);
     }
 
+    #[cfg(test)]
+    fn execution_trace(&self) -> &[FrameContractStage] {
+        &self.execution_trace.stages
+    }
+
     /// Capture timeline state into an already-created driver frame.
     ///
     /// Graphical networking can append current-frame inputs before this
@@ -698,6 +703,21 @@ fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: Miss
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timeline_for_trace_test(contract: FrameContract) -> TimelineRuntime {
+        TimelineRuntime::new(
+            ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            contract,
+            false,
+            true,
+        )
+    }
 
     #[test]
     fn mission_control_round_trips_without_defaulting_process_state() {
@@ -897,6 +917,24 @@ mod tests {
     fn recorder_frame_finalization_is_exactly_once_when_recording_is_skipped() {
         let mut frame = MissionFrame::new(0);
         assert!(!frame.close_recording());
+        assert_eq!(frame.recorder_state, RecorderFrameState::Finished);
+    }
+
+    #[test]
+    fn real_recorder_finalization_seam_emits_the_commit_stage() {
+        let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+        timeline.begin_execution_trace(FrameContractStage::ModalDrain);
+        let mut frame = MissionFrame::new(0);
+
+        timeline.finish_recording(&mut frame);
+
+        assert_eq!(
+            timeline.execution_trace(),
+            [
+                FrameContractStage::ModalDrain,
+                FrameContractStage::RecorderCommit,
+            ]
+        );
         assert_eq!(frame.recorder_state, RecorderFrameState::Finished);
     }
 
