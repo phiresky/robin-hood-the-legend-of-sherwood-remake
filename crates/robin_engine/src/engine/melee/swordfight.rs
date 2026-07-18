@@ -668,15 +668,15 @@ impl EngineInner {
             {
                 let eye_a = self
                     .get_entity(initiator)
-                    .map(compute_upright_eye_point_map_space);
+                    .and_then(|e| e.compute_eyes_point(Some(Posture::Upright)));
                 let eye_b = self
                     .get_entity(opponent)
-                    .map(compute_upright_eye_point_map_space);
+                    .and_then(|e| e.compute_eyes_point(Some(Posture::Upright)));
                 if let (Some(a), Some(b)) = (eye_a, eye_b)
                     && !crate::sight_obstacle::is_reachable_3d(
                         self.sight_obstacles(assets),
-                        a,
-                        b,
+                        [a.x, a.y, a.z],
+                        [b.x, b.y, b.z],
                         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                     )
                 {

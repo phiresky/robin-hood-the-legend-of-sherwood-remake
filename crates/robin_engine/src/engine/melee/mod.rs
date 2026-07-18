@@ -189,20 +189,6 @@ fn compute_belt_point(entity: &crate::element::Entity) -> crate::coordinates::Wo
     }
 }
 
-fn compute_upright_eye_point_map_space(entity: &crate::element::Entity) -> [f32; 3] {
-    let Some(eye) = entity.compute_eyes_point(Some(Posture::Upright)) else {
-        let pos = entity.element_data().position();
-        let map = entity.element_data().position_map();
-        return [map.x, map.y, pos.z];
-    };
-    let ground_z = entity.element_data().position().z;
-    // `compute_eyes_point` returns render-space Y (`map_y + elevation`).
-    // C++ `ComputeEyesPoint` / `IsReachable` uses map-space XY with Z
-    // separate, so strip the feet elevation before the obstacle raycast.
-    let eye_map = crate::coordinates::MapPoint::from_world_xyz(eye.x, eye.y, ground_z);
-    [eye_map.x, eye_map.y, eye.z]
-}
-
 /// Number of frames per parry.
 pub(crate) const TIME_TO_STAY_IN_PARRY_MODE: u16 = 30;
 

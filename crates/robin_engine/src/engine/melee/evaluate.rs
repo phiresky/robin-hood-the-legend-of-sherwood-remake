@@ -480,7 +480,6 @@ impl EngineInner {
             self_uber: f32,
             opp_uber: f32,
             self_max: f32,
-            self_layer: u16,
         }
         let mut snaps: Vec<Snap> = Vec::new();
         for (entity_id, entity) in self.world.entities.humans() {
@@ -532,7 +531,6 @@ impl EngineInner {
             let is_soldier = entity.is_soldier();
 
             let self_pos_3d = entity.element_data().position();
-            let self_layer = entity.element_data().layer();
             let self_sector = entity.element_data().sector().map(i16::from).unwrap_or(0);
             let opp = match self.get_entity(principal_id) {
                 Some(e) => e,
@@ -571,7 +569,6 @@ impl EngineInner {
                 self_uber,
                 opp_uber,
                 self_max,
-                self_layer,
             });
         }
 
@@ -613,22 +610,17 @@ impl EngineInner {
                     .get_entity(snap.principal_id)
                     .and_then(|e| e.compute_eyes_point(Some(crate::element::Posture::Upright)));
                 if let (Some(p1e), Some(p2e)) = (self_eye, opp_eye) {
-                    let p1 = crate::coordinates::WorldPoint3D {
-                        x: p1e.x,
-                        y: p1e.y,
-                        z: p1e.z,
-                    };
-                    let p2 = crate::coordinates::WorldPoint3D {
-                        x: p2e.x,
-                        y: p2e.y,
-                        z: p2e.z,
-                    };
-                    let los_clear = self.world.fast_grid.is_reachable_3d(
-                        p1,
-                        p2,
-                        snap.self_layer,
-                        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                    // C++ `RHFastFindGrid::IsReachable(SBGeoPoint3D, ...)`
+                    // only queries 3D sight obstacles. It does not test
+                    // 2D motion lines: those belong to a separate movement
+                    // overload. Including them here makes a valid sector
+                    // boundary (notably Leicester's bridge) repeatedly
+                    // cancel an otherwise valid swordfight.
+                    let los_clear = crate::sight_obstacle::is_reachable_3d(
                         self.sight_obstacles(assets),
+                        [p1e.x, p1e.y, p1e.z],
+                        [p2e.x, p2e.y, p2e.z],
+                        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                     );
                     if !los_clear {
                         prune_for_distance = true;
