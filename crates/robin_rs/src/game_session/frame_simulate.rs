@@ -5,6 +5,8 @@
 //! modals, and the handoff to presentation.
 
 use super::flow::{FrameControl, MissionServices};
+use super::interactive::{MissionPresentation, MissionResources};
+use super::runtime::FrameContractStage;
 use super::*;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -42,6 +44,90 @@ pub(super) struct InteractiveFrameSimulation {
     flags: FrameSimulationFlags,
 }
 
+struct SimulationModalState {
+    frame: MissionFrame,
+    rewind_active: bool,
+    consumed_buffered: bool,
+    shift_held: bool,
+    modal_rendered_this_frame: bool,
+    auto_dismiss_modals: bool,
+    tick_exit_code: Option<GameCode>,
+}
+
+/// Host-only visual state which must be refreshed immediately after the
+/// deterministic tick but before scripted modal drains.
+struct SimulationVisualRefresh<'a> {
+    last_shadow_color: &'a mut u16,
+    manager: &'a mut robin_engine::engine_manager::EngineManager,
+    host: &'a mut Host,
+    dev: &'a mut robin_engine::engine::DevState,
+    presentation: &'a mut MissionPresentation,
+    resources: &'a mut MissionResources,
+    window: &'a GameWindow,
+}
+
+impl SimulationVisualRefresh<'_> {
+    fn run(self) {
+        let Self {
+            last_shadow_color,
+            manager,
+            host,
+            dev,
+            presentation,
+            resources,
+            window,
+        } = self;
+
+        let current_shadow_color = manager.engine.weather().night_color;
+        if current_shadow_color != *last_shadow_color {
+            tracing::info!(
+                "Ambience shadow-key changed {:#06x} → {:#06x}; rebinding sprite caches",
+                last_shadow_color,
+                current_shadow_color,
+            );
+            presentation.rebind_shadow_key(resources, host, &window.gpu, current_shadow_color);
+            *last_shadow_color = current_shadow_color;
+        }
+
+        // Console `LEVEL TEXT D/DB/PT` requests are host-side because the
+        // descriptor tables deliberately do not live in deterministic state.
+        if dev.debug.all_dialogues {
+            dev.debug.all_dialogues = false;
+            if let Some(descriptors) = &resources.level_descriptors {
+                host.pending_dialogues
+                    .extend((0..descriptors.dialogues.len()).map(|index| index as i32));
+            } else {
+                tracing::warn!("cheat all_dialogues: level descriptors unavailable");
+            }
+        }
+        if dev.debug.all_popup_texts {
+            dev.debug.all_popup_texts = false;
+            if let Some(descriptors) = &resources.level_descriptors {
+                host.pending_popup_texts.extend(
+                    (0..descriptors.popup_text.picture_ids.len()).map(|index| index as i32),
+                );
+            } else {
+                tracing::warn!("cheat all_popup_texts: level descriptors unavailable");
+            }
+        }
+        if dev.debug.all_debriefings {
+            dev.debug.all_debriefings = false;
+            if let Some(descriptors) = &resources.level_descriptors {
+                host.pending_debriefings.extend(
+                    (0..descriptors.debriefing.lose_count as usize)
+                        .map(|index| engine_player_command::DebriefingTextId::Lose { index }),
+                );
+                host.pending_debriefings.extend(
+                    (0..descriptors.debriefing.win_count as usize)
+                        .map(|index| engine_player_command::DebriefingTextId::Win { index }),
+                );
+            } else {
+                tracing::warn!("cheat all_debriefings: level descriptors unavailable");
+            }
+        }
+    }
+}
+
 impl InteractiveFrameSimulation {
     pub(super) fn new(frame: MissionFrame, flags: FrameSimulationFlags) -> Self {
         Self { frame, flags }
@@ -54,9 +140,16 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameSimulationOutcome, String> {
+        let state = Self::advance_simulation(self, mission, services);
+        Self::drive_modals(mission, services, state).await
+    }
+
+    fn advance_simulation(
+        this: Self,
+        mission: &mut InteractiveMission,
+        services: &mut MissionServices<'_>,
+    ) -> SimulationModalState {
         let window = &mut *services.window;
-        let callbacks = &mut *services.callbacks;
-        let profiles = services.profiles;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
@@ -80,18 +173,16 @@ impl InteractiveFrameSimulation {
             last_shadow_color,
             ..
         } = control;
-        let input = &mut frontend.input;
-        let audio = &mut frontend.audio;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let presentation = &mut frontend.presentation;
-        let Self { mut frame, flags } = self;
+        let Self { mut frame, flags } = this;
         let FrameSimulationFlags {
             rewind_active,
             paused,
             consumed_buffered,
             shift_held,
-            modal_rendered: mut modal_rendered_this_frame,
+            modal_rendered: modal_rendered_this_frame,
             step_forward_pressed,
             step_back_pressed,
         } = flags;
@@ -103,7 +194,7 @@ impl InteractiveFrameSimulation {
             manager,
             assets,
             dev,
-            &frame,
+            &mut frame,
             rewind_active,
             paused,
             consumed_buffered,
@@ -120,68 +211,63 @@ impl InteractiveFrameSimulation {
             step_forward_pressed,
             step_back_pressed,
         );
-        // ── Rebind shadow key on ambience change ──
-        // The shadow key is baked into frame dictionaries at load
-        // time and never re-run, which would leave loaded sprites
-        // with a stale shadow key if the ambience ever changed
-        // (day→fog, day→night). Poll the engine state's
-        // `night_color` and re-run the shadow-dependent host
-        // renderers on change. No current code path mutates
-        // `weather.ambiance` post-load, so this is dormant until a
-        // future weather/scripting feature wires a trigger.
-        let current_shadow_color = manager.engine.weather().night_color;
-        if current_shadow_color != *last_shadow_color {
-            tracing::info!(
-                "Ambience shadow-key changed {:#06x} → {:#06x}; rebinding sprite caches",
-                last_shadow_color,
-                current_shadow_color,
-            );
-            presentation.rebind_shadow_key(resources, host, &window.gpu, current_shadow_color);
-            // Frame counts don't change on a shadow-key rebind — same
-            // resource rows reloaded with a different shadow colour —
-            // so the engine's `titbit_row_frame_counts` stays valid.
-            *last_shadow_color = current_shadow_color;
+        SimulationVisualRefresh {
+            last_shadow_color,
+            manager,
+            host,
+            dev,
+            presentation,
+            resources,
+            window,
         }
+        .run();
 
-        // ── Expand DisplayAll cheats ──
-        // Console `LEVEL TEXT D/DB/PT` sets `dev.debug.all_*` bools.
-        // The engine tick can't expand them because level descriptors
-        // live host-side; we do the expansion here using the same
-        // typed IDs the drain code below already understands.
-        if dev.debug.all_dialogues {
-            dev.debug.all_dialogues = false;
-            if let Some(descriptors) = &resources.level_descriptors {
-                let count = descriptors.dialogues.len();
-                host.pending_dialogues.extend((0..count).map(|i| i as i32));
-            } else {
-                tracing::warn!("cheat all_dialogues: level descriptors unavailable");
-            }
+        SimulationModalState {
+            frame,
+            rewind_active,
+            consumed_buffered,
+            shift_held,
+            modal_rendered_this_frame,
+            auto_dismiss_modals,
+            tick_exit_code,
         }
-        if dev.debug.all_popup_texts {
-            dev.debug.all_popup_texts = false;
-            if let Some(descriptors) = &resources.level_descriptors {
-                let count = descriptors.popup_text.picture_ids.len();
-                host.pending_popup_texts
-                    .extend((0..count).map(|i| i as i32));
-            } else {
-                tracing::warn!("cheat all_popup_texts: level descriptors unavailable");
-            }
-        }
-        if dev.debug.all_debriefings {
-            dev.debug.all_debriefings = false;
-            if let Some(descriptors) = &resources.level_descriptors {
-                let lose = descriptors.debriefing.lose_count as usize;
-                let win = descriptors.debriefing.win_count as usize;
-                host.pending_debriefings.extend(
-                    (0..lose).map(|index| engine_player_command::DebriefingTextId::Lose { index }),
-                );
-                host.pending_debriefings.extend(
-                    (0..win).map(|index| engine_player_command::DebriefingTextId::Win { index }),
-                );
-            } else {
-                tracing::warn!("cheat all_debriefings: level descriptors unavailable");
-            }
-        }
+    }
+
+    async fn drive_modals(
+        mission: &mut InteractiveMission,
+        services: &mut MissionServices<'_>,
+        state: SimulationModalState,
+    ) -> Result<FrameSimulationOutcome, String> {
+        let window = &mut *services.window;
+        let callbacks = &mut *services.callbacks;
+        let profiles = services.profiles;
+        let InteractiveMission { runtime, frontend } = mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            ..
+        } = runtime;
+        let MissionWorld {
+            host,
+            game,
+            manager,
+            assets,
+            ..
+        } = world;
+        let input = &mut frontend.input;
+        let audio = &mut frontend.audio;
+        let resources = &mut frontend.resources;
+        let ui = &mut frontend.ui;
+        let presentation = &mut frontend.presentation;
+        let SimulationModalState {
+            mut frame,
+            rewind_active,
+            consumed_buffered,
+            shift_held,
+            mut modal_rendered_this_frame,
+            auto_dismiss_modals,
+            tick_exit_code,
+        } = state;
 
         if auto_dismiss_modals {
             drain_pending_dialogues(
@@ -756,12 +842,8 @@ impl InteractiveFrameSimulation {
                         // `handle_quit` writes the continue-save and
                         // the outer session returns to the main
                         // menu.
-                        if let Some(ref mut recorder) = runtime.replay_recorder
-                            && !rewind_active
-                            && !consumed_buffered
-                        {
-                            recorder.end_frame();
-                        }
+                        runtime.finish_recording(&mut frame);
+                        runtime.trace(FrameContractStage::Exit);
                         return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                             GameCode::Quit,
                         )));
@@ -770,6 +852,7 @@ impl InteractiveFrameSimulation {
             }
         }
 
+        runtime.trace(FrameContractStage::ModalDrain);
         Ok(FrameSimulationOutcome::Present(FramePresentationHandoff {
             frame,
             rewind_active,
@@ -788,7 +871,7 @@ impl InteractiveFrameSimulation {
         manager: &mut robin_engine::engine_manager::EngineManager,
         assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
         dev: &mut robin_engine::engine::DevState,
-        frame: &MissionFrame,
+        frame: &mut MissionFrame,
         rewind_active: bool,
         paused: bool,
         consumed_buffered: bool,
@@ -802,11 +885,8 @@ impl InteractiveFrameSimulation {
         // pass). The hash itself was computed at the top of the
         // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
-        runtime.record_commands(
-            frame.recorder_hash,
-            &frame.commands.commands,
-            !rewind_active && !consumed_buffered,
-        );
+        runtime.record_commands(frame, !rewind_active && !consumed_buffered);
+        runtime.trace(FrameContractStage::Simulation);
 
         // ── Engine tick ──
         // The pause menu freezes the simulation by skipping the
@@ -866,6 +946,7 @@ impl InteractiveFrameSimulation {
             }
         }
 
+        runtime.trace(FrameContractStage::HostRpcAndTimelineCommit);
         tick_exit_code
     }
 

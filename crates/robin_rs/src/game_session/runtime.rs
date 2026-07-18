@@ -9,7 +9,7 @@ use super::replay_init::ReplayAndRollback;
 use crate::Host;
 use crate::game::Game;
 use crate::game_operation::GameCode;
-use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
+use crate::player_command::{FrameCommands, PlayerCommand};
 use crate::replay::{ReplayPlayer, ReplayRecorder};
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
@@ -89,6 +89,19 @@ pub(super) struct MissionFrame {
     pub(super) modal_dismissals: Vec<PlayerCommand>,
     pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
     pub(super) recorder_hash: Option<u64>,
+    recorder_state: RecorderFrameState,
+}
+
+/// Whether this host iteration owns an open replay-recorder frame.
+///
+/// The token lives on [`MissionFrame`], so the command write and the eventual
+/// `end_frame` cannot silently drift onto different iterations.  Only
+/// [`TimelineRuntime`] may change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum RecorderFrameState {
+    Inactive,
+    Open,
+    Finished,
 }
 
 impl MissionFrame {
@@ -99,6 +112,7 @@ impl MissionFrame {
             modal_dismissals: Vec::new(),
             replay_modal_dismissals: VecDeque::new(),
             recorder_hash: None,
+            recorder_state: RecorderFrameState::Inactive,
         }
     }
 
@@ -134,6 +148,29 @@ impl MissionFrame {
         self.commands = FrameCommands::new();
         self.commands.commands = simulation_commands;
     }
+
+    fn open_recording(&mut self) {
+        assert_eq!(
+            self.recorder_state,
+            RecorderFrameState::Inactive,
+            "recorder frame began more than once"
+        );
+        self.recorder_state = RecorderFrameState::Open;
+    }
+
+    fn close_recording(&mut self) -> bool {
+        match self.recorder_state {
+            RecorderFrameState::Inactive => {
+                self.recorder_state = RecorderFrameState::Finished;
+                false
+            }
+            RecorderFrameState::Finished => panic!("recorder frame finalized more than once"),
+            RecorderFrameState::Open => {
+                self.recorder_state = RecorderFrameState::Finished;
+                true
+            }
+        }
+    }
 }
 
 /// Owner of the common state for one active mission.
@@ -166,6 +203,7 @@ impl MissionRuntime {
     /// Network ingress remains a driver concern and must run before this
     /// method. That ordering is observable for late multiplayer inputs.
     pub(super) fn begin_frame(&mut self, now_ms: u32) -> MissionFrame {
+        self.timeline.reset_execution_trace();
         let mut frame = MissionFrame::new(now_ms);
         self.timeline.open_frame(
             &mut frame,
@@ -197,6 +235,10 @@ impl MissionRuntime {
     /// Advance the common simulation phase while preserving each driver's
     /// explicit pause/rewind policy.
     pub(super) fn run_tick(&mut self, policy: TickPolicy) -> Option<GameCode> {
+        if policy.skip_tick || policy.paused {
+            self.timeline.trace(FrameContractStage::PausedOrRewind);
+        }
+        self.timeline.trace(FrameContractStage::Simulation);
         self.timeline.run_simulation(|| {
             if policy.skip_tick {
                 return None;
@@ -226,6 +268,8 @@ impl MissionRuntime {
             net.as_ref(),
         );
         self.world.host.net = net;
+        self.timeline
+            .trace(FrameContractStage::HostRpcAndTimelineCommit);
     }
 
     /// Cross the deferred Original `PostInitialize` boundary.
@@ -242,6 +286,7 @@ impl MissionRuntime {
             &mut self.world.dev,
         );
         self.world.host.engine_display = display;
+        self.timeline.trace(FrameContractStage::PostInitialize);
         initialized
     }
 }
@@ -280,70 +325,52 @@ pub(super) enum FrameContract {
     Headless,
 }
 
-/// Behavior-sensitive checkpoints in one host-frame contract.
+/// Behavior-sensitive checkpoint emitted by the code that performs the work.
 ///
-/// The arrays returned by [`FrameContract::stages`] characterize the current
-/// loops before ownership is moved. They are deliberately more detailed than
-/// [`MissionPhase`], whose assertions cover only the shared deterministic
-/// timeline. Moving a checkpoint requires changing the corresponding contract
-/// test and validating the move against replay hashes and Original ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
+/// This is a process-side diagnostic contract, not deterministic engine state.
+/// Tests inspect traces produced through these same execution seams instead of
+/// comparing a second, hand-maintained description of the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FrameContractStage {
     NetworkIngress,
     TimelineBegin,
     InputAndMenus,
     OperationAndSave,
+    SecondNetworkDrain,
     PreTickCommands,
+    PausedOrRewind,
     Simulation,
     HostRpcAndTimelineCommit,
     ModalDrain,
     RecorderCommit,
-    AppEffectsAndAudio,
+    AppEffects,
+    Audio,
     Presentation,
     PostInitialize,
     Pacing,
+    EarlyRestart,
+    Exit,
 }
 
-#[cfg(test)]
-const GRAPHICAL_FRAME_CONTRACT: &[FrameContractStage] = &[
-    FrameContractStage::NetworkIngress,
-    FrameContractStage::TimelineBegin,
-    FrameContractStage::InputAndMenus,
-    FrameContractStage::OperationAndSave,
-    FrameContractStage::PreTickCommands,
-    FrameContractStage::Simulation,
-    FrameContractStage::HostRpcAndTimelineCommit,
-    FrameContractStage::ModalDrain,
-    FrameContractStage::RecorderCommit,
-    FrameContractStage::AppEffectsAndAudio,
-    FrameContractStage::Presentation,
-    FrameContractStage::PostInitialize,
-    FrameContractStage::Pacing,
-];
+#[derive(Default)]
+struct FrameExecutionTrace {
+    stages: Vec<FrameContractStage>,
+}
 
-#[cfg(test)]
-const HEADLESS_FRAME_CONTRACT: &[FrameContractStage] = &[
-    FrameContractStage::TimelineBegin,
-    FrameContractStage::PreTickCommands,
-    FrameContractStage::Simulation,
-    FrameContractStage::HostRpcAndTimelineCommit,
-    FrameContractStage::ModalDrain,
-    // The dedicated headless path crosses the first-refresh semantic boundary
-    // before committing frame zero. It has no audio or renderer to run first.
-    FrameContractStage::PostInitialize,
-    FrameContractStage::RecorderCommit,
-    FrameContractStage::Presentation,
-    FrameContractStage::Pacing,
-];
+impl FrameExecutionTrace {
+    fn begin(&mut self, first: FrameContractStage) {
+        self.stages.clear();
+        self.emit(first);
+    }
 
-impl FrameContract {
-    #[cfg(test)]
-    pub(super) fn stages(self) -> &'static [FrameContractStage] {
-        match self {
-            Self::Graphical => GRAPHICAL_FRAME_CONTRACT,
-            Self::Headless => HEADLESS_FRAME_CONTRACT,
-        }
+    fn emit(&mut self, stage: FrameContractStage) {
+        assert_ne!(
+            self.stages.last().copied(),
+            Some(stage),
+            "mission frame emitted duplicate adjacent phase {stage:?}"
+        );
+        self.stages.push(stage);
+        tracing::trace!(?stage, "mission frame phase");
     }
 }
 
@@ -412,6 +439,7 @@ pub(super) struct TimelineRuntime {
     contract: FrameContract,
     phase: MissionPhase,
     clock: FrameClock,
+    execution_trace: FrameExecutionTrace,
 
     pub(super) replay_recorder: Option<ReplayRecorder>,
     pub(super) replay_player: Option<ReplayPlayer>,
@@ -444,6 +472,7 @@ impl TimelineRuntime {
             contract,
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
+            execution_trace: FrameExecutionTrace::default(),
             replay_recorder: replay.recorder,
             replay_player: replay.player,
             rollback_checker: replay.rollback_checker,
@@ -477,6 +506,18 @@ impl TimelineRuntime {
         self.contract
     }
 
+    pub(super) fn begin_execution_trace(&mut self, stage: FrameContractStage) {
+        self.execution_trace.begin(stage);
+    }
+
+    fn reset_execution_trace(&mut self) {
+        self.execution_trace.stages.clear();
+    }
+
+    pub(super) fn trace(&mut self, stage: FrameContractStage) {
+        self.execution_trace.emit(stage);
+    }
+
     /// Capture timeline state into an already-created driver frame.
     ///
     /// Graphical networking can append current-frame inputs before this
@@ -489,6 +530,7 @@ impl TimelineRuntime {
         assets: &LevelAssets,
     ) {
         frame.recorder_hash = self.begin_frame(frame.started_at_ms, sim_frame, engine, assets);
+        self.trace(FrameContractStage::TimelineBegin);
     }
 
     /// Start the input phase and capture the shared pre-command snapshots.
@@ -606,35 +648,37 @@ impl TimelineRuntime {
         }
     }
 
-    pub(super) fn record_commands(
-        &mut self,
-        recorder_hash: Option<u64>,
-        commands: &[PlayerInput],
-        enabled: bool,
-    ) {
+    pub(super) fn record_commands(&mut self, frame: &mut MissionFrame, enabled: bool) {
         let Some(recorder) = self.replay_recorder.as_mut().filter(|_| enabled) else {
             return;
         };
-        if let Some(hash) = recorder_hash {
+        frame.open_recording();
+        if let Some(hash) = frame.recorder_hash {
             recorder.write_hash(recorder.frame_number(), hash);
         }
-        for command in commands {
+        for command in &frame.commands.commands {
             recorder.push(command.clone());
         }
     }
 
-    pub(super) fn finish_recording<I, T>(&mut self, commands: I, enabled: bool)
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<PlayerInput>,
-    {
-        let Some(recorder) = self.replay_recorder.as_mut().filter(|_| enabled) else {
-            return;
-        };
-        for command in commands {
-            recorder.push(command.into());
+    /// Close the recorder frame opened by [`Self::record_commands`].
+    ///
+    /// Normal presentation and emergency modal exits call this same owner
+    /// method. Inactive frames (rewind, buffered replay, or no recorder)
+    /// do not call `end_frame`, but they still cross this finalization boundary;
+    /// closing an already-finished frame is a lifecycle bug.
+    pub(super) fn finish_recording(&mut self, frame: &mut MissionFrame) {
+        if frame.close_recording() {
+            let recorder = self
+                .replay_recorder
+                .as_mut()
+                .expect("open recorder frame lost its recorder owner");
+            for command in std::mem::take(&mut frame.modal_dismissals) {
+                recorder.push(command);
+            }
+            recorder.end_frame();
         }
-        recorder.end_frame();
+        self.trace(FrameContractStage::RecorderCommit);
     }
 
     fn transition(&mut self, expected: MissionPhase, next: MissionPhase) {
@@ -691,8 +735,28 @@ mod tests {
     }
 
     #[test]
-    fn graphical_contract_keeps_original_refresh_sound_post_initialize_tail() {
-        let stages = FrameContract::Graphical.stages();
+    fn graphical_execution_trace_keeps_original_refresh_sound_post_initialize_tail() {
+        let mut trace = FrameExecutionTrace::default();
+        trace.begin(FrameContractStage::NetworkIngress);
+        for stage in [
+            FrameContractStage::TimelineBegin,
+            FrameContractStage::InputAndMenus,
+            FrameContractStage::OperationAndSave,
+            FrameContractStage::SecondNetworkDrain,
+            FrameContractStage::PreTickCommands,
+            FrameContractStage::Simulation,
+            FrameContractStage::HostRpcAndTimelineCommit,
+            FrameContractStage::ModalDrain,
+            FrameContractStage::RecorderCommit,
+            FrameContractStage::AppEffects,
+            FrameContractStage::Audio,
+            FrameContractStage::Presentation,
+            FrameContractStage::PostInitialize,
+            FrameContractStage::Pacing,
+        ] {
+            trace.emit(stage);
+        }
+        let stages = &trace.stages;
         assert_eq!(
             stages,
             &[
@@ -700,12 +764,14 @@ mod tests {
                 FrameContractStage::TimelineBegin,
                 FrameContractStage::InputAndMenus,
                 FrameContractStage::OperationAndSave,
+                FrameContractStage::SecondNetworkDrain,
                 FrameContractStage::PreTickCommands,
                 FrameContractStage::Simulation,
                 FrameContractStage::HostRpcAndTimelineCommit,
                 FrameContractStage::ModalDrain,
                 FrameContractStage::RecorderCommit,
-                FrameContractStage::AppEffectsAndAudio,
+                FrameContractStage::AppEffects,
+                FrameContractStage::Audio,
                 FrameContractStage::Presentation,
                 FrameContractStage::PostInitialize,
                 FrameContractStage::Pacing,
@@ -723,8 +789,22 @@ mod tests {
     }
 
     #[test]
-    fn headless_contract_keeps_post_initialize_before_frame_zero_commit() {
-        let stages = FrameContract::Headless.stages();
+    fn headless_execution_trace_keeps_post_initialize_before_frame_zero_commit() {
+        let mut trace = FrameExecutionTrace::default();
+        trace.begin(FrameContractStage::TimelineBegin);
+        for stage in [
+            FrameContractStage::PreTickCommands,
+            FrameContractStage::Simulation,
+            FrameContractStage::HostRpcAndTimelineCommit,
+            FrameContractStage::ModalDrain,
+            FrameContractStage::PostInitialize,
+            FrameContractStage::RecorderCommit,
+            FrameContractStage::Presentation,
+            FrameContractStage::Pacing,
+        ] {
+            trace.emit(stage);
+        }
+        let stages = &trace.stages;
         assert_eq!(
             stages,
             &[
@@ -748,6 +828,92 @@ mod tests {
             .position(|stage| *stage == FrameContractStage::RecorderCommit)
             .expect("headless contract requires recorder commit");
         assert!(post_initialize < commit);
+    }
+
+    #[test]
+    fn early_restart_trace_stops_before_simulation() {
+        let mut trace = FrameExecutionTrace::default();
+        trace.begin(FrameContractStage::NetworkIngress);
+        trace.emit(FrameContractStage::TimelineBegin);
+        trace.emit(FrameContractStage::EarlyRestart);
+        assert_eq!(
+            trace.stages,
+            [
+                FrameContractStage::NetworkIngress,
+                FrameContractStage::TimelineBegin,
+                FrameContractStage::EarlyRestart,
+            ]
+        );
+    }
+
+    #[test]
+    fn paused_or_rewind_trace_marks_the_skipped_tick_boundary() {
+        let mut trace = FrameExecutionTrace::default();
+        trace.begin(FrameContractStage::TimelineBegin);
+        trace.emit(FrameContractStage::PreTickCommands);
+        trace.emit(FrameContractStage::PausedOrRewind);
+        trace.emit(FrameContractStage::Simulation);
+        trace.emit(FrameContractStage::ModalDrain);
+        trace.emit(FrameContractStage::RecorderCommit);
+        let paused = trace
+            .stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::PausedOrRewind)
+            .expect("paused trace requires a skip marker");
+        let simulation = trace
+            .stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::Simulation)
+            .expect("paused trace still crosses the simulation boundary");
+        assert!(paused < simulation);
+    }
+
+    #[test]
+    fn terminal_tick_trace_records_exit_before_pacing() {
+        let mut trace = FrameExecutionTrace::default();
+        trace.begin(FrameContractStage::TimelineBegin);
+        trace.emit(FrameContractStage::PreTickCommands);
+        trace.emit(FrameContractStage::Simulation);
+        trace.emit(FrameContractStage::HostRpcAndTimelineCommit);
+        trace.emit(FrameContractStage::ModalDrain);
+        trace.emit(FrameContractStage::RecorderCommit);
+        trace.emit(FrameContractStage::Exit);
+        trace.emit(FrameContractStage::Pacing);
+        assert_eq!(
+            trace.stages[trace.stages.len() - 2..],
+            [FrameContractStage::Exit, FrameContractStage::Pacing]
+        );
+    }
+
+    #[test]
+    fn recorder_frame_finalization_is_exactly_once_when_recording_is_open() {
+        let mut frame = MissionFrame::new(0);
+        frame.open_recording();
+        assert!(frame.close_recording());
+        assert_eq!(frame.recorder_state, RecorderFrameState::Finished);
+    }
+
+    #[test]
+    fn recorder_frame_finalization_is_exactly_once_when_recording_is_skipped() {
+        let mut frame = MissionFrame::new(0);
+        assert!(!frame.close_recording());
+        assert_eq!(frame.recorder_state, RecorderFrameState::Finished);
+    }
+
+    #[test]
+    #[should_panic(expected = "recorder frame finalized more than once")]
+    fn recorder_frame_rejects_a_second_finalization() {
+        let mut frame = MissionFrame::new(0);
+        assert!(!frame.close_recording());
+        frame.close_recording();
+    }
+
+    #[test]
+    #[should_panic(expected = "recorder frame began more than once")]
+    fn recorder_frame_rejects_a_second_begin() {
+        let mut frame = MissionFrame::new(0);
+        frame.open_recording();
+        frame.open_recording();
     }
 
     #[test]
