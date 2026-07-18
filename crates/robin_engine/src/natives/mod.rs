@@ -368,32 +368,120 @@ impl NativeContext<'_, '_> {
     }
 
     fn selected_pc_handles(&self) -> Vec<i32> {
-        let mut selected: Vec<i32> = self
-            .selected_pcs
+        self.selected_pcs
+            .as_deref()
             .expect("script native requires a live player-selection query view")
             .iter()
             .copied()
             .map(Self::actor_handle)
-            .collect();
-        for command in &self.deferred_commands {
-            let DeferredCommand::SelectPC { actor, select } = command else {
-                continue;
-            };
-            if *actor == 0 {
-                if *select {
-                    selected = self.pc_handles();
-                } else {
-                    selected.clear();
+            .collect()
+    }
+
+    /// Original `RHMessenger::ForwardMessage` applies PC selection before
+    /// returning to the script VM. Keep that query-visible mutation on the
+    /// canonical local-seat vector; the deferred command remains only for
+    /// engine/sequence side effects that cannot run under this borrow set.
+    fn apply_script_selection(&mut self, actor: i32, select: bool) {
+        if actor == 0 {
+            let selected = if select {
+                let pc_ids: Vec<EntityId> = self
+                    .entities
+                    .pcs()
+                    .map(|(id, _)| EntityId::Pc(id))
+                    .collect();
+                let mut selected = Vec::new();
+                for id in pc_ids {
+                    if !self.pc_is_selectable(id) {
+                        continue;
+                    }
+                    let is_robin = matches!(
+                        self.entities.get(id),
+                        Some(Entity::Pc(pc)) if pc.pc.robin
+                    );
+                    if is_robin {
+                        selected.insert(0, id);
+                    } else {
+                        selected.push(id);
+                    }
                 }
-            } else if *select {
-                if !selected.contains(actor) {
-                    selected.push(*actor);
-                }
+                selected
             } else {
-                selected.retain(|handle| handle != actor);
-            }
+                Vec::new()
+            };
+            *self
+                .selected_pcs
+                .as_deref_mut()
+                .expect("script native requires a live player-selection query view") = selected;
+            return;
         }
-        selected
+
+        let id = self
+            .actor_id(actor)
+            .expect("SelectActorPC validates the actor before applying selection");
+        if select {
+            if self.pc_is_selectable(id) {
+                let selected = self
+                    .selected_pcs
+                    .as_deref_mut()
+                    .expect("script native requires a live player-selection query view");
+                selected.clear();
+                selected.push(id);
+            }
+        } else {
+            self.selected_pcs
+                .as_deref_mut()
+                .expect("script native requires a live player-selection query view")
+                .retain(|&selected| selected != id);
+        }
+    }
+
+    fn pc_is_selectable(&self, id: EntityId) -> bool {
+        let Some(Entity::Pc(pc)) = self.entities.get(id) else {
+            return false;
+        };
+        let posture = pc.element.posture;
+        let in_coma = self
+            .campaign
+            .as_deref()
+            .and_then(|campaign| campaign.characters.get(usize::from(pc.pc.list_index)))
+            .filter(|description| description.character_profile_idx == Some(pc.pc.profile_index))
+            .is_some_and(|description| description.status.in_coma);
+        if pc.pc.life_points == 0
+            || pc.human.unconscious
+            || pc.human.stuck_under_nets_counter > 0
+            || matches!(posture, Posture::Tied | Posture::Carried)
+            || in_coma
+            || !pc.pc.playable
+        {
+            return false;
+        }
+
+        let in_building = if pc.element.active {
+            false
+        } else {
+            let position = pc.element.position_map();
+            let point = crate::coordinates::MapPoint::new(position.x, position.y);
+            matches!(
+                self.fast_grid.get_sector(point, point, pc.element.layer()),
+                crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
+                    if self
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(sector_idx))
+                        .is_some_and(|sector| sector.sector_type.is_building())
+            )
+        };
+        if !pc.element.active && !in_building {
+            return false;
+        }
+
+        let is_vip = self
+            .bindings
+            .profile_manager
+            .get_character(pc.pc.profile_index)
+            .is_some_and(|profile| profile.vip);
+        !is_vip || !self.script_domains.mission_ui.men_to_blazon_conversion_mode
     }
 
     fn sound_source_count(&self) -> usize {
@@ -2739,14 +2827,20 @@ impl NativeContext<'_, '_> {
                 Select => {
                     let code = stack.pop_i32();
                     match code {
-                        31 => self.deferred_commands.push(DeferredCommand::SelectPC {
-                            actor: 0,
-                            select: true,
-                        }),
-                        0 => self.deferred_commands.push(DeferredCommand::SelectPC {
-                            actor: 0,
-                            select: false,
-                        }),
+                        31 => {
+                            self.apply_script_selection(0, true);
+                            self.deferred_commands.push(DeferredCommand::SelectPC {
+                                actor: 0,
+                                select: true,
+                            });
+                        }
+                        0 => {
+                            self.apply_script_selection(0, false);
+                            self.deferred_commands.push(DeferredCommand::SelectPC {
+                                actor: 0,
+                                select: false,
+                            });
+                        }
                         _ => tracing::warn!(
                             "Select: only codes 31 (select all) and 0 (unselect all) supported, got {code}"
                         ),
@@ -5833,7 +5927,9 @@ impl NativeContext<'_, '_> {
                     let target_in_same_building =
                         viewer_in_building && tgt_building_sector == viewer_building_sector;
 
-                    let sight_obstacle_list = self.bindings.sight_obstacles.list();
+                    let sight_obstacle_list = self
+                        .sight_obstacles
+                        .expect("Sees requires live canonical sight-obstacle views");
                     let target_obstacle = target_entity
                         .element_data()
                         .obstacle_index()
@@ -7627,6 +7723,7 @@ impl NativeContext<'_, '_> {
                         );
                         return 0;
                     }
+                    self.script_domains.scrolls.status.insert(scroll_h, status);
                     self.commands.push(EngineCommand::SetScrollStatus {
                         scroll_handle: scroll_h,
                         status,
@@ -8120,6 +8217,13 @@ impl NativeContext<'_, '_> {
                 SelectActorPC => {
                     let select = stack.pop_i32();
                     let actor = stack.pop_i32();
+                    if actor != 0 && !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
+                        tracing::warn!(
+                            "Script Error: Trying to select an invalid or non-PC actor!"
+                        );
+                        return 0;
+                    }
+                    self.apply_script_selection(actor, select != 0);
                     self.deferred_commands.push(DeferredCommand::SelectPC {
                         actor,
                         select: select != 0,

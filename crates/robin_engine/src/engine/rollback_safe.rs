@@ -972,11 +972,7 @@ mod tests {
 
         let mut inner = EngineInner::new();
         inner.scripts.install_mission(script);
-        inner.scripts.attach_native_capabilities(
-            &assets,
-            &inner.world.dynamic_sight_obstacles,
-            &inner.world.static_sight_obstacle_active,
-        );
+        inner.scripts.attach_native_capabilities(&assets);
         inner
             .scripts
             .mission

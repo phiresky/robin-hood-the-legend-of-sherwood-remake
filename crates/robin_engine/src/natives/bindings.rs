@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::level_data::RawHikingPath;
 use crate::profiles::ProfileManager;
-use crate::sight_obstacle::SharedSightObstacles;
 
 /// Immutable level data attached to a mission script after construction or
 /// snapshot decode. This is deliberately absent from script snapshots: the
@@ -13,7 +12,6 @@ use crate::sight_obstacle::SharedSightObstacles;
 pub struct AttachedScriptBindings {
     pub profile_manager: Arc<ProfileManager>,
     pub hiking_paths: Arc<Vec<RawHikingPath>>,
-    pub sight_obstacles: SharedSightObstacles,
     pub script_location_count: usize,
     pub script_point_count: usize,
     pub script_building_count: usize,
@@ -104,24 +102,14 @@ mod tests {
     fn dispatch_bindings_are_isolated_between_engine_instances() {
         let first = AttachedScriptBindings {
             script_location_count: 1,
-            sight_obstacles: SharedSightObstacles {
-                static_active: Arc::new(vec![true]),
-                ..Default::default()
-            },
             ..Default::default()
         };
         let second = AttachedScriptBindings {
             script_location_count: 2,
-            sight_obstacles: SharedSightObstacles {
-                static_active: Arc::new(vec![true, false]),
-                ..Default::default()
-            },
             ..Default::default()
         };
 
         assert_ne!(get_location(&second, 1), 0);
         assert_eq!(get_location(&first, 1), 0);
-        assert_eq!(first.view().sight_obstacles.static_active.len(), 1);
-        assert_eq!(second.view().sight_obstacles.static_active.len(), 2);
     }
 }
