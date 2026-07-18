@@ -592,6 +592,46 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
     }
 }
 
+/// Build one actor class whose filter calls the prototype passed as its first
+/// parameter. `ThisActor` becomes the nested call's source, so binding the
+/// class to A and B and starting A with prototype B produces B -> A -> A ...
+/// until the explicit nested-call limit supplies the inherited allow result.
+fn build_recursive_nested_scb() -> ScbFile {
+    let mut scb = build_nested_scb();
+    scb.classes
+        .retain(|class| class.class_name != "InnerTarget");
+    let recursive = scb
+        .classes
+        .iter_mut()
+        .find(|class| class.class_name == "OuterCaller")
+        .expect("nested fixture has OuterCaller");
+    recursive.class_name = "RecursiveCaller".into();
+    let filter = recursive
+        .functions
+        .iter_mut()
+        .find(|function| function.name == "FilterAIEvent")
+        .expect("recursive class has FilterAIEvent");
+    filter.num_parameters = 2;
+    filter.size_of_parameters = 8;
+    filter.size_of_temporary = 12;
+    recursive.quads.truncate(filter.address as usize);
+    recursive.quads.extend([
+        q_begin_function(0, 3),
+        q_aff1_get_param(TMP0, 0),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP1),
+        q_aff1_get_param(TMP2, 4),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::PrototypeFilterEvent as u32),
+        q_aff1_native_get_return(TMP0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+    scb
+}
+
 /// Variant where the outer callback writes an NPC custom value before
 /// yielding through `PrototypeFilterEvent`, and the nested callback reads the
 /// same entity value. This pins the shared live-state requirement across VM
@@ -713,7 +753,35 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
         .expect("direct actor callback runs cleanly");
 
     assert_eq!(result, inner_handle);
-    assert_eq!(script.game_host.script_this, 0, "call context is restored");
+    assert_eq!(
+        script.active_call_frame_count(),
+        0,
+        "call context is restored"
+    );
+}
+
+#[test]
+fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
+    let scb = build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::ThisScroll));
+    let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let scroll_handle = 23;
+    assert!(script.bind_scroll(
+        scroll_handle,
+        "InnerTarget",
+        crate::natives::NativeQueryViews::default()
+    ));
+
+    let result = script
+        .call_scroll_function(
+            scroll_handle,
+            "FilterAIEvent",
+            &[0, 0],
+            crate::natives::NativeQueryViews::default(),
+        )
+        .expect("scroll callback runs cleanly");
+
+    assert_eq!(result, scroll_handle);
+    assert_eq!(script.active_call_frame_count(), 0);
 }
 
 #[test]
@@ -749,7 +817,11 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
         result, outer_handle,
         "the prototype's ThisActor must remain the outer event receiver"
     );
-    assert_eq!(script.game_host.script_this, 0, "call context is restored");
+    assert_eq!(
+        script.active_call_frame_count(),
+        0,
+        "call context is restored"
+    );
 }
 
 /// Smoke test: an actor script's `FilterAIEvent` calls
@@ -802,6 +874,39 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
 }
 
 #[test]
+fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
+    let mut script =
+        MissionScript::from_scb(build_recursive_nested_scb()).expect("recursive SCB builds");
+    let actor_a = 1;
+    let actor_b = 2;
+    assert!(script.bind_actor(
+        actor_a,
+        "RecursiveCaller",
+        crate::natives::NativeQueryViews::default()
+    ));
+    assert!(script.bind_actor(
+        actor_b,
+        "RecursiveCaller",
+        crate::natives::NativeQueryViews::default()
+    ));
+
+    let result = script
+        .call_actor_function(
+            actor_a,
+            "FilterAIEvent",
+            &[actor_b, 0],
+            crate::natives::NativeQueryViews::default(),
+        )
+        .expect("recursive nested dispatch reaches the explicit limit");
+
+    assert_eq!(
+        result, 1,
+        "the depth guard returns FilterAIEvent's base default"
+    );
+    assert_eq!(script.active_call_frame_count(), 0);
+}
+
+#[test]
 fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     let mut script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
     let outer_handle = 1;
@@ -816,8 +921,6 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
         "InnerTarget",
         crate::natives::NativeQueryViews::default()
     ));
-    script.game_host.script_this = 77;
-
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
@@ -840,8 +943,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
         "the nested return register reaches the outer VM"
     );
     let script = engine.scripts.mission.as_ref().unwrap();
-    assert_eq!(script.game_host.script_this, 77);
-    assert_eq!(script.game_host.nested_call_depth, 0);
+    assert_eq!(script.active_call_frame_count(), 0);
 }
 
 #[test]

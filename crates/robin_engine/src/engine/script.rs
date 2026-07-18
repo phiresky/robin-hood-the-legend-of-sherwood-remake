@@ -7,33 +7,6 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
-/// Transient callback state which belongs to one script-dispatch stack, not
-/// to a save game.  `MissionScript` still stores these fields on its legacy
-/// `GameHost` adapter, so the session snapshots and restores them around the
-/// whole callback family until native dispatch owns an explicit call stack.
-#[derive(Clone, Copy)]
-struct ScriptCallState {
-    script_this: i32,
-    current_scroll: i32,
-    nested_call_depth: u8,
-}
-
-impl ScriptCallState {
-    fn capture(script: &MissionScript) -> Self {
-        Self {
-            script_this: script.game_host.script_this,
-            current_scroll: script.game_host.current_scroll,
-            nested_call_depth: script.game_host.nested_call_depth,
-        }
-    }
-
-    fn restore(self, script: &mut MissionScript) {
-        script.game_host.script_this = self.script_this;
-        script.game_host.current_scroll = self.current_scroll;
-        script.game_host.nested_call_depth = self.nested_call_depth;
-    }
-}
-
 /// Unwind-safe owner for one engine-to-script dispatch transaction.
 ///
 /// The mission script is temporarily removed from `EngineInner`, which gives
@@ -48,7 +21,6 @@ struct ScriptSession<'engine, 'assets> {
     engine: &'engine mut EngineInner,
     assets: &'assets LevelAssets,
     script: Option<MissionScript>,
-    call_state: ScriptCallState,
     live_engine_state: bool,
 }
 
@@ -56,12 +28,11 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
     fn begin(engine: &'engine mut EngineInner, assets: &'assets LevelAssets) -> Option<Self> {
         engine.scripts.assert_native_attachments_ready();
         let script = engine.scripts.mission.take()?;
-        let call_state = ScriptCallState::capture(&script);
+        script.assert_no_active_call_frames();
         Some(Self {
             engine,
             assets,
             script: Some(script),
-            call_state,
             live_engine_state: false,
         })
     }
@@ -99,11 +70,10 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
         let result = callback(script, queries);
 
         self.restore_live_engine_state();
-        self.call_state.restore(
-            self.script
-                .as_mut()
-                .expect("script session lost its leased mission script"),
-        );
+        self.script
+            .as_ref()
+            .expect("script session lost its leased mission script")
+            .assert_no_active_call_frames();
         result
     }
 
@@ -127,10 +97,10 @@ impl<'engine, 'assets> ScriptSession<'engine, 'assets> {
 
     fn restore_script(&mut self) {
         self.restore_live_engine_state();
-        let Some(mut script) = self.script.take() else {
+        let Some(script) = self.script.take() else {
             return;
         };
-        self.call_state.restore(&mut script);
+        script.assert_no_active_call_frames();
         assert!(
             self.engine.scripts.mission.is_none(),
             "a second mission script was installed during an active script session"
@@ -1047,22 +1017,26 @@ impl EngineInner {
             }
 
             // ── Phase 2: Global StartUp::Initialize(seed) ──
-            let startup_result = MissionScript::with_game_host_attached(
-                &mut script.game_host,
-                &mut script.state,
-                &script.bindings,
-                queries,
-                &mut script.instance,
-                |instance, host| {
-                    instance.push_param(seed);
-                    instance.call_function_limited_with_host(
-                        &mut script.manager,
-                        "Initialize",
-                        100_000,
-                        host,
-                    )
-                },
-            );
+            let frame = crate::natives::ScriptCallFrame::default();
+            let startup_result = script.with_call_frame(frame, |script| {
+                MissionScript::with_game_host_attached(
+                    &mut script.game_host,
+                    &mut script.state,
+                    &script.bindings,
+                    queries,
+                    frame,
+                    &mut script.instance,
+                    |instance, host| {
+                        instance.push_param(seed);
+                        instance.call_function_limited_with_host(
+                            &mut script.manager,
+                            "Initialize",
+                            100_000,
+                            host,
+                        )
+                    },
+                )
+            });
             match startup_result {
                 Ok(ret) => tracing::info!("Script StartUp::Initialize returned {ret}"),
                 Err(crate::script_manager::ScriptError::Vm(
@@ -1377,40 +1351,44 @@ impl EngineInner {
 
                 let mut zone_inst = script.manager.create_instance_idx(class_idx);
 
-                MissionScript::with_game_host_attached(
-                    &mut script.game_host,
-                    &mut script.state,
-                    &script.bindings,
-                    queries,
-                    &mut zone_inst,
-                    |zone_inst, host| {
-                        if zone_inst.has_function(&script.manager, "Initialize") {
-                            match zone_inst.call_function_limited_with_host(
-                                &mut script.manager,
-                                "Initialize",
-                                10_000,
-                                host,
-                            ) {
-                                Ok(ret) => {
-                                    tracing::debug!(
-                                        "Zone Init '{class_name}' (zone {zone_idx}) → {ret}"
-                                    );
-                                    init_count += 1;
-                                }
-                                Err(crate::script_manager::ScriptError::Vm(
-                                    crate::interp::StopReason::StepLimit,
-                                )) => {
-                                    init_count += 1;
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Zone Init '{class_name}' (zone {zone_idx}) failed: {e}"
-                                    )
+                let frame = crate::natives::ScriptCallFrame::default();
+                script.with_call_frame(frame, |script| {
+                    MissionScript::with_game_host_attached(
+                        &mut script.game_host,
+                        &mut script.state,
+                        &script.bindings,
+                        queries,
+                        frame,
+                        &mut zone_inst,
+                        |zone_inst, host| {
+                            if zone_inst.has_function(&script.manager, "Initialize") {
+                                match zone_inst.call_function_limited_with_host(
+                                    &mut script.manager,
+                                    "Initialize",
+                                    10_000,
+                                    host,
+                                ) {
+                                    Ok(ret) => {
+                                        tracing::debug!(
+                                            "Zone Init '{class_name}' (zone {zone_idx}) → {ret}"
+                                        );
+                                        init_count += 1;
+                                    }
+                                    Err(crate::script_manager::ScriptError::Vm(
+                                        crate::interp::StopReason::StepLimit,
+                                    )) => {
+                                        init_count += 1;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Zone Init '{class_name}' (zone {zone_idx}) failed: {e}"
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    },
-                );
+                        },
+                    );
+                });
                 script.zone_instances.insert(zone_idx, zone_inst);
             }
 
@@ -1922,23 +1900,27 @@ impl EngineInner {
                     .instance
                     .has_function(&script.manager, "ProcessMessage")
                 {
-                    let result = MissionScript::with_game_host_attached(
-                        &mut script.game_host,
-                        &mut script.state,
-                        &script.bindings,
-                        queries,
-                        &mut script.instance,
-                        |instance, host| {
-                            instance.push_param(msg);
-                            instance.push_param(arg1);
-                            instance.push_param(arg2);
-                            instance.call_function_with_host(
-                                &mut script.manager,
-                                "ProcessMessage",
-                                host,
-                            )
-                        },
-                    );
+                    let frame = crate::natives::ScriptCallFrame::default();
+                    let result = script.with_call_frame(frame, |script| {
+                        MissionScript::with_game_host_attached(
+                            &mut script.game_host,
+                            &mut script.state,
+                            &script.bindings,
+                            queries,
+                            frame,
+                            &mut script.instance,
+                            |instance, host| {
+                                instance.push_param(msg);
+                                instance.push_param(arg1);
+                                instance.push_param(arg2);
+                                instance.call_function_with_host(
+                                    &mut script.manager,
+                                    "ProcessMessage",
+                                    host,
+                                )
+                            },
+                        )
+                    });
                     match result {
                         Ok(_) => {}
                         Err(e) => tracing::warn!("EngineInner ProcessMessage(msg {msg}): {e}"),
@@ -1950,8 +1932,8 @@ impl EngineInner {
 
     /// Dispatch deferred `IElementTargetScript::ActivatedBy*(pPC)` calls.
     ///
-    /// Each entry is `(target_handle, pc_handle, method_name)`.  Sets
-    /// `script_this` to the target then calls the relevant
+    /// Each entry is `(target_handle, pc_handle, method_name)`. Binds
+    /// `ThisActor` to the target then calls the relevant
     /// `IElementTargetScript::ActivatedBy*` method pointer on the
     /// target's own VM.  Missing methods on the bound class are silent
     /// no-ops, matching script-runtime behaviour for classes that
@@ -3186,7 +3168,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v3_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_v4_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3207,16 +3189,16 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v3 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize v4 MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 3);
+        assert_eq!(value["snapshot_version"], 4);
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v3 MissionScript");
+            serde_json::from_str(&json).expect("deserialize v4 MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3232,6 +3214,39 @@ mod script_context_tests {
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
+    }
+
+    #[test]
+    fn active_call_frame_rejects_snapshot_and_unwinds() {
+        let mut script = empty_mission_script();
+        let hash_before = robin_util::state_hash::compute(&script);
+        let error = script.with_call_frame(
+            crate::natives::ScriptCallFrame::scroll(17).with_script_this(41),
+            |script| {
+                assert_eq!(robin_util::state_hash::compute(script), hash_before);
+                serde_json::to_string(script).expect_err("active callback is not snapshot-safe")
+            },
+        );
+
+        assert!(error.to_string().contains("active script callback"));
+        assert_eq!(script.active_call_frame_count(), 0);
+    }
+
+    #[test]
+    fn v3_parked_transient_game_host_values_are_ignored() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(3);
+        snapshot["game_host"]["script_this"] = serde_json::json!(41);
+        snapshot["game_host"]["current_scroll"] = serde_json::json!(17);
+        snapshot["game_host"]["nested_call_depth"] = serde_json::json!(3);
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("legacy parked callback values are accepted");
+        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
+        assert!(normalized["game_host"].get("script_this").is_none());
+        assert!(normalized["game_host"].get("current_scroll").is_none());
+        assert!(normalized["game_host"].get("nested_call_depth").is_none());
     }
 
     #[test]
@@ -3487,7 +3502,6 @@ mod script_context_tests {
     fn external_this_actor_success_restores_callback_and_parked_state() {
         let mut engine = EngineInner::new();
         let mut script = empty_mission_script();
-        script.game_host.script_this = 41;
         script.game_host.entities.push(None);
         engine.scripts.mission = Some(script);
         engine.attach_script_bindings(&LevelAssets::new());
@@ -3497,15 +3511,13 @@ mod script_context_tests {
 
         assert_eq!(result, Ok(99));
         assert!(engine.world.entities.is_empty());
-        let host = engine
+        let script = engine
             .scripts
             .mission
             .as_ref()
-            .expect("script remains installed")
-            .game_host()
-            .expect("mission script always owns its game host");
-        assert_eq!(host.script_this, 41);
-        assert_eq!(host.entities.len(), 1);
+            .expect("script remains installed");
+        assert_eq!(script.active_call_frame_count(), 0);
+        assert_eq!(script.game_host.entities.len(), 1);
     }
 
     #[test]
@@ -3521,8 +3533,6 @@ mod script_context_tests {
     #[test]
     fn script_session_normal_return_restores_state_and_hash() {
         let mut script = empty_mission_script();
-        script.game_host.script_this = 41;
-        script.game_host.current_scroll = 17;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(script);
@@ -3532,16 +3542,16 @@ mod script_context_tests {
 
         let result = engine.with_script_session(&assets, |script, _| {
             assert!(script.game_host.entities.is_empty());
-            script.game_host.script_this = 99;
-            script.game_host.current_scroll = 100;
-            73
+            script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |script| {
+                assert_eq!(script.active_call_frame_count(), 1);
+                73
+            })
         });
 
         assert_eq!(result, Some(73));
         assert!(engine.world.entities.is_empty());
         let script = engine.scripts.mission.as_ref().unwrap();
-        assert_eq!(script.game_host.script_this, 41);
-        assert_eq!(script.game_host.current_scroll, 17);
+        assert_eq!(script.active_call_frame_count(), 0);
         assert_eq!(script.game_host.entities.len(), 1);
         assert_eq!(robin_util::state_hash::compute(&engine), hash_before);
     }
@@ -3549,7 +3559,6 @@ mod script_context_tests {
     #[test]
     fn script_session_error_restores_callback_and_engine_ownership() {
         let mut script = empty_mission_script();
-        script.game_host.script_this = 41;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(script);
@@ -3558,15 +3567,16 @@ mod script_context_tests {
 
         let result: Result<(), &'static str> = engine
             .with_script_session(&assets, |script, _| {
-                script.game_host.script_this = 99;
-                Err("simulated script error")
+                script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |_| {
+                    Err("simulated script error")
+                })
             })
             .unwrap();
 
         assert_eq!(result, Err("simulated script error"));
         assert!(engine.world.entities.is_empty());
         let script = engine.scripts.mission.as_ref().unwrap();
-        assert_eq!(script.game_host.script_this, 41);
+        assert_eq!(script.active_call_frame_count(), 0);
         assert_eq!(script.game_host.entities.len(), 1);
     }
 
@@ -3583,17 +3593,12 @@ mod script_context_tests {
                 let engine = unsafe { &*self.0 };
                 assert!(engine.world.entities.is_empty());
                 let script = engine.scripts.mission.as_ref().unwrap();
-                assert_eq!(script.game_host.script_this, 41);
-                assert_eq!(script.game_host.current_scroll, 17);
-                assert_eq!(script.game_host.nested_call_depth, 2);
+                assert_eq!(script.active_call_frame_count(), 0);
                 assert_eq!(script.game_host.entities.len(), 1);
             }
         }
 
         let mut script = empty_mission_script();
-        script.game_host.script_this = 41;
-        script.game_host.current_scroll = 17;
-        script.game_host.nested_call_depth = 2;
         script.game_host.entities.push(None);
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(script);
@@ -3602,10 +3607,10 @@ mod script_context_tests {
         let _verify = VerifyRestoredOnUnwind(&engine);
 
         let _ = engine.with_script_session(&assets, |script, _| {
-            script.game_host.script_this = 99;
-            script.game_host.current_scroll = 100;
-            script.game_host.nested_call_depth = 9;
-            panic!("simulated script panic");
+            script.with_call_frame(
+                crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
+                |_| panic!("simulated script panic"),
+            );
         });
     }
 
@@ -3613,7 +3618,6 @@ mod script_context_tests {
     fn external_native_early_returns_without_touching_callback_state() {
         let mut engine = EngineInner::new();
         let mut script = empty_mission_script();
-        script.game_host.script_this = 41;
         script.game_host.entities.push(None);
         engine.scripts.mission = Some(script);
 
@@ -3626,14 +3630,13 @@ mod script_context_tests {
 
         assert_eq!(result, Err("unknown native: NotAnOriginalNative".into()));
         assert!(engine.world.entities.is_empty());
-        let host = &engine
+        let script = engine
             .scripts
             .mission
             .as_ref()
-            .expect("script remains installed")
-            .game_host;
-        assert_eq!(host.script_this, 41);
-        assert_eq!(host.entities.len(), 1);
+            .expect("script remains installed");
+        assert_eq!(script.active_call_frame_count(), 0);
+        assert_eq!(script.game_host.entities.len(), 1);
     }
 }
 
@@ -3772,10 +3775,8 @@ impl EngineInner {
     /// order (i.e. `args[0]` is the first argument to the native, and
     /// will be popped *last* — matches the `Param`/`Pop` LIFO contract).
     ///
-    /// When `this_actor` is `Some`, the GameHost's `script_this` field
-    /// is overridden for the duration of the call and restored after,
-    /// matching the `set_script_this` bracket scripted dispatches use.
-    /// Pass `None` to leave `script_this` unchanged.
+    /// When `this_actor` is `Some`, the standalone frame binds `ThisActor`
+    /// for the duration of the call. Pass `None` for a receiver-free frame.
     pub fn call_external_native(
         &mut self,
         assets: &LevelAssets,
@@ -3786,8 +3787,7 @@ impl EngineInner {
     }
 
     /// Like [`Self::call_external_native`], but with an explicit
-    /// `this_actor` override applied to `GameHost::script_this` for the
-    /// duration of the dispatch. Restored after — even on early returns.
+    /// `ThisActor` receiver installed in the transient call frame.
     pub fn call_external_native_with_this(
         &mut self,
         assets: &LevelAssets,
@@ -3821,34 +3821,34 @@ impl EngineInner {
         }
 
         self.with_script_session(assets, |script, queries| {
-            let saved_script_this = this_actor
-                .map(|value| std::mem::replace(&mut script.game_host.script_this, value));
-            let mut stack = NativeStack::default();
-            for &a in args {
-                stack.push_i32(a);
-            }
-
-            let outcome = {
-                let mut native_context = crate::natives::NativeContext::with_bindings(
-                    &mut script.game_host,
-                    &mut script.state,
-                    &script.bindings,
-                    queries,
-                );
-                crate::interp::HostFunctions::call(&mut native_context, index, &mut stack)
-            };
-            if let Some(saved) = saved_script_this {
-                script.game_host.script_this = saved;
-            }
-
-            match outcome {
-                crate::interp::NativeCallOutcome::Return(value) => Ok(value),
-                crate::interp::NativeCallOutcome::PendingNestedCall(call) => {
-                    Err(format!(
-                        "native {native_name} requires nested script dispatch and cannot be invoked through the standalone native adapter: {call:?}"
-                    ))
+            let frame = this_actor.map_or_else(
+                crate::natives::ScriptCallFrame::default,
+                crate::natives::ScriptCallFrame::actor,
+            );
+            script.with_call_frame(frame, |script| {
+                let mut stack = NativeStack::default();
+                for &a in args {
+                    stack.push_i32(a);
                 }
-            }
+
+                let outcome = {
+                    let mut native_context = crate::natives::NativeContext::with_call_frame(
+                        &mut script.game_host,
+                        &mut script.state,
+                        &script.bindings,
+                        queries,
+                        frame,
+                    );
+                    crate::interp::HostFunctions::call(&mut native_context, index, &mut stack)
+                };
+
+                match outcome {
+                    crate::interp::NativeCallOutcome::Return(value) => Ok(value),
+                    crate::interp::NativeCallOutcome::PendingNestedCall(call) => Err(format!(
+                        "native {native_name} requires nested script dispatch and cannot be invoked through the standalone native adapter: {call:?}"
+                    )),
+                }
+            })
         })
         .expect("mission-script presence checked above")
     }

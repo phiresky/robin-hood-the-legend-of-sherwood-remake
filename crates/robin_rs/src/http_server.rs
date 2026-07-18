@@ -214,9 +214,7 @@ pub struct NativeCall {
     pub op: String,
     #[serde(default)]
     pub args: Vec<i32>,
-    /// Optional `script_this` override for the call (overrides the
-    /// per-request `this` field on the GameHost for the duration of the
-    /// dispatch, restored after).
+    /// Optional transient `ThisActor` receiver for the call.
     #[serde(default, rename = "this")]
     pub this: Option<i32>,
 }

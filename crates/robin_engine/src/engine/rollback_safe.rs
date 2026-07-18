@@ -580,8 +580,8 @@ impl Engine {
         self.inner.call_external_native(assets, native_name, args)
     }
 
-    /// Like [`Self::call_external_native`], but with an explicit
-    /// `script_this` override (restored after the call).
+    /// Like [`Self::call_external_native`], but with an explicit transient
+    /// `ThisActor` receiver.
     pub fn call_external_native_with_this(
         &mut self,
         assets: &LevelAssets,
