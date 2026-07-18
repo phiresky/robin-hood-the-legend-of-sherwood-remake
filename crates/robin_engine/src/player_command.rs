@@ -419,6 +419,10 @@ pub enum PlayerCommand {
     /// debriefing is shown.
     ApplyQuitMissionUpdates {
         exit_code: crate::game_operation::GameCode,
+        /// Difficulty selected by the application context that issued this
+        /// deterministic command. Recruitment is the only quit-mission
+        /// update affected by it.
+        difficulty: crate::player_profile::DifficultyLevel,
     },
     /// Player confirmed the quit-mission popup.  Sets `quit_won`
     /// when the mission was already marked won (first-time-mission-

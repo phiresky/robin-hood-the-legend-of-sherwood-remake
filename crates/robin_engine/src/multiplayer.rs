@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version.  Bump on any breaking change to
 /// [`NetMsg`].  Both sides exchange this in the handshake; mismatches
 /// abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 5;
+pub const NET_PROTOCOL_VERSION: u32 = 6;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -411,5 +411,28 @@ mod tests {
             }
             _ => panic!("wrong variants"),
         }
+    }
+
+    #[test]
+    fn quit_updates_roundtrip_the_resolved_difficulty() {
+        let msg = NetMsg::Input {
+            origin_frame: 73,
+            command: PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: crate::game_operation::GameCode::LevelSucceeded,
+                difficulty: crate::player_profile::DifficultyLevel::Hard,
+            },
+        };
+
+        let decoded = decode_msg(&encode_msg(&msg)).expect("decode quit-update command");
+        assert!(matches!(
+            decoded,
+            NetMsg::Input {
+                origin_frame: 73,
+                command: PlayerCommand::ApplyQuitMissionUpdates {
+                    exit_code: crate::game_operation::GameCode::LevelSucceeded,
+                    difficulty: crate::player_profile::DifficultyLevel::Hard,
+                },
+            }
+        ));
     }
 }

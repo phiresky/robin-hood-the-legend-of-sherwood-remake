@@ -25,7 +25,11 @@ use super::{
 /// this same order so no second authoritative state value exists.
 #[derive(Deserialize)]
 struct FlatEngineSnapshot {
-    sim_config: std::cell::Cell<Option<super::SimConfig>>,
+    /// Historical JSON saves stored the application-owned configuration in
+    /// the engine snapshot. It is accepted so those saves continue to load,
+    /// but runtime state is now resolved into the commands that need it.
+    #[serde(default, rename = "sim_config")]
+    _legacy_sim_config: Option<super::SimConfig>,
     mission: super::MissionState,
     frame_counter: u32,
     sound_sim: crate::sound::SoundSimState,
@@ -90,8 +94,15 @@ impl Serialize for EngineInner {
     where
         S: Serializer,
     {
-        let mut snapshot = serializer.serialize_struct("EngineInner", 53)?;
-        snapshot.serialize_field("sim_config", &self.sim_config)?;
+        let human_readable = serializer.is_human_readable();
+        let mut snapshot =
+            serializer.serialize_struct("EngineInner", if human_readable { 52 } else { 53 })?;
+        // Bincode snapshots are positional and shared by current multiplayer
+        // peers. Keep a unit-sized placeholder in that internal format while
+        // omitting the obsolete field from human-readable save files.
+        if !human_readable {
+            snapshot.serialize_field("sim_config", &Option::<super::SimConfig>::None)?;
+        }
         snapshot.serialize_field("mission", &self.mission_domain.state)?;
         snapshot.serialize_field("frame_counter", &self.control.frame_counter)?;
         snapshot.serialize_field("sound_sim", &self.feedback.sound_sim)?;
@@ -239,7 +250,6 @@ impl<'de> Deserialize<'de> for EngineInner {
         }
         script_domains.mission_ui.force_check |= snapshot.force_check;
         Ok(Self {
-            sim_config: snapshot.sim_config,
             mission_domain: MissionDomain {
                 state: snapshot.mission,
                 cheat_used_flags: snapshot.cheat_used_flags,

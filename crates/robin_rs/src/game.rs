@@ -115,8 +115,8 @@ pub struct Game {
     pub last_tick: u32,
 
     /// Explicit application context. `Deref<GlobalOptions>` preserves the
-    /// existing directory/launcher option reads, while `sim_config()` is the
-    /// only gameplay configuration attached to the deterministic engine.
+    /// existing directory/launcher option reads. Deterministic commands copy
+    /// the specific gameplay configuration values they need at creation time.
     pub global_options: ApplicationContext,
 }
 
@@ -513,8 +513,6 @@ impl Game {
         dummy_pause: bool,
     ) -> Option<GameCode> {
         host.bind_application_context(&self.global_options);
-        engine.attach_sim_config(self.global_options.sim_config());
-
         let mission_transitioning = !self.operation.is(GameCode::LevelInProgress);
 
         if !self.should_run_hourglass(console_displayed, mission_transitioning, dummy_pause) {
@@ -632,7 +630,6 @@ impl Game {
         campaign: &mut Campaign,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
-        engine.attach_sim_config(self.global_options.sim_config());
         // The engine already owns the one required mission campaign. Apply
         // quit updates to that exact allocation, then return it to the test
         // harness's outer owner. Installing the separate placeholder here
@@ -646,6 +643,7 @@ impl Game {
             assets,
             &engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: self.operation.get_current(),
+                difficulty: self.global_options.sim_config().difficulty,
             },
         );
         *campaign = engine

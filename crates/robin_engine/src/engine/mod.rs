@@ -152,14 +152,6 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// hash compatibility is intentionally not an engine-layout constraint.
 #[derive(Clone, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
-    /// Per-session gameplay configuration attached by `Game` before a
-    /// tick. This is runtime configuration rather than mutable sim state:
-    /// rollback clones preserve it, while deserialized saves must have it
-    /// reattached before gameplay resumes. `Option` is intentional so a
-    /// missing attachment fails loudly instead of inventing Medium difficulty.
-    #[state_hash(skip)]
-    sim_config: std::cell::Cell<Option<SimConfig>>,
-
     /// Deterministic mission outcome, campaign, objective, and stats state.
     pub(crate) mission_domain: MissionDomain,
 
@@ -202,7 +194,6 @@ struct QuitMissionContext<'a> {
     mission_stat: &'a mut MissionStat,
     pending_side_effects: &'a mut SideEffects,
     frame_counter: u32,
-    sim_config: &'a std::cell::Cell<Option<SimConfig>>,
 }
 
 impl QuitMissionContext<'_> {
@@ -212,6 +203,7 @@ impl QuitMissionContext<'_> {
         living: u32,
         dead: u32,
         tied_score: i32,
+        difficulty: crate::player_profile::DifficultyLevel,
     ) {
         sync_mission_stats_to_campaign(self.mission_stat, self.campaign);
 
@@ -227,14 +219,9 @@ impl QuitMissionContext<'_> {
         }
 
         // Original provenance: `original-code/RHengine.cpp:16381-16398`
-        // reads difficulty only after the score updates above.
-        let difficulty = self
-            .sim_config
-            .get()
-            .expect(
-                "engine gameplay requires SimConfig; Game must attach its application context before ticking",
-            )
-            .difficulty;
+        // applies difficulty to recruitment only after the score updates
+        // above. The application resolves that difficulty into the command,
+        // so replay and multiplayer execution cannot consult ambient state.
         let recruited = self
             .campaign
             .recruit_post_mission_peasants(living, dead, difficulty, profiles);
@@ -426,7 +413,6 @@ impl EngineInner {
         // add deterministic seats via `ConnectSeat`.
         //
         Self {
-            sim_config: std::cell::Cell::new(None),
             mission_domain: MissionDomain::new(),
             // Original: the `__TEST` path in
             // `original-code/launcher.cpp:762-766` calls `srand(0)`.
@@ -645,6 +631,7 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         exit_code: crate::game_operation::GameCode,
+        difficulty: crate::player_profile::DifficultyLevel,
     ) {
         let won = exit_code == crate::game_operation::GameCode::LevelSucceeded;
 
@@ -672,7 +659,7 @@ impl EngineInner {
             // totals onto the campaign.
             let tied_score = self.score_tied_unconscious_soldiers();
             self.quit_mission_context()
-                .apply_won_updates(profiles, living, dead, tied_score);
+                .apply_won_updates(profiles, living, dead, tied_score, difficulty);
         } else {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
@@ -683,7 +670,6 @@ impl EngineInner {
     /// mission teardown. This deliberately cannot expose `&mut EngineInner`.
     fn quit_mission_context(&mut self) -> QuitMissionContext<'_> {
         let Self {
-            sim_config,
             mission_domain,
             control,
             feedback,
@@ -696,15 +682,7 @@ impl EngineInner {
             mission_stat,
             pending_side_effects: &mut feedback.pending_side_effects,
             frame_counter: control.frame_counter,
-            sim_config,
         }
-    }
-
-    /// Attach immutable configuration for the game context driving this
-    /// engine. Takes `&self` so the facade's read-only `Deref` can perform the
-    /// runtime attachment without exposing general mutable engine internals.
-    pub fn attach_sim_config(&self, config: SimConfig) {
-        self.sim_config.set(Some(config));
     }
 
     /// Compute score bonus for living enemy soldiers that are tied or
@@ -3812,10 +3790,12 @@ impl EngineInner {
 mod campaign_lifecycle_tests {
     use std::sync::Arc;
 
-    use super::{EngineInner, LevelAssets, SimConfig};
+    use super::{EngineInner, LevelAssets};
     use crate::campaign::{Campaign, CampaignValue};
     use crate::game_operation::GameCode;
     use crate::mission::{Mission, MissionStatus};
+    use crate::player_command::PlayerCommand;
+    use crate::player_profile::DifficultyLevel;
     use crate::profiles::{MissionProfile, MissionType, ProfileManager};
 
     fn marked_campaign() -> Campaign {
@@ -3871,7 +3851,11 @@ mod campaign_lifecycle_tests {
         let production_sector_capacity = campaign.production_sectors.capacity();
         engine.install_campaign(campaign);
 
-        engine.apply_quit_mission_updates(&LevelAssets::default(), GameCode::LevelFailed);
+        engine.apply_quit_mission_updates(
+            &LevelAssets::default(),
+            GameCode::LevelFailed,
+            DifficultyLevel::Medium,
+        );
         let campaign: Campaign = engine.take_campaign();
 
         assert_eq!(campaign.production_sectors.as_ptr(), production_sectors);
@@ -3885,8 +3869,11 @@ mod campaign_lifecycle_tests {
     #[test]
     #[should_panic(expected = "quit-mission updates: active campaign is missing")]
     fn quit_updates_reject_a_missing_required_campaign() {
-        EngineInner::new()
-            .apply_quit_mission_updates(&LevelAssets::default(), GameCode::LevelFailed);
+        EngineInner::new().apply_quit_mission_updates(
+            &LevelAssets::default(),
+            GameCode::LevelFailed,
+            DifficultyLevel::Medium,
+        );
     }
 
     #[test]
@@ -3901,9 +3888,11 @@ mod campaign_lifecycle_tests {
         engine.mission_domain.mission_stat.total_soldier_count = 5;
         engine.mission_domain.mission_stat.new_peasant_count = 99;
         engine.install_campaign(campaign);
-        engine.attach_sim_config(SimConfig::default());
-
-        engine.apply_quit_mission_updates(&assets, GameCode::LevelSucceeded);
+        engine.apply_quit_mission_updates(
+            &assets,
+            GameCode::LevelSucceeded,
+            DifficultyLevel::Medium,
+        );
 
         let campaign = engine.campaign().expect("campaign stays installed");
         assert_eq!(campaign.missions[0].status, MissionStatus::Won);
@@ -3915,20 +3904,35 @@ mod campaign_lifecycle_tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "engine gameplay requires SimConfig; Game must attach its application context before ticking"
-    )]
-    fn quit_update_rejects_missing_sim_config_without_detaching_campaign() {
+    fn serialized_quit_command_applies_deterministically() {
         let (campaign, assets) = active_historical_mission();
-        let mut engine = EngineInner::new();
-        engine.mission_domain.mission_stat.living_soldier_count = 2;
-        engine.mission_domain.mission_stat.total_soldier_count = 5;
-        engine.mission_domain.mission_stat.new_peasant_count = 77;
-        engine.install_campaign(campaign);
+        let mut first = EngineInner::new();
+        first.install_campaign(campaign.clone());
+        let mut second = EngineInner::new();
+        second.install_campaign(campaign);
 
-        // The typed quit context borrows the installed campaign in place; no
-        // restoration action is required when this expected panic unwinds.
-        engine.apply_quit_mission_updates(&assets, GameCode::LevelSucceeded);
+        let command = PlayerCommand::ApplyQuitMissionUpdates {
+            exit_code: GameCode::LevelSucceeded,
+            difficulty: DifficultyLevel::Hard,
+        };
+        let encoded = serde_json::to_string(&command).expect("serialize quit command");
+        let decoded: PlayerCommand =
+            serde_json::from_str(&encoded).expect("deserialize quit command");
+
+        for engine in [&mut first, &mut second] {
+            let mut display = super::HostDisplayState::default();
+            let mut input = super::InputState::default();
+            engine.apply_command(&mut display, &mut input, &assets, &decoded);
+        }
+
+        assert_eq!(
+            crate::replay::state_hash(&first),
+            crate::replay::state_hash(&second)
+        );
+        assert_eq!(
+            first.mission_domain.mission_stat,
+            second.mission_domain.mission_stat
+        );
     }
 
     #[test]
