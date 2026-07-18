@@ -165,8 +165,7 @@ pub struct EngineInner {
     /// Authoritative entities and the spatial state indexed alongside them.
     pub(crate) world: WorldState,
 
-    /// Deterministic world-script domains temporarily leased to native
-    /// dispatch while the legacy script transaction is active.
+    /// Deterministic world-script domains borrowed by native dispatch.
     pub(crate) script_domains: state::ScriptDomains,
 
     /// Deterministic orders, sequences, timers, messages, and existing

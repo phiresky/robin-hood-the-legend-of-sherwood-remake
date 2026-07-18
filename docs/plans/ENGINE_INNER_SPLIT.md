@@ -1,5 +1,42 @@
 # Plan: split `EngineInner` by ownership without changing the tick
 
+## Implementation status (2026-07-18)
+
+The physical ownership split described by this plan is implemented.
+`EngineInner` is now a short deterministic root over nine cohesive owners:
+
+```rust
+pub struct EngineInner {
+    mission_domain: MissionDomain,
+    control: SimulationControl,
+    ai: AiRuntime,
+    world: WorldState,
+    script_domains: ScriptDomains,
+    orders: OrderRuntime,
+    scripts: ScriptRuntime,
+    players: PlayerRuntime,
+    feedback: FeedbackRuntime,
+}
+```
+
+The live mission domain owns a required `Campaign`; there is no campaign
+lease, ownership guard, or GameHost parking slot. Runtime/static mission
+attachments are decoded once into `LevelAssets` and enter through the checked
+snapshot prepare/adopt/restore path. We therefore did not add the proposed
+`EngineBindings` wrapper. The snapshot DTO preserves the supported save shape,
+while protocol version 8 intentionally permits the in-memory state-hash layout
+change; historical replay compatibility is not retained.
+
+The logical/API split is not finished. `hourglass_phase_sequences` remains a
+large root method which reaches across most owners, and transition plus
+mission/message helpers still commonly accept `&mut EngineInner`. The next
+wave should extract sequence dispatch first, followed by transition and
+mission-gate contexts with explicit minimal borrows.
+
+The field inventory below is the pre-refactor design record. The staged plan
+now doubles as a record of completed physical moves and remaining logical API
+work; old baseline descriptions should not be read as current code.
+
 ## Decision
 
 Keep `EngineInner` as the single deterministic mission-state root, but replace
@@ -7,24 +44,10 @@ its 51-field bag with cohesive, owned substructures. Do **not** turn each source
 file into a nominal subsystem that still reaches through a shared `&mut
 EngineInner`; the useful boundary is ownership and borrowing, not file size.
 
-The target root is:
+The originally proposed root was:
 
 ```rust
-pub struct EngineInner {
-    control: SimulationControl,
-    mission: MissionRuntime,
-    world: WorldState,
-    ai: AiRuntime,
-    scripts: ScriptRuntime,
-    orders: OrderRuntime,
-    players: PlayerRuntime,
-    feedback: FeedbackRuntime,
-}
-
-pub struct Engine {
-    inner: EngineInner,
-    bindings: EngineBindings,
-}
+pub struct EngineInner { /* cohesive deterministic owners */ }
 ```
 
 `EngineInner` remains the root because rollback, rewind, multiplayer snapshots,
@@ -32,11 +55,9 @@ save games, deterministic hashing, and the tick all require one atomic world.
 The split is not an ECS rewrite, does not introduce independently ticking
 objects, and does not reorder `perform_hourglass`.
 
-`EngineBindings` is the eventual home for required, cloneable runtime
-attachments such as `SimConfig`. It is cloned with an in-memory rollback
-snapshot, omitted from deterministic hashing, and reattached/validated at
-decode boundaries. Immutable mission data remains in `LevelAssets` and is
-passed explicitly.
+The implementation instead keeps host configuration host-owned and uses
+`LevelAssets` as the sole decoded attachment source. Save restore and exact
+network adoption share one atomic validation/attachment path.
 
 ## Why this is the right boundary
 
@@ -68,7 +89,7 @@ serialization evidence, not an ownership model to copy. In particular:
 
 Those boundaries must stay observable after the Rust state is regrouped.
 
-## Current field inventory and target owners
+## Pre-refactor field inventory and target owners
 
 Legend: **S** means the field is included in serde snapshots today; **H** means
 it participates in `StateHash`. Every target state struct must derive
@@ -124,11 +145,11 @@ static attachments.
 | `pending_hero_speeches` | `OrderRuntime` | S/H | Deferred speech dispatch, drained at tick start. |
 | `pending_hades_kills` | `OrderRuntime` | S/H | Deferred full death cascades, drained at tick start. |
 | `pending_concussion_side_effects` | `OrderRuntime` | S/H | Deferred KO/wakeup cascades, drained at tick start. |
-| `mission_script` | `ScriptRuntime` | S/H | SCB VM heaps/instances plus the current mirrored `GameHost`; bytecode is reattached from `LevelAssets`. |
+| `mission_script` | `ScriptRuntime` | S/H | SCB VM heaps/instances plus the former mirrored `GameHost`; bytecode is reattached from `LevelAssets`. |
 | `script_zone_data` | `WorldState` | S/H | Runtime zone occupants/classes parallel to static `LevelAssets::script_zone_grid_indices`. |
 | `dynamic_sight_obstacles` | `WorldState` | S/H | Per-frame shield/other dynamic occluders rebuilt in tick order. |
 | `static_sight_obstacle_active` | `WorldState` | S/H | Runtime active flags parallel to immutable static obstacle geometry. |
-| `campaign` | `MissionRuntime` | S/H | Required campaign during an active mission, currently represented as `Option` and temporarily moved into `GameHost`. |
+| `campaign` | `MissionDomain` | S/H | Required campaign during an active mission. The migration removed the former `Option` and temporary GameHost ownership transfer. |
 
 This inventory deliberately treats deterministic presentation state as
 simulation state. `ground_mark`, titbits, director camera, sound deadlines and
@@ -168,12 +189,10 @@ struct MissionRuntime {
 }
 ```
 
-During the transition, `campaign` may remain `Option<Campaign>` inside this
-struct so the GameHost mirror-removal branch can compile independently. The
-end state is a required `Campaign` for a live `Engine`; mission teardown
-consumes `MissionRuntime` and returns that same allocation. This removes the
-unsafe root-level `RequiredCampaignGuard` and the generic `take_campaign<T>`
-compatibility trick.
+The implemented `MissionDomain` owns `Campaign` directly for the lifetime of a
+live `Engine`; mission teardown consumes the engine and returns that campaign.
+This removed the unsafe root-level `RequiredCampaignGuard` and the generic
+`take_campaign<T>` compatibility trick.
 
 ### `WorldState`
 
@@ -492,7 +511,16 @@ split must not expand this leak. Keep current display arguments unchanged in
 the mechanical grouping PRs, then complete the separate snapshot-input audit
 before claiming each new group is a closed deterministic unit.
 
-## Staged implementation plan
+## Historical staged implementation plan
+
+The physical owner extraction, campaign ownership, snapshot attachment, and
+facade work have landed. The implementation used `MissionDomain` and
+`ScriptDomains` as the final names, retained `SimConfig` on the host rather
+than introducing `EngineBindings`, and completed attachment ownership through
+`LevelAssets` plus fallible snapshot adoption/restoration. Phase-context work
+has extracted movement, target/animation interaction, NPC state, direct
+ability, position/lift, and door-pass launch contexts, but the largest sequence
+dispatcher and several transition/mission helpers remain future work.
 
 Each stage should compile and have focused tests before the next begins. Avoid
 large mechanical method moves in the same commit as an ownership change.
@@ -629,11 +657,12 @@ Work:
 Invariant: no new queue or drain; immediate sequence/script/entity mutations
 remain immediate; the ten phase trace is identical.
 
-### PR 7: finish runtime bindings and required campaign
+### PR 7: finish runtime attachments and required campaign
 
-Status: implemented. The live mission domain owns a concrete `Campaign`,
-snapshot decoding requires or migrates one before constructing `EngineInner`,
-and mission teardown consumes the engine to return the same allocation.
+Status: implemented with the attachment design noted above. The live mission
+domain owns a concrete `Campaign`, snapshot decoding requires or migrates one
+before constructing `EngineInner`, and mission teardown consumes the engine to
+return the same allocation.
 
 Depends on the GameHost mirror-removal work.
 
@@ -645,8 +674,8 @@ Files:
 
 Work:
 
-1. Move `sim_config` to `EngineBindings`; make missing binding a contextual
-   error/panic before simulation.
+1. Keep host configuration host-owned and require validated `LevelAssets` at
+   snapshot decode/adoption boundaries.
 2. Make live `MissionRuntime` own `Campaign` directly.
 3. Replace install/take pairs and unsafe guards with consuming mission
    construction/finish APIs.

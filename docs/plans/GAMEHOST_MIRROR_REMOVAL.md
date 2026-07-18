@@ -1,8 +1,42 @@
 # GameHost mirror-removal plan
 
+## Implementation status (2026-07-18)
+
+The direct GameHost mirrored-state and ownership-transfer scope is implemented.
+`GameHost` is no longer a second world: it owns no entities, AI state, grid,
+campaign, mission stats, doors, patches, buildings, scrolls, UI flags, query
+caches, or immutable level data. `swap_engine_state`, its refresh caches,
+campaign leases, and engine-side guard/reach-through access have been removed.
+Native dispatch now borrows canonical engine domains.
+
+The remaining serialized `GameHost` name denotes only a seven-queue script
+adapter/effect shell:
+
+```text
+commands                    completed_sequences
+production_registrations    sound_commands
+production_points           deferred_commands
+pending_objective_changes
+```
+
+The broader semantic cleanup is not finished. Several queues still defer
+deterministic mutations which the running script can query, including scroll
+status and PC selection, so same-callback set/get behavior can be stale.
+Dynamic sight obstacles and active flags are also copied into attached script
+bindings before a session; these mutable arrays must become live borrowed
+capabilities. The next wave must classify each queue against Original ordering,
+move query-visible deterministic operations synchronous with characterization
+tests, and leave only genuine outputs/deferred barriers. Renaming the shell and
+narrowing the legacy Lua adapter can follow once that boundary is stable.
+
+The inventory and PR sequence below are retained as the pre-refactor design
+record. References there to current swaps, mirrors, or a world-sized GameHost
+describe the old implementation.
+
 ## Outcome
 
-`GameHost` should stop being a serialized second world. The target is a
+`GameHost` has stopped being a serialized second world. The architectural
+target is a
 short-lived `NativeContext<'_>` which borrows the authoritative simulation
 state for one VM resume, a small serialized `ScriptState` for data that truly
 belongs to the script subsystem, immutable `ScriptBindings<'_>` borrowed from
@@ -42,7 +76,7 @@ There must be one authoritative owner at every migration step. A temporary
 ownership transfer is acceptable while the old adapter exists; a refreshed
 copy which can disagree with its source is not.
 
-## What exists today
+## Pre-refactor baseline
 
 `MissionScript` serializes a concrete `GameHost` alongside the global and
 per-object VMs (`crates/robin_engine/src/engine/types.rs`). Before script
@@ -298,10 +332,16 @@ state, or add another process TLS slot to satisfy mlua.
 Lua remains subject to the repository's deterministic-mode policy. This
 refactor must not imply that unsnapshotted Lua state is rollback-safe.
 
-## Staged implementation
+## Historical staged implementation
 
 Each stage compiles, has one owner for every migrated value, and can be
 reviewed independently.
+
+The canonical-owner portions of PRs 1–7 have landed, including borrowed native
+contexts, engine-owned script domains, removal of GameHost caches/swaps/leases,
+and snapshot attachment validation. PR 6's deterministic queue conversion is
+still required for correct same-callback semantics. PR 8's Lua/shell cleanup
+remains separate follow-up work.
 
 ### PR 1: behavior and ownership characterization
 
@@ -436,7 +476,7 @@ unwinds. Convert all paired swaps and `ScriptContext` users. Then delete
 `swap_engine_state`, `ScriptContext`, campaign leasing, `game_host()` and
 `game_host_mut()`.
 
-### PR 8: migrate Lua and remove `GameHost`
+### PR 8: future Lua cleanup and queue-shell rename/removal
 
 Files:
 
@@ -519,9 +559,26 @@ before or during migration, but do not mix a whole-file mechanical split with
 behavior changes. `engine/script.rs` is the other convergence point; delete
 sync/refresh code in small domain commits so rebases are reviewable.
 
-## Definition of done
+## Completed canonical-owner criteria
 
-The effort is complete when:
+The canonical-owner migration is complete because:
+
+- every canonical engine value has one serialized owner;
+- no canonical field is swapped into `GameHost` or refreshed into a query
+  cache;
+- immutable mission/script attachments come from validated `LevelAssets`;
+- native dispatch operates on borrowed live engine domains;
+- engine, renderer, input, tick, and command code have no guard-only or
+  canonical-state `game_host()` reach-through; and
+- save/load, rollback, multiplayer snapshot adoption, the full workspace test
+  suite, the Robin binary build, and a freshly recorded replay pass.
+
+This is not the semantic end state: mutable sight data must stop being copied
+into bindings, and query-visible deterministic queues must be made synchronous.
+
+## Long-term script-adapter end state
+
+The broader adapter cleanup will be complete when:
 
 - `MissionScript` serializes VMs plus the small `ScriptState`, not a world host;
 - no engine field is swapped into a native dispatcher or refreshed into a
