@@ -5,6 +5,27 @@ use super::*;
 use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{BonusItemTypeExt, Entity, EntityId};
 
+/// Convert the serialized position of an animation-kind sprite to the map
+/// anchor used by `RHPositionInterface`.
+///
+/// `RHSprite::LoadPositionInfoFromFile(RHFRAMEKIND_ANIMATION)` stores the
+/// serialized pair as the sprite's top-left and adds `GetSpriteCenter()` when
+/// it constructs the map position. Mobile children are then translated by the
+/// starting waypoint. Treating the serialized pair as a map position shifts
+/// `chariot02_cart` by exactly `(-70, -71)`, exposing two horse teams during
+/// the authored static-to-mobile handoff.
+fn mobile_sprite_map_position(
+    raw_x: i16,
+    raw_y: i16,
+    center: crate::coordinates::SpriteAnchor,
+    waypoint: MapPoint,
+) -> MapPoint {
+    MapPoint::new(
+        raw_x as f32 + center.x + waypoint.x,
+        raw_y as f32 + center.y + waypoint.y,
+    )
+}
+
 /// CPU-decoded background map ready for GPU upload.
 ///
 /// Produced by [`EngineInner::pre_decode_background_map`] (slow — bzip2) and
@@ -140,7 +161,8 @@ fn prime_mission_start_sprite(
 
 #[cfg(test)]
 mod mission_start_sprite_tests {
-    use super::prime_mission_start_sprite;
+    use super::{mobile_sprite_map_position, prime_mission_start_sprite};
+    use crate::coordinates::{MapPoint, SpriteAnchor};
     use crate::order::OrderType;
     use crate::sprite::Sprite;
     use crate::sprite_script::UNMAPPED;
@@ -158,6 +180,18 @@ mod mission_start_sprite_tests {
         assert_eq!(sprite.current_row, 43);
         assert_eq!(sprite.last_action, action);
         assert_eq!(sprite.current_frame, 0);
+    }
+
+    #[test]
+    fn mobile_animation_position_adds_sprite_center_before_waypoint() {
+        let position = mobile_sprite_map_position(
+            -70,
+            -71,
+            SpriteAnchor::new(70.0, 71.0),
+            MapPoint::new(772.0, 722.0),
+        );
+
+        assert_eq!(position, MapPoint::new(772.0, 722.0));
     }
 }
 
@@ -3504,9 +3538,11 @@ impl EngineInner {
                 sprite.frame_profile_name = fname.clone();
                 sprite.profile_cache_key = cache_key;
                 sprite.apply_placement(
-                    MapPoint::new(
-                        raw.sprite.position_x as f32 + start.x,
-                        raw.sprite.position_y as f32 + start.y,
+                    mobile_sprite_map_position(
+                        raw.sprite.position_x,
+                        raw.sprite.position_y,
+                        sprite.center,
+                        start,
                     ),
                     start_waypoint.level,
                     crate::position_interface::SectorHandle::new(start_waypoint.sector),

@@ -370,13 +370,6 @@ impl Converter {
         for c in &cpf.civilians {
             chars.insert(c.filename.clone());
         }
-        for name in &chars {
-            if name.is_empty() {
-                continue;
-            }
-            self.convert_rel(&format!("Characters/{name}.rhs"))?;
-        }
-
         // Missions: proto-level (.rhp), mission (.rhm), script (.scb).
         let mut level_refs = LevelRefs::default();
         for mp in &cpf.missions {
@@ -403,8 +396,28 @@ impl Converter {
         }
 
         // ── Pass 3 : level references (sprites + terrain maps) ────────
-        for sprite in &level_refs.sprite_rhs {
-            self.convert_rel(&format!("Characters/{sprite}.rhs"))?;
+        for sprite in &level_refs.animation_rhs {
+            // Level patches, background FX, targets, and mobile children all
+            // use FrameKind::Animation. Mirror resolve_rhs_path's ambiance
+            // lookup and convert every authored variant that exists. The old
+            // converter incorrectly looked under Characters/, which silently
+            // omitted assets such as Animations/Day/chariot02.rhs.
+            for rel in animation_rhs_paths(sprite) {
+                if self.exists(&rel) {
+                    self.convert_rel(&rel)?;
+                }
+            }
+        }
+        // Character banks are by far the largest conversion roots. Convert
+        // them after the comparatively small level animation dependency set,
+        // so interrupted/debug conversions still contain the assets needed
+        // to inspect a level rather than tens of thousands of unrelated
+        // character frames and no level FX.
+        for name in &chars {
+            if name.is_empty() {
+                continue;
+            }
+            self.convert_rel(&format!("Characters/{name}.rhs"))?;
         }
         for map in &level_refs.map_names {
             // The map/min files are stored under an ambience subdirectory.
@@ -847,6 +860,34 @@ impl Converter {
     }
 }
 
+fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
+    [
+        "Day", "Night", "Fog", "Attack", "Custom1", "Custom2", "Custom3", "Custom4", "",
+    ]
+    .into_iter()
+    .map(move |subdir| {
+        if subdir.is_empty() {
+            format!("Animations/{sprite}.rhs")
+        } else {
+            format!("Animations/{subdir}/{sprite}.rhs")
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::animation_rhs_paths;
+
+    #[test]
+    fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
+        let paths = animation_rhs_paths("chariot02").collect::<Vec<_>>();
+
+        assert!(paths.contains(&"Animations/Day/chariot02.rhs".to_owned()));
+        assert!(paths.contains(&"Animations/chariot02.rhs".to_owned()));
+        assert!(paths.iter().all(|path| !path.starts_with("Characters/")));
+    }
+}
+
 fn sanitize_path_component(s: &str) -> String {
     // Profile names come from artist-authored data and may contain anything.
     // Swap out the characters most likely to trip up filesystems; leave
@@ -868,7 +909,9 @@ fn sanitize_path_component(s: &str) -> String {
 
 #[derive(Default)]
 struct LevelRefs {
-    sprite_rhs: BTreeSet<String>,
+    /// RHS basenames loaded through `FrameKind::Animation` from
+    /// `Data/Animations[/<ambiance>]`, not `Data/Characters`.
+    animation_rhs: BTreeSet<String>,
     map_names: BTreeSet<String>,
     /// Sound-source IDs referenced by each level's `.rhp`. The runtime
     /// maps each ID to a `snd_%03d.wav` file under `Data/Sounds/`.
@@ -879,13 +922,13 @@ fn collect_level_refs(proto: &LoadedProtoLevel, mission: &LoadedMission, out: &m
     for p in &proto.patches {
         let n = &p.element_fx.sprite.frame_profile_name;
         if !n.is_empty() {
-            out.sprite_rhs.insert(n.clone());
+            out.animation_rhs.insert(n.clone());
         }
     }
     for fx in &proto.animations {
         let n = &fx.sprite.frame_profile_name;
         if !n.is_empty() {
-            out.sprite_rhs.insert(n.clone());
+            out.animation_rhs.insert(n.clone());
         }
     }
     if !mission.header.map_filename.is_empty() {
@@ -894,14 +937,14 @@ fn collect_level_refs(proto: &LoadedProtoLevel, mission: &LoadedMission, out: &m
     for p in &mission.mission_patches {
         let n = &p.element_fx.sprite.frame_profile_name;
         if !n.is_empty() {
-            out.sprite_rhs.insert(n.clone());
+            out.animation_rhs.insert(n.clone());
         }
     }
     for mobile in &mission.mobile_elements {
         for fx in &mobile.sprites {
             let n = &fx.sprite.frame_profile_name;
             if !n.is_empty() {
-                out.sprite_rhs.insert(n.clone());
+                out.animation_rhs.insert(n.clone());
             }
         }
     }
@@ -911,7 +954,7 @@ fn collect_level_refs(proto: &LoadedProtoLevel, mission: &LoadedMission, out: &m
     // sources they need.
     for t in &mission.targets {
         if !t.filename.is_empty() {
-            out.sprite_rhs.insert(t.filename.clone());
+            out.animation_rhs.insert(t.filename.clone());
         }
     }
     // Sound-source waves: each source's `id` is the sound-bank id the
