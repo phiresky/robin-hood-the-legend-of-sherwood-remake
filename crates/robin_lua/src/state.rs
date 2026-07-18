@@ -48,10 +48,17 @@ struct HostAttachment<'lua>(&'lua Lua);
 impl Drop for HostAttachment<'_> {
     fn drop(&mut self) {
         let removed = self.0.remove_app_data::<HostPtr>();
-        assert!(
-            removed.is_some(),
-            "Lua HostPtr attachment disappeared before its scope ended"
-        );
+        if removed.is_none() {
+            const MESSAGE: &str = "Lua HostPtr attachment disappeared before its scope ended";
+            if std::thread::panicking() {
+                // Never double-panic from cleanup: that would abort before
+                // the original unwind could restore the surrounding script
+                // session. The invariant still remains visible in logs.
+                tracing::error!("{MESSAGE}");
+            } else {
+                panic!("{MESSAGE}");
+            }
+        }
     }
 }
 
@@ -152,12 +159,11 @@ impl MissionLuaState {
     /// removed so a stray Lua coroutine resumed later can't see
     /// stale state.
     ///
-    /// **Safety**: the closure must not stash a reference to the
-    /// host that outlives this call (no `lua.create_thread` that
-    /// captures host state, no Rust upvalues holding `&mut
-    /// GameHost`). All host access happens through registered
-    /// native shims, which themselves only run synchronously
-    /// inside this scope.
+    /// **Safety**: the closure must not stash a reference to the host or
+    /// canonical capability that outlives this call (no `lua.create_thread`
+    /// that captures host state, no Rust upvalues holding borrowed engine
+    /// state). All access happens through registered native shims, which
+    /// themselves only run synchronously inside this scope.
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
