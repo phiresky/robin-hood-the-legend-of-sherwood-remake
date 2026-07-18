@@ -1,4 +1,4 @@
-//! Script/GameHost wiring, mission script management, campaign integration.
+//! Script VM/host-adapter wiring, mission script management, and campaign integration.
 
 use super::scroll_reveal::ScrollStatus;
 use super::*;
@@ -1017,9 +1017,9 @@ impl EngineInner {
         self.initialize_zone_scripts(assets);
 
         // ── Phase 3b: Apply SectorProduction registrations from StartUp::Initialize.
-        // RegisterAsProductionSector / AddProductionPoint queue into GameHost; the
-        // engine drains them here so the zone-occupant step (Phase 4) can emit
-        // SetWorkicon for initial occupants.
+        // RegisterAsProductionSector / AddProductionPoint queue through the
+        // script host adapter; the engine drains them here so the
+        // zone-occupant step (Phase 4) can emit SetWorkicon for initial occupants.
         self.apply_production_registrations(assets);
 
         // ── Phase 4: Populate initial zone occupants ──
@@ -1662,7 +1662,8 @@ impl EngineInner {
     // ─── Production-sector wiring ────────────────────────────────
 
     /// Drain `production_registrations` and `production_points` from the
-    /// GameHost into engine state.  Sets the `production_sector_type` on each
+    /// script native-command adapter into engine state. Sets the
+    /// `production_sector_type` on each
     /// referenced script zone sector, and pushes a per-sector
     /// `sector_production::Point` into the matching campaign SectorProduction.
     ///
@@ -1679,10 +1680,7 @@ impl EngineInner {
         let Some(ref mut script) = self.scripts.mission else {
             return;
         };
-        let game_host = match script.game_host_mut() {
-            Some(h) => h,
-            None => return,
-        };
+        let game_host = &mut script.game_host;
 
         let registrations: Vec<(i32, i32, i32)> =
             std::mem::take(&mut game_host.production_registrations);
@@ -2065,16 +2063,10 @@ impl EngineInner {
         if !self.filter_stimulus(assets, handle, stimulus) {
             return false;
         }
-        // Hoist the door slice off `mission_script.game_host()`
-        // before grabbing the mutable entity borrow — the friendly
-        // AI's `alert_soldier` needs it for the
+        // Hoist the canonical door slice before grabbing the mutable
+        // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
-        let doors_ptr = self
-            .scripts
-            .mission
-            .as_ref()
-            .and_then(|ms| ms.game_host())
-            .map(|_| self.script_domains.interactables.doors.as_slice());
+        let doors = self.script_domains.interactables.doors.as_slice();
         let ai_global = &mut self.ai.global;
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return false;
@@ -2094,7 +2086,7 @@ impl EngineInner {
                 ctx,
                 tick_data,
                 Some(&self.world.fast_grid),
-                doors_ptr,
+                Some(doors),
             )
         } else {
             false
@@ -2965,12 +2957,6 @@ impl EngineInner {
         // number. Sector number comes from the grid sector tagged
         // `building_index == bld_idx` (populated at level load).
         let (gate_point_in, sector_num) = {
-            let Some(ref script) = self.scripts.mission else {
-                return;
-            };
-            let Some(_game_host) = script.game_host() else {
-                return;
-            };
             let gate_handle = self
                 .script_domains
                 .buildings
