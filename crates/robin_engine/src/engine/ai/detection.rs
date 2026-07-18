@@ -1,7 +1,7 @@
 //! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
-//! enemy → PC and royalist → enemy `RefreshDetection` (P3). All three
-//! dispatch or queue their resulting stimuli at the matching per-NPC creation
-//! boundary.
+//! enemy → PC and royalist → enemy `RefreshDetection` (P3). Enemy optical
+//! stimuli dispatch at the matching per-NPC creation boundary; the NPC-side
+//! blip scan still runs as the preceding batched P2a pass.
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
 use super::*;
@@ -82,11 +82,18 @@ struct SoldierSightContext {
 }
 
 impl SoldierSightContext {
-    fn from_viewer(entity: &Entity, required_camp: Camp) -> Option<Self> {
+    fn from_viewer(
+        entity: &Entity,
+        required_camp: Camp,
+        viewer_building_sector: Option<crate::position_interface::SectorHandle>,
+    ) -> Option<Self> {
         let Entity::Soldier(soldier) = entity else {
             return None;
         };
-        if !entity.is_active()
+        // RefreshDetection's optical gate is narrower than its entry gate:
+        // an inactive NPC in a BUILDING sector still scans, while an
+        // inactive NPC merely passing a door stops after acoustics.
+        if (!entity.is_active() && viewer_building_sector.is_none())
             || entity.is_dead()
             || soldier.soldier.cached_camp != required_camp
             || soldier.human.unconscious
@@ -98,9 +105,10 @@ impl SoldierSightContext {
         // Original: `RHElementActorSoldier` owns
         // `RHArtificialMalignity` and calls its state directly from
         // Hourglass. An eligible live soldier without EnemyAi is invalid.
-        let ai = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
-            panic!("eligible active soldier has no EnemyAi brain during detection")
-        });
+        let ai =
+            soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                panic!("eligible soldier has no EnemyAi brain during detection")
+            });
         let current_substate = ai.base.current_substate;
         let ignore_bodies = matches!(
             current_substate,
@@ -445,12 +453,12 @@ impl EngineInner {
             .world
             .entities
             .npcs()
-            .map(|(id, entity)| (id.into(), entity))
+            .map(|(id, entity)| (EntityId::from(id), entity))
             .chain(
                 self.world
                     .entities
                     .objects()
-                    .map(|(id, entity)| (id.into(), entity)),
+                    .map(|(id, entity)| (EntityId::from(id), entity)),
             )
         {
             let elem = entity.element_data();
@@ -460,11 +468,27 @@ impl EngineInner {
             }
             let is_npc = entity.npc_data().is_some(); // soldier or civilian
             let is_object = entity.is_object();
+            // NPC-side blip visibility belongs to RefreshDetection and is
+            // behind its broad entry gate. Door transit counts as "inside"
+            // here, unlike the later optical gate. Listen and object-side
+            // discovery are separate paths and remain eligible.
+            let npc_refresh_detection_eligible = !is_npc
+                || elem.active
+                || elem.is_in_door_transit()
+                || self.entity_building_sector(elem.sector()).is_some();
 
-            // Royalist soldiers: auto-reveal.
+            // EntityId (monotonic slot index, never reused) stands in for
+            // original `mulCreationOrder` in the common blip cadence.
+            let modified_frame = self.control.frame_counter.wrapping_add(entity_id.index());
+            let npc_blip_cadence_open = modified_frame.is_multiple_of(DETECTION_FREQUENCY_BLIP);
+
+            // Royalist soldiers auto-reveal, but still only inside the same
+            // 16-frame RefreshDetection blip gate as every other NPC.
             if entity.is_soldier()
                 && let Entity::Soldier(s) = entity
                 && s.soldier.cached_camp == Camp::Royalists
+                && npc_refresh_detection_eligible
+                && npc_blip_cadence_open
             {
                 to_reveal.push(entity_id);
                 continue;
@@ -473,10 +497,7 @@ impl EngineInner {
             // Frame gate for SeesBlip path (NPC-side, every 16 frames).
             // The frame counter is offset by the entity's creation
             // order to stagger NPC detection across 16 frames.
-            // EntityId (monotonic slot index, never reused) stands in
-            // for that creation counter directly.
-            let modified_frame = self.control.frame_counter.wrapping_add(entity_id.index());
-            let sees_blip_gate = is_npc && modified_frame.is_multiple_of(DETECTION_FREQUENCY_BLIP);
+            let sees_blip_gate = is_npc && npc_refresh_detection_eligible && npc_blip_cadence_open;
 
             // Listen path only fires on the frame a listening PC's
             // countdown hit 0 — `firing_listeners` is non-empty
@@ -506,7 +527,10 @@ impl EngineInner {
             // ── Path A: SeesBlip ─────────────────────────────
             if sees_blip_gate {
                 for pc in &world.pcs {
-                    if pc.layer != blip_layer {
+                    // Original SeesBlip requires the viewing PC to be active.
+                    // Living inactive PCs remain in the world snapshot for
+                    // same-building NPC optical visibility only.
+                    if !pc.active || !pc.playable || pc.unconscious || pc.layer != blip_layer {
                         continue;
                     }
                     let dx = blip_eye_xy.x - pc.eye_position.x;
@@ -748,6 +772,17 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
+            // RefreshDetection's first gate admits inactive NPCs only while
+            // they have a door pointer or an actual BUILDING sector. This is
+            // deliberately broader than the later sector-only optical gate.
+            if !entity.is_active()
+                && !entity.element_data().is_in_door_transit()
+                && self
+                    .entity_building_sector(entity.element_data().sector())
+                    .is_none()
+            {
+                return;
+            }
             // Every NPC runs the acoustic pass — it lives on the
             // base NPC class.  `expects_pc_detectables` captures
             // the camp-level predicate "does this NPC's enemy
@@ -851,13 +886,13 @@ impl EngineInner {
         let enemy_idx = DetectableType::Enemy as usize;
         for pc_id in pc_target_ids {
             let Some(pc) = world.pcs.iter().find(|pc| pc.id == pc_id) else {
-                // A dead or inactive PC can remain in the
-                // detectable list until optical CleanUpDetectables later in
-                // this same RefreshDetection call. There is no acoustic
-                // snapshot to sample in that expected stale window. A live
-                // registered PC missing from the world view is inconsistent.
+                // A dead PC can remain in the detectable list until optical
+                // CleanUpDetectables later in this same RefreshDetection
+                // call. There is no acoustic snapshot to sample in that
+                // expected stale window. Every living PC, including an
+                // inactive one, must be present in the world view.
                 match self.world.entities.get(pc_id) {
-                    Some(entity) if !entity.is_active() || entity.is_dead() => continue,
+                    Some(entity) if entity.is_dead() => continue,
                     Some(_) | None => panic!(
                         "NPC {} tracks live PC {} for hearing but the PC is absent from the detection view",
                         npc_id.index(),
@@ -1024,6 +1059,11 @@ impl EngineInner {
     /// Hourglass.
     // TODO(parity): Script-driven mutation of an Enemy list between FIFO Think
     // calls remains outside the frozen final-scan aggregate.
+    // TODO(parity): Fold NPC-side blip work into this creation-ordered loop;
+    // the current P2a pass cannot observe an earlier NPC Think mutating a
+    // later NPC's blip eligibility in the same frame.
+    // TODO(parity): Generalize optical detection to civilians and add the
+    // Lacklandist-soldier → Royalist-soldier Enemy target path.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -1038,7 +1078,40 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
+            // Sample the two pre-acoustic RefreshDetection gates before
+            // EVENT_HEAR can synchronously run Think/script and mutate the
+            // viewer. Once these gates pass, original control flow always
+            // reaches the pre-optical maxima reset.
+            let passed_pre_acoustic_gates = self.world.entities.get(npc_id).is_some_and(|entity| {
+                let elem = entity.element_data();
+                let entered_refresh = elem.active
+                    || elem.is_in_door_transit()
+                    || self.entity_building_sector(elem.sector()).is_some();
+                entered_refresh
+                    && !entity.is_dead()
+                    && entity.human_data().is_none_or(|human| !human.unconscious)
+                    && elem.posture != Posture::Tied
+            });
             self.tick_enemy_ai_acoustic_detection_for_npc(npc_id, assets, world);
+
+            // RefreshDetection clears both maxima after acoustics but
+            // before its narrower optical eligibility gate. In particular,
+            // an inactive NPC on a door rail reaches this reset and then
+            // returns without scanning; an inactive outdoor NPC returned at
+            // the entry gate and must retain the old value.
+            if passed_pre_acoustic_gates
+                && let Some(npc) = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::npc_data_mut)
+            {
+                npc.maximal_detection_suspect = 0;
+                if let Some(ai) = npc.ai_brain.base_mut() {
+                    ai.max_visibility = 0.0;
+                }
+            }
+
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
@@ -1187,7 +1260,8 @@ impl EngineInner {
         // -- Read enemy state in a scoped borrow --
         let viewer = {
             let entity = self.world.entities.get(npc_id)?;
-            SoldierSightContext::from_viewer(entity, Camp::Lacklandists)?
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            SoldierSightContext::from_viewer(entity, Camp::Lacklandists, building_sector)?
         };
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
@@ -1456,11 +1530,8 @@ impl EngineInner {
                         forest_180_degree_view: false,
                         golden_eye_mode: golden_eye,
                         effective_view_radius,
-                        // PCs in pc_snapshots are always active
-                        // (filtered at snapshot build time), so
-                        // "active and outside building" reduces to
-                        // "not in a building".
-                        target_is_active_and_outside_building: pc.building_sector.is_none(),
+                        target_is_active_and_outside_building: pc.active
+                            && pc.building_sector.is_none(),
                         target: crate::stealth::detection_point_xy(
                             pc.position,
                             pc.posture,
@@ -2592,7 +2663,10 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return None;
             };
-            let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Royalists) else {
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let Some(viewer) =
+                SoldierSightContext::from_viewer(entity, Camp::Royalists, building_sector)
+            else {
                 return None;
             };
             viewer
@@ -3017,7 +3091,10 @@ impl EngineInner {
             // notes Royalist body/object reactions have no consumer
             // wired in the Rust AI layer yet, and exposing the loop
             // there would create dead stimuli with no handlers.
-            let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Lacklandists) else {
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let Some(viewer) =
+                SoldierSightContext::from_viewer(entity, Camp::Lacklandists, building_sector)
+            else {
                 return;
             };
             viewer

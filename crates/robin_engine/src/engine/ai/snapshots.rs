@@ -28,6 +28,14 @@ pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> b
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PcSnapshot {
     pub(super) id: EntityId,
+    /// Raw `RHElement::IsActive()` analogue. Living inactive PCs stay in
+    /// this snapshot because Enemy detectables are only cleaned up when the
+    /// target dies, and an inactive PC in the viewer's building remains
+    /// optically visible through the original same-sector short-circuit.
+    pub(super) active: bool,
+    /// Script-controlled PC participation flag. Non-playable PCs remain
+    /// optical targets but cannot reveal an NPC blip through `SeesBlip`.
+    pub(super) playable: bool,
     pub(super) position: MapPoint,
     /// PC viewer eye-point XY. Differs from feet position for
     /// LeaningOut and lying/dead postures, matching C++
@@ -386,9 +394,10 @@ impl EngineInner {
             // at snapshot-build time would make NPCs blind to sleeping
             // heroes entirely, breaking the "approach sleeping enemy" +
             // "kill nearby sleeping enemies" branches.
-            if !pc.element.active || pc.pc.life_points <= 0 {
+            if pc.pc.life_points <= 0 {
                 continue;
             }
+            let element_active = pc.element.active;
             let is_unconscious = pc.human.unconscious;
             let is_carried = pc.human.carrier.is_some();
             let is_passing_door = pc.actor.active_door_pass.is_some();
@@ -511,8 +520,11 @@ impl EngineInner {
                 pc.element.posture,
                 Posture::Dead | Posture::DeadBack | Posture::StuckUnderNet | Posture::Tied
             );
-            let active =
-                !is_unconscious && !is_passing_door && !posture_inactive && !self.actors_frozen();
+            let active = element_active
+                && !is_unconscious
+                && !is_passing_door
+                && !posture_inactive
+                && !self.actors_frozen();
             let noise_volume = Self::pc_noise_volume(
                 order_type,
                 material,
@@ -522,6 +534,8 @@ impl EngineInner {
             );
             pc_snapshots.push(PcSnapshot {
                 id: pc_id,
+                active: element_active,
+                playable: pc.pc.playable,
                 position: pos,
                 eye_position,
                 layer,
@@ -533,9 +547,11 @@ impl EngineInner {
                 detection_speed_in_city,
                 direction: pc.element.direction() as u16,
                 // PC `is_able_to_fight`: life > 0 (filtered above),
-                // not unconscious, active (filtered above), and not
+                // active, not unconscious, and not
                 // in a disguised posture (Tree/Spy).
-                able_to_fight: alive && !matches!(pc.element.posture, Posture::Tree | Posture::Spy),
+                able_to_fight: element_active
+                    && alive
+                    && !matches!(pc.element.posture, Posture::Tree | Posture::Spy),
                 sword_range_default,
                 sword_range_maximal,
                 sword_range_uber,

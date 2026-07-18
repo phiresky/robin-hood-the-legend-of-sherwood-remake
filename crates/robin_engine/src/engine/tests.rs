@@ -3347,6 +3347,34 @@ fn make_test_pc(posture: crate::element::Posture) -> Entity {
     })
 }
 
+fn install_test_building_sector(engine: &mut EngineInner, raw_sector: u16) {
+    let _sector = crate::position_interface::SectorHandle::new(raw_sector)
+        .expect("test building sector must be non-zero");
+    let mut level = crate::fast_find_grid::LevelGrid::default();
+    level
+        .sector_number_map
+        .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
+    level.sectors.push(crate::fast_find_grid::GridSector {
+        points: Vec::new(),
+        bounding_box: MapBBox::new(),
+        sector_type: crate::sector::SectorType::BUILDING,
+        layer: 0,
+        sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    engine.world.fast_grid.level = std::sync::Arc::new(level);
+}
+
 #[test]
 fn selection_mark_skips_hidden_and_building_pcs() {
     let mut engine = EngineInner::new();
@@ -3367,30 +3395,7 @@ fn selection_mark_skips_hidden_and_building_pcs() {
     }
 
     let sector_num = crate::position_interface::SectorHandle::new(42).unwrap();
-    let mut level = crate::fast_find_grid::LevelGrid::default();
-    level.sector_number_map.insert(
-        crate::sector::SectorNumber::new(u16::from(sector_num) as i16),
-        0,
-    );
-    level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
-        bounding_box: MapBBox::new(),
-        sector_type: crate::sector::SectorType::BUILDING,
-        layer: 0,
-        sector_number: crate::sector::SectorNumber::new(u16::from(sector_num) as i16),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
-    engine.world.fast_grid.level = std::sync::Arc::new(level);
+    install_test_building_sector(&mut engine, 42);
 
     if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
         pc.element.set_sector(Some(sector_num));
@@ -4657,6 +4662,471 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     );
     assert_eq!(ai.base.current_state, AiState::Default);
     assert!(!observer.alerted);
+}
+
+#[test]
+fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_noop() {
+    use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    for observer_inside in [true, false] {
+        let mut engine = EngineInner::new();
+        let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let indoor_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        let inactive_outdoor_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        let runner_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        let building = crate::position_interface::SectorHandle::new(42).unwrap();
+        install_test_building_sector(&mut engine, 42);
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("inactive-viewer observer exists")
+        else {
+            panic!("inactive-viewer observer changed kind")
+        };
+        observer.element.active = true;
+        observer
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+        observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+        observer.element.set_direction_instantly(4);
+        observer.npc.life_points = 100;
+        observer.npc.view_direction = [1.0, 0.0];
+        observer.npc.view_radius = 300;
+        observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        observer.npc.eye_status = crate::element::EyeStatus::Stare;
+        if observer_inside {
+            observer.element.set_sector(Some(building));
+        }
+
+        let Entity::Pc(indoor_target) = engine
+            .get_entity_mut(indoor_target_id)
+            .expect("inactive same-building target exists")
+        else {
+            panic!("inactive same-building target changed kind")
+        };
+        indoor_target.element.active = true;
+        indoor_target
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(40.0, 0.0, 0.0));
+        indoor_target
+            .element
+            .set_position_map(MapPoint::new(40.0, 0.0));
+        indoor_target.element.set_sector(Some(building));
+        indoor_target.pc.life_points = 100;
+
+        let Entity::Pc(inactive_outdoor) = engine
+            .get_entity_mut(inactive_outdoor_id)
+            .expect("inactive outdoor target exists")
+        else {
+            panic!("inactive outdoor target changed kind")
+        };
+        inactive_outdoor.element.active = true;
+        inactive_outdoor
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(45.0, 0.0, 0.0));
+        inactive_outdoor
+            .element
+            .set_position_map(MapPoint::new(45.0, 0.0));
+        inactive_outdoor.pc.life_points = 100;
+
+        let Entity::Pc(runner) = engine
+            .get_entity_mut(runner_id)
+            .expect("inactive-viewer runner exists")
+        else {
+            panic!("inactive-viewer runner changed kind")
+        };
+        runner.element.active = true;
+        runner
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(55.0, 0.0, 0.0));
+        runner.element.set_position_map(MapPoint::new(55.0, 0.0));
+        runner.pc.life_points = 100;
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            crate::element::Command::Move,
+            Some(runner_id),
+            OrderType::RunningUpright,
+        );
+        movement
+            .orders
+            .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
+        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(movement_sequence, 0);
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .get_mut(0)
+            .expect("fixture installs the PC character profile");
+        profile.detection_speed_in_city = 100;
+        profile.detection_speed_in_forest = 100;
+
+        let Entity::Pc(indoor_target) = engine
+            .get_entity_mut(indoor_target_id)
+            .expect("same-building target exists after fixture")
+        else {
+            panic!("same-building target changed kind after fixture")
+        };
+        indoor_target.element.active = false;
+        engine
+            .get_entity_mut(inactive_outdoor_id)
+            .expect("inactive outdoor target exists after fixture")
+            .element_data_mut()
+            .active = false;
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("inactive-viewer observer exists after fixture")
+        else {
+            panic!("inactive-viewer observer changed kind after fixture")
+        };
+        observer.element.active = false;
+        let ai = observer
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("inactive-viewer observer has enemy AI");
+        ai.base.me = observer_id.index();
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultOnPost;
+        ai.current_task_priority = task_priority::NONE;
+        ai.base.locks_flag_field = AiLockFlags::BUSY;
+        observer.npc.detectable_lists[DetectableType::Enemy as usize] = vec![
+            Detectable {
+                element: Some(indoor_target_id),
+                detectable_type: DetectableType::Enemy,
+                shadow_seen_last_frame: true,
+                ..Detectable::default()
+            },
+            Detectable {
+                element: Some(inactive_outdoor_id),
+                detectable_type: DetectableType::Enemy,
+                seen_last_frame: true,
+                shadow_seen_last_frame: true,
+                ..Detectable::default()
+            },
+            Detectable {
+                element: Some(runner_id),
+                detectable_type: DetectableType::Enemy,
+                shadow_seen_last_frame: true,
+                ..Detectable::default()
+            },
+        ];
+        observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+        observer.npc.maximal_detection_suspect = 777;
+
+        crate::sim_rng::with_seed(0xA013_1A51, || engine.tick_enemy_ai(&assets));
+
+        let observer = engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("inactive-viewer observer remains an NPC");
+        let ai = observer
+            .ai_brain
+            .enemy()
+            .expect("inactive-viewer observer retains enemy AI");
+        assert_eq!(ai.base.current_state, AiState::Default);
+
+        if observer_inside {
+            assert_eq!(
+                ai.base
+                    .stimulus_queue
+                    .iter()
+                    .map(|stimulus| stimulus.stimulus_type)
+                    .collect::<Vec<_>>(),
+                vec![
+                    StimulusType::EventHear,
+                    StimulusType::EventView,
+                    StimulusType::EventOutOfView,
+                ],
+                "an inactive building viewer must retain acoustic-before-optical FIFO order"
+            );
+            assert!(observer.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame);
+            assert!(
+                !observer.detectable_lists[DetectableType::Enemy as usize][1].seen_last_frame,
+                "a living inactive outdoor PC must stay in the list and produce a falling edge"
+            );
+            assert!(observer.detectable_lists[DetectableType::Enemy as usize][2].heard_last_frame);
+            assert_eq!(
+                observer.detection_suspects[DetectableType::Enemy as usize],
+                0
+            );
+            assert_eq!(observer.maximal_detection_suspect, 0);
+            assert_eq!(
+                engine
+                    .get_entity(indoor_target_id)
+                    .and_then(Entity::actor_data)
+                    .expect("inactive indoor target remains an actor")
+                    .last_noise_volume,
+                0,
+                "retaining an inactive PC for same-building sight must not make it audible"
+            );
+        } else {
+            assert!(
+                ai.base.stimulus_queue.is_empty(),
+                "the first RefreshDetection gate must make an inactive outdoor viewer a no-op"
+            );
+            assert_eq!(
+                observer.detectable_lists[DetectableType::Enemy as usize].len(),
+                3,
+                "living inactive targets remain Enemy detectables until they die"
+            );
+            assert!(!observer.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame);
+            assert!(observer.detectable_lists[DetectableType::Enemy as usize][1].seen_last_frame);
+            assert!(!observer.detectable_lists[DetectableType::Enemy as usize][2].heard_last_frame);
+            assert_eq!(
+                observer.detection_suspects[DetectableType::Enemy as usize],
+                999
+            );
+            assert_eq!(observer.maximal_detection_suspect, 777);
+        }
+    }
+}
+
+#[test]
+fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
+    use crate::element::{Camp, Entity};
+
+    for observer_inside in [true, false] {
+        let mut engine = EngineInner::new();
+        let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        install_test_building_sector(&mut engine, 42);
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("blipped inactive observer exists")
+        else {
+            panic!("blipped inactive observer changed kind")
+        };
+        observer.element.active = true;
+        observer.element.blipped = true;
+        observer.npc.life_points = 100;
+        observer
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+        observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+        if observer_inside {
+            observer.element.set_sector(Some(
+                crate::position_interface::SectorHandle::new(42).unwrap(),
+            ));
+        }
+
+        let Entity::Pc(pc) = engine
+            .get_entity_mut(pc_id)
+            .expect("blip-viewing PC exists")
+        else {
+            panic!("blip-viewing PC changed kind")
+        };
+        pc.element.active = true;
+        pc.pc.playable = true;
+        pc.pc.life_points = 100;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(20.0, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(20.0, 0.0));
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine
+            .get_entity_mut(observer_id)
+            .expect("blipped observer exists after fixture")
+            .element_data_mut()
+            .active = false;
+
+        crate::sim_rng::with_seed(0xA013_B11F, || engine.tick_enemy_ai(&assets));
+
+        assert_eq!(
+            engine
+                .get_entity(observer_id)
+                .expect("blipped observer survives tick")
+                .element_data()
+                .blipped,
+            !observer_inside,
+            "inactive building NPCs run blip detection; inactive outdoor NPCs do not"
+        );
+    }
+}
+
+#[test]
+fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
+    use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::DoorHandle;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let runner_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("door-transit observer exists")
+    else {
+        panic!("door-transit observer changed kind")
+    };
+    observer.element.active = true;
+    observer.element.blipped = true;
+    observer.npc.life_points = 100;
+    observer
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+    observer.element.set_direction_instantly(4);
+    observer.npc.view_direction = [1.0, 0.0];
+    observer.npc.view_radius = 300;
+    observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    observer.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    let Entity::Pc(runner) = engine
+        .get_entity_mut(runner_id)
+        .expect("door-transit runner exists")
+    else {
+        panic!("door-transit runner changed kind")
+    };
+    runner.element.active = true;
+    runner.pc.playable = true;
+    runner.pc.life_points = 100;
+    runner
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(55.0, 0.0, 0.0));
+    runner.element.set_position_map(MapPoint::new(55.0, 0.0));
+
+    let mut movement = SequenceElement::new_movement(
+        1,
+        crate::element::Command::Move,
+        Some(runner_id),
+        OrderType::RunningUpright,
+    );
+    movement
+        .orders
+        .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("door-transit observer exists after fixture")
+    else {
+        panic!("door-transit observer changed kind after fixture")
+    };
+    observer.element.active = false;
+    observer
+        .element
+        .sprite
+        .position_iface
+        .set_door_for_test(DoorHandle(0));
+    observer.npc.detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+        element: Some(runner_id),
+        detectable_type: DetectableType::Enemy,
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    }];
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    observer.npc.maximal_detection_suspect = 777;
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("door-transit observer has enemy AI");
+    ai.base.me = observer_id.index();
+    ai.base.current_state = AiState::Default;
+    ai.base.current_substate = Substate::DefaultOnPost;
+    ai.current_task_priority = task_priority::NONE;
+    ai.base.locks_flag_field = AiLockFlags::BUSY;
+    ai.base.max_visibility = 0.75;
+
+    crate::sim_rng::with_seed(0xA013_D00F, || engine.tick_enemy_ai(&assets));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity(observer_id)
+        .expect("door-transit observer survives tick")
+    else {
+        panic!("door-transit observer changed kind during tick")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("door-transit observer retains enemy AI");
+    assert!(
+        !observer.element.blipped,
+        "door transit passes the blip gate"
+    );
+    assert_eq!(
+        ai.base
+            .stimulus_queue
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![StimulusType::EventHear],
+        "door transit passes acoustics but the sector-only optical gate rejects it"
+    );
+    assert!(observer.npc.detectable_lists[DetectableType::Enemy as usize][0].heard_last_frame);
+    assert!(!observer.npc.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame);
+    assert_eq!(
+        observer.npc.detection_suspects[DetectableType::Enemy as usize],
+        999,
+        "the door-only optical return must not scan or decay Enemy suspects"
+    );
+    assert_eq!(observer.npc.maximal_detection_suspect, 0);
+    assert_eq!(ai.base.max_visibility, 0.0);
+}
+
+#[test]
+fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("Royalist blip observer exists")
+    else {
+        panic!("Royalist blip observer changed kind")
+    };
+    observer.element.active = true;
+    observer.element.blipped = true;
+    observer.npc.life_points = 100;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.control.frame_counter = 1;
+    engine.tick_enemy_ai(&assets);
+    assert!(
+        engine
+            .get_entity(observer_id)
+            .expect("Royalist blip observer survives closed cadence")
+            .element_data()
+            .blipped
+    );
+
+    engine.control.frame_counter = 16;
+    engine.tick_enemy_ai(&assets);
+    assert!(
+        !engine
+            .get_entity(observer_id)
+            .expect("Royalist blip observer survives open cadence")
+            .element_data()
+            .blipped
+    );
 }
 
 #[test]

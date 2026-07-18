@@ -1103,6 +1103,10 @@ impl PositionInterface {
     pub fn get_door(&self) -> DoorHandle {
         self.door
     }
+    #[cfg(test)]
+    pub(crate) fn set_door_for_test(&mut self, door: DoorHandle) {
+        self.door = door;
+    }
     #[inline]
     pub fn get_door_direction(&self) -> bool {
         self.door_direction
