@@ -702,11 +702,13 @@ pub(super) fn build_my_exit_door_info(
 /// normal `IsDetecting(human)` ignores activity in its same-building arm;
 /// inactive bonuses and projectile entities remain excluded.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
+    // Scratch views are also built by empty/pre-script engine fixtures.  Door
+    // state is intentionally unavailable during that phase; `init_ai` emits a
+    // warning when a real level reaches AI initialization without a script.
     let doors_ref = engine
         .scripts
         .mission
         .as_ref()
-        .and_then(|s| s.game_host())
         .map(|_| engine.script_domains.interactables.doors.as_slice())
         .unwrap_or(&[]);
 
@@ -1163,26 +1165,22 @@ impl EngineInner {
         // cached geometry.  No fallback when no door is stashed.
         let stashed = soldier.npc.ai_brain.enemy().and_then(|e| e.my_door_index);
         if stashed.is_some() {
-            let doors_slice: &[crate::gate::Door] = self
-                .scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .map(|_| self.script_domains.interactables.doors.as_slice())
-                .unwrap_or(&[]);
+            assert!(
+                self.scripts.mission.is_some(),
+                "stashed AI exit-door state requires an installed mission script"
+            );
+            let doors_slice = self.script_domains.interactables.doors.as_slice();
             tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
         }
 
         // Avenger-on-roof wait position — only computed when the AI
         // set the `couldnt_reachpoint` flag.
         if couldnt_reachpoint {
-            let doors_slice: &[crate::gate::Door] = self
-                .scripts
-                .mission
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .map(|_| self.script_domains.interactables.doors.as_slice())
-                .unwrap_or(&[]);
+            assert!(
+                self.scripts.mission.is_some(),
+                "AI roof recovery requires an installed mission script"
+            );
+            let doors_slice = self.script_domains.interactables.doors.as_slice();
             tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
                 &self.world.entities,
                 doors_slice,
@@ -1234,11 +1232,12 @@ impl EngineInner {
             };
             let in_building = self.entity_data_inside_building(&s.element);
             let forecast_destination = {
+                // Missing scripts are a recoverable developer-data load path;
+                // `init_ai` warns once before these per-NPC snapshots are built.
                 let doors = self
                     .scripts
                     .mission
                     .as_ref()
-                    .and_then(|ms| ms.game_host())
                     .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
@@ -1835,6 +1834,16 @@ impl EngineInner {
     /// Called from `initialize()` after level loading, and again after
     /// deserialization when re-initialization is requested.
     pub(crate) fn init_ai(&mut self, assets: &mut LevelAssets) {
+        // Script loading is intentionally recoverable so incomplete developer
+        // data can still reach the renderer.  In that mode AI starts without
+        // door-derived views, houses, or rally points; make the degraded state
+        // explicit rather than silently manufacturing valid-looking caches.
+        if self.scripts.mission.is_none() {
+            tracing::warn!(
+                "Initializing AI without a mission script; door-derived AI state will be unavailable"
+            );
+        }
+
         // Reset global AI state
         // think-method recursion depth = 0
         self.ai.global.there_are_royalist_soldiers = false;
@@ -2415,8 +2424,7 @@ impl EngineInner {
         self.ai.global.houses.clear();
         self.ai.global.door_rally_points.clear();
 
-        // Index doors by their `sector_in` (building interior side).
-        // We read from the live door table on the game host.
+        // Index canonical doors by their `sector_in` (building interior side).
         // BTreeMap (not HashMap) so the `for (sector_in, …) in
         // doors_by_building` iteration below assigns `leave_house_number`
         // in a stable, sector-ordered sequence — replay/lockstep multi-
@@ -2437,7 +2445,9 @@ impl EngineInner {
         // it.  Trap doors (`BuildingTrap`) remain excluded — those
         // sectors aren't regular building interiors and shouldn't
         // carry rally points.
-        if let Some(_game_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) {
+        // A missing script is the explicitly warned degraded-load path from
+        // `init_ai`; houses intentionally remain empty in that mode.
+        if self.scripts.mission.is_some() {
             for (idx, door) in self.script_domains.interactables.doors.iter().enumerate() {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
