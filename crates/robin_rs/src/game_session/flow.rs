@@ -506,15 +506,16 @@ fn run_interactive_post_initialize(
     dev: &mut robin_engine::engine::DevState,
 ) {
     let mut display = std::mem::take(&mut host.engine_display);
-    let post_initialized = crate::sim_timeline::run_post_initialize_stage(
-        host,
-        &mut display,
-        assets,
-        &mut manager.engine,
-        dev,
-    );
+    let post_initialized = runtime.cross_post_initialize(|| {
+        crate::sim_timeline::run_post_initialize_stage(
+            host,
+            &mut display,
+            assets,
+            &mut manager.engine,
+            dev,
+        )
+    });
     host.engine_display = display;
-    runtime.trace(FrameContractStage::PostInitialize);
     if post_initialized
         && let Some(net) = host.net.as_ref()
         && host.local_seat == engine_player_command::PlayerId::HOST

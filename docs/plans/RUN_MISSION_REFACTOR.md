@@ -29,45 +29,45 @@ to the tick, or move `PostInitialize` into `perform_hourglass`.
 
 ## Why this is worth doing
 
-`crates/robin_rs/src/game_session/mod.rs` is currently 4,346 lines.
-`run_mission` spans roughly lines 826--4300 and owns almost every live mission
-facility as a separate local. Several helper modules have already been
-extracted, but their functions still take large cross-sections of that stack.
-The result has three practical costs:
+Before this refactor, `crates/robin_rs/src/game_session/mod.rs` was 4,346 lines
+and `run_mission` owned almost every live mission facility as a separate local.
+The landed implementation leaves that module as the session boundary and short
+build/run/finish wrappers; bootstrap, runtime, interactive frontend, frame
+preparation/simulation, and finishing now have separate owners. The refactor
+addressed three practical costs:
 
-- an early return must remember campaign restoration, queued app effects, save
+- an early return had to coordinate campaign return, queued app effects, save
   flushing, recorder completion, and sometimes modal teardown;
 - the only reliable description of frame order is the physical order of one
   very long function;
 - headless execution independently reimplements part of the same timeline and
   has silently different operation, modal, and exit behavior.
 
-There is already a good seam: `game_session/runtime.rs::MissionRuntime` owns
-replay/rewind/rollback/multiplayer timing and asserts the coarse
-Input -> Simulation -> Bookkeeping -> Presentation progression. It is not yet
-the owner of a loaded mission; `EngineManager`, `Host`, `Game`, assets, `DevState`,
-pause state, renderer state, and teardown still live beside it.
+The common seam is now explicit: `MissionRuntime` owns `MissionWorld`,
+`TimelineRuntime`, and `MissionControl`; `InteractiveFrontend` separately owns
+renderer/input/audio/UI resources. The timeline asserts the coarse
+Input -> Simulation -> Bookkeeping -> Presentation progression.
 
-## Current ownership inventory
+## Landed ownership inventory
 
 The important distinction is lifetime, not whether a value happens to be used
 by rendering.
 
-| Lifetime / authority | Current values | Target owner |
+| Lifetime / authority | Values | Landed owner |
 | --- | --- | --- |
 | Application/session, borrowed for a call | `GameWindow`, `RustCallbacks`, profile manager, CLI/application options | `MissionServices<'_>` passed to methods; never stored in the loaded mission |
-| Between missions | the one concrete `Campaign` | caller before/after the mission; moved into and returned by the mission ownership API once the campaign/GameHost plan lands |
+| Between missions | the one concrete `Campaign` | caller before/after the mission; moved into and returned by the mission ownership API |
 | Common loaded world | `Host`, `Game`, `EngineManager`, `Arc<LevelAssets>`, `DevState` | `MissionWorld` inside `MissionRuntime` |
-| Timeline and transport policy | current `MissionRuntime`: recorder/player, rewind, rollback checker, peer hashes, history, start gates, MP scheduling, frame clock | rename to `TimelineRuntime`; keep all timeline methods there |
+| Timeline and transport policy | recorder/player, rewind, rollback checker, peer hashes, history, start gates, MP scheduling, frame clock | `TimelineRuntime` inside `MissionRuntime` |
 | Mission control | `manual_pause`, step-key repeat deadlines, replay-finished latch, current ambience shadow key | `MissionControl`; input repeat timers may later move into `MissionInput` |
-| Load-only scratch | loading renderer, predecoded background/minimap, raw `Engine`, seed, extracted sim sprite metadata | `MissionBootstrap`; consumed to construct a loaded runtime/frontend |
+| Load-only scratch | loading renderer, predecoded background/minimap, raw `Engine`, seed, extracted sim sprite metadata | ordered load stages plus `MissionBootstrap`, consumed to construct a loaded runtime/frontend |
 | Mission text/resource data | `text_res`, `cursor_res`, level descriptors, pre-resolved short briefing strings, HUD fonts | `MissionResources` in the interactive frontend; headless retains only data required by sim/modal policy |
 | GPU presentation | `Renderer`, cursor/selection/titbit/mouse-trail renderers, portrait cache | `MissionPresentation` |
 | HUD layout and hover state | Sherwood/zoom/corner/stature sprites, layouts, enable masks, all tooltip trackers, last cursor id | `MissionHud` inside `MissionPresentation` |
 | Input | `ThreadedInput`, `InputTranslator`, per-frame event vector and modifier state | mission-lifetime `MissionInput`; events/modifiers in `MissionFrame` |
 | Modal/menu UI | pause menu, active modal, campaign-map overlay state, console overlay, menu resources | `MissionUi` |
 | Audio | optional backend, sample loader, sound RNG | `MissionAudio`; `Host::sound` remains host state |
-| One frame | start time, `FrameCommands`, recorder hash, replay modal dismissals, pause/rewind/modal-render flags, net inputs, exit candidate | `MissionFrame`, created at frame begin and consumed at frame end |
+| One frame | start time, `FrameCommands`, recorder hash, replay/modal dismissals | `MissionFrame`, finalized at frame end; presentation flags live in `PreparedFrame`/`FramePresentationState` |
 | Save/profile callback state | save manager and pending save/load/app effects on `RustCallbacks` | remain session-owned; borrowed only by operation/save methods |
 
 `RenderContext<'_>` should remain a short-lived view. Once its referenced values
@@ -280,14 +280,13 @@ runtime methods at the same deterministic boundaries.
 
 ### Campaign and teardown
 
-Every exit must converge on one ownership boundary. In the transitional API,
-`run_mission` should always retain the constructed mission value and call one
-`finish` method after the run loop returns; frame helpers return `MissionExit`
-instead of restoring the campaign themselves.
+Every controlled exit converges on one ownership boundary. `run_mission` and
+`run_mission_headless` retain the constructed mission and call one consuming
+`finish` after the run loop returns; frame helpers return `MissionExit` rather
+than owning campaign teardown.
 
-The final API should follow `docs/REFACTORING.md`: move the concrete campaign
-into a mission and return that same value from `MissionRuntime::finish(self)`.
-An illustrative result is:
+The landed API moves the concrete campaign into a mission and returns that
+same value from consuming finalization:
 
 ```rust
 struct MissionOutcome {
@@ -296,20 +295,28 @@ struct MissionOutcome {
 }
 ```
 
-This likely requires the outer session/main-entry call sites to pass campaign
-ownership by value instead of borrowing a placeholder filled with
-`Campaign::default()`. Coordinate that change with the GameHost mirror-removal
-plan; do not add a second temporary campaign slot or another take/install pair
-just to make this refactor compile. Until the ownership API changes, keep the
-existing loud `restore_engine_campaign` check and centralize all normal/error
-exits through it.
+The outer session and main-entry call sites also pass campaign ownership by
+value. There is no restore lease, placeholder campaign, or take/install pair.
+Dropping a cancelled async mission future drops the one owned campaign in
+place; controlled cancellation/window-close paths return it in
+`MissionOutcome`.
 
 ## Staged implementation plan
 
 Each stage should compile and be reviewable independently. Mechanical moves and
 behavior changes belong in separate commits/PRs.
 
+Current status: PRs 1--6 have landed. PR7's structural cleanup has reduced
+`game_session/mod.rs` to the session boundary and wrappers; further reduction
+of specialized modal/input helper signatures is optional cleanup, not an
+ownership or lifecycle blocker. The manual/replay validation matrix below
+remains the release-level validation checklist.
+
 ### PR 1: Characterize the two frame contracts
+
+Status: implemented. Typed graphical/headless traces cover early restart,
+pause/rewind, terminal exit, recorder finalization, and the distinct
+`PostInitialize` boundaries.
 
 Files:
 
@@ -342,6 +349,9 @@ Tests/invariants:
 
 ### PR 2: Establish common owning state, with no phase moves
 
+Status: implemented. `MissionWorld`, `MissionRuntime`, `MissionControl`,
+`MissionFrame`, and `TimelineRuntime` own the common mission/timeline state.
+
 Files:
 
 - rename current timeline implementation to
@@ -372,6 +382,10 @@ Tests/invariants:
 - no new serde derives/default fallbacks are added to process resources.
 
 ### PR 3: Own the interactive frontend
+
+Status: implemented. `InteractiveFrontend` composes focused input, UI, audio,
+resources, HUD, and presentation owners without storing borrowed session
+services.
 
 Files:
 
@@ -409,6 +423,10 @@ Tests/invariants:
 
 ### PR 4: Make bootstrap produce complete owned missions
 
+Status: implemented. Ordered bootstrap stages produce complete interactive or
+headless mission owners and return the campaign on every controlled setup
+outcome.
+
 Files:
 
 - new `crates/robin_rs/src/game_session/bootstrap.rs`
@@ -443,6 +461,10 @@ Tests/invariants:
   contracts, never fabricated defaults.
 
 ### PR 5: Extract deterministic frame methods and the headless driver
+
+Status: implemented. Interactive preparation/simulation/finish phases and the
+true-headless driver share timeline seams while retaining explicit frontend
+policy differences.
 
 Files:
 
@@ -498,8 +520,8 @@ Files:
 
 Work:
 
-- Make handlers return `FrameControl`/`MissionExit`; remove campaign restoration
-  and direct function returns from nested input/modal helpers.
+- Make handlers return `FrameControl`/`MissionExit`; remove campaign-return
+  ownership and direct function returns from nested input/modal helpers.
 - Execute pending app effects and saves at named exit barriers.
 - Make one `finish` consume a loaded mission and return its campaign and result.
 - Change outer callers to ownership-by-value only after the Engine/GameHost
@@ -517,6 +539,11 @@ Tests/invariants:
 - recorder is finalized once on every exit that began a recordable frame.
 
 ### PR 7: Cleanup only after the ownership migration
+
+Status: substantially implemented. `game_session/mod.rs` is the session/index
+boundary and obsolete ownership tuples/leases are gone. Large specialized
+input/modal functions remain in focused modules and may be simplified in later
+non-behavioral cleanups.
 
 Files: primarily `game_session/mod.rs` and obsolete helper modules/imports.
 
@@ -633,7 +660,7 @@ The refactor is complete when:
 - every mission-lifetime value has one named owner and every frame-lifetime
   value dies with `MissionFrame`;
 - graphical/headless deterministic phase order is explicit and tested;
-- campaign restoration and recorder/save/app-effect teardown are centralized;
+- campaign return and recorder/save/app-effect teardown are centralized;
 - the interactive path contains no headless renderer/audio/input shims;
 - replay hashes and the manual matrix above match the pre-refactor baseline;
 - `game_session/mod.rs` is an index/session boundary rather than the mission

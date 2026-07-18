@@ -510,7 +510,7 @@ mod required_state_tests {
     use crate::ingame_menu::IngameMenuResources;
 
     #[test]
-    fn mission_exit_restores_the_exact_campaign_allocation() {
+    fn mission_exit_returns_the_exact_campaign_allocation() {
         let mut engine_campaign = Campaign::default();
         engine_campaign.values[CampaignValue::Custom20] = 0x25_25_25;
         let production_sectors = engine_campaign.production_sectors.as_ptr();
