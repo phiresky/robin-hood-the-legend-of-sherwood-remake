@@ -543,7 +543,7 @@ fn mobile_fx(mobile_index: u16) -> Entity {
 
 #[test]
 fn mobile_master_is_appended_to_script_actor_indices() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
             element: crate::element::ElementData {
@@ -576,7 +576,7 @@ fn mobile_master_is_appended_to_script_actor_indices() {
 
 #[test]
 fn generic_mobile_activation_propagates_to_all_children() {
-    let mut host = GameHost::new();
+    let mut host = BoundGameHost::new();
     host.entities.push(Some(mobile_fx(0)));
     host.entities.push(Some(mobile_fx(0)));
     let handle = GameHost::actor_handle_from_index(0);
