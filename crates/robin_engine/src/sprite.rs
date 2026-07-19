@@ -91,6 +91,21 @@ pub struct MotionOrderContext {
     pub next_destination_same_action: Option<MapPoint>,
 }
 
+/// Broken cached state for a motion order that the sprite has already started.
+///
+/// C++ `RHSprite::PerformMotion` seeds both fields when `ulUniqueID` changes and
+/// never repairs them for the same order. A same-id mismatch therefore means a
+/// producer mutated the order without assigning a fresh id, or a teardown path
+/// invalidated the position cache while leaving that order active.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MotionOrderStateMismatch {
+    Goal {
+        cached: MapPoint,
+        expected: MapPoint,
+    },
+    MapIncrementMissing,
+}
+
 // ---------------------------------------------------------------------------
 // FrameProgression
 // ---------------------------------------------------------------------------
@@ -560,23 +575,25 @@ impl Sprite {
         pi.reset_box_blocked();
     }
 
-    pub fn stale_motion_goal(&self, ctx: MotionOrderContext) -> Option<MapPoint> {
+    pub fn motion_order_state_mismatch(
+        &self,
+        ctx: MotionOrderContext,
+    ) -> Option<MotionOrderStateMismatch> {
         if self.last_processed_order_id != ctx.order_id.get() {
             return None;
         }
 
         let cached_goal = self.position_iface.map_goal();
-        let cached_goal_mismatch = (cached_goal.x - ctx.destination.x).abs() > 0.01
-            || (cached_goal.y - ctx.destination.y).abs() > 0.01;
-        if !self.position_iface.is_increment_map_computed() || cached_goal_mismatch {
-            Some(cached_goal)
-        } else {
-            None
+        if cached_goal != ctx.destination {
+            return Some(MotionOrderStateMismatch::Goal {
+                cached: cached_goal,
+                expected: ctx.destination,
+            });
         }
-    }
-
-    pub fn reseed_motion_order(&mut self, ctx: MotionOrderContext) {
-        self.initialize_motion_order(ctx);
+        if !self.position_iface.is_increment_map_computed() {
+            return Some(MotionOrderStateMismatch::MapIncrementMissing);
+        }
+        None
     }
 
     /// Construct a sprite with explicit, bound script + conversion
@@ -2307,7 +2324,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reseed_motion_order_repairs_stale_goal() {
+    fn started_motion_order_rejects_a_same_id_goal_rewrite() {
         let mut s = make_test_sprite();
         let order_id = std::num::NonZeroU32::new(42).unwrap();
         s.last_processed_order_id = order_id.get();
@@ -2325,14 +2342,37 @@ mod tests {
             next_destination_same_action: Some(MapPoint::new(1864.0, 969.0)),
         };
 
-        let stale = s.stale_motion_goal(ctx).unwrap();
-        assert_eq!(stale, MapPoint::new(1754.0, 1005.0));
+        assert_eq!(
+            s.motion_order_state_mismatch(ctx),
+            Some(MotionOrderStateMismatch::Goal {
+                cached: MapPoint::new(1754.0, 1005.0),
+                expected: ctx.destination,
+            })
+        );
+    }
 
-        s.reseed_motion_order(ctx);
+    #[test]
+    fn started_motion_order_requires_its_cached_map_increment() {
+        let mut s = make_test_sprite();
+        let order_id = std::num::NonZeroU32::new(42).unwrap();
+        let destination = MapPoint::new(1840.0, 982.0);
+        s.last_processed_order_id = order_id.get();
+        s.position_iface.set_map_goal(destination);
 
-        assert_eq!(s.position_iface.map_goal(), ctx.destination);
-        assert!(s.position_iface.is_increment_map_computed());
-        assert!(s.stale_motion_goal(ctx).is_none());
+        let ctx = MotionOrderContext {
+            order_id,
+            destination,
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+        };
+
+        assert_eq!(
+            s.motion_order_state_mismatch(ctx),
+            Some(MotionOrderStateMismatch::MapIncrementMissing)
+        );
     }
 
     #[test]
@@ -2357,7 +2397,7 @@ mod tests {
             next_destination_same_action: None,
         };
 
-        assert!(s.stale_motion_goal(ctx).is_none());
+        assert!(s.motion_order_state_mismatch(ctx).is_none());
 
         let (state, _) = s.perform_motion(
             sim,

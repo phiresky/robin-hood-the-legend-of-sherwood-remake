@@ -2963,7 +2963,7 @@ impl EngineInner {
             .get_element_mut(seq_id, elem_idx)
             .map(|elem| {
                 if !elem.orders.is_empty() {
-                    let popped = elem.orders.pop_front();
+                    let popped = elem.pop_current_order();
                     if tracing::enabled!(tracing::Level::TRACE) {
                         let remaining: Vec<(crate::order::OrderType, f32, f32)> = elem
                             .orders

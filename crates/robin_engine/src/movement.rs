@@ -507,6 +507,7 @@ pub fn build_orders_from_path(
 ) {
     let transition_orders = element.num_transition_orders.min(element.orders.len());
     element.orders.truncate(transition_orders);
+    element.num_transition_orders = transition_orders;
     let last = waypoints.len().saturating_sub(1);
     for (i, &wp) in waypoints.iter().enumerate() {
         let mut order = Order::new(
@@ -828,6 +829,11 @@ mod tests {
             0.0,
         ));
         elem.initialize_transition_orders();
+        // A launch transition may finish before Rust's asynchronous path
+        // result arrives. The teardown path normally decrements this count;
+        // use a stale larger value here to verify path installation also
+        // clamps the serialized span to the remaining queue.
+        elem.num_transition_orders = 2;
 
         let mut next_order_id = 1u32;
         build_orders_from_path(

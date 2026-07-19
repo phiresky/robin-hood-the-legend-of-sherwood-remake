@@ -806,7 +806,9 @@ pub struct SequenceElement {
     /// Action state after transition orders complete.
     pub action_state_after_transition: ActionState,
 
-    /// Number of orders that are transition orders (at the front of the order list).
+    /// Number of remaining launch-time transition orders at the front of the
+    /// queue. `generate_transition` stamps this before command/path orders are
+    /// appended; standard sequence-order teardown decrements it.
     pub num_transition_orders: usize,
 
     /// The sub-steps (movement waypoints, animation frames, etc.) for this element.
@@ -1053,14 +1055,21 @@ impl SequenceElement {
     /// Remove and return the first order, advancing to the next.
     /// Returns the new current order, or `None` if the list is now empty.
     pub fn proceed(&mut self) -> Option<&Order> {
-        if self.orders.is_empty() {
-            return None;
-        }
-        self.orders.pop_front();
+        self.pop_current_order()?;
         self.orders.front()
     }
 
-    /// Initialize the transition order count to the current number of orders.
+    /// Remove the active order and maintain the remaining leading-transition
+    /// span. Rust pathfinding may complete after one or more launch transitions
+    /// have already played, so this count describes the current queue rather
+    /// than the queue originally stamped by `generate_transition`.
+    pub fn pop_current_order(&mut self) -> Option<Order> {
+        let popped = self.orders.pop_front()?;
+        self.num_transition_orders = self.num_transition_orders.saturating_sub(1);
+        Some(popped)
+    }
+
+    /// Mark all currently queued orders as launch-time transitions.
     pub fn initialize_transition_orders(&mut self) {
         self.num_transition_orders = self.orders.len();
     }
@@ -1091,12 +1100,13 @@ impl SequenceElement {
         distance_transition: f32,
         point_start: crate::coordinates::MapPoint,
         next_order_id: &mut u32,
-    ) {
+    ) -> bool {
         let mut distance_remaining = if distance_transition == 0.0 {
             0.01
         } else {
             distance_transition
         };
+        let mut inserted = false;
 
         let mut point = point_start;
         let mut order_idx = 0usize;
@@ -1125,12 +1135,13 @@ impl SequenceElement {
                     );
                     new_order.compute_direction = true;
                     self.insert_order(order_idx, new_order);
-                    return;
+                    return true;
                 } else {
                     // Not enough room: consume the whole order,
                     // relabel it, and keep searching.
                     distance_remaining -= norm;
                     self.orders[order_idx].order_type = animation_transition;
+                    inserted = true;
                 }
             }
 
@@ -1144,6 +1155,7 @@ impl SequenceElement {
             }
             order_idx += 1;
         }
+        inserted
     }
 
     /// Insert a transition order at the *end* of this movement
@@ -3160,9 +3172,7 @@ impl SequenceManager {
             continuation.state = SequenceState::Postponed;
             continuation.postponed_element_index = None;
             continuation.cross_postponed = None;
-            continuation.orders.pop_front();
-            continuation.num_transition_orders =
-                continuation.num_transition_orders.saturating_sub(1);
+            continuation.pop_current_order();
             seq.elements.push(continuation);
             seq.elements.len() - 1
         };
@@ -5672,7 +5682,7 @@ mod tests {
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
 
         let mut next_order_id = 1u32;
-        elem.insert_transition_start(
+        let inserted = elem.insert_transition_start(
             OrderType::TransitionWaitingUprightWalkingUpright,
             OrderType::WalkingUpright,
             10.0,
@@ -5680,6 +5690,7 @@ mod tests {
             &mut next_order_id,
         );
 
+        assert!(inserted);
         assert_eq!(elem.orders.len(), 2);
         assert_eq!(
             elem.orders[0].order_type,
@@ -5687,6 +5698,56 @@ mod tests {
         );
         assert!((elem.orders[0].target_x - 10.0).abs() < 0.01);
         assert_eq!(elem.orders[1].order_type, OrderType::WalkingUpright);
+    }
+
+    #[test]
+    fn insert_transition_start_reports_short_order_relabel() {
+        let mut elem = movement_elem(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            OrderType::WalkingUpright,
+        );
+        elem.push_order(Order::test_new(OrderType::WalkingUpright, 5.0, 0.0));
+
+        let mut next_order_id = 1u32;
+        let inserted = elem.insert_transition_start(
+            OrderType::TransitionWaitingUprightWalkingUpright,
+            OrderType::WalkingUpright,
+            10.0,
+            crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
+            &mut next_order_id,
+        );
+
+        assert!(
+            inserted,
+            "an in-place relabel is still a startup transition"
+        );
+        assert_eq!(elem.orders.len(), 1);
+        assert_eq!(
+            elem.orders[0].order_type,
+            OrderType::TransitionWaitingUprightWalkingUpright
+        );
+    }
+
+    #[test]
+    fn pop_current_order_shrinks_remaining_transition_prefix() {
+        let mut elem = movement_elem(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            OrderType::WalkingUpright,
+        );
+        elem.push_order(Order::test_new(
+            OrderType::TransitionWaitingCapeWaitingUpright,
+            0.0,
+            0.0,
+        ));
+        elem.push_order(Order::test_new(OrderType::WalkingUpright, 10.0, 0.0));
+        elem.num_transition_orders = 1;
+
+        elem.pop_current_order().expect("transition order");
+        assert_eq!(elem.num_transition_orders, 0);
+        assert_eq!(
+            elem.current_order().map(|order| order.order_type),
+            Some(OrderType::WalkingUpright)
+        );
     }
 
     #[test]
