@@ -6,11 +6,8 @@
 
 use super::multiplayer::MultiplayerRollbackTelemetry;
 use super::replay_init::ReplayAndRollback;
-use crate::Host;
 use crate::game::Game;
-use crate::game_operation::GameCode;
-use crate::player_command::{FrameCommands, PlayerCommand};
-use crate::replay::{ReplayPlayer, ReplayRecorder};
+use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::sim_timeline::{
@@ -18,6 +15,9 @@ use crate::sim_timeline::{
 };
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
+use robin_engine::game_operation::GameCode;
+use robin_engine::player_command::{FrameCommands, PlayerCommand};
+use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -56,7 +56,7 @@ impl MissionWorld {
         }
     }
 
-    pub(super) fn into_campaign(self) -> crate::campaign::Campaign {
+    pub(super) fn into_campaign(self) -> robin_engine::campaign::Campaign {
         self.manager.engine.into_campaign()
     }
 }
@@ -202,7 +202,7 @@ impl MissionRuntime {
         }
     }
 
-    pub(super) fn into_campaign(self) -> crate::campaign::Campaign {
+    pub(super) fn into_campaign(self) -> robin_engine::campaign::Campaign {
         self.world.into_campaign()
     }
 
@@ -583,7 +583,7 @@ impl TimelineRuntime {
             recorder
                 .frame_number()
                 .is_multiple_of(25)
-                .then(|| crate::replay::state_hash(engine))
+                .then(|| robin_engine::replay::state_hash(engine))
         });
         if let Some(player) = self.replay_player.as_ref()
             && !player.is_finished()
@@ -591,7 +591,7 @@ impl TimelineRuntime {
             let frame = player.current_frame();
             let is_terminal_frame = frame + 1 >= player.total_frames();
             if !is_terminal_frame && let Some(expected) = player.hash_for_frame(frame) {
-                let actual = crate::replay::state_hash(engine);
+                let actual = robin_engine::replay::state_hash(engine);
                 if actual != expected {
                     tracing::error!(
                         "Replay desync at frame {frame}: expected {expected:016x}, got {actual:016x}"

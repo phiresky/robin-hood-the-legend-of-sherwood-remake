@@ -1,6 +1,6 @@
 //! Main-menu multiplayer lobby.
 
-use crate::campaign::Campaign;
+use robin_engine::campaign::Campaign;
 
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;

@@ -29,13 +29,13 @@ use robin_engine::sprite::BBox;
 use crate::gfx_types::GameEvent;
 use crate::native_font::Font;
 use crate::renderer::Renderer;
-use crate::res_descr::LevelDescriptors;
-use crate::resource_manager::ResourceManager;
 use crate::ui_screens::{
     MissionChoice, MissionDescriptionButton, MissionDescriptionScreen, center_horizontally_x,
     mission_description_layout as layout_consts,
 };
 use crate::widget::FrameWnd;
+use robin_assets::res_descr::LevelDescriptors;
+use robin_assets::resource_manager::ResourceManager;
 
 use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsOutcome, show_buy_blazons};
@@ -162,22 +162,22 @@ pub async fn show_mission_description(
         // (both `RHID_OK` and `RHID_START_MISSION_FOR_BLAZONS` are
         // round-seal variants).
         let sprite_id = match button {
-            MissionDescriptionButton::Cancel => crate::resource_ids::RHID_CANCEL,
+            MissionDescriptionButton::Cancel => robin_engine::resource_ids::RHID_CANCEL,
             MissionDescriptionButton::StartMission => {
                 if screen.requires_blazons {
-                    crate::resource_ids::RHID_START_MISSION_FOR_BLAZONS
+                    robin_engine::resource_ids::RHID_START_MISSION_FOR_BLAZONS
                 } else {
-                    crate::resource_ids::RHID_OK
+                    robin_engine::resource_ids::RHID_OK
                 }
             }
             MissionDescriptionButton::ConvertPeasants => {
-                crate::resource_ids::RHID_CONVERT_PEASANTS_TO_BLAZONS
+                robin_engine::resource_ids::RHID_CONVERT_PEASANTS_TO_BLAZONS
             }
             MissionDescriptionButton::ConvertMoney => {
-                crate::resource_ids::RHID_CONVERT_MONEY_TO_BLAZONS
+                robin_engine::resource_ids::RHID_CONVERT_MONEY_TO_BLAZONS
             }
             MissionDescriptionButton::ConvertMission => {
-                crate::resource_ids::RHID_CONVERT_MISSION_TO_BLAZONS
+                robin_engine::resource_ids::RHID_CONVERT_MISSION_TO_BLAZONS
             }
         };
         let widget = widget_bridge::make_button_with_resource(

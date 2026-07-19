@@ -11,7 +11,7 @@
 //! Special slot filenames (Continue/QuickSave/Restart/Sherwood) are
 //! defined in [`save_file::special_slots`].
 
-use crate::Host;
+use crate::host::Host;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::engine as engine_api;

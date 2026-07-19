@@ -6,11 +6,12 @@
 //! overlays, preserving the visible layer order without CPU-side
 //! background writes.
 
-use super::{BackgroundDecal, Host, PendingBgBlit};
+use crate::bg_cache::BackgroundDecal;
 use crate::gfx_types::Rect;
+use crate::host::Host;
 use robin_assets::frame_holder::SpriteVariant;
 use robin_engine::element as engine_element;
-use robin_engine::engine::PendingBgBlitDecal;
+use robin_engine::engine::{PendingBgBlit, PendingBgBlitDecal};
 
 /// Drain queued `BlitToMap` / `RestoreBackground` requests into
 /// host-owned persistent background decals.

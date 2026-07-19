@@ -29,7 +29,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::profiles::MAX_NUMBER_OF_PC;
+use robin_engine::profiles::MAX_NUMBER_OF_PC;
 
 /// Maximum number of portraits visible at once.
 pub const MAX_VISIBLE_PORTRAITS: usize = MAX_NUMBER_OF_PC;

@@ -4,10 +4,10 @@
 //! state), edge-detection between frames, and the sword-swing gesture
 //! recognizer.
 
-use crate::element::{Command, Posture};
 use crate::input::{MouseButton, ThreadedInput};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
+use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::ScrollDirection;
 use robin_engine::player_command as engine_player_command;
@@ -312,7 +312,7 @@ impl GamePadState {
     pub fn process_gamepad_input(
         &mut self,
         now_ms: u32,
-        engine: &crate::Engine,
+        engine: &robin_engine::engine::Engine,
         threaded_input: &mut ThreadedInput,
     ) -> GamepadFrame {
         let snapshot = self.pending.clone();
@@ -404,7 +404,7 @@ impl GamePadState {
     /// not inject distinct semantics.
     pub fn manage_move_axis(
         &self,
-        engine: &crate::Engine,
+        engine: &robin_engine::engine::Engine,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
@@ -492,7 +492,7 @@ impl GamePadState {
     /// centre then feed them to [`recognize_swing`].
     pub fn manage_mouse_axis(
         &mut self,
-        engine: &crate::Engine,
+        engine: &robin_engine::engine::Engine,
         threaded_input: &mut ThreadedInput,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
@@ -552,7 +552,7 @@ impl GamePadState {
     /// SELECT_PREV_CHARACTER / SELECT_NEXT_CHARACTER → cycle selection.
     pub fn manage_character_select(
         &self,
-        engine: &crate::Engine,
+        engine: &robin_engine::engine::Engine,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
         let pc_ids = engine.pc_ids();
@@ -611,7 +611,7 @@ impl GamePadState {
     /// right-click.
     pub fn manage_action_select(
         &self,
-        engine: &crate::Engine,
+        engine: &robin_engine::engine::Engine,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
         let selected = engine.selected_pc_ids();
@@ -701,7 +701,11 @@ impl GamePadState {
     /// engine mutations — start-macro verbs aren't on the
     /// `PlayerCommand` bus yet, so routing those messages lives
     /// host-side for now.
-    pub fn manage_qa(&mut self, now_ms: u32, engine: &crate::Engine) -> Option<QaEvent> {
+    pub fn manage_qa(
+        &mut self,
+        now_ms: u32,
+        engine: &robin_engine::engine::Engine,
+    ) -> Option<QaEvent> {
         if engine.selected_pc_ids().is_empty() {
             return None;
         }
@@ -968,7 +972,7 @@ pub fn recognize_swing(samples: &[(f32, f32)], facing_direction: u16) -> Option<
 ///
 /// Returns `None` when the PC has fewer than 2 opponents.
 fn choose_opponent(
-    engine: &crate::Engine,
+    engine: &robin_engine::engine::Engine,
     pc_id: engine_element::EntityId,
     mut direction: u16,
     increment: i16,
@@ -1027,7 +1031,7 @@ mod tests {
     use super::*;
 
     fn fresh_engine() -> (engine_api::Engine, engine_api::LevelAssets) {
-        use crate::campaign::Campaign;
+        use robin_engine::campaign::Campaign;
         let mut assets = engine_api::LevelAssets::new();
         let engine =
             engine_api::Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)

@@ -23,12 +23,12 @@ use crate::ingame_menu::resources::{
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
-use crate::player_profile::{DifficultyLevel, PlayerProfile};
 use crate::renderer::Renderer;
-use crate::resource_ids;
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::ui_screens::MAX_PLAYER_NAME_LENGTH;
 use crate::widget::{FrameWnd, Widget, WidgetInput, WidgetInputField};
+use robin_engine::player_profile::{DifficultyLevel, PlayerProfile};
+use robin_engine::resource_ids;
 
 /// Maximum number of player profiles that can coexist on disk.
 const MAX_PROFILES: usize = 10;

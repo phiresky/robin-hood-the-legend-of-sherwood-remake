@@ -7,13 +7,12 @@
 //! such as patch door highlights; sim-visible mouse commands are dispatched
 //! earlier in the frame so replay / rollback can record them.
 
-use crate::Host;
-use crate::element::Focus;
-use crate::profiles::Action;
+use crate::host::Host;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
 use robin_engine::element::Entity;
+use robin_engine::element::Focus;
 use robin_engine::engine::input::{
     BowTarget, MOUSE_BOW_CIVIL_COLOR, MOUSE_BOW_NO_COLOR, MOUSE_BOW_VIP_COLOR,
     MOUSE_OPACITY_DEFAULT, TrajectoryPreview,
@@ -21,6 +20,7 @@ use robin_engine::engine::input::{
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::fast_find_grid as engine_fast_find_grid;
 use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::Action;
 use robin_engine::sector as engine_sector;
 use robin_engine::weapons as engine_weapons;
 

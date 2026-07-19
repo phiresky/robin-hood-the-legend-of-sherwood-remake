@@ -7,8 +7,8 @@ use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent, NetMsg,
     NetOutbound, decode_msg, encode_msg,
 };
-use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use futures_util::{SinkExt, StreamExt};
+use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};

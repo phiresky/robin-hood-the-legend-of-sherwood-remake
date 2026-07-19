@@ -28,11 +28,11 @@
 
 use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
-use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
 use robin_engine::coordinates::{GroundBBox, GroundPoint, MapBBox};
 use robin_engine::mask as engine_mask;
 use robin_engine::position_interface as engine_position_interface;
+use robin_engine::sight_obstacle::SightObstacle;
 
 // Shared constants + types from the engine side.
 pub use robin_engine::shadow_polygon::{
@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn visibility_clips_against_obstacle() {
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
 
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
@@ -1160,11 +1160,13 @@ mod tests {
     }
 
     /// Helper to build a SightObstacle with given ground points.
-    fn make_obstacle_with_points(pts: &[(f32, f32)]) -> crate::sight_obstacle::SightObstacle {
+    fn make_obstacle_with_points(
+        pts: &[(f32, f32)],
+    ) -> robin_engine::sight_obstacle::SightObstacle {
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = pts
             .iter()
-            .map(|&(x, y)| crate::sight_obstacle::ObstaclePoint {
+            .map(|&(x, y)| robin_engine::sight_obstacle::ObstaclePoint {
                 x,
                 y,
                 z_top: 5.0,
@@ -1283,25 +1285,25 @@ mod tests {
         // Behind-left obstacle: (-200..-180, -10..10)
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: -200.0,
                 y: -10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: -180.0,
                 y: -10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: -180.0,
                 y: 10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: -200.0,
                 y: 10.0,
                 z_top: 50.0,
@@ -1332,25 +1334,25 @@ mod tests {
         // Obstacle directly ahead along +x.
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: 100.0,
                 y: -10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: 120.0,
                 y: -10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: 120.0,
                 y: 10.0,
                 z_top: 50.0,
                 z_bottom: 0.0,
             },
-            crate::sight_obstacle::ObstaclePoint {
+            robin_engine::sight_obstacle::ObstaclePoint {
                 x: 100.0,
                 y: 10.0,
                 z_top: 50.0,
@@ -1367,7 +1369,7 @@ mod tests {
 
     #[test]
     fn is_obstacle_useful_straddles_eye_level() {
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
             ObstaclePoint {
@@ -1398,7 +1400,7 @@ mod tests {
 
     #[test]
     fn is_obstacle_useful_rejects_low_obstacle_for_elevated_viewer() {
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         // A knee-high stump.
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
@@ -1429,7 +1431,7 @@ mod tests {
 
     #[test]
     fn is_obstacle_useful_rejects_skyscraper_below_viewer_feet() {
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         // An elevated slab well above the viewer's head.
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
@@ -1464,7 +1466,7 @@ mod tests {
     fn visibility_skips_obstacles_above_viewer_head() {
         // Regression test: a high elevated obstacle shouldn't clip
         // the eye-level visibility polygon.
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
@@ -1521,7 +1523,7 @@ mod tests {
         // Viewer on a tall ledge looking down past a short wall: the
         // ground shadow should end well before the 2D far-cap (radius*8)
         // at roughly `horizontal_dist * viewer_z / (viewer_z - z_top)`.
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let viewer_z = 200.0;
         let z_top = 20.0;
@@ -1593,7 +1595,7 @@ mod tests {
         // Regression test for is_box_inside_field rejection: an
         // obstacle to the side of the view cone shouldn't contribute
         // a shadow wedge.
-        use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],

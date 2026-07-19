@@ -3,10 +3,10 @@
 //!   cargo run --bin batch_run -- datadirs/fullgame/Data/Levels
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-use robin_rs::interp::Vm;
-use robin_rs::natives::{GameHost, NativeContext, ScriptState};
-use robin_rs::scb;
-use robin_rs::vm::{self, Instruction};
+use robin_assets::scb;
+use robin_engine::interp::Vm;
+use robin_engine::natives::{GameHost, NativeContext, ScriptState};
+use robin_engine::vm::{self, Instruction};
 
 fn main() {
     tracing_subscriber::fmt::init();
@@ -53,7 +53,7 @@ fn main() {
                     &mut fast_grid,
                 );
                 let mut script_state = ScriptState::default();
-                let mut script_domains = robin_rs::engine::ScriptDomains::default();
+                let mut script_domains = robin_engine::engine::ScriptDomains::default();
                 let context = NativeContext::new(
                     &mut game_host,
                     &mut script_state,
@@ -74,7 +74,7 @@ fn main() {
                         .outgoing_params
                         .extend_from_slice(&0i32.to_le_bytes());
                 }
-                let caller_frame = robin_rs::interp::Frame {
+                let caller_frame = robin_engine::interp::Frame {
                     parameters: std::mem::take(&mut vm_state.vm.outgoing_params),
                     return_address: instructions.len() as u32,
                     ..Default::default()
@@ -85,13 +85,13 @@ fn main() {
                 let stop = vm_state.run_up_to(&instructions, 500_000);
 
                 let stop_str = match stop {
-                    robin_rs::interp::StopReason::Returned => "OK-ret",
-                    robin_rs::interp::StopReason::ReturnedValue(_) => "OK-retval",
-                    robin_rs::interp::StopReason::RanOff => "OK-ranoff",
-                    robin_rs::interp::StopReason::StepLimit => "LIMIT",
-                    robin_rs::interp::StopReason::HitEmpty => "EMPTY",
-                    robin_rs::interp::StopReason::Unimplemented(_) => "UNIMPL",
-                    robin_rs::interp::StopReason::PendingNestedCall(_) => "NESTED",
+                    robin_engine::interp::StopReason::Returned => "OK-ret",
+                    robin_engine::interp::StopReason::ReturnedValue(_) => "OK-retval",
+                    robin_engine::interp::StopReason::RanOff => "OK-ranoff",
+                    robin_engine::interp::StopReason::StepLimit => "LIMIT",
+                    robin_engine::interp::StopReason::HitEmpty => "EMPTY",
+                    robin_engine::interp::StopReason::Unimplemented(_) => "UNIMPL",
+                    robin_engine::interp::StopReason::PendingNestedCall(_) => "NESTED",
                 };
 
                 let final_ip = vm_state.vm.ip as usize;

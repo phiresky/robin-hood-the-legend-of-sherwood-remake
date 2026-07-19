@@ -29,10 +29,10 @@ use crate::ingame_menu::layout::{
 };
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_ids::{
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::resource_ids::{
     RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL, RHID_FLOATING_OK, RHID_GO_TO_EXIT,
 };
-use crate::resource_manager::ResourceManager;
 
 fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(

@@ -8,7 +8,7 @@
 //! contains `draw_background`, which blits the cached background
 //! surface to a target every frame.
 
-use crate::Host;
+use crate::host::Host;
 use crate::renderer::Renderer;
 use robin_assets::frame_holder as assets_frame_holder;
 use robin_assets::frame_holder::ProgressUpdate;

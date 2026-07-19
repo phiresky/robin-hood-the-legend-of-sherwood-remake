@@ -17,8 +17,8 @@ use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::main_entry::picture_to_surface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::resource_ids;
 
 /// Show the credits scroll.  Returns once the player dismisses it.
 pub(crate) async fn show_credits(

@@ -40,9 +40,9 @@ fn sound_enabled(application_context: &crate::host::ApplicationContext) -> bool 
 use std::sync::{Arc, Once};
 
 #[cfg(feature = "video")]
-use crate::sbfile::resolve_data_path;
-#[cfg(feature = "video")]
 use crate::window::GameWindow;
+#[cfg(feature = "video")]
+use robin_engine::sbfile::resolve_data_path;
 
 #[cfg(feature = "video")]
 static FFMPEG_INIT: Once = Once::new();

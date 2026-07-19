@@ -21,7 +21,7 @@
 //! - Caret blink animation (~2Hz)
 //! - Auto-close on `WIN` / `WINCAMPAIGN` / `LOSE`.
 
-use crate::Host;
+use crate::host::Host;
 use std::collections::VecDeque;
 
 use crate::gfx_types::Keycode;
@@ -513,7 +513,7 @@ impl ConsoleOverlay {
     /// campaign-load outcome messages). These originate outside the
     /// engine dispatcher but still want to show up in the overlay's
     /// history.
-    pub fn drain_pending_host_output(&mut self, host: &mut crate::Host) {
+    pub fn drain_pending_host_output(&mut self, host: &mut crate::host::Host) {
         if host.pending_console_output.is_empty() {
             return;
         }

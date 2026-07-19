@@ -3,7 +3,6 @@
 //! A blocking modal that draws the DEFAULT.RES campaign map and waits
 //! for a location selection.
 
-use crate::campaign::Campaign;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::blazon_set;
 use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
@@ -11,17 +10,18 @@ use crate::ingame_menu::resources::{IngameMenuResources, MenuSurface};
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::menu::{CampaignMapState, LOCATION_POSITIONS, mission_location_from_index};
 use crate::native_font::{self, NativeFont};
-use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
 use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
 use robin_assets::res_descr::{self, LevelDescriptors};
+use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::campaign::Campaign;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::MissionLocation;
+use robin_engine::resource_ids;
 use robin_engine::widget_state as engine_widget_state;
 
 const MAP_W: i32 = 640;

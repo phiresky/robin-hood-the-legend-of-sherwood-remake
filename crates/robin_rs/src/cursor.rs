@@ -9,9 +9,9 @@
 
 use crate::gfx_types::BlendMode;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16, rgb565_to_rgb8};
-use crate::resource_manager::{ResourceId, ResourceManager};
 use robin_assets::frame_holder::SHADOW_KEY;
 use robin_assets::picture::Picture;
+use robin_assets::resource_manager::{ResourceId, ResourceManager};
 use robin_engine::sprite::BBox;
 
 /// One uploaded animation frame.

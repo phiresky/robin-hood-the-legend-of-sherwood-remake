@@ -5,8 +5,8 @@
 //! If no output path is given, writes to stdout.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-use robin_rs::profiles::ProfileManager;
-use robin_rs::sbfile::{SB_FILE_READ, SbFile};
+use robin_engine::profiles::ProfileManager;
+use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 
 fn main() {
     tracing_subscriber::fmt::init();

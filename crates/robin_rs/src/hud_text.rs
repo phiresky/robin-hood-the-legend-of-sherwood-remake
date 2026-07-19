@@ -5,16 +5,16 @@
 //! the `PCPortrait` font for portrait text and the `Tooltips` font for
 //! hover labels.
 
-use crate::element::{Entity, EntityId};
 use crate::host::ViewportState;
 use crate::native_font::{self, NativeFont};
-use crate::profiles;
 use crate::renderer::Renderer;
 use crate::ui_panel::PortraitCache;
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element::{Entity, EntityId};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerId;
+use robin_engine::profiles;
 
 // ─── Layout constants (matching ui_panel.rs) ─────────────────────
 
@@ -524,7 +524,7 @@ fn render_counter_titbits_gpu(
     fonts: &HudFonts,
     shadow: Option<&NativeFont>,
 ) {
-    use crate::titbit::TitbitKind;
+    use robin_engine::titbit::TitbitKind;
 
     let font = &fonts.portrait_font;
 
@@ -689,7 +689,7 @@ fn action_uses_ammo(action: profiles::Action) -> bool {
 }
 
 /// Whether this PC uses two-button mode (action[2] == NoAction).
-fn is_two_button_mode(assets: &LevelAssets, pc: &crate::element::ActorPc) -> bool {
+fn is_two_button_mode(assets: &LevelAssets, pc: &robin_engine::element::ActorPc) -> bool {
     assets
         .profile_manager
         .get_character(pc.pc.profile_index)
@@ -703,7 +703,7 @@ fn is_two_button_mode(assets: &LevelAssets, pc: &crate::element::ActorPc) -> boo
 fn pc_ammo_quantities(
     engine: &Engine,
     assets: &LevelAssets,
-    pc: &crate::element::ActorPc,
+    pc: &robin_engine::element::ActorPc,
 ) -> [Option<u16>; 3] {
     let campaign = engine.campaign();
 

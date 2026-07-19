@@ -28,7 +28,7 @@
 //! - script_*_count / script_location_positions (recomputed from level data)
 //! - hiking_paths, profile_manager (Arc'd immutable data reloaded at level init)
 
-use crate::Host;
+use crate::host::Host;
 #[cfg(test)]
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets, SnapshotRestoreError};
@@ -624,7 +624,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-        use crate::campaign::Campaign;
+        use robin_engine::campaign::Campaign;
         let mut assets = engine_api::LevelAssets::new();
         let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("new_for_test");

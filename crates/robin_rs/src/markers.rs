@@ -11,7 +11,7 @@ pub use robin_engine::markers::{
 
 use crate::gfx_types::{BlendMode, Rect};
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids::{RHID_GROUND_SELECT, RHID_GROUND_SELECT_SWORD};
 
 /// The "pure blue" shadow sentinel used in raw sprite pixel data.

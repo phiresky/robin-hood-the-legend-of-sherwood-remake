@@ -10,8 +10,8 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
 use serde::{Deserialize, Serialize};
 
-use crate::campaign::{Campaign, CampaignValue};
-use crate::profiles::{MissionLocation, MissionType};
+use robin_engine::campaign::{Campaign, CampaignValue};
+use robin_engine::profiles::{MissionLocation, MissionType};
 
 // ═══════════════════════════════════════════════════════════════════
 // Menu Screen — timer and window layer management

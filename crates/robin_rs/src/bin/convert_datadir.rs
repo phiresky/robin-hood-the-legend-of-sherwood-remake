@@ -18,19 +18,19 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
-use robin_rs::frame_holder::{FrameHolder, SpriteVariant};
-use robin_rs::level_loader::{
+use robin_assets::frame_holder::{FrameHolder, SpriteVariant};
+use robin_assets::picture::Picture;
+use robin_assets::res_descr;
+use robin_assets::resource_manager::{EncodedPicture, ResourceManager};
+use robin_assets::scb;
+use robin_engine::level_data::{
     ChunkReader, LevelFormat, LoadedMission, LoadedProtoLevel, load_mission, load_proto_level,
 };
+use robin_engine::order::OrderType;
+use robin_engine::profiles::{CivilianType, ProfileManager};
+use robin_engine::sbfile::{SB_FILE_READ, SbFile, resolve_case_insensitive};
+use robin_engine::sprite_script;
 use robin_rs::main_entry::{FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS};
-use robin_rs::order::OrderType;
-use robin_rs::picture::Picture;
-use robin_rs::profiles::{CivilianType, ProfileManager};
-use robin_rs::res_descr;
-use robin_rs::resource_manager::{EncodedPicture, ResourceManager};
-use robin_rs::sbfile::{SB_FILE_READ, SbFile, resolve_case_insensitive};
-use robin_rs::scb;
-use robin_rs::sprite_scriptor;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutFormat {
@@ -700,7 +700,7 @@ impl Converter {
     /// referenced sprite frame as a PNG, organised by profile and action.
     fn convert_rhs_to_dir(&mut self, src: &Path, out_dir: &Path) -> Result<()> {
         let (signature, profiles) =
-            sprite_scriptor::SpriteScriptor::load_all_profiles(&src.to_string_lossy())
+            sprite_script::SpriteScriptor::load_all_profiles(&src.to_string_lossy())
                 .map_err(|e| anyhow!("rhs: {e}"))?;
 
         fs::create_dir_all(out_dir)?;
@@ -1199,8 +1199,10 @@ fn write_json_pretty<T: serde::Serialize>(dst: &Path, value: &T) -> Result<()> {
 //  Shipping format: one bitcode blob, zstd-compressed at max settings.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use robin_rs::level_loader::LoadedLevel;
-use robin_rs::shipping_datadir::{RhsData, ShippingDatadir, ShippingSprite, ShippingSpriteBank};
+use robin_assets::shipping_datadir::{
+    RhsData, ShippingDatadir, ShippingSprite, ShippingSpriteBank,
+};
+use robin_engine::level_data::LoadedLevel;
 
 fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Result<()> {
     let mut dd = ShippingDatadir::default();
@@ -1452,7 +1454,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         }
         if let Some(p) = in_path(rel) {
             let (signature, profiles) =
-                sprite_scriptor::SpriteScriptor::load_all_profiles(&p.to_string_lossy())
+                sprite_script::SpriteScriptor::load_all_profiles(&p.to_string_lossy())
                     .map_err(|e| anyhow!("rhs {rel}: {e}"))?;
             let all_profiles_required = required_profiles.contains("");
             let mut matched_profiles = BTreeSet::new();
@@ -1613,7 +1615,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     let out_file = data_out.join("datadir.bin");
     let blob = bitcode::serialize(&dd).map_err(|e| anyhow!("bitcode encode: {e:?}"))?;
     let compressed =
-        robin_rs::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
+        robin_assets::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
     fs::write(&out_file, compressed).with_context(|| format!("write {}", out_file.display()))?;
     tracing::info!(
         "wrote {} (windowLog={}, map={:?})",
@@ -1679,7 +1681,7 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
 }
 
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
-    use robin_rs::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
     use std::io::Write as _;
     use std::process::{Command, Stdio};
 
@@ -1761,7 +1763,7 @@ fn transcode_picture_to_jxl(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8
 }
 
 fn picture_to_rgb888(pic: &Picture) -> Result<Vec<u8>> {
-    use robin_rs::picture::PixelFormat;
+    use robin_assets::picture::PixelFormat;
 
     let n = pic.width as usize * pic.height as usize;
     let mut rgb = Vec::with_capacity(n * 3);
@@ -1867,7 +1869,7 @@ fn walk_and_bundle_small(
 /// inner compression is gone.  Outer shipping zstd-22 then catches the
 /// cross-picture redundancy.
 fn transcode_pak_drop_bzip(path: &Path) -> Result<Vec<u8>> {
-    use robin_rs::picture::SixteenPacking;
+    use robin_assets::picture::SixteenPacking;
     let pics = read_pak_pictures(path)?;
     let mut out = Vec::new();
     for pic in &pics {
@@ -1881,7 +1883,7 @@ fn transcode_pak_drop_bzip(path: &Path) -> Result<Vec<u8>> {
 /// `SixteenPacking::None` so wasm (which stubs out the bzip2 decoder)
 /// can read the image straight from the shipping datadir.
 fn transcode_sixteen_drop_bzip(path: &Path) -> Result<Vec<u8>> {
-    use robin_rs::picture::SixteenPacking;
+    use robin_assets::picture::SixteenPacking;
     let mut file = SbFile::open(&path.to_string_lossy(), SB_FILE_READ)
         .map_err(|e| anyhow!("open {}: {e}", path.display()))?;
     let pic = Picture::load_sixteen_from_stream(&mut file)
@@ -1898,7 +1900,7 @@ fn transcode_sixteen_drop_bzip(path: &Path) -> Result<Vec<u8>> {
 /// `SBNativeFont::Load` format — see `crate::native_font` for the
 /// reader-side layout.
 fn transcode_bfn_drop_bzip(path: &Path) -> Result<Vec<u8>> {
-    use robin_rs::picture::SixteenPacking;
+    use robin_assets::picture::SixteenPacking;
     use std::io::Write;
 
     const TAG_LEN: usize = 6;
@@ -1973,7 +1975,7 @@ fn picture_sixteen_size_on_disk(bytes: &[u8]) -> Result<usize> {
 /// the reader, so the rewritten file emits `0` for them — this matches
 /// the runtime, which never reads back the flags field.
 fn transcode_res_drop_bzip(path: &Path) -> Result<Vec<u8>> {
-    use robin_rs::picture::SixteenPacking;
+    use robin_assets::picture::SixteenPacking;
     let mut rm = ResourceManager::new();
     rm.attach_resource_file(&path.to_string_lossy())?;
     rm.write_to_res_bytes(SixteenPacking::None)
@@ -1996,7 +1998,7 @@ fn add_required_rhs_rel(
 fn add_required_animation_rhs_profile(
     required: &mut std::collections::BTreeMap<String, BTreeSet<String>>,
     ambiance: u32,
-    sprite: &robin_rs::level_loader::RawSpriteRef,
+    sprite: &robin_engine::level_data::RawSpriteRef,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
 ) {
     if sprite.frame_profile_name.is_empty() || sprite.profile_name.is_empty() {

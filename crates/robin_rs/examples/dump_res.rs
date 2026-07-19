@@ -11,7 +11,7 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
 
-    let mut mgr = robin_rs::resource_manager::ResourceManager::new();
+    let mut mgr = robin_assets::resource_manager::ResourceManager::new();
     match mgr.attach_resource_file(&path) {
         Ok(()) => {
             let json = mgr.dump_json();

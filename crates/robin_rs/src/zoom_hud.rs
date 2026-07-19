@@ -24,8 +24,8 @@ use crate::ingame_menu::layout::{
 };
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_ids::{RHID_ZOOM_DOWN, RHID_ZOOM_UP};
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::resource_ids::{RHID_ZOOM_DOWN, RHID_ZOOM_UP};
 
 fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn enable_mask_gates_on_is_zoom_possible() {
-        use crate::campaign::Campaign;
+        use robin_engine::campaign::Campaign;
         use robin_engine::engine::{EngineStateRequest, HostDisplayState, InputState, LevelAssets};
 
         let mut assets = LevelAssets::new();

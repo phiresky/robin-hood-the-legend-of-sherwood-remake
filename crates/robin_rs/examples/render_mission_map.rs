@@ -122,7 +122,7 @@ fn run() -> Result<i32, String> {
 
     let (campaign, profiles, application_context) = robin_rs::main_entry::rust_init()?;
     if let Some(enabled) = fog_tint_all_sprites {
-        let mut profile_manager = robin_rs::player_profile::PlayerProfileManager::global();
+        let mut profile_manager = robin_engine::player_profile::PlayerProfileManager::global();
         let active = profile_manager
             .as_mut()
             .and_then(|manager| manager.get_active_mut())

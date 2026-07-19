@@ -8,7 +8,7 @@
 //! to a native `--server` running on a desktop / dedicated host.
 
 use super::{NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, decode_msg, encode_msg};
-use crate::player_command::PlayerId;
+use robin_engine::player_command::PlayerId;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};

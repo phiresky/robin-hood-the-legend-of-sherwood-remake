@@ -5,7 +5,7 @@
 //! gameplay, and level results. This module covers the **state
 //! management** and **transition logic** for those flows.
 
-use crate::Host;
+use crate::host::Host;
 use crate::host::{ApplicationContext, HostSignal};
 use robin_engine::engine as engine_api;
 #[cfg(test)]
@@ -15,11 +15,11 @@ use robin_engine::profiles as engine_profiles;
 use serde::{Deserialize, Serialize};
 
 use crate::app_effect::AppEffect;
-use crate::campaign::Campaign;
-use crate::game_operation::{GameCode, GameOperationState};
-use crate::profiles::MissionLocation;
 use crate::stature_hud::StatureFocusLatch;
+use robin_engine::campaign::Campaign;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::game_operation::{GameCode, GameOperationState};
+use robin_engine::profiles::MissionLocation;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -725,10 +725,10 @@ pub trait GameCallbacks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::campaign::CampaignValue;
+    use robin_engine::campaign::CampaignValue;
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-        use crate::campaign::Campaign;
+        use robin_engine::campaign::Campaign;
         let mut assets = engine_api::LevelAssets::new();
         let engine =
             Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
@@ -1186,7 +1186,7 @@ mod tests {
 
         assert_eq!(
             campaign.get_value(CampaignValue::Ransom),
-            crate::campaign::INITIAL_RANSOM
+            robin_engine::campaign::INITIAL_RANSOM
         );
         // A successful non-ambush mission earns the normal 1,000-point
         // completion bonus. The synthetic `added_score` above must not be

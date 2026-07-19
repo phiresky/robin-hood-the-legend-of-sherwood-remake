@@ -9,16 +9,14 @@ use super::{
     HandlerAction, center_on_reselected_portrait_pc, dispatch_local_command,
     dispatch_local_commands, required_menu_resources,
 };
-use crate::Host;
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
 use crate::campaign_map::{self, CampaignMapChoice};
 use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
-use crate::element::{Command, Posture};
 use crate::game::{Game, GameCallbacks};
-use crate::game_operation::GameCode;
 use crate::gfx_types::GameEvent;
+use crate::host::Host;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
@@ -28,27 +26,29 @@ use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
 use crate::main_entry::{RustCallbacks, SaveLoadRequest, current_mission_id};
 use crate::menu::CampaignMapState;
-use crate::player_command::{FrameCommands, PlayerCommand};
-use crate::profiles::Action;
 use crate::renderer::Renderer;
-use crate::resource_manager::ResourceManager;
 use crate::sherwood_hud::{
     SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
 };
-use crate::sound_cache::SampleLoader;
 use crate::ui_panel::{self, PortraitCache, PortraitHitArea};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
+use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::game_operation::GameCode;
 use robin_engine::mission as engine_mission;
 use robin_engine::player_command as engine_player_command;
+use robin_engine::player_command::{FrameCommands, PlayerCommand};
 use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::Action;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
+use robin_engine::sound_cache::SampleLoader;
 
 /// Per-frame mouse-input dispatch.
 ///
@@ -316,13 +316,13 @@ pub(super) fn handle_mouse_input(
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         if matches!(
                             selected_action,
-                            crate::profiles::Action::Apple
-                                | crate::profiles::Action::Stone
-                                | crate::profiles::Action::Hit
-                                | crate::profiles::Action::HitHard
-                                | crate::profiles::Action::Heal
-                                | crate::profiles::Action::Lever
-                                | crate::profiles::Action::Strangle
+                            robin_engine::profiles::Action::Apple
+                                | robin_engine::profiles::Action::Stone
+                                | robin_engine::profiles::Action::Hit
+                                | robin_engine::profiles::Action::HitHard
+                                | robin_engine::profiles::Action::Heal
+                                | robin_engine::profiles::Action::Lever
+                                | robin_engine::profiles::Action::Strangle
                         ) {
                             let cmds = crate::game_input::resolve_action_drag(
                                 host, engine, assets, map_pt,
@@ -960,9 +960,9 @@ pub(super) fn handle_mouse_input(
                             let armed_action = engine.selected_action_for_seat(local_seat);
                             let action_armed = matches!(
                                 armed_action,
-                                crate::profiles::Action::Heal
-                                    | crate::profiles::Action::Shield
-                                    | crate::profiles::Action::BigShield
+                                robin_engine::profiles::Action::Heal
+                                    | robin_engine::profiles::Action::Shield
+                                    | robin_engine::profiles::Action::BigShield
                             );
                             if !hit.is_burned
                                 && let PortraitHitArea::ActionButton(_) = hit.area
@@ -1362,7 +1362,8 @@ pub(super) fn dispatch_corner_button_left_click(
                 dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
             } else {
                 let next = ((game.level_of_qa as usize + 1)
-                    % crate::macro_store::NUMBER_OF_QA_MEMORY) as u8;
+                    % robin_engine::macro_store::NUMBER_OF_QA_MEMORY)
+                    as u8;
                 game.level_of_qa = next as u16;
                 let cmd = PlayerCommand::ChangeQaMemory { slot: next };
                 dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
@@ -1419,7 +1420,7 @@ pub(super) fn choose_recording_place(
     local_seat: engine_player_command::PlayerId,
 ) -> u8 {
     let selected = engine.seat_selection(local_seat);
-    for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
+    for slot in 0..robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u8 {
         let taken = selected.iter().any(|&pc| engine.has_quick_action(pc, slot));
         if !taken {
             return slot;

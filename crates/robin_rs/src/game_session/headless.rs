@@ -6,8 +6,8 @@ use super::runtime::{
     TickPolicy,
 };
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
-use crate::game_operation::GameCode;
-use crate::player_command::{PlayerCommand, PlayerInput};
+use robin_engine::game_operation::GameCode;
+use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use serde::{Deserialize, Serialize};
 
 /// Frontend behavior which intentionally differs from interactive play.

@@ -30,8 +30,8 @@ use crate::gfx_types::Keycode;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
+use robin_engine::resource_ids;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
@@ -203,7 +203,7 @@ pub async fn show_dialogue(
     renderer: &mut Renderer,
     resources: &mut IngameMenuResources,
     sound: &mut SoundManager,
-    sound_config: &crate::sound_config::SoundConfig,
+    sound_config: &robin_engine::sound_config::SoundConfig,
     audio: Option<&mut dyn AudioBackend>,
     sound_enabled: bool,
     cursor: Option<ModalCursor<'_>>,
@@ -601,7 +601,7 @@ impl DialogueModalState {
         renderer: &mut Renderer,
         resources: &mut IngameMenuResources,
         sound: &mut SoundManager,
-        sound_config: &crate::sound_config::SoundConfig,
+        sound_config: &robin_engine::sound_config::SoundConfig,
         mut audio: Option<&mut dyn AudioBackend>,
         sound_enabled: bool,
         cursor: Option<&ModalCursor<'_>>,
@@ -717,7 +717,7 @@ impl DialogueModalState {
     fn finish(
         &mut self,
         sound: &mut SoundManager,
-        sound_config: &crate::sound_config::SoundConfig,
+        sound_config: &robin_engine::sound_config::SoundConfig,
         audio: Option<&mut dyn AudioBackend>,
         result: DialogResult,
         remote: bool,
@@ -858,7 +858,7 @@ pub async fn show_dialogue_batch(
     renderer: &mut Renderer,
     resources: &mut IngameMenuResources,
     sound: &mut SoundManager,
-    sound_config: &crate::sound_config::SoundConfig,
+    sound_config: &robin_engine::sound_config::SoundConfig,
     mut audio: Option<&mut dyn AudioBackend>,
     sound_enabled: bool,
     mut cursor: Option<ModalCursor<'_>>,

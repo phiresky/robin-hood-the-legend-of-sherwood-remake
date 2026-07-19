@@ -70,7 +70,7 @@ fn run_single(path: &str, args: &Args) -> std::process::ExitCode {
         Ok(n) => n,
         Err(code) => return code,
     };
-    match robin_rs::scb::parse_file(path) {
+    match robin_assets::scb::parse_file(path) {
         Ok(scb) => {
             let output = render(&scb, args.decompile, names.as_ref());
             std::io::Write::write_all(&mut std::io::stdout(), output.as_bytes())
@@ -104,7 +104,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
         // fall through and decompile without names.
         let names =
             load_actor_names(args.datadir.as_deref(), Some(&stem), path).unwrap_or_default();
-        let scb = match robin_rs::scb::parse_file(path) {
+        let scb = match robin_assets::scb::parse_file(path) {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("{path}: {e}");
@@ -167,7 +167,7 @@ fn load_actor_names(
     datadir: Option<&str>,
     mission: Option<&str>,
     scb_path: &str,
-) -> Result<Option<robin_rs::actor_names::ActorNames>, std::process::ExitCode> {
+) -> Result<Option<robin_assets::actor_names::ActorNames>, std::process::ExitCode> {
     let Some(dd) = datadir else {
         return Ok(None);
     };
@@ -177,7 +177,7 @@ fn load_actor_names(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
-    match robin_rs::actor_names::load_from_datadir(Path::new(dd), &m) {
+    match robin_assets::actor_names::load_from_datadir(Path::new(dd), &m) {
         Ok(n) => Ok(Some(n)),
         Err(e) => {
             tracing::error!("{scb_path}: actor names: {e}");
@@ -187,14 +187,14 @@ fn load_actor_names(
 }
 
 fn render(
-    scb: &robin_rs::scb::ScbFile,
+    scb: &robin_assets::scb::ScbFile,
     decompile: bool,
-    names: Option<&robin_rs::actor_names::ActorNames>,
+    names: Option<&robin_assets::actor_names::ActorNames>,
 ) -> String {
     if decompile {
-        robin_rs::decompile::decompile_with_names(scb, names)
+        robin_assets::decompile::decompile_with_names(scb, names)
     } else {
-        robin_rs::disasm::dump(scb)
+        robin_assets::disasm::dump(scb)
     }
 }
 

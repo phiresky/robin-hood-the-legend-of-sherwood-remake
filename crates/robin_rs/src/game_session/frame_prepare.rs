@@ -423,7 +423,7 @@ fn process_pre_tick_state_hash(
         runtime.last_mp_state_hash_frame = Some(manager.sim_frame);
         let mp_hash_start = web_time::Instant::now();
         let live_hash_start = web_time::Instant::now();
-        let local_hash = crate::replay::state_hash(&manager.engine);
+        let local_hash = robin_engine::replay::state_hash(&manager.engine);
         let live_hash_us = live_hash_start.elapsed().as_micros();
         runtime.pending_mp_state_hash = Some((manager.sim_frame, local_hash));
         tracing::debug!(
@@ -433,7 +433,7 @@ fn process_pre_tick_state_hash(
             "multiplayer hash frame timing"
         );
     } else if let Some(&host_hash) = runtime.peer_hashes.get(&manager.sim_frame) {
-        let local_hash = crate::replay::state_hash(&manager.engine);
+        let local_hash = robin_engine::replay::state_hash(&manager.engine);
         if local_hash != host_hash {
             let last_rollback_path = runtime.last_mp_rollback.as_ref().map_or("none", |r| r.path);
             let last_rollback_earliest = runtime

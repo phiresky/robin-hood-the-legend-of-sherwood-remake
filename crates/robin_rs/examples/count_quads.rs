@@ -1,5 +1,5 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
-use robin_rs::scb;
+use robin_assets::scb;
 use std::collections::BTreeMap;
 fn main() {
     tracing_subscriber::fmt::init();

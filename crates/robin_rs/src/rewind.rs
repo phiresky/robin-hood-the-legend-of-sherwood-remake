@@ -10,7 +10,7 @@
 //! the target frame.
 //!
 //! The per-frame command log kept here is independent of
-//! [`crate::replay::ReplayRecorder`] (which writes JSONL to disk) and
+//! [`robin_engine::replay::ReplayRecorder`] (which writes JSONL to disk) and
 //! [`crate::rollback_checker::RollbackChecker`] (which only keeps a
 //! short 5-frame ring).  It has to cover the full span from the oldest
 //! retained snapshot to "now", so it grows with how far back the
@@ -28,12 +28,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::engine::{DevState, Engine, HostDisplayState, LevelAssets};
-use crate::player_command::PlayerInput;
 use crate::sim_timeline::{
     CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
     replay_one_frame,
 };
+use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::player_command::PlayerInput;
 
 /// How often (in sim frames) to take a snapshot.  Matches the cadence
 /// of the replay state-hash check so the two systems have similar
@@ -211,7 +211,7 @@ impl RewindBuffer {
             snapshot = cached.clone();
         }
 
-        let mut scratch_host = crate::Host::default();
+        let mut scratch_host = crate::host::Host::default();
         let mut scratch_dev = DevState::default();
         let mut scratch_display = HostDisplayState::default();
         while snapshot.frame < target_frame {
@@ -322,11 +322,11 @@ mod tests {
 
     #[test]
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
-        use crate::campaign::Campaign;
-        use crate::engine::{EngineStateRequest, InputState};
-        use crate::messenger::SimpleMessage;
-        use crate::player_command::PlayerCommand;
         use crate::sim_timeline::{run_engine_tick_core, run_post_initialize_stage};
+        use robin_engine::campaign::Campaign;
+        use robin_engine::engine::{EngineStateRequest, InputState};
+        use robin_engine::messenger::SimpleMessage;
+        use robin_engine::player_command::PlayerCommand;
 
         let mut assets = LevelAssets::new();
         let mut engine = Engine::new_for_test_with_level_size(
@@ -354,7 +354,7 @@ mod tests {
         engine.send_simple_message(SimpleMessage::LockAlt);
 
         let mut rewind = RewindBuffer::new();
-        let mut host = crate::Host::default();
+        let mut host = crate::host::Host::default();
         let mut dev = DevState::default();
         for frame in 0..3 {
             rewind.begin_frame(frame, &engine, &assets);
@@ -376,15 +376,15 @@ mod tests {
             .rewind_to(&assets, 3)
             .expect("frame 3 is reconstructable from the frame-0 checkpoint");
         assert_eq!(
-            crate::replay::state_hash(&rewound),
-            crate::replay::state_hash(&engine)
+            robin_engine::replay::state_hash(&rewound),
+            robin_engine::replay::state_hash(&engine)
         );
         assert!(!rewound.is_lock_alt());
     }
 
     #[test]
     fn splice_late_input_appends_to_correct_frame() {
-        use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
         let mut buf = RewindBuffer::new();
         // Manually seed a few frames of command logs so we can splice

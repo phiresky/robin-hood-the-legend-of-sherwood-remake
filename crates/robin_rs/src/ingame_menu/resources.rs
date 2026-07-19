@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use crate::main_entry::picture_to_surface;
 use crate::native_font::{self, Font, NativeFont};
 use crate::renderer::Renderer;
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::resource_ids;
 
 // ═══════════════════════════════════════════════════════════════════
 // Menu text string table
