@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint};
-use crate::natives::{GameHost, NativeContext, ScriptState};
+use crate::natives::{NativeContext, ScriptEffects, ScriptState};
 use crate::script_manager::{ScriptInstance, ScriptManager};
 
 use super::{
@@ -1024,8 +1024,7 @@ pub struct MissionScript {
     pub script_name: String,
     pub manager: ScriptManager,
     /// Persistent state belonging to the script subsystem. This is separate
-    /// from `game_host`, which is only the transitional adapter for canonical
-    /// engine state that has not yet moved to borrowed native capabilities.
+    /// from the ordered output effects emitted by native calls.
     pub state: ScriptState,
     /// Immutable level-native capabilities. Snapshot decode intentionally
     /// leaves this detached; the engine's snapshot adoption/restore boundary
@@ -1036,7 +1035,7 @@ pub struct MissionScript {
     /// transient trait-object host field only while a script call is
     /// executing, so snapshots keep the real state instead of losing it
     /// behind `Vm::host`'s serde skip.
-    pub game_host: GameHost,
+    pub script_effects: ScriptEffects,
     /// Active callback receivers. This is runtime control state, excluded from
     /// serialization and hashing; snapshots are rejected while it is nonempty.
     #[state_hash(skip)]
@@ -1045,7 +1044,7 @@ pub struct MissionScript {
     /// Per-actor script instances, keyed by actor script handle.
     ///
     /// Each actor with a `script_class` gets a persistent `ScriptInstance`
-    /// whose heap survives across calls. The host (`GameHost`) is NOT stored
+    /// whose heap survives across calls. The effect buffer is NOT stored
     /// on these — it lives on the global `instance` and is transferred
     /// in/out for each per-actor call.
     pub actor_instances: BTreeMap<i32, ScriptInstance>,
@@ -1093,7 +1092,7 @@ struct MissionScriptSnapshotRef<'a> {
     script_name: &'a str,
     manager: &'a ScriptManager,
     state: &'a ScriptState,
-    game_host: &'a GameHost,
+    script_effects: &'a ScriptEffects,
     instance: &'a ScriptInstance,
     actor_instances: &'a BTreeMap<i32, ScriptInstance>,
     zone_instances: &'a BTreeMap<usize, ScriptInstance>,
@@ -1118,7 +1117,7 @@ impl Serialize for MissionScript {
             script_name: &self.script_name,
             manager: &self.manager,
             state: &self.state,
-            game_host: &self.game_host,
+            script_effects: &self.script_effects,
             instance: &self.instance,
             actor_instances: &self.actor_instances,
             zone_instances: &self.zone_instances,
@@ -1136,7 +1135,7 @@ struct MissionScriptSnapshot {
     script_name: String,
     manager: ScriptManager,
     state: ScriptState,
-    game_host: GameHost,
+    script_effects: ScriptEffects,
     instance: ScriptInstance,
     actor_instances: BTreeMap<i32, ScriptInstance>,
     zone_instances: BTreeMap<usize, ScriptInstance>,
@@ -1158,7 +1157,7 @@ impl<'de> Deserialize<'de> for MissionScript {
             manager: snapshot.manager,
             state: snapshot.state,
             bindings: crate::natives::AttachedScriptBindings::default(),
-            game_host: snapshot.game_host,
+            script_effects: snapshot.script_effects,
             call_stack: ScriptCallStack::default(),
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
@@ -1224,7 +1223,7 @@ impl MissionScript {
             manager,
             state: ScriptState::default(),
             bindings: crate::natives::AttachedScriptBindings::default(),
-            game_host: GameHost::new(),
+            script_effects: ScriptEffects::new(),
             call_stack: ScriptCallStack::default(),
             instance,
             actor_instances: BTreeMap::new(),
@@ -1286,8 +1285,8 @@ impl MissionScript {
         );
     }
 
-    pub(crate) fn with_game_host_attached<R>(
-        game_host: &mut GameHost,
+    pub(crate) fn with_script_effects_attached<R>(
+        script_effects: &mut ScriptEffects,
         state: &mut ScriptState,
         script_domains: &mut super::ScriptDomains,
         bindings: &crate::natives::AttachedScriptBindings,
@@ -1297,7 +1296,7 @@ impl MissionScript {
         f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_, '_>) -> R,
     ) -> R {
         let mut context = NativeContext::with_call_frame(
-            game_host,
+            script_effects,
             state,
             script_domains,
             bindings,
@@ -1402,8 +1401,8 @@ impl MissionScript {
             frame = frame.with_current_scroll(handle);
         }
         self.with_call_frame(frame, |script| {
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1472,7 +1471,7 @@ impl MissionScript {
 
     /// Call a named function on a per-actor script instance.
     ///
-    /// Runs the actor instance with the shared `GameHost`, pushes a frame
+    /// Runs the actor instance with the shared script-effect buffer, pushes a frame
     /// binding `ThisActor` to the actor, and restores the caller frame
     /// afterwards.
     ///
@@ -1590,7 +1589,7 @@ impl MissionScript {
                     .get_mut(&handle)
                     .expect("actor instance vanished mid-run");
                 let mut context = NativeContext::with_call_frame(
-                    &mut self.game_host,
+                    &mut self.script_effects,
                     &mut self.state,
                     script_domains,
                     &self.bindings,
@@ -1732,8 +1731,8 @@ impl MissionScript {
                 .zone_instances
                 .get_mut(&zone_idx)
                 .expect("validated zone instance vanished before dispatch");
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1789,8 +1788,8 @@ impl MissionScript {
                 .target_instances
                 .get_mut(&target_handle)
                 .expect("validated target instance vanished before dispatch");
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1849,8 +1848,8 @@ impl MissionScript {
                 .scroll_instances
                 .get_mut(&scroll_handle)
                 .expect("validated scroll instance vanished before dispatch");
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1907,8 +1906,8 @@ impl MissionScript {
         // Initialize doesn't push an actor either (only ReachPoint does).
         let frame = self.current_call_frame();
         self.with_call_frame(frame, |script| {
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -1984,8 +1983,8 @@ impl MissionScript {
                 .waypoint_instances
                 .get_mut(&key)
                 .expect("validated waypoint instance vanished before dispatch");
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -2023,8 +2022,8 @@ impl MissionScript {
     ) -> Result<i32, String> {
         let frame = crate::natives::ScriptCallFrame::default();
         self.with_call_frame(frame, |script| {
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -2052,8 +2051,8 @@ impl MissionScript {
     ) -> Result<i32, String> {
         let frame = crate::natives::ScriptCallFrame::default();
         self.with_call_frame(frame, |script| {
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -2081,8 +2080,8 @@ impl MissionScript {
     ) -> Result<(), String> {
         let frame = crate::natives::ScriptCallFrame::default();
         self.with_call_frame(frame, |script| {
-            Self::with_game_host_attached(
-                &mut script.game_host,
+            Self::with_script_effects_attached(
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -2109,8 +2108,8 @@ impl MissionScript {
         if self.instance.has_function(&self.manager, "PostInitialize") {
             let frame = crate::natives::ScriptCallFrame::default();
             self.with_call_frame(frame, |script| {
-                Self::with_game_host_attached(
-                    &mut script.game_host,
+                Self::with_script_effects_attached(
+                    &mut script.script_effects,
                     &mut script.state,
                     script_domains,
                     &script.bindings,
@@ -2129,7 +2128,7 @@ impl MissionScript {
         Ok(())
     }
 
-    /// Get a mutable reference to the underlying [`GameHost`].
+    /// Get a mutable reference to the ordered script effects.
     ///
     /// Exposed to the host crate so custom-mission Lua scripts can
     /// reach engine state through `MissionLuaState::with_host`
@@ -2137,13 +2136,13 @@ impl MissionScript {
     /// this handle outside of a script event is fine for queued commands (the
     /// engine drains them next tick). Canonical entities, AI, and grid state
     /// are deliberately unavailable through this adapter.
-    pub fn game_host_mut(&mut self) -> Option<&mut GameHost> {
-        Some(&mut self.game_host)
+    pub fn script_effects_mut(&mut self) -> Option<&mut ScriptEffects> {
+        Some(&mut self.script_effects)
     }
 
-    /// Get an immutable reference to the underlying [`GameHost`].
-    pub fn game_host(&self) -> Option<&GameHost> {
-        Some(&self.game_host)
+    /// Get an immutable reference to the ordered script effects.
+    pub fn script_effects(&self) -> Option<&ScriptEffects> {
+        Some(&self.script_effects)
     }
 }
 
@@ -2226,12 +2225,12 @@ pub struct InputState {
     /// Index into `FastFindGrid::sectors` for the sector under the mouse.
     /// Set each frame in `update_mouse`. Used for door/jump alpha overlays.
     pub selected_sector_idx: Option<crate::fast_find_grid::SectorIndex>,
-    /// Index into `GameHost::patches` for the patch whose overlay sector
+    /// Index into the canonical interactable patch table for the patch whose overlay sector
     /// the mouse is hovering, if any.  Persisted on InputState so the
     /// cursor / render hooks don't re-scan `self.script_domains.interactables.patches` each
     /// frame.
     pub selected_patch_idx: Option<u32>,
-    /// Index into `GameHost::doors` for a door whose click polygon is
+    /// Index into the canonical interactable door table for a door whose click polygon is
     /// under the mouse. Some building doors are wider than their grid
     /// door sector, so hover/click handling must not depend only on
     /// `selected_sector_idx`.

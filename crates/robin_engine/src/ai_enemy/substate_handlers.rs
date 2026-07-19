@@ -5631,7 +5631,7 @@ impl EnemyAi {
                             // element targeting the door's PointOut).
                             self.set_state(AiState::Fleeing, Substate::FleeingMerryManLeaveMap);
                             if let Some(door_idx) = self.my_door_index {
-                                // `my_door_index` is a `game_host.doors`
+                                // `my_door_index` is a global door-table
                                 // index.  Find the matching reinforcement
                                 // door entry (linear scan; small list)
                                 // for the cached point_out geometry.

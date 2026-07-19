@@ -263,7 +263,7 @@ impl ScriptManager {
 /// ```ignore
 /// let mut mgr = ScriptManager::load_file("level.scb")?;
 /// let mut inst = mgr.create_instance("StartUp")?;
-/// inst.vm.host = Some(Box::new(GameHost::new()));
+/// inst.vm.host = Some(Box::new(ScriptEffects::new()));
 /// let result = inst.call_function(&mut mgr, "Initialize")?;
 /// ```
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]

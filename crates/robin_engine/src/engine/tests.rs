@@ -3281,7 +3281,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     assert!(!accepted);
     // Without `mission_script`, the status store isn't populated
     // either — the setter early-returns.  Covering the "happens to
-    // have GameHost but no class" flow is left to the integration
+    // have ScriptEffects but no class" flow is left to the integration
     // level, so here we just confirm `false` + no panic.
     let _ = ScrollStatus::Opened; // keep symbol live
 }

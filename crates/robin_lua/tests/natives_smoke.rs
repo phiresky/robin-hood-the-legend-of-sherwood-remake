@@ -1,12 +1,11 @@
 //! End-to-end smoke test: spin up a `MissionLuaState`, attach a
-//! `GameHost`, run a Lua snippet that calls registered natives, and
+//! `ScriptEffects`, run a Lua snippet that calls registered natives, and
 //! confirm the side-effects landed on the host.
 
 use mlua::Lua;
 use robin_engine::entities::Entities;
 use robin_engine::natives::{
-    EngineCommand, GameHost, NativeSessionCapabilities, ObjectiveChange, ScriptHandleCodec,
-    ScriptState,
+    EngineCommand, NativeSessionCapabilities, ScriptEffects, ScriptHandleCodec, ScriptState,
 };
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 use std::sync::{Arc, mpsc};
@@ -40,7 +39,7 @@ fn test_soldier() -> robin_engine::element::Entity {
 #[test]
 fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::from_legacy_slots(vec![Some(test_soldier())]);
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -119,11 +118,11 @@ fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
     assert!(!fast_grid.is_sector_active(0));
 }
 
-/// `InitGlobal(0, 42)` from Lua must land in `GameHost::globals`.
+/// `InitGlobal(0, 42)` from Lua must land in `ScriptEffects::globals`.
 #[test]
 fn engine_native_called_from_lua_writes_host_state() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -148,7 +147,7 @@ fn engine_native_called_from_lua_writes_host_state() {
 #[test]
 fn start_then_thanx_round_trips() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -179,7 +178,7 @@ fn start_then_thanx_round_trips() {
 #[test]
 fn spellforge_alias_opens_recording() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -207,7 +206,7 @@ fn spellforge_alias_opens_recording() {
 #[test]
 fn get_actor_name_lookup() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -247,7 +246,7 @@ fn get_actor_name_lookup() {
 #[test]
 fn get_all_actors_dumps_table() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -278,18 +277,19 @@ fn get_all_actors_dumps_table() {
         .unwrap();
 }
 
-/// `AddObjective(7, true)` and `CompleteObjective(7)` queue an
-/// `ObjectiveChange` for the host to drain — these are the
-/// Spellforge-only natives we added in this PR.
+/// Spellforge objectives share the canonical short-briefing model and are
+/// visible before the attached Lua callback returns.
 #[test]
-fn add_and_complete_objective_queue_changes() {
+fn add_and_complete_objective_mutate_live_model() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let mut briefings = robin_engine::short_briefings::ShortBriefings::default();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_short_briefings(&mut briefings);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -302,18 +302,10 @@ fn add_and_complete_objective_queue_changes() {
             },
         )
         .unwrap();
-    assert_eq!(host.pending_objective_changes.len(), 2);
-    assert!(matches!(
-        host.pending_objective_changes[0],
-        ObjectiveChange::Add {
-            id: 7,
-            is_main: true
-        }
-    ));
-    assert!(matches!(
-        host.pending_objective_changes[1],
-        ObjectiveChange::Complete { id: 7 }
-    ));
+    drop(capabilities);
+    assert_eq!(briefings.get_id(true, 0), Some(7));
+    assert_eq!(briefings.is_entry_done(true, 0), Some(true));
+    assert!(host.engine.commands.is_empty());
 }
 
 /// `IsActorOutOfAction` is the Spellforge English-name alias for
@@ -322,7 +314,7 @@ fn add_and_complete_objective_queue_changes() {
 #[test]
 fn is_actor_out_of_action_callable() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -371,7 +363,7 @@ fn native_abi_is_signature_driven() {
 
     for (source, expected_return_type, expected_command) in cases {
         let (state, _dir) = fresh_state();
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -397,15 +389,15 @@ fn native_abi_is_signature_driven() {
 
         match expected_command {
             Some(EngineCommand::SetZoomLevel { zoom }) => assert!(matches!(
-                host.commands.as_slice(),
+                host.engine.commands.as_slice(),
                 [EngineCommand::SetZoomLevel { zoom: actual }] if *actual == zoom
             )),
             Some(EngineCommand::DisplayMap { show }) => assert!(matches!(
-                host.commands.as_slice(),
+                host.engine.commands.as_slice(),
                 [EngineCommand::DisplayMap { show: actual }] if *actual == show
             )),
             None => {
-                assert!(host.commands.is_empty());
+                assert!(host.engine.commands.is_empty());
                 assert_eq!(script_state.globals.get(&7), Some(&9));
             }
             Some(other) => panic!("test case does not handle command {other:?}"),
@@ -427,7 +419,7 @@ fn invalid_native_arguments_are_typed_errors() {
     ];
 
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -472,7 +464,7 @@ fn contains_native_abi_error(error: &mlua::Error) -> bool {
 #[test]
 fn sequence_call_registers_callback() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -514,7 +506,7 @@ fn no_host_attached_errors() {
     let (state, _dir) = fresh_state();
     let err = state.lua().load("InitGlobal(0, 42)").exec().unwrap_err();
     assert!(
-        err.to_string().contains("no GameHost attached"),
+        err.to_string().contains("no ScriptEffects attached"),
         "unexpected error: {err}"
     );
 }
@@ -525,7 +517,7 @@ fn no_host_attached_errors() {
 #[test]
 fn native_session_cleared_after_scope() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -541,14 +533,14 @@ fn native_session_cleared_after_scope() {
         )
         .unwrap();
     let err = state.lua().load("InitGlobal(0, 1)").exec().unwrap_err();
-    assert!(err.to_string().contains("no GameHost attached"));
+    assert!(err.to_string().contains("no ScriptEffects attached"));
 }
 
 /// Returning an error must detach the host just like a successful return.
 #[test]
 fn native_session_cleared_after_error() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -565,7 +557,7 @@ fn native_session_cleared_after_error() {
     assert!(result.is_err());
 
     let err = state.lua().load("InitGlobal(0, 1)").exec().unwrap_err();
-    assert!(err.to_string().contains("no GameHost attached"));
+    assert!(err.to_string().contains("no ScriptEffects attached"));
 }
 
 /// Reject a nested attachment before it can replace the outer session. After
@@ -573,7 +565,7 @@ fn native_session_cleared_after_error() {
 #[test]
 fn nested_session_rejection_preserves_outer_session() {
     let (state, _dir) = fresh_state();
-    let mut outer_host = GameHost::new();
+    let mut outer_host = ScriptEffects::new();
     let mut outer_entities = Entities::new();
     let mut outer_ai = robin_engine::ai::AiGlobalState::default();
     let mut outer_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -581,7 +573,7 @@ fn nested_session_rejection_preserves_outer_session() {
         NativeSessionCapabilities::new(&mut outer_entities, &mut outer_ai, &mut outer_grid);
     let mut outer_domains = robin_engine::engine::ScriptDomains::default();
     let mut outer_script_state = ScriptState::default();
-    let mut nested_host = GameHost::new();
+    let mut nested_host = ScriptEffects::new();
     let mut nested_entities = Entities::new();
     let mut nested_ai = robin_engine::ai::AiGlobalState::default();
     let mut nested_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -619,7 +611,7 @@ fn nested_session_rejection_preserves_outer_session() {
 #[test]
 fn synchronous_nested_lua_calls_share_one_native_session() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -659,7 +651,7 @@ fn synchronous_nested_lua_calls_share_one_native_session() {
 #[test]
 fn rust_to_lua_reentrancy_reuses_the_active_session() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -697,7 +689,7 @@ fn cross_thread_native_invocation_is_rejected_while_session_is_active() {
     let owner = thread::spawn({
         let state = Arc::clone(&state);
         move || {
-            let mut host = GameHost::new();
+            let mut host = ScriptEffects::new();
             let mut entities = Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -749,7 +741,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
     let owner = thread::spawn({
         let state = Arc::clone(&state);
         move || {
-            let mut host = GameHost::new();
+            let mut host = ScriptEffects::new();
             let mut entities = Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -778,7 +770,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
     });
 
     entered_rx.recv().expect("owner attached session");
-    let mut competing_host = GameHost::new();
+    let mut competing_host = ScriptEffects::new();
     let mut competing_entities = Entities::new();
     let mut competing_ai = robin_engine::ai::AiGlobalState::default();
     let mut competing_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -815,7 +807,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
         )
         .expect("gate must be reusable after owner detaches");
     assert!(matches!(
-        competing_host.commands.as_slice(),
+        competing_host.engine.commands.as_slice(),
         [EngineCommand::DisplayMap { show: true }]
     ));
 }
@@ -823,7 +815,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
 #[test]
 fn retained_function_cannot_reuse_a_stale_session() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -847,7 +839,7 @@ fn retained_function_cannot_reuse_a_stale_session() {
 
     let error = stale_function.call::<()>(()).unwrap_err();
     assert!(
-        error.to_string().contains("no GameHost attached"),
+        error.to_string().contains("no ScriptEffects attached"),
         "unexpected stale-function error: {error}"
     );
     assert_eq!(script_state.globals.get(&5), Some(&1));
@@ -866,12 +858,12 @@ fn panic_unwind_detaches_native_session() {
                 .load("InitGlobal(0, 1)")
                 .exec()
                 .expect_err("native session survived panic unwind");
-            assert!(error.to_string().contains("no GameHost attached"));
+            assert!(error.to_string().contains("no ScriptEffects attached"));
         }
     }
 
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -889,14 +881,16 @@ fn panic_unwind_detaches_native_session() {
 }
 
 #[test]
-fn native_dispatch_preserves_game_host_queue_order() {
+fn native_dispatch_preserves_script_effects_queue_order() {
     let (state, _dir) = fresh_state();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let mut briefings = robin_engine::short_briefings::ShortBriefings::default();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_short_briefings(&mut briefings);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
     state
@@ -915,25 +909,16 @@ fn native_dispatch_preserves_game_host_queue_order() {
         .unwrap();
 
     assert!(matches!(
-        host.commands.as_slice(),
+        host.engine.commands.as_slice(),
         [
             EngineCommand::DisplayMap { show: true },
             EngineCommand::SetZoomLevel { zoom },
             EngineCommand::DisplayMap { show: false },
         ] if *zoom == 2.0
     ));
-    assert!(matches!(
-        host.pending_objective_changes.as_slice(),
-        [
-            ObjectiveChange::Add {
-                id: 10,
-                is_main: true,
-            },
-            ObjectiveChange::Complete { id: 10 },
-            ObjectiveChange::Add {
-                id: 11,
-                is_main: false,
-            },
-        ]
-    ));
+    drop(capabilities);
+    assert_eq!(briefings.get_id(true, 0), Some(10));
+    assert_eq!(briefings.is_entry_done(true, 0), Some(true));
+    assert_eq!(briefings.get_id(false, 0), Some(11));
+    assert_eq!(briefings.is_entry_done(false, 0), Some(false));
 }

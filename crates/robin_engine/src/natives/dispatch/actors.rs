@@ -304,7 +304,8 @@ impl NativeContext<'_, '_> {
                         // resurrection so other NPCs drop us
                         // from their detectable-body lists.
                         if current == Posture::Lying && is_npc {
-                            self.deferred_commands
+                            self.simulation_barriers
+                                .commands
                                 .push(DeferredCommand::BroadcastResurrection { actor });
                         }
                         launch_wait = true;
@@ -332,7 +333,8 @@ impl NativeContext<'_, '_> {
                         // detect-me broadcast before the Wait()
                         // so allies pick the body up.
                         if is_npc {
-                            self.deferred_commands
+                            self.simulation_barriers
+                                .commands
                                 .push(DeferredCommand::BroadcastLoseConsciousness { actor });
                         }
                         launch_wait = true;
@@ -368,13 +370,15 @@ impl NativeContext<'_, '_> {
                         // push order, so queue Stop first, then
                         // the NPC broadcasts, then LaunchWait
                         // below.
-                        self.deferred_commands
-                            .push(DeferredCommand::StopActorAtPriority {
+                        self.simulation_barriers.commands.push(
+                            DeferredCommand::StopActorAtPriority {
                                 actor,
                                 priority: crate::sequence::SequencePriority::Injury,
-                            });
+                            },
+                        );
                         if is_npc {
-                            self.deferred_commands
+                            self.simulation_barriers
+                                .commands
                                 .push(DeferredCommand::BroadcastLoseConsciousness { actor });
                         }
                         launch_wait = true;
@@ -394,7 +398,8 @@ impl NativeContext<'_, '_> {
                         // dispatches a synthetic lethal
                         // `ReceiveDamage` element (see
                         // engine/melee.rs::handle_death).
-                        self.deferred_commands
+                        self.simulation_barriers
+                            .commands
                             .push(DeferredCommand::HandleDeath { actor });
                         launch_wait = true;
                     }
@@ -409,7 +414,8 @@ impl NativeContext<'_, '_> {
                         // normally seeds the HIDDEN titbit, so
                         // we re-add it via the deferred queue
                         // (handler resolves the per-PC phase).
-                        self.deferred_commands
+                        self.simulation_barriers
+                            .commands
                             .push(DeferredCommand::AddHiddenTitbitForActor { actor });
                         launch_wait = true;
                     }
@@ -425,7 +431,8 @@ impl NativeContext<'_, '_> {
                     }
                 }
                 if launch_wait {
-                    self.deferred_commands
+                    self.simulation_barriers
+                        .commands
                         .push(DeferredCommand::LaunchWait { actor });
                 }
                 0
@@ -511,18 +518,22 @@ impl NativeContext<'_, '_> {
                     // non-humans via `human_data()` so the gate
                     // is implicit there; the unconscious-stars
                     // removal needs an explicit gate.
-                    self.deferred_commands
+                    self.simulation_barriers
+                        .commands
                         .push(DeferredCommand::QuitSwordfight { actor });
                     if is_human {
-                        self.deferred_commands
+                        self.simulation_barriers
+                            .commands
                             .push(DeferredCommand::RemoveUnconsciousStars { actor });
                     }
                     // Playable PCs lose playability.
                     if is_pc && is_playable {
-                        self.deferred_commands.push(DeferredCommand::SetPlayable {
-                            actor,
-                            playable: false,
-                        });
+                        self.simulation_barriers
+                            .commands
+                            .push(DeferredCommand::SetPlayable {
+                                actor,
+                                playable: false,
+                            });
                     }
                     // Unlocked NPCs get script-locked before the native
                     // returns, matching `SetActorLocation(NULL)` in the
@@ -552,7 +563,7 @@ impl NativeContext<'_, '_> {
                     }
                     // The engine command handles the full position update:
                     // SetObstacle, ComputePositionAll, ComputeDisplayOrder.
-                    self.commands.push(EngineCommand::SetActorLocation {
+                    self.engine.commands.push(EngineCommand::SetActorLocation {
                         actor_handle: actor,
                         x,
                         y,
@@ -736,8 +747,7 @@ impl NativeContext<'_, '_> {
                 let target = self
                     .actor_id(actor)
                     .expect("InflictPain: actor_exists check passed but actor_id None");
-                self.completed_sequences
-                    .push(Sequence::single_damage(target, damage, concussion));
+                self.launch_script_sequence(Sequence::single_damage(target, damage, concussion));
                 // Returns true on success.
                 1
             }
@@ -793,7 +803,7 @@ impl NativeContext<'_, '_> {
                         Command::EnterAttentiveMode,
                         Some(target_id),
                     ));
-                    self.completed_sequences.push(seq);
+                    self.launch_script_sequence(seq);
                 }
                 0
             }
@@ -831,9 +841,11 @@ impl NativeContext<'_, '_> {
                 // engine-side state.  Validation (ActorExists +
                 // IsPC) and the actual `actor_make_crouched`
                 // call happen in the engine-side handler.
-                self.commands.push(EngineCommand::ScriptMakePCCrouched {
-                    actor_handle: actor,
-                });
+                self.engine
+                    .commands
+                    .push(EngineCommand::ScriptMakePCCrouched {
+                        actor_handle: actor,
+                    });
                 0
             }
             GetActorActionState => {
@@ -881,7 +893,8 @@ impl NativeContext<'_, '_> {
                     return 0;
                 };
                 actor_data.action_state = s;
-                self.deferred_commands
+                self.simulation_barriers
+                    .commands
                     .push(DeferredCommand::LaunchWait { actor });
                 0
             }
@@ -1121,8 +1134,7 @@ impl NativeContext<'_, '_> {
                             .get_entity(actor)
                             .is_some_and(|e| e.human_data().is_some())
                     {
-                        self.completed_sequences
-                            .push(Sequence::single_damage(target, 10000, 0));
+                        self.launch_script_sequence(Sequence::single_damage(target, 10000, 0));
                     }
                 } else if is_npc {
                     let target_id = self.actor_id(actor);
@@ -1151,12 +1163,14 @@ impl NativeContext<'_, '_> {
                 // sequence manager, so carry the launch request across
                 // the VM boundary instead of directly dispatching the
                 // target callback here.
-                self.deferred_commands.push(DeferredCommand::SendMessage {
-                    actor,
-                    message: msg,
-                    arg1: 0,
-                    arg2: 0,
-                });
+                self.simulation_barriers
+                    .commands
+                    .push(DeferredCommand::SendMessage {
+                        actor,
+                        message: msg,
+                        arg1: 0,
+                        arg2: 0,
+                    });
                 0
             }
             SendMessageWithArguments => {
@@ -1171,12 +1185,14 @@ impl NativeContext<'_, '_> {
                 }
                 // See SendMessage above: this is a sequence-element
                 // launch request, not a post-call ProcessMessage request.
-                self.deferred_commands.push(DeferredCommand::SendMessage {
-                    actor,
-                    message: msg,
-                    arg1,
-                    arg2,
-                });
+                self.simulation_barriers
+                    .commands
+                    .push(DeferredCommand::SendMessage {
+                        actor,
+                        message: msg,
+                        arg1,
+                        arg2,
+                    });
                 0
             }
 

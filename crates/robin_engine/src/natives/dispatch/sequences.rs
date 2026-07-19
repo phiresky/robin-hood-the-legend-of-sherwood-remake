@@ -11,7 +11,7 @@ impl NativeContext<'_, '_> {
             ScrollCameraTo => {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraTo") {
-                    self.commands.push(EngineCommand::ScrollCameraTo {
+                    self.engine.commands.push(EngineCommand::ScrollCameraTo {
                         location_handle: loc,
                         speed: 2.0,
                     });
@@ -22,7 +22,7 @@ impl NativeContext<'_, '_> {
                 let speed = f32::from_bits(stack.pop_i32() as u32);
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraSlowlyTo") {
-                    self.commands.push(EngineCommand::ScrollCameraTo {
+                    self.engine.commands.push(EngineCommand::ScrollCameraTo {
                         location_handle: loc,
                         speed,
                     });
@@ -32,7 +32,7 @@ impl NativeContext<'_, '_> {
             JumpCameraTo => {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "JumpCameraTo") {
-                    self.commands.push(EngineCommand::JumpCameraTo {
+                    self.engine.commands.push(EngineCommand::JumpCameraTo {
                         location_handle: loc,
                     });
                 }
@@ -44,23 +44,28 @@ impl NativeContext<'_, '_> {
                 if zoom != 0.5 && zoom != 1.0 && zoom != 2.0 {
                     tracing::warn!("Script Error: SetZoomLevel with invalid zoom {zoom}");
                 } else {
-                    self.commands.push(EngineCommand::SetZoomLevel { zoom });
+                    self.engine
+                        .commands
+                        .push(EngineCommand::SetZoomLevel { zoom });
                 }
                 0
             }
             StartDialog => {
                 let dialog_id = stack.pop_i32();
-                self.commands.push(EngineCommand::StartDialog { dialog_id });
+                self.engine
+                    .commands
+                    .push(EngineCommand::StartDialog { dialog_id });
                 0
             }
             DisplayMap => {
                 let show = stack.pop_i32();
-                self.commands
+                self.engine
+                    .commands
                     .push(EngineCommand::DisplayMap { show: show != 0 });
                 0
             }
             DisplayConsole => {
-                self.commands.push(EngineCommand::DisplayConsole);
+                self.engine.commands.push(EngineCommand::DisplayConsole);
                 0
             }
             CustomizeMinimapDisplay => {
@@ -69,57 +74,68 @@ impl NativeContext<'_, '_> {
                 if actor_handle == 0 {
                     tracing::warn!("Script Error: CustomizeMinimapDisplay called with NULL actor");
                 } else {
-                    self.commands.push(EngineCommand::CustomizeMinimapDisplay {
-                        actor_handle,
-                        dot_type,
-                    });
+                    self.engine
+                        .commands
+                        .push(EngineCommand::CustomizeMinimapDisplay {
+                            actor_handle,
+                            dot_type,
+                        });
                 }
                 0
             }
             DefineFlatTrajectoryZone => {
                 let apex_height = stack.pop_i32();
                 let location_handle = stack.pop_i32();
-                self.commands.push(EngineCommand::DefineFlatTrajectoryZone {
-                    location_handle,
-                    apex_height,
-                });
+                self.engine
+                    .commands
+                    .push(EngineCommand::DefineFlatTrajectoryZone {
+                        location_handle,
+                        apex_height,
+                    });
                 0
             }
             AddShortBriefing => {
                 let primary = stack.pop_i32();
                 let id = stack.pop_i32();
-                // Queue an engine command so the engine handles
-                // updating `short_briefings` on the Campaign.
-                self.commands.push(EngineCommand::AddShortBriefing {
-                    id,
-                    primary: primary != 0,
-                });
+                self.short_briefings
+                    .as_mut()
+                    .expect("AddShortBriefing requires live mission objectives")
+                    .add(id as u32, primary != 0);
                 0
             }
             DoneShortBriefing => {
                 let id = stack.pop_i32();
-                self.commands.push(EngineCommand::DoneShortBriefing { id });
+                self.short_briefings
+                    .as_mut()
+                    .expect("DoneShortBriefing requires live mission objectives")
+                    .mark_done(id as u32);
                 0
             }
             ChooseVictoryDefeatText => {
                 let id = stack.pop_i32();
-                self.commands
+                self.engine
+                    .commands
                     .push(EngineCommand::ChooseVictoryDefeatText { id });
                 0
             }
             DisplayPopupText => {
                 let text_id = stack.pop_i32();
-                self.commands
+                self.engine
+                    .commands
                     .push(EngineCommand::DisplayPopupText { text_id });
                 0
             }
             DisplaySherwoodReport => {
-                self.commands.push(EngineCommand::DisplaySherwoodReport);
+                self.engine
+                    .commands
+                    .push(EngineCommand::DisplaySherwoodReport);
                 0
             }
             FadeToBlack => {
                 let speed = stack.pop_i32();
-                self.commands.push(EngineCommand::FadeToBlack { speed });
+                self.engine
+                    .commands
+                    .push(EngineCommand::FadeToBlack { speed });
                 0
             }
             SetOutlineDisplay => {
@@ -127,7 +143,8 @@ impl NativeContext<'_, '_> {
                 let display = val != 0;
                 if self.script_domains.mission_ui.outline_display != display {
                     self.script_domains.mission_ui.outline_display = display;
-                    self.commands
+                    self.engine
+                        .commands
                         .push(EngineCommand::SetOutlineDisplay { display });
                 }
                 0
@@ -140,12 +157,25 @@ impl NativeContext<'_, '_> {
                 }
             }
             SetViewRadius => {
-                let radius = stack.pop_i32();
-                self.commands.push(EngineCommand::SetViewRadius { radius });
+                // C++ passes the script `int` to `SetStandardViewRadius(UWORD)`,
+                // so retain the original narrowing conversion exactly.
+                let radius = stack.pop_i32() as u16;
+                **self
+                    .standard_view_radius
+                    .as_mut()
+                    .expect("SetViewRadius requires live AI radius state") = radius;
+                for (_, entity) in self.entities.npcs_mut() {
+                    let npc = entity
+                        .npc_data_mut()
+                        .expect("NPC iterator yielded an entity without NPC data");
+                    npc.view_radius_base = radius;
+                    npc.view_radius_goal = radius;
+                    npc.view_radius = radius;
+                }
                 0
             }
             PlayTrapJingle => {
-                self.commands.push(EngineCommand::PlayJingle(
+                self.external.sound.push(SoundCommand::PlayJingle(
                     crate::sound::Jingle::TrapTriggered,
                 ));
                 0
@@ -691,7 +721,7 @@ impl NativeContext<'_, '_> {
                         tracing::warn!("RecordEnterGame: invalid actor handle {actor}");
                         return 0;
                     }
-                    self.commands.push(EngineCommand::SetActorLocation {
+                    self.engine.commands.push(EngineCommand::SetActorLocation {
                         actor_handle: actor,
                         x: ox,
                         y: oy,
@@ -983,7 +1013,8 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script error (ResetAnim): invalid animation handle {actor}");
                     0
                 } else {
-                    self.deferred_commands
+                    self.simulation_barriers
+                        .commands
                         .push(DeferredCommand::ResetSpriteFrame { actor });
                     1
                 }

@@ -3,23 +3,27 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use super::{AttachedScriptBindings, GameHost, ScriptBindings, ScriptHandleCodec, ScriptState};
+use super::{
+    AttachedScriptBindings, ScriptBindings, ScriptEffects, ScriptHandleCodec, ScriptState,
+};
 use crate::element::EntityId;
 
 /// Canonical engine owners and read views borrowed for one complete script
 /// session. Each [`NativeContext`] takes short-lived mutable borrows for one VM
 /// resume; nested dispatch can then borrow the same owners before resuming the
-/// outer VM. None of these values move into or through [`GameHost`].
+/// outer VM. None of these values move into or through [`ScriptEffects`].
 pub struct NativeSessionCapabilities<'a> {
     entities: RefCell<&'a mut crate::entities::Entities>,
     ai_global: RefCell<&'a mut crate::ai::AiGlobalState>,
     fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
     campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
     mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
-    sequence_manager: Option<&'a crate::sequence::SequenceManager>,
+    sequence_manager: Option<RefCell<&'a mut crate::sequence::SequenceManager>>,
     selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
+    short_briefings: Option<RefCell<&'a mut crate::short_briefings::ShortBriefings>>,
+    standard_view_radius: Option<RefCell<&'a mut u16>>,
     sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'a>>,
-    sound_sources: Option<&'a crate::sound_source::SoundSourceManager>,
+    sound_sources: Option<RefCell<&'a mut crate::sound_source::SoundSourceManager>>,
     weather: Option<&'a crate::engine::WeatherState>,
     frame_counter: Option<&'a u32>,
 }
@@ -38,6 +42,8 @@ impl<'a> NativeSessionCapabilities<'a> {
             mission_stat: None,
             sequence_manager: None,
             selected_pcs: None,
+            short_briefings: None,
+            standard_view_radius: None,
             sight_obstacles: None,
             sound_sources: None,
             weather: None,
@@ -47,15 +53,15 @@ impl<'a> NativeSessionCapabilities<'a> {
 
     pub fn with_queries(
         mut self,
-        sequence_manager: &'a crate::sequence::SequenceManager,
+        sequence_manager: &'a mut crate::sequence::SequenceManager,
         selected_pcs: &'a mut Vec<EntityId>,
-        sound_sources: &'a crate::sound_source::SoundSourceManager,
+        sound_sources: &'a mut crate::sound_source::SoundSourceManager,
         weather: &'a crate::engine::WeatherState,
         frame_counter: &'a u32,
     ) -> Self {
-        self.sequence_manager = Some(sequence_manager);
+        self.sequence_manager = Some(RefCell::new(sequence_manager));
         self.selected_pcs = Some(RefCell::new(selected_pcs));
-        self.sound_sources = Some(sound_sources);
+        self.sound_sources = Some(RefCell::new(sound_sources));
         self.weather = Some(weather);
         self.frame_counter = Some(frame_counter);
         self
@@ -85,6 +91,26 @@ impl<'a> NativeSessionCapabilities<'a> {
     ) -> Self {
         self.campaign = Some(RefCell::new(campaign));
         self.mission_stat = Some(RefCell::new(mission_stat));
+        self
+    }
+
+    /// Attach the canonical objective/short-briefing model. Both vanilla
+    /// briefing natives and Spellforge objective extensions write this owner
+    /// before returning to the VM.
+    pub fn with_short_briefings(
+        mut self,
+        short_briefings: &'a mut crate::short_briefings::ShortBriefings,
+    ) -> Self {
+        self.short_briefings = Some(RefCell::new(short_briefings));
+        self
+    }
+
+    /// Attach the AI-domain radius paired with the live entity store. The
+    /// `SetViewRadius` native updates both before returning, matching
+    /// `RHEngine::SetStandardViewRadius` followed by every NPC's
+    /// `InitViewRadius` in the Original.
+    pub fn with_standard_view_radius(mut self, radius: &'a mut u16) -> Self {
+        self.standard_view_radius = Some(RefCell::new(radius));
         self
     }
 
@@ -169,8 +195,12 @@ impl ScriptCallFrame {
 
 impl<'a> NativeSessionCapabilities<'a> {
     #[doc(hidden)]
-    pub fn sequence_manager_option(&self) -> Option<&'a crate::sequence::SequenceManager> {
-        self.sequence_manager
+    pub fn sequence_manager_option(&self) -> Option<RefMut<'_, crate::sequence::SequenceManager>> {
+        self.sequence_manager.as_ref().map(|sequence_manager| {
+            RefMut::map(sequence_manager.borrow_mut(), |sequence_manager| {
+                &mut **sequence_manager
+            })
+        })
     }
 
     #[doc(hidden)]
@@ -183,13 +213,37 @@ impl<'a> NativeSessionCapabilities<'a> {
     }
 
     #[doc(hidden)]
+    pub fn short_briefings_option(
+        &self,
+    ) -> Option<RefMut<'_, crate::short_briefings::ShortBriefings>> {
+        self.short_briefings.as_ref().map(|short_briefings| {
+            RefMut::map(short_briefings.borrow_mut(), |short_briefings| {
+                &mut **short_briefings
+            })
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn standard_view_radius_option(&self) -> Option<RefMut<'_, u16>> {
+        self.standard_view_radius
+            .as_ref()
+            .map(|radius| RefMut::map(radius.borrow_mut(), |radius| &mut **radius))
+    }
+
+    #[doc(hidden)]
     pub fn sight_obstacles_option(&self) -> Option<crate::sight_obstacle::ObstacleList<'a>> {
         self.sight_obstacles
     }
 
     #[doc(hidden)]
-    pub fn sound_sources_option(&self) -> Option<&'a crate::sound_source::SoundSourceManager> {
-        self.sound_sources
+    pub fn sound_sources_option(
+        &self,
+    ) -> Option<RefMut<'_, crate::sound_source::SoundSourceManager>> {
+        self.sound_sources.as_ref().map(|sound_sources| {
+            RefMut::map(sound_sources.borrow_mut(), |sound_sources| {
+                &mut **sound_sources
+            })
+        })
     }
 
     #[doc(hidden)]
@@ -205,11 +259,10 @@ impl<'a> NativeSessionCapabilities<'a> {
 
 /// Short-lived native dispatcher assembled for one VM resume.
 ///
-/// `GameHost` still owns the not-yet-migrated engine adapter state. Script
-/// globals, computed locations, and recorder state are borrowed from their
-/// sole owner on `MissionScript` and are never copied into that adapter.
+/// Script globals, computed locations, and recorder state are borrowed from
+/// their sole owner on `MissionScript`; only typed effects are buffered here.
 pub struct NativeContext<'ctx, 'owners: 'ctx> {
-    pub(crate) game_host: &'ctx mut GameHost,
+    pub(crate) script_effects: &'ctx mut ScriptEffects,
     pub(crate) entities: RefMut<'ctx, crate::entities::Entities>,
     pub(crate) ai_global: RefMut<'ctx, crate::ai::AiGlobalState>,
     pub(crate) fast_grid: RefMut<'ctx, crate::fast_find_grid::FastFindGrid>,
@@ -218,10 +271,12 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) bindings: ScriptBindings<'ctx>,
     pub(crate) campaign: Option<RefMut<'ctx, crate::campaign::Campaign>>,
     pub(crate) mission_stat: Option<RefMut<'ctx, crate::mission_stat::MissionStat>>,
-    pub(crate) sequence_manager: Option<&'owners crate::sequence::SequenceManager>,
+    pub(crate) sequence_manager: Option<RefMut<'ctx, crate::sequence::SequenceManager>>,
     pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
+    pub(crate) short_briefings: Option<RefMut<'ctx, crate::short_briefings::ShortBriefings>>,
+    pub(crate) standard_view_radius: Option<RefMut<'ctx, u16>>,
     pub(crate) sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'owners>>,
-    pub(crate) sound_sources: Option<&'owners crate::sound_source::SoundSourceManager>,
+    pub(crate) sound_sources: Option<RefMut<'ctx, crate::sound_source::SoundSourceManager>>,
     pub(crate) weather: Option<&'owners crate::engine::WeatherState>,
     pub(crate) frame_counter: Option<&'owners u32>,
     pub(crate) call_frame: ScriptCallFrame,
@@ -229,13 +284,13 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     pub fn new(
-        game_host: &'ctx mut GameHost,
+        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
-            game_host,
+            script_effects,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
@@ -246,6 +301,8 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            short_briefings: capabilities.short_briefings_option(),
+            standard_view_radius: capabilities.standard_view_radius_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
@@ -255,14 +312,14 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub fn with_bindings(
-        game_host: &'ctx mut GameHost,
+        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
         bindings: &'ctx AttachedScriptBindings,
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
-            game_host,
+            script_effects,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
@@ -273,6 +330,8 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            short_briefings: capabilities.short_briefings_option(),
+            standard_view_radius: capabilities.standard_view_radius_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
@@ -282,7 +341,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     }
 
     pub fn with_call_frame(
-        game_host: &'ctx mut GameHost,
+        script_effects: &'ctx mut ScriptEffects,
         script_state: &'ctx mut ScriptState,
         script_domains: &'ctx mut crate::engine::ScriptDomains,
         bindings: &'ctx AttachedScriptBindings,
@@ -290,7 +349,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         call_frame: ScriptCallFrame,
     ) -> Self {
         Self {
-            game_host,
+            script_effects,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
@@ -301,6 +360,8 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             mission_stat: capabilities.mission_stat(),
             sequence_manager: capabilities.sequence_manager_option(),
             selected_pcs: capabilities.selected_pcs_option(),
+            short_briefings: capabilities.short_briefings_option(),
+            standard_view_radius: capabilities.standard_view_radius_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
@@ -317,8 +378,8 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         self.script_state
     }
 
-    pub fn game_host(&self) -> &GameHost {
-        self.game_host
+    pub fn script_effects(&self) -> &ScriptEffects {
+        self.script_effects
     }
 
     pub fn script_state_mut(&mut self) -> &mut ScriptState {
@@ -378,15 +439,15 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
 }
 
 impl Deref for NativeContext<'_, '_> {
-    type Target = GameHost;
+    type Target = ScriptEffects;
 
     fn deref(&self) -> &Self::Target {
-        self.game_host
+        self.script_effects
     }
 }
 
 impl DerefMut for NativeContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.game_host
+        self.script_effects
     }
 }

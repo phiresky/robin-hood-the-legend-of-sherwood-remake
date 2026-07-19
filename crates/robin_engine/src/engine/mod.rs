@@ -3340,19 +3340,16 @@ impl EngineInner {
         self.scripts.mission.as_ref()
     }
 
-    /// Mutable access to the script host — the `GameHost` that sits on
-    /// the VM's transient call-adapter field. Canonical entity, AI, and
-    /// fast-grid state is never stored here; script event sites attach one
-    /// [`crate::natives::NativeSessionCapabilities`] bundle while dispatching.
+    /// Mutable access to ordered script effects for Lua/tool adapters.
     ///
     /// Exposed `pub` so the host crate's Lua scripting layer
     /// (`robin_rs::lua_session`) can drive custom-mission Lua events
-    /// against the same `GameHost` the `.scb` VM uses. The
+    /// against the same effect buffer the `.scb` VM uses. The
     /// `RollbackSafeEngine` invariant still holds — Lua sessions are
     /// single-player only (see `docs/lua.md`) and never run during
     /// rollback resimulation.
-    pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
-        self.scripts.mission.as_mut()?.game_host_mut()
+    pub fn mission_script_effects_mut(&mut self) -> Option<&mut crate::natives::ScriptEffects> {
+        self.scripts.mission.as_mut()?.script_effects_mut()
     }
 
     /// True iff men-to-blazon conversion mode is active. Read by titbit
@@ -3397,8 +3394,9 @@ impl EngineInner {
     /// host.  Called from the host after a save-load so the script
     /// refreshes its side of the information-bar UI.
     pub fn queue_update_information_bars(&mut self) {
-        if let Some(game_host) = self.mission_script_game_host_mut() {
-            game_host
+        if let Some(effects) = self.mission_script_effects_mut() {
+            effects
+                .engine
                 .commands
                 .push(crate::natives::EngineCommand::UpdateInformationBars);
         }

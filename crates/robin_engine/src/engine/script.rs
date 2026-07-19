@@ -16,18 +16,16 @@ use crate::profiles::{MissionLocation, MissionProfile};
 struct PendingScriptEffects {
     sound: Vec<crate::natives::SoundCommand>,
     engine: Vec<crate::natives::EngineCommand>,
-    completed_sequences: Vec<crate::sequence::Sequence>,
     deferred: Vec<crate::natives::DeferredCommand>,
 }
 
 impl PendingScriptEffects {
     fn drain(script: &mut MissionScript) -> Self {
-        let game_host = &mut script.game_host;
+        let effects = &mut script.script_effects;
         Self {
-            sound: std::mem::take(&mut game_host.sound_commands),
-            engine: game_host.drain_commands(),
-            completed_sequences: game_host.take_completed_sequences(),
-            deferred: std::mem::take(&mut game_host.deferred_commands),
+            sound: std::mem::take(&mut effects.external.sound),
+            engine: effects.drain_commands(),
+            deferred: std::mem::take(&mut effects.simulation_barriers.commands),
         }
     }
 }
@@ -73,13 +71,15 @@ impl EngineInner {
                 &world.static_sight_obstacle_active,
             )
             .with_queries(
-                &orders.sequence_manager,
+                &mut orders.sequence_manager,
                 &mut players.seats[0].selection,
-                &feedback.sound_sim.sources,
+                &mut feedback.sound_sim.sources,
                 &world.weather,
                 &control.frame_counter,
             )
-            .with_campaign(campaign, &mut mission_domain.mission_stat);
+            .with_campaign(campaign, &mut mission_domain.mission_stat)
+            .with_short_briefings(&mut mission_domain.short_briefings)
+            .with_standard_view_radius(&mut ai.standard_view_polygon_radius);
             let result = callback(script, script_domains, &capabilities);
             script.assert_no_active_call_frames();
             result
@@ -109,7 +109,6 @@ impl EngineInner {
         let PendingScriptEffects {
             sound,
             engine: engine_commands,
-            completed_sequences,
             deferred,
         } = effects;
 
@@ -237,12 +236,13 @@ impl EngineInner {
                             .retain(|p| p.source_index as usize != idx);
                     }
                 }
+                crate::natives::SoundCommand::PlayJingle(jingle) => {
+                    self.feedback
+                        .pending_side_effects
+                        .sounds
+                        .push(super::SoundCommand::Jingle(jingle));
+                }
             }
-        }
-
-        // ── Completed sequences (from Record*/Thanx) ──
-        for seq in completed_sequences {
-            self.launch_sequence(seq);
         }
 
         // ── Deferred game-logic commands ──
@@ -286,16 +286,6 @@ impl EngineInner {
                 crate::natives::DeferredCommand::HandleDeath { actor } => {
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
                         self.handle_death(assets, id);
-                    }
-                }
-                crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.add_damage_number(id, damage);
-                    }
-                }
-                crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.say_ouch(assets, id, Some(damage));
                     }
                 }
                 crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
@@ -351,34 +341,6 @@ impl EngineInner {
                     let pc_id = self.entity_id_for_actor_handle(actor);
                     self.orders.messenger.send(Message::pc(msg_type, pc_id));
                     tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
-                }
-                crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
-                    // Save migration only: current natives apply this write
-                    // synchronously and never enqueue the variant. Older
-                    // saves may contain an undrained request, so consume it
-                    // exactly once rather than dropping deterministic state.
-                    let owner = self.entity_id_for_actor_handle(actor).unwrap_or_else(|| {
-                        panic!("saved AI lock references missing actor {actor}")
-                    });
-                    let from_lockai_command = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        })
-                        .is_some_and(|element| element.command == crate::element::Command::LockAi);
-                    let entity = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .expect("saved AI lock actor disappeared during drain");
-                    let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                        panic!("saved AI lock references non-NPC actor {actor}")
-                    });
-                    ai.script_lock(send_back, from_lockai_command);
                 }
                 cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
                     post_script.push(cmd);
@@ -537,19 +499,6 @@ impl EngineInner {
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
                         self.relaunch_path_at_new_speed(assets, id);
                     }
-                }
-                crate::natives::DeferredCommand::SetPatrolShouldRun {
-                    actor: _,
-                    should_run: _,
-                } => {
-                    // Spellforge `SetPatrolShouldRun` — no engine
-                    // handler yet. The patrol walk/run toggle
-                    // lives on the patrol descriptor; wiring it
-                    // up is tracked alongside the Lua mission
-                    // bring-up.
-                    // TODO: stamp `patrol.should_run` and re-issue
-                    // the in-flight GoTo via the existing
-                    // `RelaunchPathAtNewSpeed` flow.
                 }
             }
         }
@@ -885,8 +834,8 @@ impl EngineInner {
             // ── Phase 2: Global StartUp::Initialize(seed) ──
             let frame = crate::natives::ScriptCallFrame::default();
             let startup_result = script.with_call_frame(frame, |script| {
-                MissionScript::with_game_host_attached(
-                    &mut script.game_host,
+                MissionScript::with_script_effects_attached(
+                    &mut script.script_effects,
                     &mut script.state,
                     script_domains,
                     &script.bindings,
@@ -943,8 +892,8 @@ impl EngineInner {
         self.initialize_zone_scripts(assets);
 
         // ── Phase 3b: Apply SectorProduction registrations from StartUp::Initialize.
-        // RegisterAsProductionSector / AddProductionPoint queue through the
-        // script host adapter; the engine drains them here so the
+        // RegisterAsProductionSector / AddProductionPoint append to the typed
+        // initialization buffer; the engine drains it here so the
         // zone-occupant step (Phase 4) can emit SetWorkicon for initial occupants.
         self.apply_production_registrations(assets);
 
@@ -1232,8 +1181,8 @@ impl EngineInner {
 
                 let frame = crate::natives::ScriptCallFrame::default();
                 script.with_call_frame(frame, |script| {
-                    MissionScript::with_game_host_attached(
-                        &mut script.game_host,
+                    MissionScript::with_script_effects_attached(
+                        &mut script.script_effects,
                         &mut script.state,
                         script_domains,
                         &script.bindings,
@@ -1587,8 +1536,7 @@ impl EngineInner {
 
     // ─── Production-sector wiring ────────────────────────────────
 
-    /// Drain `production_registrations` and `production_points` from the
-    /// script native-command adapter into engine state. Sets the
+    /// Drain the initialization-session production buffer into engine state. Sets the
     /// `production_sector_type` on each
     /// referenced script zone sector, and pushes a per-sector
     /// `sector_production::Point` into the matching campaign SectorProduction.
@@ -1604,14 +1552,12 @@ impl EngineInner {
             .len()
             .saturating_sub(self.script_domains.zones.scripts.len());
 
-        let Some(ref mut script) = self.scripts.mission else {
+        let Some(_) = self.scripts.mission else {
             return;
         };
-        let game_host = &mut script.game_host;
-
-        let registrations: Vec<(i32, i32, i32)> =
-            std::mem::take(&mut game_host.production_registrations);
-        let points: Vec<(i32, i32)> = std::mem::take(&mut game_host.production_points);
+        let registrations =
+            std::mem::take(&mut self.script_domains.production_initialization.sectors);
+        let points = std::mem::take(&mut self.script_domains.production_initialization.points);
 
         for (prod_type, loc_handle, speed) in registrations {
             let prod_type_enum = match crate::sector_production::Type::from_script_i32(prod_type) {
@@ -1799,8 +1745,8 @@ impl EngineInner {
                 {
                     let frame = crate::natives::ScriptCallFrame::default();
                     let result = script.with_call_frame(frame, |script| {
-                        MissionScript::with_game_host_attached(
-                            &mut script.game_host,
+                        MissionScript::with_script_effects_attached(
+                            &mut script.script_effects,
                             &mut script.state,
                             script_domains,
                             &script.bindings,
@@ -2442,12 +2388,6 @@ impl EngineInner {
                         }
                     }
                 }
-                EngineCommand::AddShortBriefing { id, primary } => {
-                    self.mission_domain.short_briefings.add(id as u32, primary);
-                }
-                EngineCommand::DoneShortBriefing { id } => {
-                    self.mission_domain.short_briefings.mark_done(id as u32);
-                }
                 EngineCommand::ChooseVictoryDefeatText { id } => {
                     self.mission_domain.state.victory_defeat_id = id as u32;
                 }
@@ -2507,16 +2447,6 @@ impl EngineInner {
                     // `host.input.draw_hidden` to switch entities into
                     // the masked/outline draw mode.
                     self.feedback.pending_side_effects.set_draw_hidden = Some(show);
-                }
-                EngineCommand::SetViewRadius { radius } => {
-                    self.ai.standard_view_polygon_radius = radius as u16;
-                    self.propagate_view_radius();
-                }
-                EngineCommand::PlayJingle(jingle) => {
-                    self.feedback
-                        .pending_side_effects
-                        .sounds
-                        .push(super::SoundCommand::Jingle(jingle));
                 }
                 EngineCommand::SetActorLocation {
                     actor_handle,
@@ -3091,25 +3021,17 @@ mod script_context_tests {
         let json = serde_json::to_string(&script).expect("serialize MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
         assert!(value.get("snapshot_version").is_none());
-        let host_keys = value["game_host"]
+        let effect_keys = value["script_effects"]
             .as_object()
-            .expect("GameHost snapshot object")
+            .expect("ScriptEffects snapshot object")
             .keys()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
-            host_keys,
-            [
-                "commands",
-                "completed_sequences",
-                "deferred_commands",
-                "pending_objective_changes",
-                "production_points",
-                "production_registrations",
-                "sound_commands",
-            ]
-            .into_iter()
-            .collect()
+            effect_keys,
+            ["external", "engine", "simulation_barriers"]
+                .into_iter()
+                .collect()
         );
         assert!(value.get("bindings").is_none());
 
@@ -3236,7 +3158,7 @@ mod script_context_tests {
             stack.push_i32(door);
             stack.push_i32(0);
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.game_host,
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -3276,7 +3198,7 @@ mod script_context_tests {
 
         let result = engine.with_script_session(&assets, |script, script_domains, queries| {
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.game_host,
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -3398,7 +3320,7 @@ mod script_context_tests {
             script_domains.mission_ui.outline_display = true;
             {
                 let mut context = crate::natives::NativeContext::with_bindings(
-                    &mut script.game_host,
+                    &mut script.script_effects,
                     &mut script.state,
                     script_domains,
                     &script.bindings,
@@ -3630,7 +3552,7 @@ impl EngineInner {
 
                 let outcome = {
                     let mut native_context = crate::natives::NativeContext::with_call_frame(
-                        &mut script.game_host,
+                        &mut script.script_effects,
                         &mut script.state,
                         script_domains,
                         &script.bindings,

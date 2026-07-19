@@ -195,8 +195,9 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
         .mission
         .as_mut()
         .expect("script installed")
-        .game_host
-        .deferred_commands
+        .script_effects
+        .simulation_barriers
+        .commands
         .push(DeferredCommand::SendMessage {
             actor: handle,
             message: 1234,
@@ -283,19 +284,23 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
         .mission
         .as_mut()
         .expect("script installed")
-        .game_host;
-    host.deferred_commands.push(DeferredCommand::SendMessage {
-        actor: handle,
-        message: 41,
-        arg1: 0,
-        arg2: 0,
-    });
-    host.deferred_commands.push(DeferredCommand::SendMessage {
-        actor: handle,
-        message: 72,
-        arg1: 0,
-        arg2: 0,
-    });
+        .script_effects;
+    host.simulation_barriers
+        .commands
+        .push(DeferredCommand::SendMessage {
+            actor: handle,
+            message: 41,
+            arg1: 0,
+            arg2: 0,
+        });
+    host.simulation_barriers
+        .commands
+        .push(DeferredCommand::SendMessage {
+            actor: handle,
+            message: 72,
+            arg1: 0,
+            arg2: 0,
+        });
 
     engine.drain_script_effects(&assets);
 

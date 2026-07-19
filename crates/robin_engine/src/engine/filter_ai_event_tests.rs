@@ -645,7 +645,7 @@ fn build_recursive_nested_scb() -> ScbFile {
 /// Variant where the outer callback writes an NPC custom value before
 /// yielding through `PrototypeFilterEvent`, and the nested callback reads the
 /// same entity value. This pins the shared live-state requirement across VM
-/// resume boundaries before GameHost is structurally removed.
+/// resume boundaries before ScriptEffects is structurally removed.
 fn build_nested_entity_mutation_scb() -> ScbFile {
     let mut scb = build_nested_scb();
 
@@ -787,13 +787,13 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let mut entity_store = crate::entities::Entities::new();
     let outer_handle = 11;
     let inner_handle = 22;
-    let sequences = crate::sequence::SequenceManager::new();
+    let mut sequences = crate::sequence::SequenceManager::new();
     let mut selection = vec![
         crate::element::EntityId::Pc(crate::entity_id::PcId(0)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(2)),
     ];
-    let sounds = crate::sound_source::SoundSourceManager::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 41;
     let mut ai_global = crate::ai::AiGlobalState::default();
@@ -803,7 +803,13 @@ fn nested_callback_keeps_the_canonical_query_views() {
         &mut ai_global,
         &mut fast_grid,
     )
-    .with_queries(&sequences, &mut selection, &sounds, &weather, &frame);
+    .with_queries(
+        &mut sequences,
+        &mut selection,
+        &mut sounds,
+        &weather,
+        &frame,
+    );
     assert!(script.bind_actor(
         outer_handle,
         "OuterCaller",

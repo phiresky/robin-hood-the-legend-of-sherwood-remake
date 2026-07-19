@@ -1,19 +1,19 @@
-//! Host-to-engine commands queued by script natives.
+//! Typed effects and engine barriers queued by script natives.
 //!
-//! Native functions run inside the scripting VM and can't touch the
-//! engine directly (no `&mut EngineInner` available). Instead, natives push
-//! command values onto these queues, which the engine drains after each
-//! script step and applies in its own mutation context.
+//! Native functions mutate deterministic state synchronously through
+//! [`NativeSessionCapabilities`](super::NativeSessionCapabilities). They only
+//! queue work that crosses into presentation/external systems or needs a wider
+//! `EngineInner` mutation context. The engine drains these streams after each
+//! script step without changing their command order.
 //!
 //! - `EngineCommand` — camera, dialog, map, fade, minimap, outline, …
 //! - `SoundCommand`  — sound source activate / suspend / destroy.
 //! - `DeferredCommand` — game-logic actions that need sequence manager
 //!   or global engine state (SendMessage, SelectPC, StopActor, FreezeAll).
 
-/// Deferred commands queued by native functions for the engine to process
-/// after script execution. GameHost cannot access the EngineInner directly
-/// during native calls, so commands that need engine state are queued
-/// here and drained by the engine each frame.
+/// Ordered engine-bound commands queued by native functions for processing
+/// after script execution. [`EngineCommand::domain`] distinguishes genuine
+/// presentation from deterministic follow-up barriers.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -38,10 +38,6 @@ pub enum EngineCommand {
         location_handle: i32,
         apex_height: i32,
     },
-    /// Add a short briefing entry.
-    AddShortBriefing { id: i32, primary: bool },
-    /// Mark a short briefing as done.
-    DoneShortBriefing { id: i32 },
     /// Select victory/defeat dialogue text.
     ChooseVictoryDefeatText { id: i32 },
     /// Display popup text by resource ID.
@@ -52,8 +48,6 @@ pub enum EngineCommand {
     FadeToBlack { speed: i32 },
     /// Set outline/hidden entity rendering mode.
     SetOutlineDisplay { display: bool },
-    /// Set fog-of-war view radius for all NPCs.
-    SetViewRadius { radius: i32 },
     /// Teleport actor to a new position (called by SetActorLocation
     /// and RecordEnterGame).  When `dest_layer_sector` is `Some`, the
     /// engine-side handler will also reconcile the projection-area
@@ -74,9 +68,6 @@ pub enum EngineCommand {
         dest_layer_sector: Option<(u16, u16)>,
         spawn_elevation_probe: Option<(f32, f32)>,
     },
-    /// Play a UI jingle.  The post-script merge translates this into a
-    /// `pending_side_effects.sounds` entry.
-    PlayJingle(crate::sound::Jingle),
     /// Mission won.
     Win { show_window: bool },
     /// Update information bars (blazon display, etc.).
@@ -112,13 +103,54 @@ pub enum EngineCommand {
     /// Crouch a PC via the full sequence/animation rewrite path:
     /// rewrite an active movement sequence to its crouched variant, or
     /// launch a brand-new `RHCOMMAND_CROUCH_DOWN` so the actor plays
-    /// the crouch-down animation.  The native arm runs in `GameHost`
+    /// the crouch-down animation.  The native arm runs in `ScriptEffects`
     /// without the `EngineInner` borrow, so it queues this command for
     /// the engine to drain via `actor_make_crouched`.
     ScriptMakePCCrouched { actor_handle: i32 },
     /// Propagate generic Activate/Deactivate from the script-visible mobile
     /// handle to its non-entity RHElementMobile master.
     SetMobileActive { mobile_index: u16, active: bool },
+}
+
+/// Whether an ordered engine command is a genuine host-facing effect or a
+/// deterministic follow-up that still needs a wider engine mutation context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptCommandDomain {
+    Presentation,
+    SimulationBarrier,
+}
+
+impl EngineCommand {
+    /// Compiler-exhaustive queue classification. Adding a command variant must
+    /// make an explicit architectural choice here.
+    pub const fn domain(&self) -> ScriptCommandDomain {
+        use EngineCommand::*;
+        match self {
+            ScrollCameraTo { .. }
+            | JumpCameraTo { .. }
+            | SetZoomLevel { .. }
+            | DisplayMap { .. }
+            | DisplayConsole
+            | DisplayPopupText { .. }
+            | DisplaySherwoodReport
+            | UpdateInformationBars
+            | SetOutlineDisplay { .. }
+            | MarkPc { .. } => ScriptCommandDomain::Presentation,
+
+            StartDialog { .. }
+            | ChooseVictoryDefeatText { .. }
+            | FadeToBlack { .. }
+            | HeroSpeak { .. }
+            | CustomizeMinimapDisplay { .. }
+            | DefineFlatTrajectoryZone { .. }
+            | SetActorLocation { .. }
+            | Win { .. }
+            | MakeNoise { .. }
+            | SetScrollStatus { .. }
+            | ScriptMakePCCrouched { .. }
+            | SetMobileActive { .. } => ScriptCommandDomain::SimulationBarrier,
+        }
+    }
 }
 
 /// Commands queued by script natives for the engine's sound system.
@@ -132,6 +164,7 @@ pub enum SoundCommand {
     Activate(i32),
     Deactivate(i32),
     Destroy(i32),
+    PlayJingle(crate::sound::Jingle),
 }
 
 /// Commands queued by script natives for the engine to process after
@@ -174,21 +207,6 @@ pub enum DeferredCommand {
     /// is checked in the handler).  Used when a human actor is sent to
     /// honolulu (null location).
     RemoveUnconsciousStars { actor: i32 },
-    /// Legacy save compatibility for AI locks queued by builds before the
-    /// synchronous native-context migration. There are no live producers;
-    /// keeping this variant in place preserves all following serialized enum
-    /// discriminants. The drain applies the previously queued write once.
-    ScriptLockAI { actor: i32, send_back: bool },
-    /// Spawn a floating damage-number titbit above an entity.  Used by
-    /// script natives (`InflictPain`, `SetPersistentProperty LIFEPOINTS`)
-    /// that apply damage without going through the combat helpers.
-    SpawnDamageNumber { actor: i32, damage: u16 },
-    /// Fire the PC-override hero-speech edge triggers
-    /// (`HERO_DIE` / `HERO_HURT`) after a scripted life-point drop.
-    /// The native writes life points directly (bypassing
-    /// `combat::set_life_points`), so this deferred command routes
-    /// through `say_ouch` to keep the hero-speech cues in parity.
-    PcSayOuchForLifeDrop { actor: i32, damage: u16 },
     /// Process patch effects produced by ApplyPatch/ResetPatch script natives.
     /// The patch state was already mutated in the native; this deferred command
     /// lets the engine apply the side effects (swap objects, toggle animations,
@@ -278,27 +296,4 @@ pub enum DeferredCommand {
     /// current hiking-path waypoint, compute `WillStopAtNextWaypoint`,
     /// and call `ai.go_to(pos, default_flags | DONT_STOP if !will_stop, ctx)`.
     RelaunchPathAtNewSpeed { actor: i32 },
-    /// Spellforge `SetPatrolShouldRun(actor, should_run)`: toggle
-    /// whether the NPC's patrol moves at walk or run speed. The
-    /// engine handler stamps the patrol's `should_run` field; the
-    /// per-tick patrol re-issue picks the new speed up via the
-    /// existing `RelaunchPathAtNewSpeed` flow.
-    SetPatrolShouldRun { actor: i32, should_run: bool },
-}
-
-/// Mission-objective panel changes queued by the Spellforge
-/// `AddObjective` / `CompleteObjective` natives. The objectives UI
-/// itself doesn't live in `robin_engine` (the host owns rendering and
-/// localisation), so the engine just records the requested changes and
-/// the host drains `GameHost::pending_objective_changes` each frame.
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
-)]
-pub enum ObjectiveChange {
-    /// Add a new objective entry. `is_main` distinguishes primary
-    /// vs. optional objectives — the Spellforge UI uses different
-    /// glyphs for each.
-    Add { id: i32, is_main: bool },
-    /// Mark a previously-added objective complete.
-    Complete { id: i32 },
 }

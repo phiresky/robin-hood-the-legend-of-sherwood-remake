@@ -405,7 +405,7 @@ impl NativeContext<'_, '_> {
                     .resolve_location_layer_sector(loc)
                     .map(|(l, _s)| l)
                     .unwrap_or(0);
-                self.commands.push(EngineCommand::MakeNoise {
+                self.engine.commands.push(EngineCommand::MakeNoise {
                     noise_type,
                     x: origin_x,
                     y: origin_y,
@@ -462,7 +462,8 @@ impl NativeContext<'_, '_> {
                         crate::ai::Substate::DefaultGotoRoute | crate::ai::Substate::DefaultEnroute
                     );
                 if needs_relaunch {
-                    self.deferred_commands
+                    self.simulation_barriers
+                        .commands
                         .push(DeferredCommand::RelaunchPathAtNewSpeed { actor });
                 }
                 0

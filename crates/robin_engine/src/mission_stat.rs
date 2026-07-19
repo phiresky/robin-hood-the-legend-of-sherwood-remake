@@ -18,7 +18,7 @@ pub const RHID_HA: u32 = 10002;
 /// joins the gang.  Carries the profile-based fallback string plus the
 /// optional `PROP_NAME` SPECIAL_PEASANT override; the override is
 /// resolved against the host menu-text table at debriefing render time
-/// (the menu-text lookup is deferred because `GameHost` doesn't carry a
+/// (the menu-text lookup is deferred because the native context doesn't carry a
 /// `MenuTextLookup`).
 #[derive(
     Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,

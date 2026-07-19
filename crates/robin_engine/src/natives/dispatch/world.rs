@@ -54,11 +54,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.deferred_commands
-                            .push(DeferredCommand::ProcessPatchEffects {
+                        self.simulation_barriers.commands.push(
+                            DeferredCommand::ProcessPatchEffects {
                                 patch_index,
                                 effects,
-                            });
+                            },
+                        );
                     }
                 }
                 1
@@ -76,11 +77,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.deferred_commands
-                            .push(DeferredCommand::ProcessPatchEffects {
+                        self.simulation_barriers.commands.push(
+                            DeferredCommand::ProcessPatchEffects {
                                 patch_index,
                                 effects,
-                            });
+                            },
+                        );
                     }
                 }
                 1
@@ -180,28 +182,34 @@ impl NativeContext<'_, '_> {
 
             // --- sound ---
             SuspendAllSoundSources => {
-                self.sound_commands.push(SoundCommand::SuspendAll);
+                self.external.sound.push(SoundCommand::SuspendAll);
                 1
             }
             ResumeAllSoundSources => {
-                self.sound_commands.push(SoundCommand::ResumeAll);
+                self.external.sound.push(SoundCommand::ResumeAll);
                 1
             }
             ActivateSoundSource => {
                 let ss_h = stack.pop_i32();
                 if ss_h != 0 {
-                    self.sound_commands.push(SoundCommand::Activate(ss_h));
+                    self.external.sound.push(SoundCommand::Activate(ss_h));
                 }
                 1
             }
             DeactivateSoundSource => {
                 let ss_h = stack.pop_i32();
-                self.sound_commands.push(SoundCommand::Deactivate(ss_h));
+                self.external.sound.push(SoundCommand::Deactivate(ss_h));
                 1
             }
             DestroySoundSource => {
                 let ss_h = stack.pop_i32();
-                self.sound_commands.push(SoundCommand::Destroy(ss_h));
+                if let Some(index) = Self::sound_source_index(ss_h) {
+                    self.sound_sources
+                        .as_mut()
+                        .expect("DestroySoundSource requires live sound-source state")
+                        .delete(index);
+                }
+                self.external.sound.push(SoundCommand::Destroy(ss_h));
                 1
             }
 
@@ -302,7 +310,8 @@ impl NativeContext<'_, '_> {
                 // EngineInner applies positioning (inactive + special layer +
                 // building sector + gate point_in + DisableAllActionsTemp
                 // for PCs) after the script step.
-                self.deferred_commands
+                self.simulation_barriers
+                    .commands
                     .push(DeferredCommand::PutActorInBuilding {
                         actor: actor_h,
                         building: bld_h,
@@ -564,7 +573,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.script_domains.scrolls.status.insert(scroll_h, status);
-                self.commands.push(EngineCommand::SetScrollStatus {
+                self.engine.commands.push(EngineCommand::SetScrollStatus {
                     scroll_handle: scroll_h,
                     status,
                 });

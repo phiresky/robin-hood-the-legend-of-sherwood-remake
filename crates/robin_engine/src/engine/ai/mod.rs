@@ -2417,7 +2417,7 @@ impl EngineInner {
     ///
     /// Runtime occupant tracking is wired at the `execute_pass_door`
     /// Enter / Leave branches in `engine::door_pass`: the same hook
-    /// that updates `game_host.building_occupants` also updates
+    /// that updates canonical `BuildingState` occupants also updates
     /// `House::occupant_ids`.
     pub(super) fn initialize_buildings(&mut self) {
         use crate::ai::{AI_DOOR_RALLY_POINT_DISTANCE, DoorRallyPoint, House, Position};
@@ -2657,24 +2657,6 @@ impl EngineInner {
             prev,
             new_overall,
         );
-    }
-
-    /// Set every NPC's `view_radius_base`, `view_radius_goal`, and
-    /// `view_radius` from `standard_view_polygon_radius`.  Called at
-    /// init and when the script changes the radius at runtime.
-    pub(super) fn propagate_view_radius(&mut self) {
-        let r = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS
-        };
-        for (_, entity) in self.world.entities.npcs_mut() {
-            if let Some(npc) = entity.npc_data_mut() {
-                npc.view_radius_base = r;
-                npc.view_radius_goal = r;
-                npc.view_radius = r;
-            }
-        }
     }
 
     // ─── Turn order processing ──────────────────────────────────

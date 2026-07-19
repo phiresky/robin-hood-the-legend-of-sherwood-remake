@@ -3200,7 +3200,7 @@ pub struct RepulsivePoint {
 // ---------------------------------------------------------------------------
 
 /// Minimal door info cached on AiGlobalState for `FindDoorEnemyCouldBeBehind`.
-/// Populated at level load from the full `Door` data on GameHost.
+/// Populated at level load from the canonical interactable door table.
 /// Serialized with `AiGlobalState`; includes cached authorization data that
 /// should match the exact door state at the save point.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -3928,14 +3928,13 @@ pub struct House {
     /// Sector index (into `FastFindGrid::sectors`) of the building's
     /// interior motion area.
     pub sector_index: u32,
-    /// Building index (into `GameHost::building_occupants`) if this
-    /// sector is linked to one. Same index used by the tenant list and
-    /// the `host.building_occupants` parallel table. `None` when the
+    /// Building index (into canonical `BuildingState`) if this sector is
+    /// linked to one. The same index addresses the tenant list. `None` when the
     /// sector isn't proto-linked to a building (e.g. script-synthesised
     /// portals).
     pub building_index: Option<crate::sector::BuildingIdx>,
     /// Doors that connect this building to the outside.  Indices into
-    /// `GameHost::doors`.
+    /// the canonical interactable door table.
     pub door_indices: Vec<u32>,
     /// Entities currently inside the building.  Kept live by the
     /// `PassDoor` Enter / Leave hooks in `engine::door_pass`.
@@ -3979,8 +3978,8 @@ impl House {
 //     live by the `execute_pass_door` Enter / Leave hooks.  New AI
 //     code should query this.
 //
-//   * `natives::GameHost::building_occupants: Vec<Vec<i32>>` — the
-//     script-facing view, indexed by `building_index` with actor
+//   * `ScriptDomains::buildings` — the script-facing view, indexed by
+//     `building_index` with actor
 //     script handles. Kept in sync by the same hooks so script
 //     natives (`GetNumberOfOccupants`, `GetOccupant`, etc.) see the
 //     same occupancy that AI code does.
@@ -3990,7 +3989,7 @@ impl House {
 // codebase and neither can be dropped independently.  Long-term
 // consolidation would either migrate script natives to `EntityId`
 // or delete `building_occupants` once all natives query via a
-// `GameHost::occupants_of(building_index) -> &[i32]` helper that
+// a canonical `occupants_of(building_index) -> &[i32]` helper that
 // derives from the House list on demand.
 //
 
@@ -4003,7 +4002,7 @@ impl House {
 pub struct DoorRallyPoint {
     /// World position (outside the door).
     pub position: Position,
-    /// Door index in `GameHost::doors`.
+    /// Door index in the canonical interactable door table.
     pub door_index: crate::gate::DoorIndex,
     /// Radius around `position` within which NPCs are "at" the rally
     /// point.
