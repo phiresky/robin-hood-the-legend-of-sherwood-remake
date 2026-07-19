@@ -1708,6 +1708,135 @@ impl EngineInner {
         // (concussion / KO / posture resets at the call site).
     }
 
+    /// Apply the reciprocal/global relationship work that the original
+    /// `SetState(SLEEPING, SLEEPING_FOREVER)` performs synchronously.
+    ///
+    /// Normal AI transitions defer these writes through the actor outbox,
+    /// but death clears that entire outbox to prevent pre-death work from
+    /// reaching the corpse.  Extract both the current relationship and any
+    /// already-queued old relationship before that reset so teardown cannot
+    /// leave a PC or archery reservation pointing at the dead soldier.
+    fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
+        let (guarded_pcs, shooting_points, archery_sector) = {
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
+                return;
+            };
+            let Some(enemy) = soldier.npc.ai_brain.enemy_mut() else {
+                return;
+            };
+
+            let guard_effect = enemy.base.outbox.actor.set_guarded_pc.take();
+            let mut guarded_pcs = Vec::new();
+            for guarded_pc in [
+                enemy.guarded_pc.take(),
+                guard_effect.and_then(|effect| effect.old),
+                guard_effect.and_then(|effect| effect.new),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !guarded_pcs.contains(&guarded_pc) {
+                    guarded_pcs.push(guarded_pc);
+                }
+            }
+
+            let release = enemy.base.outbox.actor.take_archery_reservation_release();
+            let mut shooting_points = Vec::new();
+            for shooting_point in [
+                enemy.my_shooting_point.take().map(Into::into),
+                release.shooting_point,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !shooting_points.contains(&shooting_point) {
+                    shooting_points.push(shooting_point);
+                }
+            }
+
+            let archery_sector = enemy.my_archery_sector.take();
+            debug_assert!(
+                !release.release_sector || archery_sector.is_some(),
+                "queued archery-sector release has no owned sector on death"
+            );
+
+            (guarded_pcs, shooting_points, archery_sector)
+        };
+
+        for guarded_pc in guarded_pcs {
+            let guarded_pc_id = EntityId::Pc(guarded_pc);
+            match self.world.entities.get_mut(guarded_pc_id) {
+                Some(Entity::Pc(pc)) if pc.pc.guard == Some(victim_id) => {
+                    pc.pc.guard = None;
+                }
+                Some(Entity::Pc(_)) => {}
+                Some(_) => unreachable!("typed PcId resolved to a non-PC entity"),
+                None => tracing::warn!(
+                    ?victim_id,
+                    ?guarded_pc_id,
+                    "dead soldier's guarded PC no longer exists"
+                ),
+            }
+        }
+
+        for shooting_point in shooting_points {
+            let Some(sector) = self
+                .ai
+                .global
+                .archery_sectors
+                .get_mut(shooting_point.sector_index as usize)
+            else {
+                tracing::warn!(
+                    ?victim_id,
+                    sector = shooting_point.sector_index,
+                    point = usize::from(shooting_point.point_index),
+                    "dead soldier's shooting-point sector no longer exists"
+                );
+                continue;
+            };
+            let Some(point) = sector
+                .points
+                .get_mut(usize::from(shooting_point.point_index))
+            else {
+                tracing::warn!(
+                    ?victim_id,
+                    sector = shooting_point.sector_index,
+                    point = usize::from(shooting_point.point_index),
+                    "dead soldier's shooting point no longer exists"
+                );
+                continue;
+            };
+            if point.owner == Some(victim_id) {
+                point.owner = None;
+            } else if let Some(owner) = point.owner {
+                tracing::warn!(
+                    ?victim_id,
+                    ?owner,
+                    sector = shooting_point.sector_index,
+                    point = usize::from(shooting_point.point_index),
+                    "dead soldier's shooting point is owned by another entity"
+                );
+            }
+        }
+
+        if let Some(sector_index) = archery_sector {
+            let Some(sector) = self
+                .ai
+                .global
+                .archery_sectors
+                .get_mut(sector_index as usize)
+            else {
+                tracing::warn!(
+                    ?victim_id,
+                    sector = sector_index,
+                    "dead soldier's archery sector no longer exists"
+                );
+                return;
+            };
+            sector.decrement_owner_counter();
+        }
+    }
+
     pub(crate) fn handle_death_with_damage_element(
         &mut self,
         assets: &LevelAssets,
@@ -1815,6 +1944,11 @@ impl EngineInner {
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::Friend);
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::MissedFriend);
 
+        // The original SetState(SLEEPING_FOREVER) immediately clears the
+        // guarded-PC reciprocal pointer and archery ownership.  Apply those
+        // invariants before the broad outbox reset below discards stale work.
+        self.detach_npc_death_relationships(victim_id);
+
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
@@ -1834,9 +1968,14 @@ impl EngineInner {
             actor.clear_path();
         }
 
-        // NPC kill cascade: alert reset, state snap, emoticon clear,
-        // and intent-queue drain.
+        // NPC kill cascade: clear stale pre-death work, then enqueue the
+        // death-owned alert/music transition and snap the terminal state.
         if let Some(ai) = victim.ai_controller_mut() {
+            // Drop every remaining AI intent queued by the think that ran
+            // earlier in this tick.  The relationship-maintenance effects
+            // were applied synchronously above; all other channels must be
+            // cauterised before death adds its own instant-music effect.
+            ai.clear_all_pending();
             ai.set_alert_status_with_flags(
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
@@ -1845,14 +1984,6 @@ impl EngineInner {
             ai.current_state = crate::ai::AiState::Sleeping;
             ai.current_substate = crate::ai::Substate::SleepingForever;
             ai.clear_emoticon();
-            // Drop every pending AI intent queued by the think that
-            // ran earlier in this tick.  `handle_death` is the single
-            // runtime death site, so draining the intent queues here
-            // means the downstream drain loops
-            // (`process_pending_ai_orders`, the pending-flags block
-            // in `engine/ai.rs`) naturally no-op on dead entities
-            // without needing individual `is_dead` gates.
-            ai.clear_all_pending();
         }
 
         if let Some(npc) = victim.npc_data_mut() {

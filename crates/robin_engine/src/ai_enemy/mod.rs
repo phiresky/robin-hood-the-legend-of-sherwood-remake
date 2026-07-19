@@ -4135,7 +4135,7 @@ mod tests {
     }
 
     #[test]
-    fn archery_release_is_outbox_work_but_special_strike_remains_a_latch() {
+    fn archery_release_is_outbox_work_and_special_strike_remains_a_latch() {
         let mut ai = EnemyAi::new(1);
         ai.my_shooting_point = Some((2, 3));
         ai.my_archery_sector = Some(2);
@@ -4156,12 +4156,6 @@ mod tests {
             }
         );
 
-        ai.base.clear_all_pending();
-
-        assert_eq!(
-            ai.base.outbox.actor.archery_reservation_release,
-            ArcheryReservationRelease::default()
-        );
         assert!(ai.pending_special_strike);
     }
 

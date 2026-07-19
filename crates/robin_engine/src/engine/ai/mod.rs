@@ -4326,20 +4326,44 @@ impl EngineInner {
         if let Some(guard_delta) = guard_delta {
             // Clear `pc.guard` on the old target
             // (`guarded_pc.set_guard(NULL)`).
-            if let Some(old_pc) = guard_delta.old
-                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(EntityId::Pc(old_pc))
-            {
-                pc.pc.guard = None;
+            if let Some(old_pc) = guard_delta.old {
+                let old_pc_id = EntityId::Pc(old_pc);
+                match self.world.entities.get_mut(old_pc_id) {
+                    Some(Entity::Pc(pc)) => pc.pc.guard = None,
+                    Some(entity) => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?old_pc_id,
+                        actual_kind = ?entity.kind(),
+                        "guarded-PC clear target has the wrong entity kind"
+                    ),
+                    None => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?old_pc_id,
+                        "guarded-PC clear target does not exist"
+                    ),
+                }
             }
             // Set `pc.guard` on the new target
             // (`guarded_pc.set_guard(self)`).  Asserts `is_in_coma()`
             // on the PC; the only caller already gates on the coma
             // check in the `AttackingApproachingSleepingEnemy`
             // handler, so skip the redundant debug_assert here.
-            if let Some(new_pc) = guard_delta.new
-                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(EntityId::Pc(new_pc))
-            {
-                pc.pc.guard = Some(npc_id);
+            if let Some(new_pc) = guard_delta.new {
+                let new_pc_id = EntityId::Pc(new_pc);
+                match self.world.entities.get_mut(new_pc_id) {
+                    Some(Entity::Pc(pc)) => pc.pc.guard = Some(npc_id),
+                    Some(entity) => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?new_pc_id,
+                        actual_kind = ?entity.kind(),
+                        "guarded-PC set target has the wrong entity kind"
+                    ),
+                    None => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?new_pc_id,
+                        "guarded-PC set target does not exist"
+                    ),
+                }
             }
         }
 
