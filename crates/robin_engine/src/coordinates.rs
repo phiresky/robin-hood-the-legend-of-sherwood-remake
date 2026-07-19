@@ -293,11 +293,19 @@ impl MoveBox {
         MapBBox::from_geo(self.to_geo().translated(point.to_geo()))
     }
 
-    pub fn binary_rw(&mut self, file: &mut crate::sbfile::SbFile) -> Result<(), i32> {
-        let mut bbox = self.to_geo();
-        bbox.binary_rw(file)?;
-        *self = Self::from_geo(bbox);
-        Ok(())
+    pub fn read_legacy(
+        reader: &mut crate::legacy_io::LegacyReader<'_>,
+        field: impl std::fmt::Display,
+    ) -> crate::legacy_io::LegacyResult<Self> {
+        Ok(Self::from_geo(geo2d::BBox2D::read_legacy(reader, field)?))
+    }
+
+    pub fn write_legacy<W: std::io::Write>(
+        &self,
+        writer: &mut crate::legacy_io::LegacyWriter<W>,
+        field: impl std::fmt::Display,
+    ) -> crate::legacy_io::LegacyResult<()> {
+        self.to_geo().write_legacy(writer, field)
     }
 }
 

@@ -372,43 +372,66 @@ pub fn distance(a: GeoPoint2D, b: GeoPoint2D) -> f32 {
     (dx * dx + dy * dy).sqrt()
 }
 
-// ─── Serialization ───────────────────────────────────────────────
+// ─── Legacy authored-data I/O ────────────────────────────────────
 
 impl BBox2D {
-    /// Binary read/write of a serialized bounding box.
+    /// Read an original-game serialized bounding box.
     /// Format: 4 x f32 (top_left.x, top_left.y, bottom_right.x, bottom_right.y) + 1 x bool.
-    pub fn binary_rw(&mut self, file: &mut crate::sbfile::SbFile) -> Result<(), i32> {
-        let mut tl_x = self.0.map_or(0.0, |r| r.min().x);
-        let mut tl_y = self.0.map_or(0.0, |r| r.min().y);
-        let mut br_x = self.0.map_or(0.0, |r| r.max().x);
-        let mut br_y = self.0.map_or(0.0, |r| r.max().y);
-        let mut bounds_set = self.is_somewhere();
+    pub fn read_legacy(
+        reader: &mut crate::legacy_io::LegacyReader<'_>,
+        field: impl std::fmt::Display,
+    ) -> crate::legacy_io::LegacyResult<Self> {
+        reader.scope(field.to_string(), |reader| {
+            let tl_x = reader.read_f32("top_left.x")?;
+            let tl_y = reader.read_f32("top_left.y")?;
+            let br_x = reader.read_f32("bottom_right.x")?;
+            let br_y = reader.read_f32("bottom_right.y")?;
+            let bounds_set = reader.read_bool("bounds_set")?;
 
-        file.serialize_f32(&mut tl_x)?;
-        file.serialize_f32(&mut tl_y)?;
-        file.serialize_f32(&mut br_x)?;
-        file.serialize_f32(&mut br_y)?;
-        file.serialize_bool(&mut bounds_set)?;
-
-        if file.is_read_mode() {
             if bounds_set {
-                *self = BBox2D::from_coords(tl_x, tl_y, br_x, br_y);
+                Ok(BBox2D::from_coords(tl_x, tl_y, br_x, br_y))
             } else {
-                *self = BBox2D::new();
+                Ok(BBox2D::new())
             }
-        }
-        Ok(())
+        })
+    }
+
+    /// Write the exact original-game bounding-box layout.
+    pub fn write_legacy<W: std::io::Write>(
+        &self,
+        writer: &mut crate::legacy_io::LegacyWriter<W>,
+        field: impl std::fmt::Display,
+    ) -> crate::legacy_io::LegacyResult<()> {
+        writer.scope(field.to_string(), |writer| {
+            writer.write_f32("top_left.x", self.0.map_or(0.0, |r| r.min().x))?;
+            writer.write_f32("top_left.y", self.0.map_or(0.0, |r| r.min().y))?;
+            writer.write_f32("bottom_right.x", self.0.map_or(0.0, |r| r.max().x))?;
+            writer.write_f32("bottom_right.y", self.0.map_or(0.0, |r| r.max().y))?;
+            writer.write_bool("bounds_set", self.is_somewhere())
+        })
     }
 }
 
-/// Serialize a GeoPoint2D. Format: 2 x f32 (x, y).
-pub fn serialize_geo_point(
-    file: &mut crate::sbfile::SbFile,
-    p: &mut GeoPoint2D,
-) -> Result<(), i32> {
-    file.serialize_f32(&mut p.x)?;
-    file.serialize_f32(&mut p.y)?;
-    Ok(())
+/// Read a GeoPoint2D. Format: 2 x f32 (x, y).
+pub fn read_legacy_geo_point(
+    reader: &mut crate::legacy_io::LegacyReader<'_>,
+    field: impl std::fmt::Display,
+) -> crate::legacy_io::LegacyResult<GeoPoint2D> {
+    reader.scope(field.to_string(), |reader| {
+        Ok(pt(reader.read_f32("x")?, reader.read_f32("y")?))
+    })
+}
+
+/// Write a GeoPoint2D in the exact original-game layout.
+pub fn write_legacy_geo_point<W: std::io::Write>(
+    writer: &mut crate::legacy_io::LegacyWriter<W>,
+    field: impl std::fmt::Display,
+    point: GeoPoint2D,
+) -> crate::legacy_io::LegacyResult<()> {
+    writer.scope(field.to_string(), |writer| {
+        writer.write_f32("x", point.x)?;
+        writer.write_f32("y", point.y)
+    })
 }
 
 // ─── Segment operations ──────────────────────────────────────────

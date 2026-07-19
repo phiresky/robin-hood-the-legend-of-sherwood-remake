@@ -269,6 +269,9 @@ pub struct SbFile {
     position: u64,
     last_error: i32,
     version: u32,
+    /// Logical path requested by the caller. Typed legacy readers surface it
+    /// in field-level parse errors even when bytes came from an overlay.
+    path: String,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -504,7 +507,7 @@ impl SbFileSystem {
         let requested = Path::new(&normalised);
         if requested.is_absolute() {
             return try_read(self, &normalised)?
-                .map(SbFile::from_bytes)
+                .map(|bytes| SbFile::from_bytes(bytes, normalised.clone()))
                 .ok_or(SBFILE_ERROR_FILE_NOT_FOUND);
         }
         if requested
@@ -517,17 +520,17 @@ impl SbFileSystem {
         let overlay_paths = self.overlay_paths.lock().unwrap();
         for overlay in overlay_paths.iter() {
             if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
-                return Ok(SbFile::from_bytes(bytes));
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
         }
         drop(overlay_paths);
         if let Some(primary) = self.primary_path.lock().unwrap().clone()
             && let Some(bytes) = try_read(self, &primary.join(&normalised).to_string_lossy())?
         {
-            return Ok(SbFile::from_bytes(bytes));
+            return Ok(SbFile::from_bytes(bytes, normalised.clone()));
         }
         if let Some(bytes) = try_read(self, &normalised)? {
-            return Ok(SbFile::from_bytes(bytes));
+            return Ok(SbFile::from_bytes(bytes, normalised.clone()));
         }
         let alt_paths = self.alternate_paths.lock().unwrap();
         for alt in alt_paths.iter() {
@@ -535,10 +538,10 @@ impl SbFileSystem {
                 && let Some(bytes) =
                     try_read(self, &primary.join(alt).join(&normalised).to_string_lossy())?
             {
-                return Ok(SbFile::from_bytes(bytes));
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
             if let Some(bytes) = try_read(self, &format!("{alt}/{normalised}"))? {
-                return Ok(SbFile::from_bytes(bytes));
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
         }
         tracing::warn!(
@@ -557,7 +560,7 @@ impl SbFileSystem {
 }
 
 impl SbFile {
-    fn from_bytes(bytes: Vec<u8>) -> Self {
+    fn from_bytes(bytes: Vec<u8>, path: String) -> Self {
         let size = bytes.len() as u64;
         SbFile {
             file: Cursor::new(bytes),
@@ -565,6 +568,7 @@ impl SbFile {
             position: 0,
             last_error: SBFILE_NO_ERROR,
             version: 0,
+            path,
         }
     }
 
@@ -615,6 +619,9 @@ impl SbFile {
     pub fn get_size(&self) -> u64 {
         self.size
     }
+    pub fn path(&self) -> &str {
+        &self.path
+    }
     /// True once the cursor has reached the end of the in-memory buffer.
     pub fn is_eof(&self) -> bool {
         self.position >= self.size
@@ -630,6 +637,9 @@ impl SbFile {
     }
 
     // ── Binary readers ───────────────────────────────────────────
+
+    // TODO(legacy-io): once level and sprite authored-data consumers use
+    // LegacyReader, make these mutate-in-place/status-code methods private.
 
     pub fn serialize_bytes(&mut self, buf: &mut [u8]) -> Result<(), i32> {
         if self.read(buf) < 0 {

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MoveBox, SpriteAnchor};
 use crate::geo2d;
+use crate::legacy_io::{LegacyIoError, LegacyReader, LegacyResult};
 use crate::sbfile::SbFile;
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -722,24 +723,31 @@ pub struct BowProfile {
 }
 
 impl BowShootMode {
-    fn load_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        file.serialize_u16(&mut self.range)?;
+    fn read_legacy_cpf(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+        let range = reader.read_u16("range")?;
+        let mut hit_chances = std::array::from_fn(|_| BowHitChance::default());
         for i in 0..6 {
-            for skill in self.hit_chances.iter_mut() {
-                file.serialize_u16(&mut skill.hit_chance[i])?;
+            for (skill_index, skill) in hit_chances.iter_mut().enumerate() {
+                skill.hit_chance[i] =
+                    reader.read_u16(format_args!("hit_chances[{skill_index}][{i}]"))?;
             }
         }
-        file.serialize_u16(&mut self.damage)?;
-        Ok(())
+        let damage = reader.read_u16("damage")?;
+        Ok(Self {
+            range,
+            hit_chances,
+            damage,
+        })
     }
 }
 
 impl BowProfile {
-    pub fn load_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        self.normal_shoot.load_legacy_cpf(file)?;
-        file.serialize_bool(&mut self.has_long_shoot)?;
-        self.long_shoot.load_legacy_cpf(file)?;
-        Ok(())
+    fn read_legacy_cpf(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+        Ok(Self {
+            normal_shoot: reader.scope("normal_shoot", BowShootMode::read_legacy_cpf)?,
+            has_long_shoot: reader.read_bool("has_long_shoot")?,
+            long_shoot: reader.scope("long_shoot", BowShootMode::read_legacy_cpf)?,
+        })
     }
 }
 
@@ -842,502 +850,483 @@ impl ProfileManager {
     // ── Profile pointer serialization ────────────────────────────
 }
 
-// ─── Binary Serialization ────────────────────────────────────────
+// ─── Legacy authored profile.cpf loading ─────────────────────────
 //
 // Format: u32 count + per-profile fields.
 
-/// Serialize a Vec<u32> as a u32 count prefix + N u32 values.
-fn serialize_u32_vec(file: &mut SbFile, vec: &mut Vec<u32>) -> Result<(), i32> {
-    if file.is_write_mode() {
-        let mut count = vec.len() as u32;
-        file.serialize_u32(&mut count)?;
-        for val in vec.iter_mut() {
-            file.serialize_u32(val)?;
+fn read_count(reader: &mut LegacyReader<'_>, field: &str) -> LegacyResult<usize> {
+    Ok(reader.read_u32(field)? as usize)
+}
+
+fn reserve_legacy<T>(
+    reader: &mut LegacyReader<'_>,
+    field: &str,
+    count: usize,
+) -> LegacyResult<Vec<T>> {
+    let offset = reader.offset();
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(count)
+        .map_err(|_| reader.allocation_error(offset, field, count))?;
+    Ok(values)
+}
+
+/// Read a Vec<u32> as a u32 count prefix + N u32 values.
+fn read_u32_vec(reader: &mut LegacyReader<'_>, field: &str) -> LegacyResult<Vec<u32>> {
+    reader.scope(field, |reader| {
+        let count = read_count(reader, "count")?;
+        let mut values = reserve_legacy(reader, "items", count)?;
+        for index in 0..count {
+            values.push(reader.read_u32(format_args!("items[{index}]"))?);
         }
+        Ok(values)
+    })
+}
+
+fn read_profiles<T>(
+    reader: &mut LegacyReader<'_>,
+    field: &str,
+    mut read_one: impl FnMut(&mut LegacyReader<'_>, usize) -> LegacyResult<T>,
+) -> LegacyResult<Vec<T>> {
+    reader.scope(field, |reader| {
+        let count = read_count(reader, "count")?;
+        let mut values = reserve_legacy(reader, "items", count)?;
+        for index in 0..count {
+            values.push(reader.scope(format!("items[{index}]"), |reader| read_one(reader, index))?);
+        }
+        Ok(values)
+    })
+}
+
+fn normalized_action(value: u32) -> Action {
+    Action::from_u32(value)
+}
+
+fn normalized_mission_type(value: u32) -> MissionType {
+    MissionType::from_u32(value)
+}
+
+fn validate_character_index(
+    reader: &mut LegacyReader<'_>,
+    offset: u64,
+    field: impl std::fmt::Display,
+    index: u32,
+    character_count: usize,
+) -> LegacyResult<u32> {
+    if (index as usize) < character_count {
+        Ok(index)
     } else {
-        let mut count = 0u32;
-        file.serialize_u32(&mut count)?;
-        vec.clear();
-        for _ in 0..count {
-            let mut val = 0u32;
-            file.serialize_u32(&mut val)?;
-            vec.push(val);
-        }
+        Err(reader.invalid_value(
+            offset,
+            field,
+            index,
+            "an index into the loaded character profile table",
+        ))
     }
-    Ok(())
 }
 
 impl MissionProfile {
-    /// Binary serialize the per-mission profile block.
-    pub fn load_legacy_cpf(
-        &mut self,
-        file: &mut SbFile,
-        _characters: &[CharacterProfile],
-    ) -> Result<(), i32> {
-        file.serialize_u32(&mut self.id)?;
+    fn read_legacy_cpf(
+        reader: &mut LegacyReader<'_>,
+        character_count: usize,
+    ) -> LegacyResult<Self> {
+        let id = reader.read_u32("id")?;
+        let proto_level_filename = reader.read_string("proto_level_filename")?;
+        let mission_filename = reader.read_string("mission_filename")?;
+        let mission_name = reader.read_string("mission_name")?;
 
-        file.serialize_string(&mut self.proto_level_filename)?;
-        file.serialize_string(&mut self.mission_filename)?;
-        file.serialize_string(&mut self.mission_name)?;
+        // The previous loader and shipped-data path normalize unknown enum
+        // discriminants instead of rejecting the entire authored cache.
+        let mission_type = normalized_mission_type(reader.read_u32("mission_type")?);
+        let location_value = reader.read_u32("location")?;
+        let location = MissionLocation::try_from(location_value).unwrap_or_else(|_| {
+            tracing::warn!("invalid MissionLocation value {location_value}, clamping to York");
+            MissionLocation::York
+        });
 
-        // Enums serialized as u32 with a clamping fallback on read.
-        let mut mtype = self.mission_type as u32;
-        file.serialize_u32(&mut mtype)?;
-        if file.is_read_mode() {
-            self.mission_type = MissionType::from_u32(mtype);
+        let pass_through_hq = reader.read_bool("pass_through_hq")?;
+        let life_time = reader.read_u16("life_time")?;
+        let obligatory = reader.read_bool("obligatory")?;
+        let length = reader.read_u16("length")?;
+        let min_ransom = reader.read_u32("min_ransom")?;
+        let max_ransom = reader.read_u32("max_ransom")?;
+        let missions_required_to_be_done = read_u32_vec(reader, "missions_required_to_be_done")?;
+        let missions_required_not_to_be_done =
+            read_u32_vec(reader, "missions_required_not_to_be_done")?;
+        let min_gang_size = reader.read_u16("min_gang_size")?;
+        let max_gang_size = reader.read_u16("max_gang_size")?;
+        let access_probability = reader.read_u16("access_probability")?;
+        let priority = reader.read_u16("priority")?;
+
+        let required_count = read_count(reader, "required_character_indices.count")?;
+        let mut required_character_indices =
+            reserve_legacy(reader, "required_character_indices", required_count)?;
+        for index in 0..required_count {
+            let field = format!("required_character_indices[{index}]");
+            let offset = reader.offset();
+            let value = reader.read_u32(&field)?;
+            required_character_indices.push(validate_character_index(
+                reader,
+                offset,
+                &field,
+                value,
+                character_count,
+            )?);
         }
 
-        let mut loc = self.location as u32;
-        file.serialize_u32(&mut loc)?;
-        if file.is_read_mode() {
-            self.location = MissionLocation::try_from(loc).unwrap_or_else(|_| {
-                tracing::warn!("invalid MissionLocation value {loc}, clamping to York");
-                MissionLocation::York
-            });
+        let ares_sensible = reader.read_bool("ares_sensible")?;
+        let mut available_in_ares_state = [false; 10];
+        // The authored CPF format contains nine entries although the runtime
+        // structure has ten. This matches RHProfileManager::SerializeMissions.
+        for (index, available) in available_in_ares_state[..9].iter_mut().enumerate() {
+            *available = reader.read_bool(format_args!("available_in_ares_state[{index}]"))?;
         }
 
-        file.serialize_bool(&mut self.pass_through_hq)?;
-        file.serialize_u16(&mut self.life_time)?;
-        file.serialize_bool(&mut self.obligatory)?;
-        file.serialize_u16(&mut self.length)?;
-        file.serialize_u32(&mut self.min_ransom)?;
-        file.serialize_u32(&mut self.max_ransom)?;
-
-        serialize_u32_vec(file, &mut self.missions_required_to_be_done)?;
-        serialize_u32_vec(file, &mut self.missions_required_not_to_be_done)?;
-
-        file.serialize_u16(&mut self.min_gang_size)?;
-        file.serialize_u16(&mut self.max_gang_size)?;
-        file.serialize_u16(&mut self.access_probability)?;
-        file.serialize_u16(&mut self.priority)?;
-
-        // Required characters: stored as indices into character vector
-        if file.is_write_mode() {
-            let mut count = self.required_character_indices.len() as u32;
-            file.serialize_u32(&mut count)?;
-            for idx in self.required_character_indices.iter_mut() {
-                file.serialize_u32(idx)?;
-            }
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.required_character_indices.clear();
-            for _ in 0..count {
-                let mut idx = 0u32;
-                file.serialize_u32(&mut idx)?;
-                self.required_character_indices.push(idx);
-            }
-        }
-
-        file.serialize_bool(&mut self.ares_sensible)?;
-
-        // Only 9 ARES states are serialized (not 10) — the format uses a
-        // 9-slot table even though the in-memory array has room for 10.
-        for i in 0..9 {
-            file.serialize_bool(&mut self.available_in_ares_state[i])?;
-        }
-
-        file.serialize_i8(&mut self.ares_state_succeeded)?;
-        file.serialize_i8(&mut self.ares_state_lost)?;
-        file.serialize_i8(&mut self.ares_state_refused)?;
-
-        file.serialize_u16(&mut self.min_new_team_members)?;
-        file.serialize_u16(&mut self.max_new_team_members)?;
-
-        file.serialize_u16(&mut self.number_of_blazons_to_win)?;
-        file.serialize_u16(&mut self.number_of_blazons_to_be_collected)?;
-        file.serialize_u16(&mut self.blazon_price)?;
-        file.serialize_u16(&mut self.blazon_inflation)?;
-        file.serialize_u16(&mut self.peasant_to_blazon_quotation)?;
-
-        file.serialize_string(&mut self.green_music)?;
-        file.serialize_string(&mut self.yellow_music)?;
-        file.serialize_string(&mut self.red_music)?;
-
-        Ok(())
+        Ok(Self {
+            id,
+            proto_level_filename,
+            mission_filename,
+            mission_name,
+            mission_type,
+            location,
+            pass_through_hq,
+            life_time,
+            obligatory,
+            length,
+            min_ransom,
+            max_ransom,
+            missions_required_to_be_done,
+            missions_required_not_to_be_done,
+            min_gang_size,
+            max_gang_size,
+            access_probability,
+            priority,
+            required_character_indices,
+            ares_sensible,
+            available_in_ares_state,
+            ares_state_succeeded: reader.read_i8("ares_state_succeeded")?,
+            ares_state_lost: reader.read_i8("ares_state_lost")?,
+            ares_state_refused: reader.read_i8("ares_state_refused")?,
+            min_new_team_members: reader.read_u16("min_new_team_members")?,
+            max_new_team_members: reader.read_u16("max_new_team_members")?,
+            number_of_blazons_to_win: reader.read_u16("number_of_blazons_to_win")?,
+            number_of_blazons_to_be_collected: reader
+                .read_u16("number_of_blazons_to_be_collected")?,
+            blazon_price: reader.read_u16("blazon_price")?,
+            blazon_inflation: reader.read_u16("blazon_inflation")?,
+            peasant_to_blazon_quotation: reader.read_u16("peasant_to_blazon_quotation")?,
+            green_music: reader.read_string("green_music")?,
+            yellow_music: reader.read_string("yellow_music")?,
+            red_music: reader.read_string("red_music")?,
+            ..Self::default()
+        })
     }
 }
 
 impl CivilianProfile {
-    pub fn load_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        file.serialize_string(&mut self.filename)?;
-        file.serialize_string(&mut self.profile_name)?;
-        file.serialize_string(&mut self.display_name)?;
-        let mut ct = self.civilian_type as u32;
-        file.serialize_u32(&mut ct)?;
-        if file.is_read_mode() {
-            self.civilian_type = CivilianType::try_from(ct).unwrap_or_else(|_| {
-                tracing::warn!("invalid CivilianType value {ct}, clamping to Vip");
+    fn read_legacy_cpf(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+        let filename = reader.read_string("filename")?;
+        let profile_name = reader.read_string("profile_name")?;
+        let display_name = reader.read_string("display_name")?;
+        let civilian_type_value = reader.read_u32("civilian_type")?;
+        let attitude_value = reader.read_u32("attitude")?;
+        Ok(Self {
+            filename,
+            profile_name,
+            display_name,
+            civilian_type: CivilianType::try_from(civilian_type_value).unwrap_or_else(|_| {
+                tracing::warn!("invalid CivilianType value {civilian_type_value}, clamping to Vip");
                 CivilianType::Vip
-            });
-        }
-        let mut att = self.attitude as u32;
-        file.serialize_u32(&mut att)?;
-        if file.is_read_mode() {
-            self.attitude = Attitude::try_from(att).unwrap_or_else(|_| {
-                tracing::warn!("invalid Attitude value {att}, clamping to Friendly");
+            }),
+            attitude: Attitude::try_from(attitude_value).unwrap_or_else(|_| {
+                tracing::warn!("invalid Attitude value {attitude_value}, clamping to Friendly");
                 Attitude::Friendly
-            });
-        }
-        file.serialize_u32(&mut self.exclamation_id)?;
-        Ok(())
+            }),
+            exclamation_id: reader.read_u32("exclamation_id")?,
+        })
     }
 }
 
 impl ThrustProfile {
-    pub fn load_legacy_cpf(
-        &mut self,
-        file: &mut SbFile,
+    fn read_legacy_cpf(
+        reader: &mut LegacyReader<'_>,
         clamp_counts: &mut (u32, u32),
-    ) -> Result<(), i32> {
+    ) -> LegacyResult<Self> {
         // The on-disk CPF layout interleaves target/stunts/distances with
         // kind/direction in the middle (not the natural struct order):
         //   target (u32), stunning, cutting, min, max (u16×4),
         //   kind (u32), direction (u32),
         //   initAngle, finalAngle, rotAngle, repulsion, stumble, energy (u16×6)
         // This matches the layout of the shipped `profile.cpf`.
-        let mut target = self.target as u32;
-        file.serialize_u32(&mut target)?;
-        if file.is_read_mode() {
-            self.target = WeaponTarget::try_from(target).unwrap_or_else(|_| {
-                tracing::warn!("invalid WeaponTarget value {target}, clamping to None");
-                WeaponTarget::None
-            });
-        }
-        file.serialize_u16(&mut self.stunning)?;
-        file.serialize_u16(&mut self.cutting)?;
-        file.serialize_u16(&mut self.minimal_distance)?;
-        file.serialize_u16(&mut self.maximal_distance)?;
-        let mut kind = self.kind as u32;
-        file.serialize_u32(&mut kind)?;
-        if file.is_read_mode() {
-            self.kind = WeaponThrustKind::try_from(kind).unwrap_or_else(|_| {
-                tracing::debug!("invalid WeaponThrustKind value {kind}, clamping to Assault");
-                clamp_counts.0 += 1;
-                WeaponThrustKind::Assault
-            });
-        }
-        let mut dir = self.direction as u32;
-        file.serialize_u32(&mut dir)?;
-        if file.is_read_mode() {
-            self.direction = WeaponThrustDirection::try_from(dir).unwrap_or_else(|_| {
-                tracing::debug!(
-                    "invalid WeaponThrustDirection value {dir}, clamping to NonApplicable"
-                );
-                clamp_counts.1 += 1;
-                WeaponThrustDirection::NonApplicable
-            });
-        }
-        file.serialize_u16(&mut self.initial_angle)?;
-        file.serialize_u16(&mut self.final_angle)?;
-        file.serialize_u16(&mut self.rotation_angle)?;
-        file.serialize_u16(&mut self.repulsion)?;
-        file.serialize_u16(&mut self.stumble_probability)?;
-        file.serialize_u16(&mut self.energy)?;
-        Ok(())
+        let target_value = reader.read_u32("target")?;
+        let target = WeaponTarget::try_from(target_value).unwrap_or_else(|_| {
+            tracing::warn!("invalid WeaponTarget value {target_value}, clamping to None");
+            WeaponTarget::None
+        });
+        let stunning = reader.read_u16("stunning")?;
+        let cutting = reader.read_u16("cutting")?;
+        let minimal_distance = reader.read_u16("minimal_distance")?;
+        let maximal_distance = reader.read_u16("maximal_distance")?;
+        let kind_value = reader.read_u32("kind")?;
+        let kind = WeaponThrustKind::try_from(kind_value).unwrap_or_else(|_| {
+            tracing::debug!("invalid WeaponThrustKind value {kind_value}, clamping to Assault");
+            clamp_counts.0 += 1;
+            WeaponThrustKind::Assault
+        });
+        let direction_value = reader.read_u32("direction")?;
+        let direction = WeaponThrustDirection::try_from(direction_value).unwrap_or_else(|_| {
+            tracing::debug!(
+                "invalid WeaponThrustDirection value {direction_value}, clamping to NonApplicable"
+            );
+            clamp_counts.1 += 1;
+            WeaponThrustDirection::NonApplicable
+        });
+        Ok(Self {
+            target,
+            kind,
+            direction,
+            stunning,
+            cutting,
+            minimal_distance,
+            maximal_distance,
+            initial_angle: reader.read_u16("initial_angle")?,
+            final_angle: reader.read_u16("final_angle")?,
+            rotation_angle: reader.read_u16("rotation_angle")?,
+            repulsion: reader.read_u16("repulsion")?,
+            stumble_probability: reader.read_u16("stumble_probability")?,
+            energy: reader.read_u16("energy")?,
+        })
     }
 }
 
 impl HtHWeaponProfile {
-    pub fn load_legacy_cpf(
-        &mut self,
-        file: &mut SbFile,
+    fn read_legacy_cpf(
+        reader: &mut LegacyReader<'_>,
         clamps: &mut (u32, u32),
-    ) -> Result<(), i32> {
-        for d in self.distance.iter_mut() {
-            file.serialize_u16(d)?;
+    ) -> LegacyResult<Self> {
+        let mut distance = [0; 4];
+        for (index, value) in distance.iter_mut().enumerate() {
+            *value = reader.read_u16(format_args!("distance[{index}]"))?;
         }
-        for p in self.protection_by_localization.iter_mut() {
-            file.serialize_u16(p)?;
+        let mut protection_by_localization = [0; 5];
+        for (index, value) in protection_by_localization.iter_mut().enumerate() {
+            *value = reader.read_u16(format_args!("protection_by_localization[{index}]"))?;
         }
-        file.serialize_u16(&mut self.bludgeon_protection)?;
-        file.serialize_u16(&mut self.piercing_protection)?;
-        file.serialize_bool(&mut self.charge)?;
-        file.serialize_bool(&mut self.shield)?;
-        file.serialize_u16(&mut self.shield_width)?;
-        file.serialize_u16(&mut self.shield_height)?;
-        for t in self.thrusts.iter_mut() {
-            t.load_legacy_cpf(file, clamps)?;
+        let bludgeon_protection = reader.read_u16("bludgeon_protection")?;
+        let piercing_protection = reader.read_u16("piercing_protection")?;
+        let charge = reader.read_bool("charge")?;
+        let shield = reader.read_bool("shield")?;
+        let shield_width = reader.read_u16("shield_width")?;
+        let shield_height = reader.read_u16("shield_height")?;
+        let mut thrusts = std::array::from_fn(|_| ThrustProfile::default());
+        for (index, thrust) in thrusts.iter_mut().enumerate() {
+            *thrust = reader.scope(format!("thrusts[{index}]"), |reader| {
+                ThrustProfile::read_legacy_cpf(reader, clamps)
+            })?;
         }
-        Ok(())
+        Ok(Self {
+            distance,
+            protection_by_localization,
+            bludgeon_protection,
+            piercing_protection,
+            charge,
+            shield,
+            shield_width,
+            shield_height,
+            thrusts,
+        })
     }
 }
 
 impl CharacterProfile {
-    pub fn load_legacy_cpf(&mut self, file: &mut SbFile, index: u32) -> Result<(), i32> {
+    fn read_legacy_cpf(reader: &mut LegacyReader<'_>, index: u32) -> LegacyResult<Self> {
         // `index` and `priority` are derived from the loop counter, not
         // serialized. Note: the legacy implementation had an off-by-one
         // (the first iteration's index underflowed to 0xFFFFFFFF, giving
         // priority = 11 instead of 10), but every consumer of `priority`
         // uses relative comparisons so the bug was invisible. We use the
         // natural 0-based loop index (`(0, 10), (1, 9), …`).
-        self.index = index;
-        self.priority = (10 - index) as u16;
+        let priority = 10u32.checked_sub(index).ok_or_else(|| {
+            let offset = reader.offset();
+            reader.invalid_value(
+                offset,
+                "index",
+                index,
+                "a character profile index from 0 to 10",
+            )
+        })? as u16;
 
-        file.serialize_string(&mut self.filename)?;
-        file.serialize_string(&mut self.profile_name)?;
-        file.serialize_string(&mut self.alternative_profile_name)?;
-        file.serialize_bool(&mut self.valid_alternative_profile)?;
-        file.serialize_bool(&mut self.vip)?;
-        file.serialize_u16(&mut self.shooting)?;
-        file.serialize_u16(&mut self.fighting)?;
-        file.serialize_u16(&mut self.endurance)?;
-        file.serialize_u32(&mut self.exclamation_id)?;
-        file.serialize_u32(&mut self.hth_weapon_id)?;
-        file.serialize_u32(&mut self.shooting_weapon_id)?;
+        let filename = reader.read_string("filename")?;
+        let profile_name = reader.read_string("profile_name")?;
+        let alternative_profile_name = reader.read_string("alternative_profile_name")?;
+        let valid_alternative_profile = reader.read_bool("valid_alternative_profile")?;
+        let vip = reader.read_bool("vip")?;
+        let shooting = reader.read_u16("shooting")?;
+        let fighting = reader.read_u16("fighting")?;
+        let endurance = reader.read_u16("endurance")?;
+        let exclamation_id = reader.read_u32("exclamation_id")?;
+        let hth_weapon_id = reader.read_u32("hth_weapon_id")?;
+        let shooting_weapon_id = reader.read_u32("shooting_weapon_id")?;
 
         // 3 action + ammo pairs
+        let mut actions = [Action::default(); NUMBER_OF_PC_ACTIONS];
+        let mut action_max_ammo = [0; NUMBER_OF_PC_ACTIONS];
         for i in 0..NUMBER_OF_PC_ACTIONS {
-            let mut act = self.actions[i] as u32;
-            file.serialize_u32(&mut act)?;
-            if file.is_read_mode() {
-                self.actions[i] = Action::from_u32(act);
-            }
-            file.serialize_u16(&mut self.action_max_ammo[i])?;
+            actions[i] = normalized_action(reader.read_u32(format_args!("actions[{i}]"))?);
+            action_max_ammo[i] = reader.read_u16(format_args!("action_max_ammo[{i}]"))?;
         }
         // 4 contextual actions
+        let mut contextual_actions = [Action::default(); NUMBER_OF_PC_CONTEXTUAL_ACTIONS];
         for i in 0..NUMBER_OF_PC_CONTEXTUAL_ACTIONS {
-            let mut act = self.contextual_actions[i] as u32;
-            file.serialize_u32(&mut act)?;
-            if file.is_read_mode() {
-                self.contextual_actions[i] = Action::from_u32(act);
-            }
+            contextual_actions[i] =
+                normalized_action(reader.read_u32(format_args!("contextual_actions[{i}]"))?);
         }
 
-        file.serialize_u8(&mut self.pathfinder_index)?;
-        self.box_move.binary_rw(file)?;
-        let mut center = self.center.to_geo();
-        geo2d::serialize_geo_point(file, &mut center)?;
-        if file.is_read_mode() {
-            self.center = SpriteAnchor::new(center.x, center.y);
-        }
-        file.serialize_u16(&mut self.wake_up)?;
+        let pathfinder_index = reader.read_u8("pathfinder_index")?;
+        let box_move = MoveBox::read_legacy(reader, "box_move")?;
+        let center = geo2d::read_legacy_geo_point(reader, "center")?;
+        let wake_up = reader.read_u16("wake_up")?;
 
-        let mut wm = self.weapon_material as u32;
-        file.serialize_u32(&mut wm)?;
-        if file.is_read_mode() {
-            self.weapon_material = WeaponMaterial::try_from(wm).unwrap_or_else(|_| {
-                tracing::warn!("invalid WeaponMaterial value {wm}, clamping to SteelAndWood");
+        let weapon_material_value = reader.read_u32("weapon_material")?;
+        let weapon_material =
+            WeaponMaterial::try_from(weapon_material_value).unwrap_or_else(|_| {
+                tracing::warn!(
+                    "invalid WeaponMaterial value {weapon_material_value}, clamping to SteelAndWood"
+                );
                 WeaponMaterial::SteelAndWood
             });
-        }
-        let mut am = self.armor_material as u32;
-        file.serialize_u32(&mut am)?;
-        if file.is_read_mode() {
-            self.armor_material = ArmorMaterial::try_from(am).unwrap_or_else(|_| {
-                tracing::warn!("invalid ArmorMaterial value {am}, clamping to Plate");
-                ArmorMaterial::Plate
-            });
-        }
+        let armor_material_value = reader.read_u32("armor_material")?;
+        let armor_material = ArmorMaterial::try_from(armor_material_value).unwrap_or_else(|_| {
+            tracing::warn!("invalid ArmorMaterial value {armor_material_value}, clamping to Plate");
+            ArmorMaterial::Plate
+        });
 
-        file.serialize_u16(&mut self.detection_speed_in_forest)?;
-        file.serialize_u16(&mut self.detection_speed_in_city)?;
-
-        Ok(())
+        Ok(Self {
+            index,
+            priority,
+            filename,
+            profile_name,
+            alternative_profile_name,
+            valid_alternative_profile,
+            vip,
+            shooting,
+            fighting,
+            endurance,
+            exclamation_id,
+            hth_weapon_id,
+            shooting_weapon_id,
+            actions,
+            action_max_ammo,
+            contextual_actions,
+            pathfinder_index,
+            box_move,
+            center: SpriteAnchor::new(center.x, center.y),
+            wake_up,
+            weapon_material,
+            armor_material,
+            detection_speed_in_forest: reader.read_u16("detection_speed_in_forest")?,
+            detection_speed_in_city: reader.read_u16("detection_speed_in_city")?,
+        })
     }
 }
 
 impl SoldierProfile {
-    pub fn load_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        file.serialize_string(&mut self.filename)?;
-        file.serialize_string(&mut self.profile_name)?;
-        file.serialize_string(&mut self.display_name)?;
-        file.serialize_u16(&mut self.life_point)?;
-        file.serialize_u16(&mut self.intelligence)?;
-        file.serialize_u16(&mut self.courage)?;
-        file.serialize_u16(&mut self.initiative)?;
-        file.serialize_u16(&mut self.pride)?;
-        file.serialize_bool(&mut self.formation)?;
-        file.serialize_u16(&mut self.shooting)?;
-        file.serialize_u16(&mut self.fighting)?;
-        file.serialize_u16(&mut self.endurance)?;
+    fn read_legacy_cpf(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+        let filename = reader.read_string("filename")?;
+        let profile_name = reader.read_string("profile_name")?;
+        let display_name = reader.read_string("display_name")?;
+        let life_point = reader.read_u16("life_point")?;
+        let intelligence = reader.read_u16("intelligence")?;
+        let courage = reader.read_u16("courage")?;
+        let initiative = reader.read_u16("initiative")?;
+        let pride = reader.read_u16("pride")?;
+        let formation = reader.read_bool("formation")?;
+        let shooting = reader.read_u16("shooting")?;
+        let fighting = reader.read_u16("fighting")?;
+        let endurance = reader.read_u16("endurance")?;
 
-        let mut rank = self.rank as u32;
-        file.serialize_u32(&mut rank)?;
-        if file.is_read_mode() {
-            self.rank = ProfileRank::try_from(rank).unwrap_or_else(|_| {
-                tracing::warn!("invalid ProfileRank value {rank}, clamping to None");
-                ProfileRank::None
-            });
-        }
-
-        file.serialize_u32(&mut self.exclamation_id)?;
-        file.serialize_u16(&mut self.bee_time)?;
+        let rank_value = reader.read_u32("rank")?;
+        let rank = ProfileRank::try_from(rank_value).unwrap_or_else(|_| {
+            tracing::warn!("invalid ProfileRank value {rank_value}, clamping to None");
+            ProfileRank::None
+        });
+        let exclamation_id = reader.read_u32("exclamation_id")?;
+        let bee_time = reader.read_u16("bee_time")?;
 
         // Flags packed as single byte (bitfield)
-        let mut flags_byte: u8 = 0;
-        if file.is_write_mode() {
-            if self.hostile {
-                flags_byte |= 1;
-            }
-            if self.rider {
-                flags_byte |= 2;
-            }
-            if self.heavy {
-                flags_byte |= 4;
-            }
-            if self.vip {
-                flags_byte |= 8;
-            }
-            if self.duty {
-                flags_byte |= 16;
-            }
-            if self.strangle {
-                flags_byte |= 32;
-            }
-        }
-        file.serialize_u8(&mut flags_byte)?;
-        if file.is_read_mode() {
-            self.hostile = flags_byte & 1 != 0;
-            self.rider = flags_byte & 2 != 0;
-            self.heavy = flags_byte & 4 != 0;
-            self.vip = flags_byte & 8 != 0;
-            self.duty = flags_byte & 16 != 0;
-            self.strangle = flags_byte & 32 != 0;
-        }
+        let flags = reader.read_u8("flags")?;
+        let money = reader.read_u16("money")?;
+        let apple = reader.read_u16("apple")?;
+        let beer = reader.read_u16("beer")?;
+        let whistle = reader.read_u16("whistle")?;
+        let hth_weapon_id = reader.read_u32("hth_weapon_id")?;
+        let shooting_weapon_id = reader.read_u32("shooting_weapon_id")?;
+        let pathfinder_index = reader.read_u8("pathfinder_index")?;
+        let box_move = MoveBox::read_legacy(reader, "box_move")?;
+        let center = geo2d::read_legacy_geo_point(reader, "center")?;
+        let wake_up = reader.read_u16("wake_up")?;
 
-        file.serialize_u16(&mut self.money)?;
-        file.serialize_u16(&mut self.apple)?;
-        file.serialize_u16(&mut self.beer)?;
-        file.serialize_u16(&mut self.whistle)?;
-        file.serialize_u32(&mut self.hth_weapon_id)?;
-        file.serialize_u32(&mut self.shooting_weapon_id)?;
-        file.serialize_u8(&mut self.pathfinder_index)?;
-        self.box_move.binary_rw(file)?;
-        let mut center = self.center.to_geo();
-        geo2d::serialize_geo_point(file, &mut center)?;
-        if file.is_read_mode() {
-            self.center = SpriteAnchor::new(center.x, center.y);
-        }
-        file.serialize_u16(&mut self.wake_up)?;
-
-        let mut wm = self.weapon_material as u32;
-        file.serialize_u32(&mut wm)?;
-        if file.is_read_mode() {
-            self.weapon_material = WeaponMaterial::try_from(wm).unwrap_or_else(|_| {
-                tracing::warn!("invalid WeaponMaterial value {wm}, clamping to SteelAndWood");
+        let weapon_material_value = reader.read_u32("weapon_material")?;
+        let weapon_material =
+            WeaponMaterial::try_from(weapon_material_value).unwrap_or_else(|_| {
+                tracing::warn!(
+                    "invalid WeaponMaterial value {weapon_material_value}, clamping to SteelAndWood"
+                );
                 WeaponMaterial::SteelAndWood
             });
-        }
-        let mut am = self.armor_material as u32;
-        file.serialize_u32(&mut am)?;
-        if file.is_read_mode() {
-            self.armor_material = ArmorMaterial::try_from(am).unwrap_or_else(|_| {
-                tracing::warn!("invalid ArmorMaterial value {am}, clamping to Plate");
-                ArmorMaterial::Plate
-            });
-        }
+        let armor_material_value = reader.read_u32("armor_material")?;
+        let armor_material = ArmorMaterial::try_from(armor_material_value).unwrap_or_else(|_| {
+            tracing::warn!("invalid ArmorMaterial value {armor_material_value}, clamping to Plate");
+            ArmorMaterial::Plate
+        });
 
-        Ok(())
+        Ok(Self {
+            filename,
+            profile_name,
+            display_name,
+            life_point,
+            intelligence,
+            courage,
+            initiative,
+            pride,
+            formation,
+            shooting,
+            fighting,
+            endurance,
+            rank,
+            exclamation_id,
+            bee_time,
+            hostile: flags & 1 != 0,
+            rider: flags & 2 != 0,
+            heavy: flags & 4 != 0,
+            vip: flags & 8 != 0,
+            duty: flags & 16 != 0,
+            strangle: flags & 32 != 0,
+            money,
+            apple,
+            beer,
+            whistle,
+            hth_weapon_id,
+            shooting_weapon_id,
+            pathfinder_index,
+            box_move,
+            center: SpriteAnchor::new(center.x, center.y),
+            wake_up,
+            weapon_material,
+            armor_material,
+        })
     }
 }
 
 impl ProfileManager {
-    /// Serialize all mission profiles.
-    pub fn load_legacy_cpf_missions(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.missions.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.missions.clear();
-            for _ in 0..count {
-                self.missions.push(MissionProfile::default());
-            }
-        }
-
-        // Need to serialize each mission; the character list is needed
-        // for resolving character indices in required_character_indices.
-        let n = self.missions.len();
-        for i in 0..n {
-            // Split borrow: take mission out, serialize, put back
-            let mut mission = std::mem::take(&mut self.missions[i]);
-            mission.load_legacy_cpf(file, &self.characters)?;
-            self.missions[i] = mission;
-        }
-
-        Ok(())
-    }
-
-    /// Serialize all civilian profiles.
-    pub fn load_legacy_cpf_civilians(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.civilians.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.civilians.clear();
-            for _ in 0..count {
-                self.civilians.push(CivilianProfile::default());
-            }
-        }
-        for p in self.civilians.iter_mut() {
-            p.load_legacy_cpf(file)?;
-        }
-        Ok(())
-    }
-
-    /// Serialize all character profiles.
-    pub fn load_legacy_cpf_characters(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.characters.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.characters.clear();
-            for _ in 0..count {
-                self.characters.push(CharacterProfile::default());
-            }
-        }
-        let n = self.characters.len();
-        for i in 0..n {
-            let mut ch = std::mem::take(&mut self.characters[i]);
-            ch.load_legacy_cpf(file, i as u32)?;
-            self.characters[i] = ch;
-        }
-        Ok(())
-    }
-
-    /// Serialize all soldier profiles.
-    pub fn load_legacy_cpf_soldiers(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.soldiers.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.soldiers.clear();
-            for _ in 0..count {
-                self.soldiers.push(SoldierProfile::default());
-            }
-        }
-        for p in self.soldiers.iter_mut() {
-            p.load_legacy_cpf(file)?;
-        }
-        Ok(())
-    }
-
-    /// Serialize all hand-to-hand weapon profiles.
-    pub fn load_legacy_cpf_hth_weapons(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.hth_weapons.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.hth_weapons.clear();
-            for _ in 0..count {
-                self.hth_weapons.push(HtHWeaponProfile::default());
-            }
-        }
+    fn read_legacy_cpf_hth_weapons(
+        reader: &mut LegacyReader<'_>,
+    ) -> LegacyResult<Vec<HtHWeaponProfile>> {
         let mut clamps = (0u32, 0u32);
-        for p in self.hth_weapons.iter_mut() {
-            p.load_legacy_cpf(file, &mut clamps)?;
-        }
-        if file.is_read_mode() && (clamps.0 > 0 || clamps.1 > 0) {
+        let profiles = read_profiles(reader, "hth_weapons", |reader, _| {
+            HtHWeaponProfile::read_legacy_cpf(reader, &mut clamps)
+        })?;
+        if clamps.0 > 0 || clamps.1 > 0 {
             // Known quirk: shipped CPF data has garbage `kind`/`direction`
             // bytes that the original loader silently accepted. The clamp
             // is behaviorally identical for every caller of the strike
@@ -1346,29 +1335,41 @@ impl ProfileManager {
                 "HtH weapons: clamped {} invalid thrust kind(s) and {} invalid thrust direction(s) across {} weapon(s) (shipped data quirk, benign)",
                 clamps.0,
                 clamps.1,
-                self.hth_weapons.len()
+                profiles.len()
             );
         }
-        Ok(())
+        Ok(profiles)
     }
 
-    /// Serialize all bow/shooting weapon profiles.
-    pub fn load_legacy_cpf_bows(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        if file.is_write_mode() {
-            let mut count = self.bows.len() as u32;
-            file.serialize_u32(&mut count)?;
-        } else {
-            let mut count = 0u32;
-            file.serialize_u32(&mut count)?;
-            self.bows.clear();
-            for _ in 0..count {
-                self.bows.push(BowProfile::default());
-            }
-        }
-        for p in self.bows.iter_mut() {
-            p.load_legacy_cpf(file)?;
-        }
-        Ok(())
+    fn read_all_legacy_cpf(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+        // RHProfileManager::Serialize writes this exact order. This is the
+        // authored profile.cpf cache format, not save/snapshot serialization.
+        let hth_weapons = Self::read_legacy_cpf_hth_weapons(reader)?;
+        let bows = read_profiles(reader, "bows", |reader, _| {
+            BowProfile::read_legacy_cpf(reader)
+        })?;
+        let characters = read_profiles(reader, "characters", |reader, index| {
+            CharacterProfile::read_legacy_cpf(reader, index as u32)
+        })?;
+        let soldiers = read_profiles(reader, "soldiers", |reader, _| {
+            SoldierProfile::read_legacy_cpf(reader)
+        })?;
+        let character_count = characters.len();
+        let missions = read_profiles(reader, "missions", |reader, _| {
+            MissionProfile::read_legacy_cpf(reader, character_count)
+        })?;
+        let civilians = read_profiles(reader, "civilians", |reader, _| {
+            CivilianProfile::read_legacy_cpf(reader)
+        })?;
+
+        Ok(Self {
+            characters,
+            soldiers,
+            hth_weapons,
+            bows,
+            missions,
+            civilians,
+        })
     }
 
     /// Walk every mission's `.rhm` file and populate
@@ -1444,15 +1445,12 @@ impl ProfileManager {
         }
     }
 
-    /// Serialize all profiles. Order is fixed by the on-disk format:
+    /// Load all profiles. Order is fixed by the authored CPF format:
     /// weapons, bows, characters, soldiers, missions, civilians.
-    pub fn load_all_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        self.load_legacy_cpf_hth_weapons(file)?;
-        self.load_legacy_cpf_bows(file)?;
-        self.load_legacy_cpf_characters(file)?;
-        self.load_legacy_cpf_soldiers(file)?;
-        self.load_legacy_cpf_missions(file)?;
-        self.load_legacy_cpf_civilians(file)?;
+    pub fn load_all_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), LegacyIoError> {
+        let mut reader = LegacyReader::new(file);
+        let loaded = reader.scope("profiles", Self::read_all_legacy_cpf)?;
+        *self = loaded;
         Ok(())
     }
 }
