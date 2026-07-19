@@ -6,10 +6,11 @@ publish = false
 
 [lib]
 name = "robin_rs"
-# `cdylib` is required for `wasm-bindgen` to emit JS glue against the
-# crate.  `rlib` keeps the lib usable as a normal Rust dependency
-# (the `bin/robin.rs` entry, dev-dependencies, integration tests).
-crate-type = ["cdylib", "rlib"]
+# Native and wasm development use the library as an `rlib`; the wasm build's
+# actual artifact is the `robin` binary. Android packaging requests `cdylib`
+# explicitly via `cargo rustc` so normal builds and tests do not also link an
+# unused host shared library.
+crate-type = ["rlib"]
 
 [dependencies]
 robin_engine = { path = "../robin_engine" }

@@ -15,7 +15,7 @@ CC_aarch64_linux_android=aarch64-linux-android35-clang \
 CXX_aarch64_linux_android=aarch64-linux-android35-clang++ \
 AR_aarch64_linux_android=llvm-ar \
 CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android35-clang \
-RUSTC_WRAPPER= cargo build -p robin_rs --lib \
+RUSTC_WRAPPER= cargo rustc -p robin_rs --lib --crate-type cdylib \
   --target aarch64-linux-android \
   --profile android-dev \
   --no-default-features --features android

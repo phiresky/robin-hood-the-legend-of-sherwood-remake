@@ -44,9 +44,10 @@ android {
 
 tasks.register("buildRustAndroid", Exec) {
     workingDir repoRoot.asFile
-    commandLine "cargo", "build",
+    commandLine "cargo", "rustc",
         "-p", "robin_rs",
         "--lib",
+        "--crate-type", "cdylib",
         "--target", "aarch64-linux-android",
         "--profile", rustProfile.get(),
         "--no-default-features",
