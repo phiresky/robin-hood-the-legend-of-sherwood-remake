@@ -1,6 +1,7 @@
 # Post-port Features
 
 A list of which additional features we have added, which ones we might still want to add, and which old ones we will NOT add.
+
 ## Done
 
 - **Fog-tint all sprites option.** Options → Graphics now includes a
@@ -46,8 +47,7 @@ A list of which additional features we have added, which ones we might still wan
   `--http-server 0` to disable.
   - `GET /` — endpoint listing.
   - `GET /natives` — every NativeFn (index, name, return_type, params)
-    with parameter names parsed from `assets/script_api/RHScriptAPI.scs`
-    (embedded at compile time via `include_str!`).
+    with signature provenance from `original-code/RHScriptAPI.scs`.
   - `GET /engine-dump` — full serialized engine state for ad-hoc debugging.
   - `GET /script` — mission-script class & function listing.
   - `GET /script/decompile[?class=Foo]` — TypeScript-like pseudocode
@@ -204,15 +204,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ### Code Quality
 
-- Replace `0xFFFF` / `u16::MAX` sentinels with `Option<u16>` (and
-  `0xFFFFFFFF` / `u32::MAX` with `Option<u32>`). Fields like `path_id`,
-  `alert_path_id`, `obstacle_index`, `Sector.layer`, `max_occupants`,
-  `INVALID_TITBIT_ID`, `INVALID_PROFILE_ID` are currently plain integers that
-  use a magic "no such thing" value inherited from the old binary format.
-  Porting them to `Option` makes intent explicit at the type level, surfaces
-  every sentinel check at compile time, and makes the hackable JSON render
-  `null` instead of `65535`. Keep the binary reader/writer mapping
-  `0xFFFF` <-> `None` so on-disk format stays stable.
+- Finish moving legacy sentinels to typed runtime boundaries. Entity IDs,
+  titbit IDs, layers, sectors, obstacles and AI patrol paths now use nominal
+  handles and `Option` where absence is meaningful. Raw level-data structs
+  still retain authored `0xFFFF` values, and a few animation/ammunition fields
+  use the maximum value as real Original-game protocol. Convert remaining
+  runtime fields only when their semantics are proven; keep asset-reader
+  translation at the binary boundary instead of spreading sentinel checks.
 
 ### Rebalancing
 

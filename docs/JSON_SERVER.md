@@ -1,287 +1,176 @@
-# JSON-RPC HTTP server
+# HTTP automation server
 
-The game binary exposes a local HTTP endpoint for external tools — debug
-shells, test harnesses, AI drivers, screenshot pipelines. Source lives
-in [crates/robin_rs/src/http_server.rs](crates/robin_rs/src/http_server.rs).
+The `robin` binary exposes a loopback-only HTTP endpoint for debug tools,
+test harnesses, replay drivers and screenshot pipelines. The implementation is
+in [`http_server.rs`](../crates/robin_rs/src/http_server.rs).
 
-## Starting / stopping
+This is a small JSON-over-HTTP API, not a JSON-RPC 2.0 server. Responses are
+JSON except for `/screenshot`.
 
-Bind address is always `127.0.0.1` (no authentication, no TLS, no LAN
-exposure). Default port is `17640`.
+## Starting it
 
-```
-robin                        # starts on :17640
-robin --http-server 9999     # custom port
-robin --http-server 0        # disabled
-robin --start-paused         # launch with sim paused (HUD/cursor live)
-```
+The server binds only to `127.0.0.1`; it has no authentication or TLS. The
+default port is 17640.
 
-`--start-paused` freezes the engine tick from frame 0 — the HUD,
-cursor, and input are still live, but the simulation does not advance
-until a `/step-forward` request drives it. Useful for automated test
-drivers that want to observe-then-advance without the default 25 fps
-wall-clock pace.
-
-The listener runs in a dedicated `robin-http-server` thread; the game
-loop drains queued requests once per tick.
-
-## Threading model
-
-```
-HTTP client ──► listener thread ──► queue ──► game tick ──► reply
-                (tiny_http)                   (drain_global)
+```text
+robin                         # listen on 127.0.0.1:17640
+robin --http-server 9999      # choose another port
+robin --http-server 0         # disable the server
+robin --start-paused          # freeze simulation at frame zero
 ```
 
-Each request waits on a one-shot channel with a 60 s timeout. While the
-game is paused, loading a level, rewinding, or displaying a modal
-dialog / briefing, the per-tick drain is suspended — requests block
-until the game resumes (or time out). Clients that want to fail fast
-instead of waiting out a blocked main loop should pass a shorter HTTP
-timeout themselves, e.g. `curl --max-time 2`.
+Build before launching a long-running game process:
 
-## Endpoints
+```bash
+cargo build --bin robin
+RUST_LOG=debug ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
+  target/debug/robin --start-paused
+```
 
-### `GET /`
+The listener runs in a dedicated `robin-http-server` thread. It places work on
+a queue which the mission loop drains on the game thread. A request waiting on
+that queue times out after 60 seconds; use a shorter client timeout when a
+blocked or loading game should fail quickly.
 
-Returns a listing of every endpoint with a short description.
+## Inspection endpoints
 
-### `GET /natives`
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/` or `/info` | endpoint discovery document |
+| `GET` | `/natives` | every script native with index and signature |
+| `GET` | `/state` | compact frame, map and replay status |
+| `GET` | `/engine-dump` | complete serialized deterministic Engine state |
+| `GET` | `/level-assets` | static level data plus runtime fast-grid flags |
+| `GET` | `/host-debug` | non-authoritative host/UI debug state |
+| `GET` | `/script` | loaded script classes, functions and instance counts |
+| `GET` | `/script/decompile?class=Foo` | TypeScript-like script decompilation; omit `class` for all classes |
 
-Lists every `NativeFn` the script VM recognises: index, name, return
-type, parameter types and names (parsed from the embedded
-`RHScriptAPI.scs`).
+`/engine-dump` and `/host-debug` are deliberately separate. The former is
+authoritative simulation state; the latter contains local viewport, hover and
+trajectory-preview details which do not belong in Engine snapshots.
+
+## Command endpoints
+
+### Script natives
+
+`POST /native` invokes one native. `this` optionally supplies the transient
+script receiver.
 
 ```json
-{ "natives": [
-    { "index": 12, "name": "SetMissionWon", "return_type": "void",
-      "params": [] },
-    ...
+{"op":"SetMissionWon","args":[],"this":null}
+```
+
+`POST /batch` invokes multiple natives back-to-back in one queue drain:
+
+```json
+{"calls":[
+  {"op":"GetFrame","args":[]},
+  {"op":"SetMissionWon","args":[]}
 ]}
 ```
 
-### `GET /state`
+Missing required Engine objects fail with a contextual error; the server does
+not manufacture default values for malformed calls.
 
-Engine snapshot: frame counter, map name, mission flags, camera,
-selected PCs, full entity list.
+### Console and player commands
 
-```json
-{
-  "frame": 1842,
-  "map": "Dem_Lei_MP",
-  "mission": { "won": false, "quit_won": false, "quit_lost": false },
-  "camera": { "x": 3200.0, "y": 1800.0 },
-  "selected_pc_handles": [1],
-  "pcs": [...],
-  "entity_count": 127,
-  "entities": [...]
-}
-```
-
-### `GET /script`
-
-Mission script class and function listing (class names, function names,
-member variables, quad count per class, total counts of instances).
-
-### `GET /script/decompile[?class=Foo]`
-
-Decompiles the loaded script bytecode to TypeScript-like pseudocode.
-Pass `?class=Foo` to scope to one class; omit for the whole file.
+`POST /console` accepts the same command string as the in-game debug console:
 
 ```json
-{ "source": "class Foo {\n  function bar(...) { ... }\n}\n..." }
+{"command":"give all"}
 ```
 
-### `POST /native`
-
-Invoke a single script-VM native with integer arguments. `this` is an
-optional script-side `script_this` override.
-
-```
-POST /native
-{ "op": "SetMissionWon", "args": [], "this": null }
-```
-
-Returns `{ "return": <i32> }` or `{ "error": "..." }`.
-
-### `POST /batch`
-
-Run many natives on the same tick. Each call's `this` and arguments
-are handled independently; results are returned in order.
-
-```
-POST /batch
-{ "calls": [
-    { "op": "GetFrame", "args": [] },
-    { "op": "SetMissionWon", "args": [] }
-]}
-```
-
-Returns `{ "results": [ {...}, {...} ] }`.
-
-### `POST /console`
-
-Run a debug-console command (the same strings you'd type into the
-in-game `~` console).
-
-```
-POST /console
-{ "command": "give all" }
-```
-
-Response `kind` tells you how the command was handled:
-
-- `ok` — executed inline, optional `message` is the console output
-- `unknown` — unrecognised command
-- `not_implemented` — recognised but stubbed
-- `host_followup` — sim-state command that needs host-side dispatch
-  (CAMPAIGN load, ARES advance with side effects, …) — the variant
-  name is returned in `variant`
-
-### `POST /command`
-
-Apply a `PlayerCommand` directly to the engine. Body is the externally
-tagged JSON form of the [`PlayerCommand`](crates/robin_engine/src/player_command.rs)
-enum. Returns `{ "ok": true }` on success.
-
-```
-POST /command
-{ "SelectPc": { "id": 1 } }
-```
-
-### `GET /screenshot`
-
-Returns a PNG image of the next rendered frame.
-**Response body is raw `image/png` bytes**, not JSON.
-
-Query parameters (all optional):
-
-| Param              | Meaning                                                               |
-|--------------------|-----------------------------------------------------------------------|
-| `w`, `h`           | Output size. If both set, image is nearest-neighbour resized. Native render-target size if omitted. |
-| `hide_ui`          | Crop off the bottom HUD panel (80 px) before encoding.                |
-| `view_cones`       | Force the "show all NPC view cones" debug overlay on/off.             |
-| `pc_sight`         | Force the PC-sight overlay.                                           |
-| `motion_graph`     | Motion-graph debug lines.                                             |
-| `all_obstacles`    | Render every active sight obstacle.                                   |
-| `elevation`        | Elevation grid.                                                       |
-| `noise`            | Noise display.                                                        |
-| `sound_source`     | Sound sources.                                                        |
-| `actor_info`       | Per-actor info text.                                                  |
-| `script_zones`     | Script zone outlines.                                                 |
-| `door`             | Door overlay.                                                         |
-| `projection_areas` | Projection area outlines.                                             |
-| `railroad`         | Railroad debug overlay.                                               |
-| `probability`      | Probability display.                                                  |
-| `company_number`   | Company number overlay.                                               |
-| `combat_energy`    | Combat energy bars.                                                   |
-| `light_zones`      | Light zone outlines.                                                  |
-| `animation_lines`  | Animation lines.                                                      |
-| `seek_points`      | Seek points.                                                          |
-| `fps`              | FPS counter.                                                          |
-
-Flag values accept `1`/`0`, `true`/`false`, `yes`/`no`, `on`/`off`
-(case-insensitive), or just a bare `?view_cones` (treated as `true`).
-Flags only affect *this* screenshot — the live `DevState` is untouched.
-
-```
-# Native resolution, no UI, all view cones:
-curl -o shot.png 'http://127.0.0.1:17640/screenshot?hide_ui=1&view_cones=1'
-
-# Scaled to 640x480:
-curl -o thumb.png 'http://127.0.0.1:17640/screenshot?w=640&h=480'
-
-# Multiple debug overlays at once:
-curl -o debug.png 'http://127.0.0.1:17640/screenshot?view_cones&pc_sight&noise'
-```
-
-The render pipeline is explicitly set up so screenshot flags **do not**
-mutate the live engine or dev state — `render_frame` takes `&Engine` +
-`&DevState`, and a per-screenshot throwaway frame is rendered with a
-cloned `DevState` that has the requested flag overrides merged in.
-
-### `POST /step-forward`
-
-Run `n` engine ticks synchronously. Body `{"n": N}` — `N` defaults to
-`1` if the body is empty. Each tick goes through the same bookkeeping
-as a normal unpaused frame (rollback checker, rewind-buffer commit,
-`sim_frame++`).
+`POST /command` accepts the externally tagged JSON representation of
+[`PlayerCommand`](../crates/robin_engine/src/player_command.rs):
 
 ```json
-{"direction": "forward", "from_frame": 0, "frame": 10, "advanced": 10}
+{"SelectPc":{"pc_id":{"Pc":1},"append":false}}
 ```
 
-The endpoint bypasses the `--start-paused` / pause-menu gate so it
-works from a paused game. **Fails organically** when the engine has
-queued a modal dialog / briefing / debriefing — advancing the sim past
-one would skip it, so the request responds:
+The command enters the same deterministic command path as interactive input.
 
-```json
-{"error": "modal dialog/briefing pending — dismiss before stepping the sim"}
+## Screenshots
+
+`GET /screenshot` returns raw `image/png` bytes. Without `frame`, it captures
+the next rendered frame; `frame=N` waits until the simulation has reached at
+least that absolute frame.
+
+| Query | Meaning |
+| --- | --- |
+| `frame` | earliest absolute simulation frame to capture |
+| `full_map` | capture the complete level at 1:1 map scale |
+| `w`, `h` | aspect-preserving output bounds |
+| `hide_ui` | omit screen-space HUD drawing; for a viewport capture, also crop the panel area |
+
+Boolean debug-overlay overrides are `view_cones`, `pc_sight`, `motion_graph`,
+`surface`, `all_obstacles`, `elevation`, `noise`, `sound_source`, `actor_info`,
+`script_zones`, `door`, `projection_areas`, `railroad`, `probability`,
+`company_number`, `combat_energy`, `light_zones`, `animation_lines`,
+`seek_points`, `fps`, `sprite_masks` and `entity_ids`.
+
+Values accept `1`/`0`, `true`/`false`, `yes`/`no` and `on`/`off`; a bare flag
+means true. Overrides affect only the throwaway capture frame and do not mutate
+the live `DevState`.
+
+```bash
+curl -o shot.png \
+  'http://127.0.0.1:17640/screenshot?hide_ui=1&view_cones=1'
+
+curl -o map.png \
+  'http://127.0.0.1:17640/screenshot?full_map=1&hide_ui=1&frame=100'
+
+curl -o thumb.png \
+  'http://127.0.0.1:17640/screenshot?w=640&h=480'
 ```
 
-`advanced` may be less than `n` if the sim hit a modal partway through
-the batch — the step returns early with the frames it did manage to
-run.
+## Timeline control
 
-### `POST /step-back`
+These endpoints are intended for deterministic automation, especially with
+`--start-paused`.
 
-Rewind `n` frames through the engine's rollback buffer. Body
-`{"n": N}` (defaults to 1). Replaces the live engine/game/assets/dev
-state with the reconstructed state at `sim_frame - N`.
+| Method | Path | Body | Behavior |
+| --- | --- | --- | --- |
+| `POST` | `/step-forward` | `{"n":10}` | run full frame-equivalent ticks |
+| `POST` | `/step-back` | `{"n":10}` | restore and replay through rewind history |
+| `POST` | `/go-to-frame` | `{"frame":100}` | move forward or backward to an absolute frame |
+| `POST` | `/set-paused` | `{"paused":true}` | change the manual-pause flag |
 
-```json
-{"direction": "back", "from_frame": 10, "frame": 7, "rewound": 3}
+Forward stepping applies recorded commands when replay playback is active and
+runs normal rollback/history bookkeeping. Automation steps silently dismiss
+pending dialogs, popup scrolls, debriefings, Sherwood reports and pause-all
+states so they cannot deadlock the driver. Successful replies include
+`modals_dismissed` where applicable.
+
+Backward movement fails if the requested frame predates retained rewind
+history. Moving the timeline resets rollback-checker history because the live
+Engine is now on a reconstructed timeline.
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"n":1}' http://127.0.0.1:17640/step-forward
+
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"frame":250}' http://127.0.0.1:17640/go-to-frame
 ```
 
-Fails with 400 if:
-- `n` exceeds the current frame number, or
-- the target frame is older than the oldest retained snapshot
-  (the buffer's exponential retention means you can't always reach
-  arbitrarily far back — typical coverage is a few hundred frames).
+## Replay handoff
 
-## Error responses
+- `GET /get-replay` returns the current recorder's JSONL byte stream from its
+  in-memory mirror as `{"content":"..."}`.
+- `POST /load-replay` accepts `{"data":"...","paused":true}`. It stages the
+  replay for the next mission start; the caller must then trigger that restart.
 
-Any failure returns a 4xx/5xx with a JSON body:
+The same handoff works for native and wasm drivers. Replay schema compatibility
+is intentionally limited to the current format.
 
-```json
-{ "error": "bad json: expected value at line 1 column 3" }
-```
+## Errors
 
-- `400` — malformed payload, bad native, or handler-returned error
-- `404` — unknown path
-- `504` — game loop didn't process the request within 60 s
-- `500` — response channel dropped (listener thread is gone)
+Failures return a 4xx or 5xx response with `{"error":"..."}`:
 
-## Examples
+- `400` for malformed input or a rejected operation;
+- `404` for an unknown route;
+- `500` if the response channel disappears;
+- `504` if the game thread does not process the request within 60 seconds.
 
-```
-# Snapshot the current state:
-curl -s http://127.0.0.1:17640/state | jq .frame
-
-# Invoke a native:
-curl -s -X POST http://127.0.0.1:17640/native \
-     -H 'Content-Type: application/json' \
-     -d '{"op":"SetMissionWon","args":[]}'
-
-# Run a console cheat:
-curl -s -X POST http://127.0.0.1:17640/console \
-     -H 'Content-Type: application/json' \
-     -d '{"command":"give all"}'
-
-# Decompile one class:
-curl -s 'http://127.0.0.1:17640/script/decompile?class=MissionMain' | jq -r .source
-
-# Save a clean screenshot of just the map:
-curl -s -o map.png \
-     'http://127.0.0.1:17640/screenshot?hide_ui=1'
-
-# Drive a --start-paused game one tick at a time:
-curl -s -X POST -d '{"n":1}' \
-     -H 'Content-Type: application/json' \
-     http://127.0.0.1:17640/step-forward
-
-# Rewind 30 frames:
-curl -s -X POST -d '{"n":30}' \
-     -H 'Content-Type: application/json' \
-     http://127.0.0.1:17640/step-back
-```
+For endpoint discovery, prefer `GET /` over copying a route list into external
+tools; the discovery document is maintained next to the server dispatcher.
