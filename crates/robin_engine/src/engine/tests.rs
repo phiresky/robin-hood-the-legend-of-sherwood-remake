@@ -3281,7 +3281,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     assert!(!accepted);
     // Without `mission_script`, the status store isn't populated
     // either — the setter early-returns.  Covering the "happens to
-    // have GameHost but no class" flow is left to the integration
+    // have ScriptEffects but no class" flow is left to the integration
     // level, so here we just confirm `false` + no panic.
     let _ = ScrollStatus::Opened; // keep symbol live
 }
@@ -7272,7 +7272,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
 // ─── Waypoint-script VM dispatch ───────────────────────────────────
 //
 // Covers the per-waypoint VM wiring added to `MissionScript`:
-// `bind_waypoint` + `call_waypoint_function`.  Each scripted waypoint
+// `bind_waypoint` + the shared ScriptVmKey driver. Each scripted waypoint
 // carries its own VM and `Initialize()` + `ReachPoint(actor)` dispatch
 // into that VM.
 
@@ -7338,10 +7338,9 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 }
 
 /// `bind_waypoint` inserts a `ScriptInstance` keyed by `(path, wp)`
-/// and runs `Initialize()` once.  A missing class returns `false`
-/// and stores nothing.
+/// without running callbacks through a bypass path.
 #[test]
-fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
+fn bind_waypoint_inserts_instance() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
@@ -7366,29 +7365,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
             .waypoint_instances
             .contains_key(&(crate::ai::PathId::new(2).unwrap(), 3))
     );
-
-    // Unknown class is a `false` return + no map insertion.
-    assert!(!script.bind_waypoint(
-        crate::ai::PathId::new(4).unwrap(),
-        0,
-        "NonExistent",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(
-        !script
-            .waypoint_instances
-            .contains_key(&(crate::ai::PathId::new(4).unwrap(), 0))
-    );
 }
 
-/// `call_waypoint_function` dispatches `ReachPoint(actor)` against the
-/// bound instance.  A key with no bound instance returns `Ok(0)` —
-/// matches the pattern used by `call_actor_function` / `call_scroll_function`.
 #[test]
-fn call_waypoint_function_dispatches_and_falls_back() {
-    let scb = scripted_waypoint_scb();
-    let mut script = MissionScript::from_scb(scb).expect("from_scb");
+#[should_panic(expected = "Waypoint script class 'NonExistent'")]
+fn bind_waypoint_rejects_missing_referenced_class() {
+    let mut script = MissionScript::from_scb(scripted_waypoint_scb()).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
@@ -7398,50 +7380,69 @@ fn call_waypoint_function_dispatches_and_falls_back() {
         &mut ai_global,
         &mut fast_grid,
     );
-    assert!(script.bind_waypoint(
-        crate::ai::PathId::new(0).unwrap(),
+    script.bind_waypoint(
+        crate::ai::PathId::new(4).unwrap(),
         0,
-        "TestWaypoint",
+        "NonExistent",
         &mut script_domains,
         &capabilities,
-    ));
+    );
+}
+
+/// The Engine driver dispatches `ReachPoint(actor)` against the bound
+/// waypoint instance and distinguishes a missing VM from a missing method.
+#[test]
+fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
+    let scb = scripted_waypoint_scb();
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(MissionScript::from_scb(scb).expect("from_scb"));
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(&assets, |script, script_domains, capabilities| {
+            assert!(script.bind_waypoint(
+                crate::ai::PathId::new(0).unwrap(),
+                0,
+                "TestWaypoint",
+                script_domains,
+                capabilities,
+            ));
+        })
+        .expect("mission installed");
 
     // Bound: call dispatches cleanly.
     let actor_handle = 42;
-    let ret = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(0).unwrap(),
-            0,
+    let ret = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "ReachPoint",
             &[actor_handle],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
         .expect("ReachPoint");
     assert_eq!(ret, 0, "empty ReachPoint should return 0");
 
-    // Unbound key: `Ok(0)`, no panic.
-    let ret_missing = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(7).unwrap(),
-            9,
+    // A missing required VM is structural, not an optional-method default.
+    let missing = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(7).unwrap(), 9),
             "ReachPoint",
             &[actor_handle],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
-        .expect("missing instance should be Ok(0)");
-    assert_eq!(ret_missing, 0);
+        .expect_err("missing instance is an error");
+    assert!(missing.contains("required VM is not bound"));
 
     // Missing function on a bound instance: also `Ok(0)`.
-    let ret_no_fn = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(0).unwrap(),
-            0,
+    let ret_no_fn = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "NotAFunction",
             &[],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
         .expect("missing function should be Ok(0)");
     assert_eq!(ret_no_fn, 0);
@@ -8398,4 +8399,28 @@ fn start_macro_empty_slot_is_noop() {
     assert!(engine.has_quick_action(pc, 2));
     assert!(!engine.has_quick_action(pc, 0));
     assert!(!engine.has_quick_action(pc, 1));
+}
+
+#[test]
+fn sherwood_harvest_detaches_production_sector_and_clears_points() {
+    let mut engine = EngineInner::new();
+    let mut sector =
+        crate::sector_production::SectorProduction::new(crate::sector_production::Type::MakeArrow);
+    sector.script_zone = Some(3);
+    sector
+        .production_points
+        .push(crate::sector_production::Point {
+            x: 12.0,
+            y: 34.0,
+            layer: 2,
+            sector: 7,
+            obstacle: 0xFFFF,
+        });
+    engine.mission_domain.campaign.production_sectors = vec![sector];
+
+    engine.harvest_production_sector_state(&LevelAssets::new());
+
+    let sector = &engine.mission_domain.campaign.production_sectors[0];
+    assert_eq!(sector.script_zone, None);
+    assert!(sector.production_points.is_empty());
 }

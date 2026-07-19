@@ -7,32 +7,605 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
+#[cfg(test)]
+std::thread_local! {
+    static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ACTIVE_DRIVER_SNAPSHOT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn arm_active_driver_snapshot_probe() {
+    ACTIVE_DRIVER_SNAPSHOT_PROBE.with(|probe| probe.set(true));
+    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|error| *error.borrow_mut() = None);
+}
+
+#[cfg(test)]
+pub(super) fn take_active_driver_snapshot_error() -> Option<String> {
+    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|error| error.borrow_mut().take())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ActiveScriptCall {
+    pub(super) target: ScriptVmKey,
+    pub(super) frame: crate::natives::ScriptCallFrame,
+    /// External-native entry supplies receiver context but is not a VM
+    /// activation and therefore must not consume one recursion slot.
+    pub(super) counts_toward_depth: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct ScriptDriverError {
+    pub(super) detail: String,
+    /// True once the sequence element that actually failed has been marked
+    /// Impossible. Ancestor actions must not be blamed for descendant errors.
+    pub(super) sequence_element_failed: bool,
+}
+
+impl ScriptDriverError {
+    pub(super) fn new(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            sequence_element_failed: false,
+        }
+    }
+}
+
+impl From<String> for ScriptDriverError {
+    fn from(detail: String) -> Self {
+        Self::new(detail)
+    }
+}
+
+impl From<&str> for ScriptDriverError {
+    fn from(detail: &str) -> Self {
+        Self::new(detail)
+    }
+}
+
 /// Script-originated effects removed from the VM adapter before processing.
 ///
 /// Draining first ends the `MissionScript` borrow. Effect handlers may then
 /// synchronously re-enter script dispatch while the canonical VM remains in
 /// `ScriptRuntime`; no engine state or script owner is parked elsewhere.
-#[derive(Default)]
-struct PendingScriptEffects {
-    sound: Vec<crate::natives::SoundCommand>,
-    engine: Vec<crate::natives::EngineCommand>,
-    completed_sequences: Vec<crate::sequence::Sequence>,
-    deferred: Vec<crate::natives::DeferredCommand>,
-}
+impl EngineInner {
+    /// Run one callback to completion, servicing every VM yield before the
+    /// caller regains control. This is the sole engine-owned yield/resume
+    /// boundary for all persistent script-instance kinds.
+    pub(super) fn call_script_vm(
+        &mut self,
+        assets: &LevelAssets,
+        key: ScriptVmKey,
+        fn_name: &str,
+        params: &[i32],
+        frame: crate::natives::ScriptCallFrame,
+    ) -> Result<i32, String> {
+        self.call_script_vm_inner(assets, key, fn_name, params, frame, &mut Vec::new())
+            .map_err(|error| error.detail)
+    }
 
-impl PendingScriptEffects {
-    fn drain(script: &mut MissionScript) -> Self {
-        let game_host = &mut script.game_host;
-        Self {
-            sound: std::mem::take(&mut game_host.sound_commands),
-            engine: game_host.drain_commands(),
-            completed_sequences: game_host.take_completed_sequences(),
-            deferred: std::mem::take(&mut game_host.deferred_commands),
+    pub(super) fn call_script_vm_inner(
+        &mut self,
+        assets: &LevelAssets,
+        key: ScriptVmKey,
+        fn_name: &str,
+        params: &[i32],
+        frame: crate::natives::ScriptCallFrame,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<i32, ScriptDriverError> {
+        let script =
+            self.scripts.mission.as_ref().ok_or_else(|| {
+                format!("cannot call {key:?}.{fn_name}: no mission script loaded")
+            })?;
+        if !script.has_script_vm(key) {
+            return Err(format!("cannot call {key:?}.{fn_name}: required VM is not bound").into());
+        }
+        if !script.script_vm_has_function(key, fn_name) {
+            return Ok(if fn_name == "FilterAIEvent" { 1 } else { 0 });
+        }
+
+        let real_depth = active
+            .iter()
+            .filter(|call| call.counts_toward_depth)
+            .count();
+        if real_depth >= usize::from(crate::natives::MAX_NESTED_CALL_DEPTH) {
+            return Err(ScriptDriverError::new(format!(
+                "nested script callback depth limit ({}) exceeded while calling {key:?}.{fn_name}",
+                crate::natives::MAX_NESTED_CALL_DEPTH
+            )));
+        }
+
+        let mut activation = self
+            .with_script_session_in_driver(assets, |script, _, _| {
+                script.begin_script_vm(key, fn_name, params)
+            })
+            .expect("validated mission script vanished")?;
+
+        self.scripts
+            .mission
+            .as_mut()
+            .expect("validated mission script vanished before activation guard")
+            .push_active_driver_frame(frame);
+        active.push(ActiveScriptCall {
+            target: key,
+            frame,
+            counts_toward_depth: true,
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.drive_started_script_vm(assets, key, fn_name, frame, &mut activation, active)
+        }));
+        let popped = active.pop();
+        debug_assert!(popped.is_some_and(|call| call.target == key));
+        self.scripts
+            .mission
+            .as_mut()
+            .expect("mission script vanished while restoring activation guard")
+            .pop_active_driver_frame(frame);
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
         }
     }
-}
 
-impl EngineInner {
+    fn drive_started_script_vm(
+        &mut self,
+        assets: &LevelAssets,
+        key: ScriptVmKey,
+        fn_name: &str,
+        frame: crate::natives::ScriptCallFrame,
+        activation: &mut crate::interp::VmActivationState,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<i32, ScriptDriverError> {
+        loop {
+            let stop = self
+                .with_script_session_in_driver(assets, |script, script_domains, capabilities| {
+                    script.resume_script_vm(
+                        key,
+                        fn_name,
+                        frame,
+                        activation,
+                        script_domains,
+                        capabilities,
+                    )
+                })
+                .expect("mission script vanished while callback was suspended");
+            self.drain_script_effects_with_active(assets, active)?;
+            match stop {
+                crate::interp::StopReason::ReturnedValue(value) => return Ok(value),
+                crate::interp::StopReason::Returned => return Ok(0),
+                crate::interp::StopReason::Yield(request) => {
+                    let operation_result = match request.operation {
+                        crate::interp::NativeOperation::ScriptCall(call) => {
+                            let nested_frame = match call.script_this {
+                                crate::interp::NestedCallScriptThis::TargetActor => {
+                                    frame.with_script_this(call.actor_handle)
+                                }
+                                crate::interp::NestedCallScriptThis::PreserveCaller => frame,
+                            };
+                            let nested_key = ScriptVmKey::Actor(call.actor_handle);
+                            self.call_script_vm_inner(
+                                assets,
+                                nested_key,
+                                &call.fn_name,
+                                &call.params,
+                                nested_frame,
+                                active,
+                            )?
+                        }
+                        crate::interp::NativeOperation::SequenceAction(operation) => {
+                            self.drive_detached_sequence_operation(assets, operation, active)?;
+                            0
+                        }
+                        crate::interp::NativeOperation::EngineAction(action) => {
+                            self.execute_synchronous_script_request(assets, action, active)?
+                        }
+                    };
+                    activation.native_return_value = match request.resume {
+                        crate::interp::ResumePolicy::OperationResult => operation_result,
+                        crate::interp::ResumePolicy::Fixed(value) => value,
+                    };
+                }
+                crate::interp::StopReason::StepLimit => {
+                    return Err(ScriptDriverError::new(format!(
+                        "{key:?} script {fn_name} exceeded the VM step limit"
+                    )));
+                }
+                other => {
+                    return Err(ScriptDriverError::new(format!(
+                        "{key:?} script {fn_name} stopped abnormally: {other:?}"
+                    )));
+                }
+            }
+        }
+    }
+
+    fn execute_synchronous_script_request(
+        &mut self,
+        assets: &LevelAssets,
+        request: crate::interp::SynchronousScriptRequest,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<i32, ScriptDriverError> {
+        match request {
+            crate::interp::SynchronousScriptRequest::SetPersistentLifePoints {
+                actor,
+                amount,
+                ..
+            } => {
+                let actor = self
+                    .entity_id_for_actor_handle(actor)
+                    .ok_or_else(|| format!("invalid actor handle {actor}"))?;
+                self.apply_scripted_life_points(assets, actor, amount);
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::SetPersistentConcussion {
+                actor,
+                amount,
+                ..
+            } => {
+                let actor = self
+                    .entity_id_for_actor_handle(actor)
+                    .ok_or_else(|| format!("invalid actor handle {actor}"))?;
+                self.get_entity(actor)
+                    .expect("validated concussion actor vanished before synchronous apply")
+                    .human_data()
+                    .expect("validated concussion actor lost HumanData before synchronous apply");
+                // C++ first narrows to UWORD, then tests the stored value as
+                // SWORD. Values with bit 15 set become negative and normalize
+                // to zero before the upper concussion cap is considered.
+                let narrowed = amount as u16;
+                let value = if (narrowed as i16) < 0 { 0 } else { narrowed };
+                self.apply_scripted_concussion(assets, actor, value, true);
+                self.drain_pending_concussion_side_effects(assets);
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::SetActorPosture { actor, posture, .. } => {
+                self.apply_script_actor_posture(assets, actor, posture, active)?;
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::SetActorLocation {
+                actor, location, ..
+            } => Ok(self.apply_script_actor_location(assets, actor, location)?),
+            crate::interp::SynchronousScriptRequest::SetActorActionState {
+                actor, state, ..
+            } => {
+                let actor_id = self
+                    .entity_id_for_actor_handle(actor)
+                    .ok_or_else(|| format!("SetActorActionState invalid actor {actor}"))?;
+                let state = crate::element::ActionState::try_from(state as u32)
+                    .map_err(|_| format!("SetActorActionState invalid state {state}"))?;
+                self.get_entity_mut(actor_id)
+                    .expect("validated SetActorActionState actor vanished")
+                    .actor_data_mut()
+                    .expect("validated SetActorActionState human lost ActorData")
+                    .action_state = state;
+                self.actor_wait(actor_id);
+                self.drain_script_synchronous_actions(assets, active)?;
+                Ok(0)
+            }
+        }
+    }
+
+    fn apply_script_actor_location(
+        &mut self,
+        assets: &LevelAssets,
+        actor_handle: i32,
+        location: i32,
+    ) -> Result<i32, String> {
+        let actor = self
+            .entity_id_for_actor_handle(actor_handle)
+            .ok_or_else(|| format!("SetActorLocation invalid actor handle {actor_handle}"))?;
+
+        if location != 0 {
+            if self
+                .get_entity(actor)
+                .expect("validated SetActorLocation actor vanished")
+                .element_data()
+                .in_honolulu
+            {
+                let entity = self
+                    .get_entity_mut(actor)
+                    .expect("validated SetActorLocation actor vanished before activation");
+                entity.element_data_mut().active = true;
+                entity.element_data_mut().in_honolulu = false;
+            }
+
+            let script = self
+                .scripts
+                .mission
+                .as_ref()
+                .expect("SetActorLocation requires the active mission script");
+            let location_index = crate::natives::ScriptHandleCodec::location_index(location);
+            let resolved = location_index.and_then(|index| {
+                if index < script.bindings.script_location_count {
+                    // Static sector handles follow points in the original
+                    // script-object array and are deliberately rejected only
+                    // after Honolulu reactivation.
+                    if index >= script.bindings.script_point_count {
+                        return None;
+                    }
+                    Some((
+                        *script.bindings.location_positions.get(index)?,
+                        Some((
+                            *script.bindings.location_layers.get(index)?,
+                            *script.bindings.location_sectors.get(index)?,
+                        )),
+                    ))
+                } else {
+                    let computed = script
+                        .state
+                        .computed_locations
+                        .get(index - script.bindings.script_location_count)?;
+                    Some((computed.position, computed.layer_sector))
+                }
+            });
+            let Some(((x, y), dest_layer_sector)) = resolved else {
+                tracing::warn!(
+                    "SetActorLocation: location {location} is invalid or is not a point"
+                );
+                return Ok(0);
+            };
+
+            // Original RHScript.cpp writes map position/layer/sector before
+            // discovering that the referenced sector is not a motion area.
+            if let Some((layer, sector)) = dest_layer_sector {
+                let element = self
+                    .get_entity_mut(actor)
+                    .expect("validated SetActorLocation actor vanished before partial write")
+                    .element_data_mut();
+                element.set_position_map(crate::coordinates::MapPoint { x, y });
+                element.set_layer(layer);
+                element.set_sector(crate::position_interface::SectorHandle::new(sector));
+                let valid_motion = self.world.fast_grid.level.sectors.iter().any(|candidate| {
+                    candidate.sector_number.get() == sector as i16
+                        && candidate.layer == layer
+                        && candidate.sector_type.is_motion()
+                        && candidate.sector_type.is_area()
+                });
+                if !valid_motion {
+                    tracing::warn!(
+                        "SetActorLocation: location {location} references non-motion sector {sector}"
+                    );
+                    return Ok(0);
+                }
+            }
+            self.apply_host_commands(
+                assets,
+                vec![crate::natives::EngineCommand::SetActorLocation {
+                    actor_handle,
+                    x,
+                    y,
+                    dest_layer_sector,
+                    spawn_elevation_probe: None,
+                }],
+            );
+            return Ok(1);
+        }
+
+        {
+            let entity = self
+                .get_entity_mut(actor)
+                .expect("validated SetActorLocation actor vanished before Honolulu mutation");
+            entity.element_data_mut().active = false;
+            entity.element_data_mut().in_honolulu = true;
+        }
+        let is_human = self
+            .get_entity(actor)
+            .expect("SetActorLocation actor vanished after Honolulu mutation")
+            .is_human();
+        if is_human {
+            self.quit_swordfight(assets, actor);
+            let still_unconscious = self
+                .get_entity(actor)
+                .expect("SetActorLocation human vanished after QuitSwordFight")
+                .human_data()
+                .expect("SetActorLocation validated human lost HumanData")
+                .unconscious;
+            self.feedback.titbit_manager.remove_unconscious_stars_if(
+                crate::titbit::ElementHandle(actor.index()),
+                still_unconscious,
+            );
+        }
+        let mut disabled_pc = false;
+        match self
+            .get_entity_mut(actor)
+            .expect("SetActorLocation actor vanished before playability/AI mutation")
+        {
+            crate::element::Entity::Pc(pc) if pc.pc.playable => {
+                pc.pc.playable = false;
+                disabled_pc = true;
+                self.orders.messenger.send(crate::messenger::Message::pc(
+                    crate::messenger::PcMessage::DisableCharacter,
+                    Some(actor),
+                ));
+            }
+            entity if entity.is_npc() => {
+                let ai = entity
+                    .ai_controller_mut()
+                    .expect("SetActorLocation resolved NPC without an AI controller");
+                if !ai.script_locked {
+                    ai.script_lock(false, false);
+                }
+            }
+            _ => {}
+        }
+        if disabled_pc {
+            self.unselect_single_pc(actor);
+        }
+        Ok(1)
+    }
+
+    /// `RHScript::SetActorPosture` translated at the engine boundary so every
+    /// Stop/SetPosture/Wait/concussion/death step completes in source order
+    /// before the VM observes its next opcode.
+    fn apply_script_actor_posture(
+        &mut self,
+        assets: &LevelAssets,
+        actor_handle: i32,
+        posture_id: i32,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<(), ScriptDriverError> {
+        use crate::element::{ActionState, Posture};
+
+        let actor = self
+            .entity_id_for_actor_handle(actor_handle)
+            .ok_or_else(|| format!("SetActorPosture invalid actor handle {actor_handle}"))?;
+        let (current, is_npc) = self
+            .get_entity(actor)
+            .filter(|entity| entity.is_human())
+            .map(|entity| (entity.element_data().posture, entity.is_npc()))
+            .ok_or_else(|| format!("SetActorPosture target {actor_handle} is not human"))?;
+
+        let set_posture = |engine: &mut Self, posture| {
+            engine
+                .get_entity_mut(actor)
+                .expect("validated posture actor vanished")
+                .set_posture(posture);
+        };
+        let wait = |engine: &mut Self, active: &mut Vec<ActiveScriptCall>| {
+            engine.actor_wait(actor);
+            engine.drain_script_synchronous_actions(assets, active)
+        };
+        let clear_concussion = |engine: &mut Self| {
+            engine.apply_scripted_concussion(assets, actor, 0, true);
+            engine.drain_pending_concussion_side_effects(assets);
+        };
+        let notify_down = |engine: &mut Self| {
+            if is_npc {
+                engine.dispatch_ai_stimulus(
+                    actor,
+                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
+                );
+                engine.broadcast_body_detectable(actor);
+            }
+        };
+
+        match posture_id {
+            0 => {
+                if current == Posture::CarryingCorpse {
+                    assert!(
+                        self.get_entity(actor)
+                            .expect("validated carrying actor vanished")
+                            .is_pc(),
+                        "SetActorPosture(UPRIGHT) from CarryingCorpse requires a PC"
+                    );
+                }
+                if current == Posture::Lying && is_npc {
+                    self.broadcast_resurrection(actor);
+                }
+                set_posture(self, Posture::Upright);
+                wait(self, active)?;
+                if current != Posture::CarryingCorpse {
+                    clear_concussion(self);
+                }
+            }
+            2 => {
+                set_posture(self, Posture::Lying);
+                wait(self, active)?;
+                clear_concussion(self);
+            }
+            7 => {
+                notify_down(self);
+                set_posture(self, Posture::Tied);
+                wait(self, active)?;
+            }
+            10 => {
+                set_posture(self, Posture::Crouched);
+                self.get_entity_mut(actor)
+                    .expect("validated crouched actor vanished")
+                    .actor_data_mut()
+                    .expect("validated crouched human lost ActorData")
+                    .action_state = ActionState::Waiting;
+                wait(self, active)?;
+            }
+            15 => {
+                self.apply_scripted_life_points(assets, actor, 0);
+                let entity = self
+                    .get_entity_mut(actor)
+                    .expect("validated dead actor vanished after virtual Kill");
+                entity.set_posture(Posture::Dead);
+                entity
+                    .actor_data_mut()
+                    .expect("validated dead human lost ActorData")
+                    .action_state = ActionState::Waiting;
+                wait(self, active)?;
+            }
+            16 => {
+                set_posture(self, Posture::Sitting);
+                clear_concussion(self);
+                wait(self, active)?;
+            }
+            17 => {
+                self.stop_owner(actor, crate::sequence::SequencePriority::Injury);
+                self.drain_script_synchronous_actions(assets, active)?;
+                set_posture(self, Posture::Lying);
+                self.apply_scripted_concussion(assets, actor, crate::combat::CONCUSSION_MAX, true);
+                self.drain_pending_concussion_side_effects(assets);
+                notify_down(self);
+                wait(self, active)?;
+            }
+            100 => {
+                set_posture(self, Posture::AnonymousArcher);
+                self.get_entity_mut(actor)
+                    .expect("validated AnonymousArcher actor vanished")
+                    .actor_data_mut()
+                    .expect("validated AnonymousArcher human lost ActorData")
+                    .action_state = ActionState::Waiting;
+                self.add_hidden_titbit_for_script_actor(assets, actor_handle, actor);
+                wait(self, active)?;
+            }
+            forbidden @ (4 | 5 | 6 | 8 | 9 | 11) => {
+                tracing::warn!(
+                    "Script Error: SetActorPosture cannot set posture {forbidden} from script"
+                );
+            }
+            other => tracing::warn!("Script Error: SetActorPosture illegal ID {other}"),
+        }
+        Ok(())
+    }
+
+    fn add_hidden_titbit_for_script_actor(
+        &mut self,
+        assets: &LevelAssets,
+        actor_handle: i32,
+        actor: crate::element::EntityId,
+    ) {
+        let entity = self
+            .get_entity(actor)
+            .expect("validated anonymous-archer actor vanished");
+        assert!(
+            entity.is_human(),
+            "SetActorPosture(ANONYMOUS_ARCHER) requires a human actor {actor_handle}"
+        );
+        let phase = if let crate::element::Entity::Pc(pc) = entity {
+            let profile = assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "anonymous archer PC {} has unknown profile_index {}",
+                        actor.index(),
+                        pc.pc.profile_index
+                    )
+                });
+            crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename).to_phase()
+        } else {
+            0
+        };
+        let handle = crate::titbit::ElementHandle(actor.index());
+        self.feedback.titbit_manager.add_titbit(
+            crate::coordinates::WorldPoint3D::default(),
+            0,
+            crate::titbit::TitbitKind::Hidden,
+            handle,
+            phase,
+            handle,
+            false,
+            0,
+            true,
+            None,
+            None,
+        );
+    }
+
     /// Canonical entry boundary for global, actor, zone, target, scroll, and
     /// waypoint script callbacks. The VM and every native capability are
     /// disjoint borrows of their sole owners; nothing is removed from
@@ -46,6 +619,33 @@ impl EngineInner {
             &crate::natives::NativeSessionCapabilities<'_>,
         ) -> R,
     ) -> Option<R> {
+        if let Some(script) = self.scripts.mission.as_ref() {
+            script.assert_no_active_call_frames();
+        }
+        let result = self.with_script_session_in_driver(assets, callback);
+        self.drain_script_effects_with_active(assets, &mut Vec::new())
+            .unwrap_or_else(|error| panic!("script effect drain failed: {}", error.detail));
+        if let Some(script) = self.scripts.mission.as_ref() {
+            script.assert_no_active_call_frames();
+        }
+        result
+    }
+
+    fn with_script_session_in_driver<R>(
+        &mut self,
+        assets: &LevelAssets,
+        callback: impl FnOnce(
+            &mut MissionScript,
+            &mut crate::engine::ScriptDomains,
+            &crate::natives::NativeSessionCapabilities<'_>,
+        ) -> R,
+    ) -> Option<R> {
+        // Unlike `with_script_session`, this helper deliberately does not
+        // assert an empty MissionScript call stack: real activation markers
+        // remain installed across VM suspension, effect application, and all
+        // nested drains. The owning driver pushes/pops them in catch-unwind
+        // guards; external-native receiver frames follow the same lifetime but
+        // are marked as depth-neutral in `ActiveScriptCall`.
         self.scripts.assert_native_attachments_ready();
         let result = {
             let EngineInner {
@@ -60,7 +660,6 @@ impl EngineInner {
                 feedback,
             } = self;
             let script = scripts.mission.as_mut()?;
-            script.assert_no_active_call_frames();
             let campaign = &mut mission_domain.campaign;
             let capabilities = crate::natives::NativeSessionCapabilities::new(
                 &mut world.entities,
@@ -73,18 +672,18 @@ impl EngineInner {
                 &world.static_sight_obstacle_active,
             )
             .with_queries(
-                &orders.sequence_manager,
+                &mut orders.sequence_manager,
                 &mut players.seats[0].selection,
-                &feedback.sound_sim.sources,
+                &mut feedback.sound_sim.sources,
                 &world.weather,
                 &control.frame_counter,
             )
-            .with_campaign(campaign, &mut mission_domain.mission_stat);
+            .with_campaign(campaign, &mut mission_domain.mission_stat)
+            .with_short_briefings(&mut mission_domain.short_briefings)
+            .with_standard_view_radius(&mut ai.standard_view_polygon_radius);
             let result = callback(script, script_domains, &capabilities);
-            script.assert_no_active_call_frames();
             result
         };
-        self.drain_script_effects(assets);
         Some(result)
     }
 
@@ -101,576 +700,313 @@ impl EngineInner {
     /// The queue batch is removed under a short `ScriptRuntime` borrow before
     /// any effect is executed. Handlers can therefore re-enter the same live
     /// VM synchronously without a take/restore ownership transaction.
-    pub(crate) fn drain_script_effects(&mut self, assets: &LevelAssets) {
-        let effects = match self.scripts.mission.as_mut() {
-            Some(script) => PendingScriptEffects::drain(script),
-            None => return,
-        };
-        let PendingScriptEffects {
-            sound,
-            engine: engine_commands,
-            completed_sequences,
-            deferred,
-        } = effects;
+    fn drain_script_effects_with_active(
+        &mut self,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<ActiveScriptCall>,
+    ) -> Result<(), ScriptDriverError> {
+        loop {
+            let (effect, parent_tail) = match self.scripts.mission.as_mut() {
+                Some(script) => {
+                    let Some(effect) = script.script_effects.pop_front() else {
+                        return Ok(());
+                    };
+                    (effect, script.script_effects.take_tail())
+                }
+                None => return Ok(()),
+            };
+            #[cfg(test)]
+            ACTIVE_DRIVER_SNAPSHOT_PROBE.with(|probe| {
+                if probe.replace(false) {
+                    let error = serde_json::to_string(&*self)
+                        .expect_err("active driver must reject full EngineInner serialization")
+                        .to_string();
+                    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|slot| *slot.borrow_mut() = Some(error));
+                }
+            });
+            let (sound, engine_commands, deferred) = match effect {
+                crate::natives::ScriptEffect::ExternalSound(command) => {
+                    (vec![command], Vec::new(), Vec::new())
+                }
+                crate::natives::ScriptEffect::Presentation(command)
+                | crate::natives::ScriptEffect::Simulation(
+                    crate::natives::SimulationEffect::Engine(command),
+                ) => (Vec::new(), vec![command], Vec::new()),
+                crate::natives::ScriptEffect::Simulation(
+                    crate::natives::SimulationEffect::Deferred(command),
+                ) => (Vec::new(), Vec::new(), vec![command]),
+            };
 
-        // Commands whose handlers can synchronously call the mission VM are
-        // kept until the first-pass state effects have completed.
-        let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
-        // RHScript::SendMessage launches a standalone RHCOMMAND_SEND_MESSAGE
-        // sequence element. Keep requests in native-call order and launch
-        // them once the mission script is installed again so their immediate
-        // ProcessMessage callback can re-enter the script system this frame.
-        let mut script_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
+            // Commands whose handlers can synchronously call the mission VM are
+            // kept until the first-pass state effects have completed.
+            let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
 
-        // ── Sound commands ──
-        // Commands that don't need an AudioBackend are processed now.
-        // The remaining ones are queued for main_entry to flush.
-        for cmd in sound {
-            match cmd {
-                crate::natives::SoundCommand::SuspendAll => {
-                    // SuspendAllSoundSources stops the audio
-                    // channels but the paired `ResumeAll` must be
-                    // able to restart every source that was active
-                    // at suspend time.  We clear `active` so the
-                    // hourglass stops channels, but first stash the
-                    // active set on `sound_sim` so `ResumeAll` can
-                    // restore it.
-                    let mut stashed: Vec<u32> = Vec::new();
-                    for i in 0..self.feedback.sound_sim.sources.num_sources() {
-                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(i)
-                            && src.active
+            // ── Sound commands ──
+            // Commands that don't need an AudioBackend are processed now.
+            // The remaining ones are queued for main_entry to flush.
+            for cmd in sound {
+                match cmd {
+                    crate::natives::SoundCommand::SuspendAll => {
+                        // SuspendAllSoundSources stops the audio
+                        // channels but the paired `ResumeAll` must be
+                        // able to restart every source that was active
+                        // at suspend time.  We clear `active` so the
+                        // hourglass stops channels, but first stash the
+                        // active set on `sound_sim` so `ResumeAll` can
+                        // restore it.
+                        let mut stashed: Vec<u32> = Vec::new();
+                        for i in 0..self.feedback.sound_sim.sources.num_sources() {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(i)
+                                && src.active
+                            {
+                                stashed.push(i as u32);
+                                src.active = false;
+                            }
+                        }
+                        self.feedback.sound_sim.suspended_active_sources = stashed;
+                        self.feedback.sound_sim.playing_sources.clear();
+                    }
+                    crate::natives::SoundCommand::ResumeAll => {
+                        // Restore `active` on every source that was
+                        // active at the last suspend — preserves the
+                        // active flag across suspend/resume.
+                        let stashed =
+                            std::mem::take(&mut self.feedback.sound_sim.suspended_active_sources);
+                        for idx in stashed {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx as usize)
+                            {
+                                src.active = true;
+                            }
+                        }
+                        let pos = self.feedback.cutscene_camera.view_position;
+                        let zoom = self.feedback.cutscene_camera.zoom_factor;
+                        self.feedback.pending_side_effects.sounds.push(
+                            super::SoundCommand::ResumeAllSources {
+                                position: pos,
+                                zoom,
+                            },
+                        );
+                        // For every still-active `Single` / `Volatile`
+                        // source that's being resumed, re-arm the
+                        // deterministic finish so the drain in
+                        // `perform_hourglass` applies the same
+                        // transition the host used to drive from
+                        // `stop_sound_source`.
+                        schedule_source_finishes_for_all_active(
+                            &mut self.feedback.sound_sim,
+                            &assets.source_durations,
+                            self.control.frame_counter,
+                        );
+                    }
+                    crate::natives::SoundCommand::Activate(h) => {
+                        // Mark active sim-side (participates in rollback hash),
+                        // then emit the side-effect so the host audio backend
+                        // picks up the source and starts a channel.  Symmetric
+                        // with the Deactivate path below.
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
                         {
-                            stashed.push(i as u32);
-                            src.active = false;
+                            // Re-activation cancels any previously
+                            // scheduled finish so we don't prematurely
+                            // kill a freshly-restarted source.
+                            self.feedback
+                                .sound_sim
+                                .playing_sources
+                                .retain(|p| p.source_index as usize != idx);
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                                src.active = true;
+                                schedule_source_finish(
+                                    &src.source_kind,
+                                    src.id,
+                                    idx,
+                                    self.control.frame_counter,
+                                    &assets.source_durations,
+                                    &mut self.feedback.sound_sim.playing_sources,
+                                );
+                            }
+                            self.feedback
+                                .pending_side_effects
+                                .sounds
+                                .push(super::SoundCommand::ActivateSource(idx));
                         }
                     }
-                    self.feedback.sound_sim.suspended_active_sources = stashed;
-                    self.feedback.sound_sim.playing_sources.clear();
-                }
-                crate::natives::SoundCommand::ResumeAll => {
-                    // Restore `active` on every source that was
-                    // active at the last suspend — preserves the
-                    // active flag across suspend/resume.
-                    let stashed =
-                        std::mem::take(&mut self.feedback.sound_sim.suspended_active_sources);
-                    for idx in stashed {
-                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx as usize) {
-                            src.active = true;
+                    crate::natives::SoundCommand::Deactivate(h) => {
+                        // Mark inactive; hourglass will stop the channel.
+                        // Drop any pending scheduled finish — the source
+                        // is no longer playing and a stale `finish_frame`
+                        // would fire as a no-op on an already-inactive
+                        // source, but clearing it keeps the queue small
+                        // and unambiguous across rollback snapshots.
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+                        {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                                src.active = false;
+                            }
+                            self.feedback
+                                .sound_sim
+                                .playing_sources
+                                .retain(|p| p.source_index as usize != idx);
                         }
                     }
-                    let pos = self.feedback.cutscene_camera.view_position;
-                    let zoom = self.feedback.cutscene_camera.zoom_factor;
-                    self.feedback.pending_side_effects.sounds.push(
-                        super::SoundCommand::ResumeAllSources {
-                            position: pos,
-                            zoom,
-                        },
-                    );
-                    // For every still-active `Single` / `Volatile`
-                    // source that's being resumed, re-arm the
-                    // deterministic finish so the drain in
-                    // `perform_hourglass` applies the same
-                    // transition the host used to drive from
-                    // `stop_sound_source`.
-                    schedule_source_finishes_for_all_active(
-                        &mut self.feedback.sound_sim,
-                        &assets.source_durations,
-                        self.control.frame_counter,
-                    );
-                }
-                crate::natives::SoundCommand::Activate(h) => {
-                    // Mark active sim-side (participates in rollback hash),
-                    // then emit the side-effect so the host audio backend
-                    // picks up the source and starts a channel.  Symmetric
-                    // with the Deactivate path below.
-                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
-                        // Re-activation cancels any previously
-                        // scheduled finish so we don't prematurely
-                        // kill a freshly-restarted source.
-                        self.feedback
-                            .sound_sim
-                            .playing_sources
-                            .retain(|p| p.source_index as usize != idx);
-                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                            src.active = true;
-                            schedule_source_finish(
-                                &src.source_kind,
-                                src.id,
-                                idx,
-                                self.control.frame_counter,
-                                &assets.source_durations,
-                                &mut self.feedback.sound_sim.playing_sources,
-                            );
+                    crate::natives::SoundCommand::Destroy(h) => {
+                        if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h)
+                        {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
+                                src.active = false;
+                            }
+                            self.feedback.sound_sim.sources.delete(idx);
+                            self.feedback
+                                .sound_sim
+                                .playing_sources
+                                .retain(|p| p.source_index as usize != idx);
                         }
+                    }
+                    crate::natives::SoundCommand::PlayJingle(jingle) => {
                         self.feedback
                             .pending_side_effects
                             .sounds
-                            .push(super::SoundCommand::ActivateSource(idx));
-                    }
-                }
-                crate::natives::SoundCommand::Deactivate(h) => {
-                    // Mark inactive; hourglass will stop the channel.
-                    // Drop any pending scheduled finish — the source
-                    // is no longer playing and a stale `finish_frame`
-                    // would fire as a no-op on an already-inactive
-                    // source, but clearing it keeps the queue small
-                    // and unambiguous across rollback snapshots.
-                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
-                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                            src.active = false;
-                        }
-                        self.feedback
-                            .sound_sim
-                            .playing_sources
-                            .retain(|p| p.source_index as usize != idx);
-                    }
-                }
-                crate::natives::SoundCommand::Destroy(h) => {
-                    if let Some(idx) = crate::natives::ScriptHandleCodec::sound_source_index(h) {
-                        if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
-                            src.active = false;
-                        }
-                        self.feedback.sound_sim.sources.delete(idx);
-                        self.feedback
-                            .sound_sim
-                            .playing_sources
-                            .retain(|p| p.source_index as usize != idx);
+                            .push(super::SoundCommand::Jingle(jingle));
                     }
                 }
             }
-        }
 
-        // ── Completed sequences (from Record*/Thanx) ──
-        for seq in completed_sequences {
-            self.launch_sequence(seq);
-        }
-
-        // ── Deferred game-logic commands ──
-        // Re-entrant handlers are deferred until the first-pass effects
-        // have released all temporary borrows.
-        for cmd in deferred {
-            match cmd {
-                crate::natives::DeferredCommand::SendMessage {
-                    actor,
-                    message,
-                    arg1,
-                    arg2,
-                } => script_messages.push((actor, message, arg1, arg2)),
-                crate::natives::DeferredCommand::SelectPC { actor, select } => {
-                    // Scripted scene: targets the LOCAL seat.
-                    if actor == 0 {
-                        // NULL actor → select/deselect all
-                        if select {
-                            self.select_all_pcs(assets, 0);
-                        } else {
-                            self.unselect_all_pcs(0);
-                        }
-                    } else if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        if select {
-                            // Script-path SelectPC uses `speak=false`
-                            // — script already owns the sound flow.
-                            self.select_pc(assets, 0, id, false, false);
-                        } else {
-                            self.players.seats[0].selection.retain(|&x| x != id);
-                        }
-                    }
-                }
-                crate::natives::DeferredCommand::StopActor { actor } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.stop_owner(id, crate::sequence::SequencePriority::Script);
-                    }
-                }
-                crate::natives::DeferredCommand::FreezeAll { freeze } => {
-                    self.set_actors_frozen(freeze);
-                }
-                crate::natives::DeferredCommand::HandleDeath { actor } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.handle_death(assets, id);
-                    }
-                }
-                crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.add_damage_number(id, damage);
-                    }
-                }
-                crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.say_ouch(assets, id, Some(damage));
-                    }
-                }
-                crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.apply_scripted_life_points(assets, id, amount);
-                    }
-                }
-                crate::natives::DeferredCommand::SetScriptedConcussion {
-                    actor,
-                    amount,
-                    force_value,
-                } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        // Clamp negative `i32` from the script stack to 0
-                        // before casting; `combat::set_concussion` clamps
-                        // the upper bound to `CONCUSSION_MAX`.
-                        let value = amount.max(0).min(u16::MAX as i32) as u16;
-                        self.apply_concussion(assets, id, value, force_value);
-                    }
-                }
-                crate::natives::DeferredCommand::QuitSwordfight { actor } => {
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.quit_swordfight(assets, id);
-                    }
-                }
-                crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
-                    // The titbit is only dropped when the actor is *not*
-                    // currently unconscious — `remove_unconscious_stars_if`
-                    // takes `is_still_unconscious` and short-circuits
-                    // otherwise.  Read the live human-data flag now.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor)
-                        && let Some(entity) = self.world.entities.get(id)
-                    {
-                        let still_unconscious = entity.human_data().is_some_and(|h| h.unconscious);
-                        self.feedback.titbit_manager.remove_unconscious_stars_if(
-                            crate::titbit::ElementHandle(id.index()),
-                            still_unconscious,
-                        );
-                    }
-                }
-                crate::natives::DeferredCommand::SetPlayable { actor, playable } => {
-                    // PC playable state (pc.playable) was already set on
-                    // the entity by the native call. Forward
-                    // MSG_ENABLE/DISABLE_CHARACTER to the messenger
-                    // carrying the actor's entity id so the handler
-                    // can drop the PC from the selection and update
-                    // Sherwood interface-hidden state.
-                    let msg_type = if playable {
-                        crate::messenger::PcMessage::EnableCharacter
-                    } else {
-                        crate::messenger::PcMessage::DisableCharacter
-                    };
-                    let pc_id = self.entity_id_for_actor_handle(actor);
-                    self.orders.messenger.send(Message::pc(msg_type, pc_id));
-                    tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
-                }
-                crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
-                    // Save migration only: current natives apply this write
-                    // synchronously and never enqueue the variant. Older
-                    // saves may contain an undrained request, so consume it
-                    // exactly once rather than dropping deterministic state.
-                    let owner = self.entity_id_for_actor_handle(actor).unwrap_or_else(|| {
-                        panic!("saved AI lock references missing actor {actor}")
-                    });
-                    let from_lockai_command = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        })
-                        .is_some_and(|element| element.command == crate::element::Command::LockAi);
-                    let entity = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .expect("saved AI lock actor disappeared during drain");
-                    let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                        panic!("saved AI lock references non-NPC actor {actor}")
-                    });
-                    ai.script_lock(send_back, from_lockai_command);
-                }
-                cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
-                    post_script.push(cmd);
-                }
-                crate::natives::DeferredCommand::PutActorInBuilding { actor, building } => {
-                    self.put_actor_in_building(actor, building);
-                }
-                crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
-                    // Rewind the actor's sprite to frame 0 of its current row.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor)
-                        && let Some(entity) = self.world.entities.get_mut(id)
-                    {
-                        entity.sprite_mut().reset_sprite_frame(false);
-                    }
-                }
-                crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
-                    // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
-                    // loop: drops QA titbits + clears macro_store slot.
-                    if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
-                        for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
-                            self.remove_quick_action_titbits_for(pc_id, slot);
-                            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
-                                state.clear_slot(slot as usize);
+            // ── Deferred game-logic commands ──
+            // Re-entrant handlers are deferred until the first-pass effects
+            // have released all temporary borrows.
+            for cmd in deferred {
+                match cmd {
+                    crate::natives::DeferredCommand::SelectPC { actor, select } => {
+                        // Scripted scene: targets the LOCAL seat.
+                        if actor == 0 {
+                            // NULL actor → select/deselect all
+                            if select {
+                                self.select_all_pcs(assets, 0);
+                            } else {
+                                self.unselect_all_pcs(0);
+                            }
+                        } else if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                            if select {
+                                // Script-path SelectPC uses `speak=false`
+                                // — script already owns the sound flow.
+                                self.select_pc(assets, 0, id, false, false);
+                            } else {
+                                self.players.seats[0].selection.retain(|&x| x != id);
                             }
                         }
                     }
-                }
-                crate::natives::DeferredCommand::LaunchWait { actor } => {
-                    // Build a fresh `SequenceElement(1, Wait, owner)`
-                    // at `Wait` priority and hand it to the sequence
-                    // manager so the instruct arbitration displaces
-                    // any lower-or-equal-priority sequence the actor
-                    // was running.  Called from `SetActorPosture`,
-                    // `SetActorActionState` (every arm), etc., right
-                    // after the script stamps the new posture/action-state.
-                    if let Some(owner) = self.entity_id_for_actor_handle(actor) {
-                        let mut elem = crate::sequence::SequenceElement::new(
-                            1,
-                            crate::element::Command::Wait,
-                            Some(owner),
-                        );
-                        elem.priority = crate::sequence::SequencePriority::Wait;
-                        self.orders.sequence_manager.launch_element(elem);
-                    } else {
-                        tracing::warn!("LaunchWait: invalid actor handle {actor}");
-                    }
-                }
-                crate::natives::DeferredCommand::StopActorAtPriority { actor, priority } => {
-                    // `Stop(priority)` invoked outside the StopActor
-                    // native; currently driven by `SetActorPosture` ID_KO
-                    // at `Injury` priority.  Routes through the engine's
-                    // wrapper so movement/path-request teardown stays
-                    // in sync with the sequence-manager stop.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.stop_owner(id, priority);
-                    }
-                }
-                crate::natives::DeferredCommand::BroadcastLoseConsciousness { actor } => {
-                    // `Think(EVENT_LOSE_CONSCIOUSNESS) +
-                    // BroadcastBodyDetectable()` invoked from
-                    // `SetActorPosture` ID_KO/ID_TIED arms.  Both are
-                    // NPC-only (guarded by `is_npc()`); we no-op when
-                    // the entity has no AI controller.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        // Queue stimulus first so the AI's next think
-                        // tick observes the "lose consciousness" event
-                        // before the detect-me broadcast lands on
-                        // friends — ordering matters here.
-                        if let Some(entity) = self.world.entities.get_mut(id)
-                            && let Some(ai) = entity.ai_controller_mut()
-                        {
-                            ai.outbox.detection.stimuli.push(crate::ai::Stimulus::new(
-                                crate::ai::StimulusType::EventLoseConsciousness,
-                            ));
-                        }
-                        // Only NPCs broadcast their body — guard via
-                        // `is_npc()` to avoid touching a PC or non-actor
-                        // slot.
-                        if let Some(entity) = self.world.entities.get(id)
-                            && entity.is_npc()
-                        {
-                            self.broadcast_body_detectable(id);
+                    crate::natives::DeferredCommand::StopActor { actor } => {
+                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                            self.stop_owner(id, crate::sequence::SequencePriority::Script);
                         }
                     }
-                }
-                crate::natives::DeferredCommand::BroadcastResurrection { actor } => {
-                    // From the `SetActorPosture` ID_UPRIGHT/LYING NPC
-                    // branch.  The engine-side `broadcast_resurrection`
-                    // walks every other NPC and clears the resurrected
-                    // NPC from their `DETECTABLE_BODY` list.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor)
-                        && let Some(entity) = self.world.entities.get(id)
-                        && entity.is_npc()
-                    {
-                        self.broadcast_resurrection(id);
+                    crate::natives::DeferredCommand::FreezeAll { freeze } => {
+                        self.set_actors_frozen(freeze);
+                    }
+                    crate::natives::DeferredCommand::QuitSwordfight { actor } => {
+                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                            self.quit_swordfight(assets, id);
+                        }
+                    }
+                    crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
+                        // The titbit is only dropped when the actor is *not*
+                        // currently unconscious — `remove_unconscious_stars_if`
+                        // takes `is_still_unconscious` and short-circuits
+                        // otherwise.  Read the live human-data flag now.
+                        if let Some(id) = self.entity_id_for_actor_handle(actor)
+                            && let Some(entity) = self.world.entities.get(id)
+                        {
+                            let still_unconscious =
+                                entity.human_data().is_some_and(|h| h.unconscious);
+                            self.feedback.titbit_manager.remove_unconscious_stars_if(
+                                crate::titbit::ElementHandle(id.index()),
+                                still_unconscious,
+                            );
+                        }
+                    }
+                    crate::natives::DeferredCommand::SetPlayable { actor, playable } => {
+                        // PC playable state (pc.playable) was already set on
+                        // the entity by the native call. Forward
+                        // MSG_ENABLE/DISABLE_CHARACTER to the messenger
+                        // carrying the actor's entity id so the handler
+                        // can drop the PC from the selection and update
+                        // Sherwood interface-hidden state.
+                        let msg_type = if playable {
+                            crate::messenger::PcMessage::EnableCharacter
+                        } else {
+                            crate::messenger::PcMessage::DisableCharacter
+                        };
+                        let pc_id = self.entity_id_for_actor_handle(actor);
+                        self.orders.messenger.send(Message::pc(msg_type, pc_id));
+                        tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
+                    }
+                    cmd @ crate::natives::DeferredCommand::ProcessPatchEffects { .. } => {
+                        post_script.push(cmd);
+                    }
+                    crate::natives::DeferredCommand::PutActorInBuilding { actor, building } => {
+                        self.put_actor_in_building(actor, building);
+                    }
+                    crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
+                        // Rewind the actor's sprite to frame 0 of its current row.
+                        if let Some(id) = self.entity_id_for_actor_handle(actor)
+                            && let Some(entity) = self.world.entities.get_mut(id)
+                        {
+                            entity.sprite_mut().reset_sprite_frame(false);
+                        }
+                    }
+                    crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
+                        // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
+                        // loop: drops QA titbits + clears macro_store slot.
+                        if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
+                            for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
+                                self.remove_quick_action_titbits_for(pc_id, slot);
+                                if let Some(state) = self.players.macro_store.get_mut(pc_id) {
+                                    state.clear_slot(slot as usize);
+                                }
+                            }
+                        }
+                    }
+                    crate::natives::DeferredCommand::RelaunchPathAtNewSpeed { actor } => {
+                        // From the `SetPathWalkingFlags` relaunch tail:
+                        // re-issue GoTo at the freshly-changed walking
+                        // flags so the speed change takes effect
+                        // mid-segment instead of waiting for the next
+                        // waypoint pickup.
+                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
+                            self.relaunch_path_at_new_speed(assets, id);
+                        }
                     }
                 }
-                crate::natives::DeferredCommand::AddHiddenTitbitForActor { actor } => {
-                    // From the `SetActorPosture` ID_ANONYMOUS_ARCHER
-                    // arm: add a HIDDEN titbit for the actor.  The
-                    // script bypasses the stealth-command transition
-                    // that normally adds the HIDDEN titbit
-                    // (`engine/tick.rs:5318`), so we replicate the
-                    // add here.  Phase resolution (`HiddenCharacter`)
-                    // requires a PC profile; for an NPC the original
-                    // would deref a non-PC as PC (UB), so we guard
-                    // and log instead — script callers in shipping
-                    // levels only target PCs.
-                    let Some(id) = self.entity_id_for_actor_handle(actor) else {
-                        continue;
-                    };
-                    let Some(entity) = self.world.entities.get(id) else {
-                        continue;
-                    };
-                    let phase = if let crate::element::Entity::Pc(pc) = entity {
-                        let profile = assets
-                            .profile_manager
-                            .get_character(pc.pc.profile_index)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "AddHiddenTitbitForActor: PC {} has unknown profile_index {}",
-                                    id.index(),
-                                    pc.pc.profile_index
-                                )
-                            });
-                        crate::titbit::HiddenCharacter::for_pc(pc.pc.robin, &profile.filename)
-                            .to_phase()
-                    } else {
-                        tracing::warn!(
-                            "AddHiddenTitbitForActor: actor {actor} is not a PC; \
-                                 skipping HIDDEN titbit (original would deref non-PC as PC)"
-                        );
-                        continue;
-                    };
-                    let handle = crate::titbit::ElementHandle(id.index());
-                    self.feedback.titbit_manager.add_titbit(
-                        crate::coordinates::WorldPoint3D::default(),
-                        0,
-                        crate::titbit::TitbitKind::Hidden,
-                        handle,
-                        phase,
-                        handle,
-                        false,
-                        0,
-                        true,
-                        None,
-                        None,
-                    );
-                }
-                crate::natives::DeferredCommand::RelaunchPathAtNewSpeed { actor } => {
-                    // From the `SetPathWalkingFlags` relaunch tail:
-                    // re-issue GoTo at the freshly-changed walking
-                    // flags so the speed change takes effect
-                    // mid-segment instead of waiting for the next
-                    // waypoint pickup.
-                    if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.relaunch_path_at_new_speed(assets, id);
+            }
+
+            for cmd in post_script {
+                match cmd {
+                    crate::natives::DeferredCommand::ProcessPatchEffects {
+                        patch_index,
+                        effects,
+                    } => {
+                        self.process_patch_effects(assets, patch_index, effects);
                     }
-                }
-                crate::natives::DeferredCommand::SetPatrolShouldRun {
-                    actor: _,
-                    should_run: _,
-                } => {
-                    // Spellforge `SetPatrolShouldRun` — no engine
-                    // handler yet. The patrol walk/run toggle
-                    // lives on the patrol descriptor; wiring it
-                    // up is tracked alongside the Lua mission
-                    // bring-up.
-                    // TODO: stamp `patrol.should_run` and re-issue
-                    // the in-flight GoTo via the existing
-                    // `RelaunchPathAtNewSpeed` flow.
+                    _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
                 }
             }
-        }
 
-        for cmd in post_script {
-            match cmd {
-                crate::natives::DeferredCommand::ProcessPatchEffects {
-                    patch_index,
-                    effects,
-                } => {
-                    self.process_patch_effects(assets, patch_index, effects);
-                }
-                _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
+            if !engine_commands.is_empty() {
+                self.apply_host_commands(assets, engine_commands);
             }
+
+            // Sequence actions and effects emitted by this handler are
+            // children of the current effect. Fully drive them with the same
+            // active VM stack before exposing the detached parent tail.
+            let child_result = self
+                .drain_script_synchronous_actions(assets, active_scripts)
+                .and_then(|()| self.drain_script_effects_with_active(assets, active_scripts));
+            self.scripts
+                .mission
+                .as_mut()
+                .expect("mission script vanished while restoring effect tail")
+                .script_effects
+                .restore_tail(parent_tail);
+            child_result?;
         }
-
-        for (actor, message, arg1, arg2) in script_messages {
-            self.launch_script_send_message(assets, actor, message, arg1, arg2);
-        }
-
-        if !engine_commands.is_empty() {
-            self.apply_host_commands(assets, engine_commands);
-        }
-    }
-
-    /// Launch and synchronously execute the one-element sequence created by
-    /// `RHScript::SendMessage[WithArguments]`.
-    ///
-    /// The original route is `LaunchSequenceElement` →
-    /// `RegisterSequenceElementToGo` → `ExecutedImmediately`. The last
-    /// step calls `ExecuteImmediately` directly, so an owner-bound message
-    /// deliberately bypasses `Instruct` priority contention and leaves the
-    /// actor's current sequence untouched. `ProcessMessage` runs before the
-    /// SendMessage element changes from `Todo` to `Terminated`.
-    pub(super) fn launch_script_send_message(
-        &mut self,
-        assets: &LevelAssets,
-        actor: i32,
-        message: i32,
-        arg1: i32,
-        arg2: i32,
-    ) {
-        let owner = if actor == 0 {
-            None
-        } else {
-            let Some(owner) = self.entity_id_for_actor_handle(actor) else {
-                tracing::warn!(
-                    actor,
-                    message,
-                    "SendMessage target disappeared before sequence launch"
-                );
-                return;
-            };
-            Some(owner)
-        };
-
-        let mut element = crate::sequence::SequenceElement::new_generic(
-            1,
-            crate::element::Command::SendMessage,
-            owner,
-        );
-        element.set_property(
-            crate::sequence::Field::Message,
-            crate::sequence::FieldValue::Integer(message as u32),
-        );
-        element.set_property(
-            crate::sequence::Field::MessageArgument,
-            crate::sequence::FieldValue::Integer(arg1 as u32),
-        );
-        element.set_property(
-            crate::sequence::Field::MessageExtendedArgument,
-            crate::sequence::FieldValue::Integer(arg2 as u32),
-        );
-        let mut sequence = crate::sequence::Sequence::new();
-        sequence.append_element(element);
-
-        // Use LaunchSequence rather than the owned LaunchElement/Instruct
-        // wrapper. RHCOMMAND_SEND_MESSAGE is in ExecutedImmediately(), so
-        // the original never arbitrates it against the actor's current
-        // element.
-        let sequence_id = self.launch_sequence(sequence);
-        let action = self
-            .orders
-            .sequence_manager
-            .take_pending_immediate_action_for(sequence_id, 0)
-            .unwrap_or_else(|| {
-                panic!(
-                    "SendMessage sequence {:?} did not register its immediate action",
-                    sequence_id
-                )
-            });
-
-        match action {
-            crate::sequence::SequenceAction::ExecuteImmediateOwner {
-                owner: action_owner,
-                sequence_id: action_sequence_id,
-                element_index: 0,
-            } => {
-                assert_eq!(Some(action_owner), owner);
-                assert_eq!(action_sequence_id, sequence_id);
-                self.dispatch_sequence_messages(assets, &[(actor, message, arg1, arg2)], &[]);
-            }
-            crate::sequence::SequenceAction::ExecuteImmediateEngine {
-                sequence_id: action_sequence_id,
-                element_index: 0,
-            } => {
-                assert!(owner.is_none());
-                assert_eq!(action_sequence_id, sequence_id);
-                self.dispatch_sequence_messages(assets, &[], &[(message, arg1, arg2)]);
-            }
-            other => panic!(
-                "SendMessage sequence {:?} registered unexpected action {:?}",
-                sequence_id, other
-            ),
-        }
-
-        // RHEngine/RHElementActor set RHSEQ_TERMINATED only after
-        // ProcessMessage returns.
-        self.orders
-            .sequence_manager
-            .element_terminated(sequence_id, 0);
     }
 
     /// Load a mission script from the level directory.
@@ -881,39 +1217,76 @@ impl EngineInner {
                     script.waypoint_instances.len()
                 );
             }
-
-            // ── Phase 2: Global StartUp::Initialize(seed) ──
-            let frame = crate::natives::ScriptCallFrame::default();
-            let startup_result = script.with_call_frame(frame, |script| {
-                MissionScript::with_game_host_attached(
-                    &mut script.game_host,
-                    &mut script.state,
-                    script_domains,
-                    &script.bindings,
-                    capabilities,
-                    frame,
-                    &mut script.instance,
-                    |instance, host| {
-                        instance.push_param(seed);
-                        instance.call_function_limited_with_host(
-                            &mut script.manager,
-                            "Initialize",
-                            100_000,
-                            host,
-                        )
-                    },
-                )
-            });
-            match startup_result {
-                Ok(ret) => tracing::info!("Script StartUp::Initialize returned {ret}"),
-                Err(crate::script_manager::ScriptError::Vm(
-                    crate::interp::StopReason::StepLimit,
-                )) => {
-                    tracing::warn!("Script StartUp::Initialize hit step limit (100K)");
-                }
-                Err(e) => tracing::warn!("Script StartUp::Initialize failed: {e}"),
-            }
         });
+
+        for (handle, _) in &per_actor_scripts {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Actor(*handle),
+                "Initialize",
+                &[],
+                crate::natives::ScriptCallFrame::actor(*handle),
+            ) {
+                tracing::warn!("Actor Initialize (handle {handle}): {error}");
+            }
+        }
+        for (handle, _) in &per_target_scripts {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Target(*handle),
+                "Initialize",
+                &[],
+                crate::natives::ScriptCallFrame::actor(*handle),
+            ) {
+                tracing::warn!("Target Initialize (handle {handle}): {error}");
+            }
+        }
+        for (handle, _) in &per_scroll_scripts {
+            let frame = crate::natives::ScriptCallFrame::default()
+                .with_script_this(*handle)
+                .with_current_scroll(*handle);
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Scroll(*handle),
+                "Initialize",
+                &[],
+                frame,
+            ) {
+                tracing::warn!("Scroll Initialize (handle {handle}): {error}");
+            }
+        }
+        for (path_idx, path) in hiking_paths.iter().enumerate() {
+            for (wp_idx, waypoint) in path.waypoints.iter().enumerate() {
+                if !matches!(
+                    waypoint.command,
+                    crate::level_data::WaypointCommand::Script(_)
+                ) {
+                    continue;
+                }
+                let Some(path_id) = crate::ai::PathId::new(path_idx as u16) else {
+                    continue;
+                };
+                if let Err(error) = self.call_script_vm(
+                    assets,
+                    ScriptVmKey::Waypoint(path_id, wp_idx as u8),
+                    "Initialize",
+                    &[],
+                    crate::natives::ScriptCallFrame::default(),
+                ) {
+                    tracing::warn!("Waypoint Initialize ({path_id}, {wp_idx}): {error}");
+                }
+            }
+        }
+        match self.call_script_vm(
+            assets,
+            ScriptVmKey::Global,
+            "Initialize",
+            &[seed],
+            crate::natives::ScriptCallFrame::default(),
+        ) {
+            Ok(value) => tracing::info!("Script StartUp::Initialize returned {value}"),
+            Err(error) => tracing::warn!("Script StartUp::Initialize failed: {error}"),
+        }
 
         // ── Mark AiControllers whose bound class overrides FilterAIEvent ──
         // Read by cascade `think()` sites in ai_enemy.rs to decide
@@ -942,12 +1315,6 @@ impl EngineInner {
         // ── Phase 3: Zone script Initialize ──
         self.initialize_zone_scripts(assets);
 
-        // ── Phase 3b: Apply SectorProduction registrations from StartUp::Initialize.
-        // RegisterAsProductionSector / AddProductionPoint queue through the
-        // script host adapter; the engine drains them here so the
-        // zone-occupant step (Phase 4) can emit SetWorkicon for initial occupants.
-        self.apply_production_registrations(assets);
-
         // ── Phase 4: Populate initial zone occupants ──
         self.initialize_zone_occupants(assets);
     }
@@ -955,11 +1322,15 @@ impl EngineInner {
     /// Finalize the mission script (called on mission end).
     /// `abandoned` is true if the player quit/interrupted.
     pub(crate) fn finalize_mission_script(&mut self, assets: &LevelAssets, abandoned: bool) {
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            if let Err(e) = script.finalize(abandoned, script_domains, capabilities) {
-                tracing::warn!("Script Finalize failed: {e}");
-            }
-        });
+        if let Err(error) = self.call_script_vm(
+            assets,
+            ScriptVmKey::Global,
+            "Finalize",
+            &[i32::from(abandoned)],
+            crate::natives::ScriptCallFrame::default(),
+        ) {
+            tracing::warn!("Script Finalize failed: {error}");
+        }
     }
 
     // ─── Per-actor script event dispatch ───────────────────────────
@@ -1024,19 +1395,17 @@ impl EngineInner {
         }
 
         // Phase 2: Dispatch to scripts in collection order.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for (handle, new_anim, old_anim) in &changes {
-                if let Err(e) = script.call_actor_function(
-                    *handle,
-                    "ActionChange",
-                    &[*new_anim, *old_anim],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("ActionChange (handle {handle}): {e}");
-                }
+        for (handle, new_anim, old_anim) in &changes {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Actor(*handle),
+                "ActionChange",
+                &[*new_anim, *old_anim],
+                crate::natives::ScriptCallFrame::actor(*handle),
+            ) {
+                tracing::warn!("ActionChange (handle {handle}): {error}");
             }
-        });
+        }
     }
 
     /// Per-frame scroll script `Hourglass(0)` dispatch.
@@ -1045,8 +1414,8 @@ impl EngineInner {
     /// `scroll_instances.contains_key(handle)`), increment
     /// `script_hourglass_timeout` and, when it reaches
     /// `SCRIPT_HOURGLASS_TIMEOUT = 25`, fire `IScrollScript::Hourglass(0)`
-    /// with the `SetScrollExecutingScript` bracket provided by
-    /// [`MissionScript::call_scroll_function`], then reset the counter.
+    /// with the executing-scroll frame carried by the shared
+    /// [`ScriptVmKey::Scroll`] driver, then reset the counter.
     ///
     /// Sprite frame advance for scrolls lives in the generic animation
     /// tick; this function only handles the per-25-tick script
@@ -1088,19 +1457,20 @@ impl EngineInner {
 
         // Phase 2: dispatch in scroll slot order. Per-scroll `Hourglass` is
         // distinct from the engine callback and passes the literal zero.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for handle in &ready {
-                if let Err(e) = script.call_scroll_function(
-                    *handle,
-                    "Hourglass",
-                    &[0],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("Scroll Hourglass (handle {handle}): {e}");
-                }
+        for handle in &ready {
+            let frame = crate::natives::ScriptCallFrame::default()
+                .with_script_this(*handle)
+                .with_current_scroll(*handle);
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Scroll(*handle),
+                "Hourglass",
+                &[0],
+                frame,
+            ) {
+                tracing::warn!("Scroll Hourglass (handle {handle}): {error}");
             }
-        });
+        }
     }
 
     /// Dispatch `IScrollScript::IsTaken(pc)` for a scroll being picked up.
@@ -1108,8 +1478,7 @@ impl EngineInner {
     ///   1. Flip the scroll's sprite to `BonusThree` (the "opened
     ///      scroll" pose).
     ///   2. Call the bound script's `IsTaken(pc)` inside the
-    ///      `SetScrollExecutingScript` / `ResetScrollExecutingScript`
-    ///      bracket (provided by [`MissionScript::call_scroll_function`]).
+    ///      executing-scroll frame carried by [`ScriptVmKey::Scroll`].
     ///   3. If the script returns non-zero, mark the scroll `Taken`
     ///      and return `true`.  Otherwise `false` — the scroll keeps
     ///      the `Opened` visual but stays in-world.
@@ -1159,17 +1528,15 @@ impl EngineInner {
 
         // Step 3 — dispatch via the SetScrollExecutingScript bracket.
         let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
-        let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
-                script.call_scroll_function(
-                    handle,
-                    "IsTaken",
-                    &[pc_handle],
-                    script_domains,
-                    capabilities,
-                )
-            })
-            .expect("bound scroll script disappeared before IsTaken dispatch");
+        let result = self.call_script_vm(
+            assets,
+            ScriptVmKey::Scroll(handle),
+            "IsTaken",
+            &[pc_handle],
+            crate::natives::ScriptCallFrame::default()
+                .with_script_this(handle)
+                .with_current_scroll(handle),
+        );
 
         let accepted = match result {
             Ok(v) => v != 0,
@@ -1185,6 +1552,53 @@ impl EngineInner {
             self.set_scroll_status(scroll_id, ScrollStatus::Taken);
         }
         accepted
+    }
+
+    pub(super) fn scroll_is_taken_in_script_driver(
+        &mut self,
+        assets: &LevelAssets,
+        scroll_id: crate::element::EntityId,
+        pc_id: crate::element::EntityId,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<bool, ScriptDriverError> {
+        use crate::element::Entity;
+
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll_id);
+        if let Some(Entity::Scroll(scroll)) = self.get_entity_mut(scroll_id) {
+            let direction = scroll.element.direction() as u16;
+            scroll
+                .element
+                .sprite
+                .force_animation(crate::order::OrderType::BonusThree, direction);
+        } else {
+            tracing::warn!(?scroll_id, "scroll_is_taken: entity is not a scroll");
+            return Ok(false);
+        }
+        self.set_scroll_status(scroll_id, ScrollStatus::Opened);
+        let key = ScriptVmKey::Scroll(handle);
+        let has_script = self
+            .scripts
+            .mission
+            .as_ref()
+            .is_some_and(|script| script.script_vm_has_function(key, "IsTaken"));
+        if !has_script {
+            return Ok(false);
+        }
+        let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
+        let accepted = self.call_script_vm_inner(
+            assets,
+            key,
+            "IsTaken",
+            &[pc_handle],
+            crate::natives::ScriptCallFrame::default()
+                .with_script_this(handle)
+                .with_current_scroll(handle),
+            active,
+        )? != 0;
+        if accepted {
+            self.set_scroll_status(scroll_id, ScrollStatus::Taken);
+        }
+        Ok(accepted)
     }
 
     // ─── Zone script system ───────────────────────────────────────
@@ -1209,76 +1623,40 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            let mut init_count = 0u32;
-            for (zone_idx, class_name) in classes {
+        if classes.is_empty() {
+            return;
+        }
+
+        let bound: Vec<usize> = self
+            .with_script_session(assets, |script, _, _| {
+                let mut bound = Vec::new();
+                for (zone_idx, class_name) in &classes {
                 let class_idx = match script.manager.find_class(&class_name) {
                     Some(idx) => idx,
-                    None => {
-                        // The original fires a fatal "Structural error in RHD,
-                        // a Sector has got a script reference that does not
-                        // exist!" — we escalate to `error!` rather than
-                        // panicking so authoring breakage is loud without
-                        // killing the engine outright.
-                        tracing::error!(
-                            "Structural error in RHD: zone {zone_idx} references script class \
-                         '{class_name}' which does not exist in the SCB — zone will run unbound"
-                        );
-                        continue;
-                    }
+                    None => panic!(
+                        "Structural error in RHD: zone {zone_idx} references missing script class '{class_name}'"
+                    ),
                 };
-
-                let mut zone_inst = script.manager.create_instance_idx(class_idx);
-
-                let frame = crate::natives::ScriptCallFrame::default();
-                script.with_call_frame(frame, |script| {
-                    MissionScript::with_game_host_attached(
-                        &mut script.game_host,
-                        &mut script.state,
-                        script_domains,
-                        &script.bindings,
-                        capabilities,
-                        frame,
-                        &mut zone_inst,
-                        |zone_inst, host| {
-                            if zone_inst.has_function(&script.manager, "Initialize") {
-                                match zone_inst.call_function_limited_with_host(
-                                    &mut script.manager,
-                                    "Initialize",
-                                    10_000,
-                                    host,
-                                ) {
-                                    Ok(ret) => {
-                                        tracing::debug!(
-                                            "Zone Init '{class_name}' (zone {zone_idx}) → {ret}"
-                                        );
-                                        init_count += 1;
-                                    }
-                                    Err(crate::script_manager::ScriptError::Vm(
-                                        crate::interp::StopReason::StepLimit,
-                                    )) => {
-                                        init_count += 1;
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Zone Init '{class_name}' (zone {zone_idx}) failed: {e}"
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                    );
-                });
-                script.zone_instances.insert(zone_idx, zone_inst);
-            }
-
-            if init_count > 0 {
-                tracing::info!(
-                    "Initialized {init_count} zone scripts ({} instances persisted)",
-                    script.zone_instances.len()
-                );
-            }
-        });
+                    let zone_inst = script.manager.create_instance_idx(class_idx);
+                    script.zone_instances.insert(*zone_idx, zone_inst);
+                    bound.push(*zone_idx);
+                }
+                bound
+            })
+            .expect("script zones require a loaded mission script");
+        for zone_idx in &bound {
+            self.call_script_vm(
+                assets,
+                ScriptVmKey::Zone(*zone_idx),
+                "Initialize",
+                &[],
+                crate::natives::ScriptCallFrame::default(),
+            )
+            .unwrap_or_else(|error| panic!("Zone Initialize ({zone_idx}) failed: {error}"));
+        }
+        if !bound.is_empty() {
+            tracing::info!("Initialized {} zone scripts", bound.len());
+        }
     }
 
     /// Scan all actors against all script-zone polygons and return the
@@ -1425,19 +1803,17 @@ impl EngineInner {
         self.apply_zone_occupant_entries(&entries);
 
         // Phase 3: Dispatch EnterZone to zone scripts.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for &(zone_idx, _, handle) in &entries {
-                if let Err(e) = script.call_zone_function(
-                    zone_idx,
-                    "EnterZone",
-                    &[handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {e}");
-                }
+        for &(zone_idx, _, handle) in &entries {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Zone(zone_idx),
+                "EnterZone",
+                &[handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {error}");
             }
-        });
+        }
 
         tracing::info!(
             "Initialized {} zone occupant entries across {} zones",
@@ -1559,133 +1935,26 @@ impl EngineInner {
 
         // Phase 3: Dispatch enters before exits, preserving the original
         // batch order used by this port.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for &(zone_idx, _, handle) in &enter_events {
-                if let Err(e) = script.call_zone_function(
-                    zone_idx,
-                    "EnterZone",
-                    &[handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {e}");
-                }
-            }
-            for &(zone_idx, _, handle) in &exit_events {
-                if let Err(e) = script.call_zone_function(
-                    zone_idx,
-                    "ExitZone",
-                    &[handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("Zone {zone_idx} ExitZone (actor {handle}): {e}");
-                }
-            }
-        });
-    }
-
-    // ─── Production-sector wiring ────────────────────────────────
-
-    /// Drain `production_registrations` and `production_points` from the
-    /// script native-command adapter into engine state. Sets the
-    /// `production_sector_type` on each
-    /// referenced script zone sector, and pushes a per-sector
-    /// `sector_production::Point` into the matching campaign SectorProduction.
-    ///
-    /// `RegisterAsProductionSector` sets the sector's production type;
-    /// `AddProductionPoint` pushes onto the per-type points list.
-    pub(super) fn apply_production_registrations(&mut self, assets: &LevelAssets) {
-        // Points come before sectors in the script-location payload
-        // layout, so a sector's zone index is `location_index - points_count`.
-        let points_count = assets
-            .scripts
-            .location_positions
-            .len()
-            .saturating_sub(self.script_domains.zones.scripts.len());
-
-        let Some(ref mut script) = self.scripts.mission else {
-            return;
-        };
-        let game_host = &mut script.game_host;
-
-        let registrations: Vec<(i32, i32, i32)> =
-            std::mem::take(&mut game_host.production_registrations);
-        let points: Vec<(i32, i32)> = std::mem::take(&mut game_host.production_points);
-
-        for (prod_type, loc_handle, speed) in registrations {
-            let prod_type_enum = match crate::sector_production::Type::from_script_i32(prod_type) {
-                Some(t) => t,
-                None => {
-                    tracing::warn!("RegisterAsProductionSector: bad type {prod_type} — ignored");
-                    continue;
-                }
-            };
-            let Some(loc_idx) = crate::natives::ScriptHandleCodec::location_index(loc_handle)
-            else {
-                tracing::warn!("RegisterAsProductionSector: invalid location handle {loc_handle}");
-                continue;
-            };
-            if loc_idx < points_count {
-                tracing::warn!(
-                    "RegisterAsProductionSector: location {loc_handle} is not a script zone sector"
-                );
-                continue;
-            }
-            let zone_idx = loc_idx - points_count;
-            if zone_idx >= self.script_domains.zones.scripts.len() {
-                tracing::warn!("RegisterAsProductionSector: zone {zone_idx} out of range");
-                continue;
-            }
-            self.script_domains.zones.scripts[zone_idx].production_sector_type = prod_type_enum;
-
-            // Attach to the campaign's SectorProduction so its `speed` is set.
-            if let Some(campaign) = Some(&mut self.mission_domain.campaign)
-                && (prod_type as usize) < campaign.production_sectors.len()
-            {
-                let prod = &mut campaign.production_sectors[prod_type as usize];
-                prod.speed = speed.max(0) as u16;
-                prod.prod_type = prod_type_enum;
+        for &(zone_idx, _, handle) in &enter_events {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Zone(zone_idx),
+                "EnterZone",
+                &[handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {error}");
             }
         }
-
-        for (prod_type, loc_handle) in points {
-            let prod_type_enum = match crate::sector_production::Type::from_script_i32(prod_type) {
-                Some(t) => t,
-                None => continue,
-            };
-            let Some(loc_idx) = crate::natives::ScriptHandleCodec::location_index(loc_handle)
-            else {
-                continue;
-            };
-            if loc_idx >= assets.scripts.location_positions.len() {
-                continue;
-            }
-            let (x, y) = assets.scripts.location_positions[loc_idx];
-            let layer = assets.scripts.location_layers[loc_idx];
-            let sector = assets.scripts.location_sectors[loc_idx];
-            // GetProjectionArea(point) → GetObstacleIndex.
-            let obstacle = self
-                .get_projection_area_index(
-                    assets,
-                    sector,
-                    layer,
-                    crate::coordinates::MapPoint::new(x, y),
-                )
-                .unwrap_or(0xFFFF);
-            if let Some(campaign) = Some(&mut self.mission_domain.campaign)
-                && (prod_type as usize) < campaign.production_sectors.len()
-            {
-                let prod = &mut campaign.production_sectors[prod_type as usize];
-                prod.prod_type = prod_type_enum;
-                prod.production_points
-                    .push(crate::sector_production::Point {
-                        x,
-                        y,
-                        layer,
-                        sector,
-                        obstacle,
-                    });
+        for &(zone_idx, _, handle) in &exit_events {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Zone(zone_idx),
+                "ExitZone",
+                &[handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                tracing::warn!("Zone {zone_idx} ExitZone (actor {handle}): {error}");
             }
         }
     }
@@ -1743,21 +2012,26 @@ impl EngineInner {
         elem_idx: usize,
     ) -> (i32, i32, i32) {
         use crate::sequence::{Field, FieldValue};
-        let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
-            Some(e) => e,
-            None => return (0, 0, 0),
-        };
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .unwrap_or_else(|| panic!("missing SendMessage element {seq_id:?}/{elem_idx}"));
         let msg = match elem.get_property(Field::Message) {
             Some(FieldValue::Integer(v)) => *v as i32,
-            _ => 0,
+            other => panic!("SendMessage {seq_id:?}/{elem_idx} has malformed Message: {other:?}"),
         };
         let arg1 = match elem.get_property(Field::MessageArgument) {
             Some(FieldValue::Integer(v)) => *v as i32,
-            _ => 0,
+            other => {
+                panic!("SendMessage {seq_id:?}/{elem_idx} has malformed MessageArgument: {other:?}")
+            }
         };
         let arg2 = match elem.get_property(Field::MessageExtendedArgument) {
             Some(FieldValue::Integer(v)) => *v as i32,
-            _ => 0,
+            other => panic!(
+                "SendMessage {seq_id:?}/{elem_idx} has malformed MessageExtendedArgument: {other:?}"
+            ),
         };
         (msg, arg1, arg2)
     }
@@ -1777,55 +2051,29 @@ impl EngineInner {
         per_actor: &[(i32, i32, i32, i32)],
         engine_level: &[(i32, i32, i32)],
     ) {
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            // Per-actor ProcessMessage
-            for &(handle, msg, arg1, arg2) in per_actor {
-                if let Err(e) = script.call_actor_function(
-                    handle,
-                    "ProcessMessage",
-                    &[msg, arg1, arg2],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("Sequence ProcessMessage (actor {handle}, msg {msg}): {e}");
-                }
+        for &(handle, msg, arg1, arg2) in per_actor {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Actor(handle),
+                "ProcessMessage",
+                &[msg, arg1, arg2],
+                crate::natives::ScriptCallFrame::actor(handle),
+            ) {
+                tracing::warn!("Sequence ProcessMessage (actor {handle}, msg {msg}): {error}");
             }
+        }
 
-            // EngineInner-level ProcessMessage → global StartUp script
-            for &(msg, arg1, arg2) in engine_level {
-                if script
-                    .instance
-                    .has_function(&script.manager, "ProcessMessage")
-                {
-                    let frame = crate::natives::ScriptCallFrame::default();
-                    let result = script.with_call_frame(frame, |script| {
-                        MissionScript::with_game_host_attached(
-                            &mut script.game_host,
-                            &mut script.state,
-                            script_domains,
-                            &script.bindings,
-                            capabilities,
-                            frame,
-                            &mut script.instance,
-                            |instance, host| {
-                                instance.push_param(msg);
-                                instance.push_param(arg1);
-                                instance.push_param(arg2);
-                                instance.call_function_with_host(
-                                    &mut script.manager,
-                                    "ProcessMessage",
-                                    host,
-                                )
-                            },
-                        )
-                    });
-                    match result {
-                        Ok(_) => {}
-                        Err(e) => tracing::warn!("EngineInner ProcessMessage(msg {msg}): {e}"),
-                    }
-                }
+        for &(msg, arg1, arg2) in engine_level {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Global,
+                "ProcessMessage",
+                &[msg, arg1, arg2],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                tracing::warn!("EngineInner ProcessMessage(msg {msg}): {error}");
             }
-        });
+        }
     }
 
     /// Dispatch deferred `IElementTargetScript::ActivatedBy*(pPC)` calls.
@@ -1841,9 +2089,8 @@ impl EngineInner {
     /// (`--NOSCRIPT` CLI option).  We don't plumb that flag through
     /// to the runtime (same situation as `ActivatedByListenable` in
     /// `engine/ai.rs`), so script dispatch is effectively always on.
-    /// The "is class instantiated" check is implicit:
-    /// `call_target_function` returns `Ok(0)` when no `ScriptInstance`
-    /// is bound for the target.
+    /// The shared driver distinguishes an absent optional method from a
+    /// missing required target VM.
     pub(super) fn dispatch_target_activations(
         &mut self,
         assets: &LevelAssets,
@@ -1852,19 +2099,17 @@ impl EngineInner {
         if calls.is_empty() {
             return;
         }
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for &(target_handle, pc_handle, fn_name) in calls {
-                if let Err(e) = script.call_target_function(
-                    target_handle,
-                    fn_name,
-                    &[pc_handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    tracing::warn!("{fn_name} (target {target_handle}): {e}");
-                }
+        for &(target_handle, pc_handle, fn_name) in calls {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Target(target_handle),
+                fn_name,
+                &[pc_handle],
+                crate::natives::ScriptCallFrame::actor(target_handle),
+            ) {
+                tracing::warn!("{fn_name} (target {target_handle}): {error}");
             }
-        });
+        }
     }
 
     /// Send a one-shot engine-level `ProcessMessage` to the global
@@ -1935,17 +2180,13 @@ impl EngineInner {
             return true;
         }
 
-        let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
-                script.call_actor_function(
-                    handle,
-                    "FilterAIEvent",
-                    &[source, code],
-                    script_domains,
-                    capabilities,
-                )
-            })
-            .expect("checked mission-script presence above");
+        let result = self.call_script_vm(
+            assets,
+            ScriptVmKey::Actor(handle),
+            "FilterAIEvent",
+            &[source, code],
+            crate::natives::ScriptCallFrame::actor(handle),
+        );
 
         match result {
             Ok(v) => v != 0,
@@ -2074,18 +2315,23 @@ impl EngineInner {
             return;
         }
 
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for (handle, source, code) in &notifications {
-                // Return value ignored — notification only.
-                let _ = script.call_actor_function(
-                    *handle,
-                    "FilterAIEvent",
-                    &[*source, *code],
-                    script_domains,
-                    capabilities,
+        for (handle, source, code) in &notifications {
+            if let Err(error) = self.call_script_vm(
+                assets,
+                ScriptVmKey::Actor(*handle),
+                "FilterAIEvent",
+                &[*source, *code],
+                crate::natives::ScriptCallFrame::actor(*handle),
+            ) {
+                tracing::warn!(
+                    actor_handle = *handle,
+                    source_handle = *source,
+                    event_code = *code,
+                    %error,
+                    "FilterAIEvent callback failed"
                 );
             }
-        });
+        }
     }
 
     // ─── Campaign integration ────────────────────────────────────
@@ -2442,12 +2688,6 @@ impl EngineInner {
                         }
                     }
                 }
-                EngineCommand::AddShortBriefing { id, primary } => {
-                    self.mission_domain.short_briefings.add(id as u32, primary);
-                }
-                EngineCommand::DoneShortBriefing { id } => {
-                    self.mission_domain.short_briefings.mark_done(id as u32);
-                }
                 EngineCommand::ChooseVictoryDefeatText { id } => {
                     self.mission_domain.state.victory_defeat_id = id as u32;
                 }
@@ -2508,16 +2748,6 @@ impl EngineInner {
                     // the masked/outline draw mode.
                     self.feedback.pending_side_effects.set_draw_hidden = Some(show);
                 }
-                EngineCommand::SetViewRadius { radius } => {
-                    self.ai.standard_view_polygon_radius = radius as u16;
-                    self.propagate_view_radius();
-                }
-                EngineCommand::PlayJingle(jingle) => {
-                    self.feedback
-                        .pending_side_effects
-                        .sounds
-                        .push(super::SoundCommand::Jingle(jingle));
-                }
                 EngineCommand::SetActorLocation {
                     actor_handle,
                     x,
@@ -2537,18 +2767,43 @@ impl EngineInner {
                         tracing::warn!("SetActorLocation: invalid actor handle {actor_handle}");
                         continue;
                     };
-                    let Some(entity) = self.world.entities.get_mut(id) else {
+                    let Some(is_actor) = self
+                        .world
+                        .entities
+                        .get(id)
+                        .map(|entity| entity.actor_data().is_some())
+                    else {
                         tracing::warn!("SetActorLocation: actor {actor_handle} missing entity");
                         continue;
                     };
+                    if let Some((layer, sector_num)) = dest_layer_sector {
+                        let sector = crate::position_interface::SectorHandle::new(sector_num);
+                        let entity = self
+                            .world
+                            .entities
+                            .get_mut(id)
+                            .expect("SetActorLocation actor vanished before layer mutation");
+                        entity.element_data_mut().set_layer(layer);
+                        entity.element_data_mut().set_sector(sector);
+                    }
                     let pt = crate::coordinates::MapPoint { x, y };
-                    if entity.actor_data().is_none() {
+                    if !is_actor {
                         // Non-actor entities don't need the full actor
                         // reproject dance; refresh the basic grid.
+                        let entity = self
+                            .world
+                            .entities
+                            .get_mut(id)
+                            .expect("SetActorLocation entity vanished before grid refresh");
                         entity.element_data_mut().set_position_map(pt);
                         entity.element_data_mut().update_grid_cell();
                         continue;
                     }
+                    let entity = self
+                        .world
+                        .entities
+                        .get_mut(id)
+                        .expect("SetActorLocation actor vanished before position refresh");
                     let pi = entity.position_iface_mut();
                     pi.set_map_position(pt);
                     let ed = entity.element_data_mut();
@@ -3091,26 +3346,13 @@ mod script_context_tests {
         let json = serde_json::to_string(&script).expect("serialize MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
         assert!(value.get("snapshot_version").is_none());
-        let host_keys = value["game_host"]
+        let effect_keys = value["script_effects"]
             .as_object()
-            .expect("GameHost snapshot object")
+            .expect("ScriptEffects snapshot object")
             .keys()
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            host_keys,
-            [
-                "commands",
-                "completed_sequences",
-                "deferred_commands",
-                "pending_objective_changes",
-                "production_points",
-                "production_registrations",
-                "sound_commands",
-            ]
-            .into_iter()
-            .collect()
-        );
+        assert_eq!(effect_keys, ["ordered"].into_iter().collect());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
@@ -3130,22 +3372,6 @@ mod script_context_tests {
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
-    }
-
-    #[test]
-    fn active_call_frame_rejects_snapshot_and_unwinds() {
-        let mut script = empty_mission_script();
-        let hash_before = robin_util::state_hash::compute(&script);
-        let error = script.with_call_frame(
-            crate::natives::ScriptCallFrame::scroll(17).with_script_this(41),
-            |script| {
-                assert_eq!(robin_util::state_hash::compute(script), hash_before);
-                serde_json::to_string(script).expect_err("active callback is not snapshot-safe")
-            },
-        );
-
-        assert!(error.to_string().contains("active script callback"));
-        assert_eq!(script.active_call_frame_count(), 0);
     }
 
     #[test]
@@ -3236,7 +3462,7 @@ mod script_context_tests {
             stack.push_i32(door);
             stack.push_i32(0);
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.game_host,
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -3276,7 +3502,7 @@ mod script_context_tests {
 
         let result = engine.with_script_session(&assets, |script, script_domains, queries| {
             let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.game_host,
+                &mut script.script_effects,
                 &mut script.state,
                 script_domains,
                 &script.bindings,
@@ -3323,12 +3549,9 @@ mod script_context_tests {
         let hash_before = robin_util::state_hash::compute(&engine);
         let canonical_entities = std::ptr::from_ref(&engine.world.entities);
 
-        let result = engine.with_script_session(&assets, |script, _, capabilities| {
+        let result = engine.with_script_session(&assets, |_script, _, capabilities| {
             assert_eq!(capabilities.entities_owner_ptr(), canonical_entities);
-            script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |script| {
-                assert_eq!(script.active_call_frame_count(), 1);
-                73
-            })
+            73
         });
 
         assert_eq!(result, Some(73));
@@ -3348,10 +3571,8 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
 
         let result: Result<(), &'static str> = engine
-            .with_script_session(&assets, |script, _, _capabilities| {
-                script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |_| {
-                    Err("simulated script error")
-                })
+            .with_script_session(&assets, |_script, _, _capabilities| {
+                Err("simulated script error")
             })
             .unwrap();
 
@@ -3398,7 +3619,7 @@ mod script_context_tests {
             script_domains.mission_ui.outline_display = true;
             {
                 let mut context = crate::natives::NativeContext::with_bindings(
-                    &mut script.game_host,
+                    &mut script.script_effects,
                     &mut script.state,
                     script_domains,
                     &script.bindings,
@@ -3406,10 +3627,7 @@ mod script_context_tests {
                 );
                 context.ai_global_mut().golden_eye_mode = true;
             }
-            script.with_call_frame(
-                crate::natives::ScriptCallFrame::scroll(100).with_script_this(99),
-                |_| panic!("simulated script panic"),
-            );
+            panic!("simulated script panic");
         });
     }
 
@@ -3617,37 +3835,84 @@ impl EngineInner {
             return Err("no mission script loaded (no mission running)".into());
         }
 
-        self.with_script_session(assets, |script, script_domains, capabilities| {
-            let frame = this_actor.map_or_else(
-                crate::natives::ScriptCallFrame::default,
-                crate::natives::ScriptCallFrame::actor,
-            );
-            script.with_call_frame(frame, |script| {
-                let mut stack = NativeStack::default();
-                for &a in args {
-                    stack.push_i32(a);
-                }
-
-                let outcome = {
+        let base_frame = this_actor.map_or_else(
+            crate::natives::ScriptCallFrame::default,
+            crate::natives::ScriptCallFrame::actor,
+        );
+        self.scripts
+            .mission
+            .as_mut()
+            .expect("mission-script presence checked above")
+            .push_active_driver_frame(base_frame);
+        let mut active = vec![ActiveScriptCall {
+            target: this_actor.map_or(ScriptVmKey::Global, ScriptVmKey::Actor),
+            frame: base_frame,
+            counts_toward_depth: false,
+        }];
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let outcome = self
+                .with_script_session_in_driver(assets, |script, script_domains, capabilities| {
+                    let mut stack = NativeStack::default();
+                    for &a in args {
+                        stack.push_i32(a);
+                    }
                     let mut native_context = crate::natives::NativeContext::with_call_frame(
-                        &mut script.game_host,
+                        &mut script.script_effects,
                         &mut script.state,
                         script_domains,
                         &script.bindings,
                         capabilities,
-                        frame,
+                        base_frame,
                     );
                     crate::interp::HostFunctions::call(&mut native_context, index, &mut stack)
-                };
-
-                match outcome {
-                    crate::interp::NativeCallOutcome::Return(value) => Ok(value),
-                    crate::interp::NativeCallOutcome::PendingNestedCall(call) => Err(format!(
-                        "native {native_name} requires nested script dispatch and cannot be invoked through the standalone native adapter: {call:?}"
-                    )),
+                })
+                .expect("mission-script presence checked above");
+            self.drain_script_effects_with_active(assets, &mut active)?;
+            match outcome {
+                crate::interp::NativeCallOutcome::Return(value) => Ok(value),
+                crate::interp::NativeCallOutcome::Yield(request) => {
+                    let operation_result = match request.operation {
+                        crate::interp::NativeOperation::ScriptCall(call) => {
+                            let frame = match call.script_this {
+                                crate::interp::NestedCallScriptThis::TargetActor => {
+                                    base_frame.with_script_this(call.actor_handle)
+                                }
+                                crate::interp::NestedCallScriptThis::PreserveCaller => base_frame,
+                            };
+                            self.call_script_vm_inner(
+                                assets,
+                                ScriptVmKey::Actor(call.actor_handle),
+                                &call.fn_name,
+                                &call.params,
+                                frame,
+                                &mut active,
+                            )?
+                        }
+                        crate::interp::NativeOperation::SequenceAction(operation) => {
+                            self.drive_detached_sequence_operation(assets, operation, &mut active)?;
+                            0
+                        }
+                        crate::interp::NativeOperation::EngineAction(action) => {
+                            self.execute_synchronous_script_request(assets, action, &mut active)?
+                        }
+                    };
+                    Ok(match request.resume {
+                        crate::interp::ResumePolicy::OperationResult => operation_result,
+                        crate::interp::ResumePolicy::Fixed(value) => value,
+                    })
                 }
-            })
-        })
-        .expect("mission-script presence checked above")
+            }
+        }));
+        let popped = active.pop();
+        debug_assert!(popped.is_some_and(|call| !call.counts_toward_depth));
+        self.scripts
+            .mission
+            .as_mut()
+            .expect("mission script vanished while restoring external-native guard")
+            .pop_active_driver_frame(base_frame);
+        match result {
+            Ok(result) => result.map_err(|error: ScriptDriverError| error.detail),
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 }

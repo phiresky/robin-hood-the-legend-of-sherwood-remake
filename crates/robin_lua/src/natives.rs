@@ -2,7 +2,7 @@
 //!
 //! Every Spellforge `api.lua` entry that mission scripts actually
 //! call gets a Rust shim here. The shim runs against the engine's
-//! `GameHost` (the same dispatcher the `.scb` VM uses), so a Lua
+//! `ScriptEffects` (the same dispatcher the `.scb` VM uses), so a Lua
 //! script and an `.scb` script behave identically when they invoke
 //! the same engine function.
 //!
@@ -42,8 +42,8 @@ use mlua::{Function, Lua, Table, Value};
 use robin_engine::engine::ScriptDomains;
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
-    AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn,
-    NativeSessionCapabilities, NativeSignature, ScriptState,
+    AttachedScriptBindings, NATIVE_REGISTRY, NativeContext, NativeFn, NativeSessionCapabilities,
+    NativeSignature, ScriptEffects, ScriptState,
 };
 
 use crate::state::MissionLuaState;
@@ -53,7 +53,7 @@ use crate::state::MissionLuaState;
 /// This value stays on the Rust stack. Only [`AttachedNativeCall`]'s guarded
 /// pointer handle crosses mlua's `'static` app-data boundary.
 pub(crate) struct NativeCallSession<'call, 'owners> {
-    host: &'call mut GameHost,
+    host: &'call mut ScriptEffects,
     script_state: &'call mut ScriptState,
     script_domains: &'call mut ScriptDomains,
     bindings: &'call AttachedScriptBindings,
@@ -62,7 +62,7 @@ pub(crate) struct NativeCallSession<'call, 'owners> {
 
 impl<'call, 'owners> NativeCallSession<'call, 'owners> {
     pub(crate) fn new(
-        host: &'call mut GameHost,
+        host: &'call mut ScriptEffects,
         script_state: &'call mut ScriptState,
         script_domains: &'call mut ScriptDomains,
         bindings: &'call AttachedScriptBindings,
@@ -302,7 +302,7 @@ pub const NATIVE_ALIASES: &[(&str, NativeFn)] = &[
 
 /// Descriptor for one Lua-side binding. The dispatcher used by all
 /// "calls a NativeFn" shims pushes the args onto a NativeStack in
-/// the order the engine expects, invokes `GameHost::call(index)`,
+/// the order the engine expects, invokes `ScriptEffects::call(index)`,
 /// then returns the result.
 pub struct NativeBinding {
     pub lua_name: &'static str,
@@ -448,7 +448,7 @@ pub fn register_natives(state: &mut MissionLuaState) -> mlua::Result<()> {
 }
 
 /// Build a Lua function that marshals its declared arguments onto a
-/// `NativeStack` (in argument order), calls `GameHost::call`, and marshals
+/// `NativeStack` (in argument order), calls `ScriptEffects::call`, and marshals
 /// the declared return type back to Lua.
 ///
 /// Original provenance: `original-code/RHScriptAPI.scs` is the source of
@@ -488,26 +488,43 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
             lua,
             || {
                 mlua::Error::RuntimeError(format!(
-                    "{}: called with no GameHost attached",
+                    "{}: called with no ScriptEffects attached",
                     sig.name
                 ))
             },
             |session| {
+                let words = args
+                    .iter()
+                    .zip(sig.params.iter())
+                    .zip(param_types.iter())
+                    .enumerate()
+                    .map(|(index, ((value, param), abi_type))| {
+                        argument_to_stack_word(value, *abi_type, sig, index, param.name)
+                    })
+                    .collect::<mlua::Result<Vec<_>>>()?;
                 let mut native_context = session.native_context();
+                // Lua functions cannot currently suspend their mlua call
+                // frame while EngineInner drives a typed SCB yield. Reject
+                // these natives before HostFunctions sees them: several
+                // (Thanx/SendMessage) mutate the recorder/SequenceManager as
+                // they construct the yield, so detecting it afterwards
+                // corrupts state on an otherwise failed Lua event.
+                //
+                // TODO(lua-coroutine): expose an Engine-owned Lua event
+                // coroutine driver, then remove this preflight gate.
+                if native_context.requires_engine_driver(native, &words) {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "{} requires the Engine-owned synchronous yield driver and is unavailable from a direct Lua host session",
+                        sig.name
+                    )));
+                }
                 let mut stack = NativeStack::default();
                 // Push in argument order — the engine's `pop_i32()` pulls
                 // them off in *reverse*, so the last arg ends up on top of
                 // the stack. The .scb VM produced this exact order, so we
                 // mirror it.
-                for (index, ((value, param), abi_type)) in args
-                    .iter()
-                    .zip(sig.params.iter())
-                    .zip(param_types.iter())
-                    .enumerate()
-                {
-                    stack.push_i32(argument_to_stack_word(
-                        value, *abi_type, sig, index, param.name,
-                    )?);
+                for word in words {
+                    stack.push_i32(word);
                 }
                 match robin_engine::interp::HostFunctions::call(
                     &mut native_context,
@@ -517,9 +534,9 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                     NativeCallOutcome::Return(ret) => {
                         Ok(return_from_stack_word(ret, return_type))
                     }
-                    NativeCallOutcome::PendingNestedCall(call) => {
+                    NativeCallOutcome::Yield(call) => {
                         Err(mlua::Error::RuntimeError(format!(
-                            "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
+                            "{} requires synchronous engine dispatch, which is unavailable through the Lua host adapter: {call:?}",
                             sig.name
                         )))
                     }
@@ -617,7 +634,7 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     //
     // Spellforge's `.rhm` extension prefixes each entity with a
     // string identifier. The mission loader fills the matching
-    // BTreeMap on GameHost; these natives just look up by name.
+    // BTreeMaps on immutable script-name bindings; these natives only look up by name.
     let get_actor = lua.create_function(|lua, name: String| {
         with_attached_bindings(lua, |bindings| {
             Ok(bindings.lua_names.actors.get(&name).copied().unwrap_or(0))
@@ -756,7 +773,7 @@ mod tests {
 
     #[test]
     fn overlapping_session_reborrow_is_rejected_and_released() {
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut script_state = ScriptState::default();
         let mut script_domains = ScriptDomains::default();
         let bindings = AttachedScriptBindings::default();

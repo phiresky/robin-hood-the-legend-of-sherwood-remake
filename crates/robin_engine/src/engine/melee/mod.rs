@@ -43,7 +43,7 @@
 //!   `MELEE_HIT_FRAME` timer when sprite animation is unavailable.
 
 use super::*;
-use crate::combat::{self, ConcussionContext};
+use crate::combat::{self, ConcussionContext, ConcussionOutcome};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::entities::Entities;
 use crate::profiles::WeaponThrustKind;
@@ -439,23 +439,22 @@ const VIP_REMARK_DIES: u16 = 118;
 impl EngineInner {
     /// Build a [`ConcussionContext`] for a given entity id, reading the
     /// real invulnerable / tied / carried / script-locked / sherwood-pc
-    /// flags off the entity instead of defaulting them.  Used by console
+    /// flags off the entity instead of defaulting them. Used by console
     /// cheats that call `set_concussion` (WAKEUP, MORPHEUS, BUD SPENCER)
     /// so the guards — "invulnerable entity refuses concussion
     /// increase", "tied/carried keeps asleep below wakeup threshold" —
-    /// still fire through the cheat path.  Returns a default (all-false)
-    /// context when the entity is missing (the caller then no-ops on
-    /// the cheat target anyway).
-    pub(crate) fn concussion_ctx_for<I: Into<EntityId>>(&self, id: I) -> ConcussionContext {
+    /// still fire through the cheat path. A missing cheat target is explicitly
+    /// optional and is reported to the caller instead of being represented by
+    /// a fabricated all-false context.
+    pub(crate) fn concussion_ctx_for<I: Into<EntityId>>(&self, id: I) -> Option<ConcussionContext> {
         let id = id.into();
-        match self.get_entity(id) {
-            Some(entity) => concussion_ctx_full(
+        self.get_entity(id).map(|entity| {
+            concussion_ctx_full(
                 entity,
                 self.world.weather.is_forest_level,
                 Some(&self.mission_domain.campaign),
-            ),
-            None => ConcussionContext::default(),
-        }
+            )
+        })
     }
 
     /// Engine-level wrapper around `combat::set_concussion` that runs
@@ -468,16 +467,10 @@ impl EngineInner {
     /// directly because it also needs the falling-back animation
     /// queueing tied to a damage element.
     ///
-    /// On `WentUnconscious` this:
-    ///  - sets the concussion healing timeout
-    ///  - clears action_state / active melee / path
-    ///  - clears NPC suspects + alerted flag, sets eye-status
-    ///  - clears `inform_my_friends` (no PC who-dunnit on cheat path)
-    ///  - queues `quit_swordfight` + `add_unconscious_star` +
-    ///    `EventLoseConsciousness` for the deferred drain in
-    ///    `perform_hourglass` (where `&LevelAssets` is available).
-    ///
-    /// On `WokeUp` this queues `EventFitAgain` for the deferred drain.
+    /// On a state transition this updates the healing timeout and queues the
+    /// original cross-system finish work. Script-yield callers drain that work
+    /// immediately before resuming the VM; ordinary combat callers drain it at
+    /// the engine boundary.
     ///
     /// When `force_value` is true, bypass the script-lock
     /// stay-asleep clause so the call can wake a script-locked NPC.
@@ -493,61 +486,101 @@ impl EngineInner {
         use crate::combat::ConcussionOutcome;
 
         let entity_id = entity_id.into();
-        let mut ctx = self.concussion_ctx_for(entity_id);
+        let Some(mut ctx) = self.concussion_ctx_for(entity_id) else {
+            tracing::warn!(?entity_id, "optional concussion target does not exist");
+            return ConcussionOutcome::NoChange;
+        };
         ctx.force_value = force_value;
 
-        // Read the wake-up speed from the PC or soldier profile.  The
-        // previous version hard-coded `SOLDIER_CONCUSSION_HEALING_SPEED`
-        // because `&LevelAssets` wasn't in scope at the cheat call
-        // sites; now it's plumbed through `dispatch_console_command`,
-        // so the cheat-driven KO seeds the same per-profile timer the
-        // damage-path tick uses.
-        let healing_speed = match self.get_entity(entity_id) {
-            Some(e) => concussion_healing_speed_for_entity(e, &assets.profile_manager),
-            None => return ConcussionOutcome::NoChange,
-        };
-
-        let outcome = match self
+        let Some(human) = self
             .get_entity_mut(entity_id)
-            .and_then(|e| e.human_data_mut())
-        {
-            Some(h) => combat::set_concussion(h, value, &ctx),
-            None => return ConcussionOutcome::NoChange,
+            .and_then(|entity| entity.human_data_mut())
+        else {
+            tracing::warn!(?entity_id, "optional concussion target is not human");
+            return ConcussionOutcome::NoChange;
         };
+        let outcome = combat::set_concussion(human, value, &ctx);
 
+        self.finish_applied_concussion(assets, entity_id, outcome)
+    }
+
+    /// Strict scripted concussion path. Native validation guarantees the
+    /// actor and its HumanData exist until this synchronous request applies;
+    /// losing either is an engine invariant violation, never a false result.
+    pub(crate) fn apply_scripted_concussion(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: impl Into<EntityId>,
+        value: u16,
+        force_value: bool,
+    ) -> crate::combat::ConcussionOutcome {
+        let entity_id = entity_id.into();
+        let mut ctx = {
+            let entity = self
+                .get_entity(entity_id)
+                .expect("validated scripted concussion target vanished before apply");
+            entity
+                .human_data()
+                .expect("validated scripted concussion target lost HumanData");
+            concussion_ctx_full(
+                entity,
+                self.world.weather.is_forest_level,
+                Some(&self.mission_domain.campaign),
+            )
+        };
+        ctx.force_value = force_value;
+        let human = self
+            .get_entity_mut(entity_id)
+            .expect("validated scripted concussion target vanished during apply")
+            .human_data_mut()
+            .expect("validated scripted concussion target lost HumanData during apply");
+        let outcome = combat::set_concussion(human, value, &ctx);
+
+        self.finish_applied_concussion(assets, entity_id, outcome)
+    }
+
+    fn finish_applied_concussion(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        outcome: crate::combat::ConcussionOutcome,
+    ) -> crate::combat::ConcussionOutcome {
+        self.finish_scripted_concussion(assets, entity_id, outcome);
+        let pc_is_unconscious = self.get_entity(entity_id).is_some_and(|entity| {
+            entity.is_pc()
+                && entity
+                    .human_data()
+                    .expect("PC concussion target lost HumanData")
+                    .unconscious
+        });
+        if pc_is_unconscious {
+            self.unselect_single_pc(entity_id);
+        }
+        outcome
+    }
+
+    /// Complete cross-system concussion effects after a script native has
+    /// already changed canonical HumanData synchronously.
+    pub(crate) fn finish_scripted_concussion(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        outcome: ConcussionOutcome,
+    ) {
+        let healing_speed = concussion_healing_speed_for_entity(
+            self.get_entity(entity_id)
+                .expect("scripted concussion target vanished before finish"),
+            &assets.profile_manager,
+        );
         match outcome {
             ConcussionOutcome::WentUnconscious => {
                 // Healing-timeout init.
-                if let Some(h) = self
+                let h = self
                     .get_entity_mut(entity_id)
                     .and_then(|e| e.human_data_mut())
-                    && h.concussion_healing_timeout == 0
-                {
+                    .expect("scripted concussion target lost HumanData during finish");
+                if h.concussion_healing_timeout == 0 {
                     h.concussion_healing_timeout = healing_speed;
-                }
-
-                // State cleanup that handle_knockout also performs
-                // (eye-status + action_state / active_melee / path
-                // clears).  Done inline because none of these
-                // mutations need `&LevelAssets`.
-                if let Some(victim) = self.get_entity_mut(entity_id) {
-                    if let Some(actor) = victim.actor_data_mut() {
-                        if actor.action_state.is_sword()
-                            || actor.action_state == ActionState::Menacing
-                        {
-                            actor.action_state = ActionState::Waiting;
-                        }
-                        actor.active_melee.clear();
-                        actor.clear_path();
-                    }
-                    if let Some(npc) = victim.npc_data_mut() {
-                        crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-                        npc.alerted = false;
-                        npc.clear_all_suspects();
-                        // Cheat path has no PC who-dunnit, so leave
-                        // the body-detect broadcast off.
-                        npc.inform_my_friends = false;
-                    }
                 }
 
                 self.orders
@@ -561,87 +594,175 @@ impl EngineInner {
             }
             ConcussionOutcome::NoChange => {}
         }
-
-        outcome
     }
 
-    /// Engine-level wrapper around `combat::set_life_points` that runs
-    /// the cross-system side-effects the pure `combat::set_life_points`
-    /// helper can't reach (Human base behaviour plus the PC override).
-    ///
-    /// Used by the script native `SetPersistentProperty(LIFEPOINTS, …)`,
-    /// which passes the equivalent of `bShowTitbit = false` — so no
-    /// damage-number titbit is emitted.
-    ///
-    /// Side effects:
-    /// - Skips when `life_points <= 0` (already-dead branch).
-    /// - Applies the clamp / invulnerable / Sherwood-PC guards via
-    ///   `combat::set_life_points`.
-    /// - Calls `handle_death(assets, …)` synchronously on the kill edge.
-    /// - For PCs, fires the HERO_DIE / HERO_HURT cues via `say_ouch`
-    ///   on any drop, mirroring the PC override.
+    /// Apply the original script-level life setter as one synchronous engine
+    /// operation, including PC speech and the death pipeline.
     pub(crate) fn apply_scripted_life_points(
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
         amount: i32,
     ) {
-        let entity = match self.get_entity(entity_id) {
-            Some(e) => e,
-            None => return,
-        };
+        let entity = self
+            .get_entity(entity_id)
+            .expect("scripted life-point target disappeared before synchronous apply");
+        assert!(
+            matches!(
+                entity,
+                Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
+            ),
+            "scripted life-point target is not a PC, soldier, or civilian"
+        );
+        entity
+            .human_data()
+            .expect("scripted life-point target has no HumanData");
         let is_pc = entity.kind().is_pc();
-        let invulnerable = entity.human_data().map(|h| h.invulnerable).unwrap_or(false);
-        let max_lp = get_max_life_points(entity);
-        let is_sherwood_pc = self.world.weather.is_forest_level && is_pc;
+        let invulnerable = entity
+            .human_data()
+            .expect("validated scripted life-point target lost HumanData")
+            .invulnerable;
+        let max_life = get_max_life_points(entity);
+        let sherwood_pc = self.world.weather.is_forest_level && is_pc;
         let before = get_life_points(entity);
-
-        // Already-dead skip: bypass without invoking the helper so
-        // the death pipeline isn't re-entered for a corpse.
         if before <= 0 {
             return;
         }
 
-        let new_value = amount.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        // RHScript passes `int` to the SWORD setter, so preserve the original
+        // two's-complement narrowing rather than saturating at Rust's bounds.
+        let value = amount as i16;
         let died = match self.get_entity_mut(entity_id) {
-            Some(Entity::Pc(e)) => crate::combat::set_life_points(
-                &mut e.pc.life_points,
-                new_value,
-                invulnerable,
-                max_lp,
-                is_sherwood_pc,
+            Some(Entity::Pc(entity)) if invulnerable => {
+                entity.pc.life_points = 100;
+                false
+            }
+            Some(Entity::Soldier(entity)) if invulnerable => {
+                entity.npc.life_points = 100;
+                false
+            }
+            Some(Entity::Civilian(entity)) if invulnerable => {
+                entity.npc.life_points = 100;
+                false
+            }
+            Some(Entity::Pc(entity)) => crate::combat::set_life_points(
+                &mut entity.pc.life_points,
+                value,
+                false,
+                max_life,
+                sherwood_pc,
             ),
-            Some(Entity::Soldier(e)) => crate::combat::set_life_points(
-                &mut e.npc.life_points,
-                new_value,
-                invulnerable,
-                max_lp,
-                is_sherwood_pc,
+            Some(Entity::Soldier(entity)) => crate::combat::set_life_points(
+                &mut entity.npc.life_points,
+                value,
+                false,
+                max_life,
+                sherwood_pc,
             ),
-            Some(Entity::Civilian(e)) => crate::combat::set_life_points(
-                &mut e.npc.life_points,
-                new_value,
-                invulnerable,
-                max_lp,
-                is_sherwood_pc,
+            Some(Entity::Civilian(entity)) => crate::combat::set_life_points(
+                &mut entity.npc.life_points,
+                value,
+                false,
+                max_life,
+                sherwood_pc,
             ),
-            _ => return,
+            _ => unreachable!("validated scripted life-point target changed entity kind"),
         };
-
-        let after = self.get_entity(entity_id).map(get_life_points).unwrap_or(0);
+        let after = get_life_points(
+            self.get_entity(entity_id)
+                .expect("scripted life-point target vanished after synchronous apply"),
+        );
         let damage = (before - after).max(0) as u16;
-
-        // PC override: HERO_DIE / HERO_HURT cues fire on any drop.
-        // `say_ouch` reads the post-drop life/dead/unconscious state
-        // and selects the right exclamation group, so call after the
-        // field is updated.
         if is_pc && damage > 0 {
             self.say_ouch(assets, entity_id, Some(damage));
         }
-
         if died {
-            self.handle_death(assets, entity_id);
+            self.apply_scripted_virtual_kill(assets, entity_id);
         }
+    }
+
+    /// Run the virtual PC/NPC/Soldier/Human `Kill` chain used by
+    /// `RHElementActorHuman::SetLifePoints`, without synthesizing a damage
+    /// element. Damage-only animation, roll, attacker attribution, and fight
+    /// score belong to `ReceiveDamage`, not to a script setter.
+    fn apply_scripted_virtual_kill(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+        let (is_pc, is_npc, allied_soldier) = {
+            let entity = self
+                .get_entity(entity_id)
+                .expect("script-killed actor vanished before virtual Kill");
+            (
+                entity.is_pc(),
+                entity.is_npc(),
+                entity.is_soldier() && entity.camp() == crate::element::Camp::Royalists,
+            )
+        };
+
+        if is_pc {
+            self.apply_pc_kill_cascade(assets, entity_id);
+        }
+        if is_npc {
+            self.delete_detectable_for_all_npc(entity_id, crate::element::DetectableType::Friend);
+            self.delete_detectable_for_all_npc(
+                entity_id,
+                crate::element::DetectableType::MissedFriend,
+            );
+            let entity = self
+                .get_entity_mut(entity_id)
+                .expect("script-killed NPC vanished during virtual Kill");
+            let forced_attentive = if entity.is_soldier() {
+                entity
+                    .enemy_ai()
+                    .expect("script-killed soldier NPC has no EnemyAi")
+                    .forced_attentive
+            } else {
+                false
+            };
+            let ai = entity
+                .ai_controller_mut()
+                .expect("script-killed NPC has no AI controller");
+            ai.set_alert_status_with_flags(
+                crate::ai::AlertLevel::Green,
+                crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
+                forced_attentive,
+            );
+            ai.current_state = crate::ai::AiState::Sleeping;
+            ai.current_substate = crate::ai::Substate::SleepingForever;
+            ai.clear_emoticon();
+            ai.clear_all_pending();
+            let npc = entity
+                .npc_data_mut()
+                .expect("script-killed NPC has no NPCData");
+            npc.alerted = false;
+            if npc.eye_status != EyeStatus::Closed {
+                crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
+            }
+            npc.inform_my_friends = false;
+            if let Some(ai) = npc.ai_brain.base_mut() {
+                ai.knocked_out_in_money_fight = false;
+            }
+        }
+        if allied_soldier {
+            self.mission_domain.mission_stat.add_killed_allied();
+        }
+
+        self.quit_swordfight(assets, entity_id);
+        let still_unconscious = self
+            .get_entity(entity_id)
+            .and_then(|entity| entity.human_data())
+            .expect("script-killed human lost HumanData")
+            .unconscious;
+        self.feedback.titbit_manager.remove_unconscious_stars_if(
+            crate::titbit::ElementHandle(entity_id.index()),
+            still_unconscious,
+        );
+        let human = self
+            .get_entity_mut(entity_id)
+            .expect("script-killed human vanished during Human::Kill")
+            .human_data_mut()
+            .expect("script-killed human lost HumanData during Human::Kill");
+        human.unconscious = false;
+        human.concussion_of_the_brain = 0;
+        human.concussion_healing_timeout = 0;
     }
 
     /// Drain `pending_concussion_side_effects` (queued by
@@ -665,17 +786,30 @@ impl EngineInner {
                 ConcussionOutcome::WentUnconscious => {
                     self.quit_swordfight(assets, entity_id);
                     self.add_unconscious_star(entity_id);
+                    if let Some(npc) = self
+                        .get_entity_mut(entity_id)
+                        .and_then(|entity| entity.npc_data_mut())
+                    {
+                        npc.clear_all_suspects();
+                    }
                     self.dispatch_ai_stimulus(
                         entity_id,
                         crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
                     );
+                    if let Some(npc) = self
+                        .get_entity_mut(entity_id)
+                        .and_then(|entity| entity.npc_data_mut())
+                    {
+                        // Script setters have no who-dunnit actor.
+                        npc.inform_my_friends = false;
+                    }
                 }
                 ConcussionOutcome::WokeUp => {
-                    self.queue_wake_redetection_blinks(entity_id);
                     self.dispatch_ai_stimulus(
                         entity_id,
                         crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
                     );
+                    self.queue_wake_redetection_blinks(entity_id);
                 }
                 ConcussionOutcome::NoChange => {}
             }

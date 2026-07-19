@@ -442,7 +442,7 @@ pub struct GridSector {
     pub layer: u16,
     /// Global sector number.
     pub sector_number: crate::sector::SectorNumber,
-    /// For door sectors: index into the global door table (`GameHost::doors`).
+    /// For door sectors: index into the canonical interactable door table.
     pub door_index: Option<u32>,
     /// For lift sectors: the sub-type (wall/stairs/ladder/normal).
     pub lift_type: Option<crate::sector::LiftType>,
@@ -453,7 +453,7 @@ pub struct GridSector {
     /// Whether all movement in this sector must be crouched.
     /// Loaded from proto motion area flags.
     pub force_crouched: bool,
-    /// For building interior sectors: index into `GameHost::building_occupants`.
+    /// For building interior sectors: index into canonical `BuildingState`.
     pub building_index: Option<crate::sector::BuildingIdx>,
 
     // The runtime `active` toggle (set by patches) and per-lift occupancy /
@@ -469,7 +469,7 @@ pub struct GridSector {
     // Door indices are ancillary references for code that still needs the
     // original door record (for example falling out of a lift to the outside
     // door point). Movement animation must use the direct exit points above.
-    /// Index into `GameHost::doors` of the door at the bottom of this
+    /// Index into the canonical door table of the door at the bottom of this
     /// lift, or `None` for non-lift sectors. The door whose `point_in.Y`
     /// is largest (screen coords, Y grows downward). Used by
     /// `translate_ladder_wall_fall` to locate the ground entry point.
@@ -482,7 +482,7 @@ pub struct GridSector {
     /// level init.
     pub jump_line_indices: Vec<crate::jump_line::JumpLineIndex>,
 
-    /// Indices into `GameHost::doors` of the gates attached to this motion
+    /// Indices into the canonical door table of the gates attached to this motion
     /// area sector. Populated during level load from each door's
     /// `sector_in` / `sector_out`. Used by the motion-area cursor
     /// reachability check and for gate-connectivity queries.

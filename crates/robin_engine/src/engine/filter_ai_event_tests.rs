@@ -14,9 +14,8 @@
 //!  * Unmapped stimulus type: `filter_stimulus` calls the script with the
 //!    original sentinel event code `-2`.
 //!  * Missing FilterAIEvent override: the base class's implicit
-//!    `return 1` must be honoured — `filter_stimulus` returns true
-//!    even though `call_actor_function` would otherwise return
-//!    `Ok(0)` for "no such function".
+//!    `return 1` must be honoured, while a missing required VM remains an
+//!    error in the shared driver.
 //!  * Side effects: the filter can observe-and-mutate state each call
 //!    (the raison d'être for on-demand vs. precompute).
 
@@ -319,11 +318,9 @@ fn filter_runs_for_unmapped_stimulus_type() {
     );
 }
 
-/// Actors with a bound script that doesn't override `FilterAIEvent`
-/// inherit the base class's `return 1` default.  `call_actor_function`
-/// would otherwise return `Ok(0)` for "no such function"; the
-/// `actor_has_function` pre-check prevents that from being misread
-/// as a script-blocked stimulus.
+/// Actors with a bound script that doesn't override `FilterAIEvent` inherit
+/// the base class's `return 1` default. The `actor_has_function` pre-check
+/// distinguishes that optional missing method from a script-authored zero.
 #[test]
 fn filter_allows_when_actor_has_no_filter_override() {
     let (mut engine, _, _, noov_handle) = build_engine();
@@ -404,8 +401,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
 // subsystem mid-execution.  The native calls
 // `prototype.FilterAIEvent(source, event)` from inside a running
 // script — implemented via a yield-and-resume pipeline
-// (`StopReason::PendingNestedCall` /
-// `MissionScript::call_actor_function`'s nested-resume loop).
+// (`StopReason::Yield` and the sole `EngineInner` callback driver).
 
 fn q_aff0_iconstant(dst: u16, constant: i32) -> Quad {
     let mut ops = [0u8; 8];
@@ -645,7 +641,7 @@ fn build_recursive_nested_scb() -> ScbFile {
 /// Variant where the outer callback writes an NPC custom value before
 /// yielding through `PrototypeFilterEvent`, and the nested callback reads the
 /// same entity value. This pins the shared live-state requirement across VM
-/// resume boundaries before GameHost is structurally removed.
+/// resume boundaries before ScriptEffects is structurally removed.
 fn build_nested_entity_mutation_scb() -> ScbFile {
     let mut scb = build_nested_scb();
 
@@ -782,48 +778,30 @@ fn build_nested_ai_global_mutation_scb() -> ScbFile {
 fn nested_callback_keeps_the_canonical_query_views() {
     let scb =
         build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::GetNumberOfSelectedPCs));
-    let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
     let outer_handle = 11;
     let inner_handle = 22;
-    let sequences = crate::sequence::SequenceManager::new();
-    let mut selection = vec![
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(MissionScript::from_scb(scb).expect("scb builds"));
+    engine.players.seats[0].selection = vec![
         crate::element::EntityId::Pc(crate::entity_id::PcId(0)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(1)),
         crate::element::EntityId::Pc(crate::entity_id::PcId(2)),
     ];
-    let sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 41;
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-    )
-    .with_queries(&sequences, &mut selection, &sounds, &weather, &frame);
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        inner_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
-
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(&assets, |script, domains, capabilities| {
+            assert!(script.bind_actor(outer_handle, "OuterCaller", domains, capabilities));
+            assert!(script.bind_actor(inner_handle, "InnerTarget", domains, capabilities));
+        })
+        .expect("mission installed");
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
         .expect("nested dispatch runs cleanly");
 
@@ -851,19 +829,29 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            inner_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(inner_handle),
             "FilterAIEvent",
             &[0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(inner_handle),
         )
         .expect("direct actor callback runs cleanly");
 
     assert_eq!(result, inner_handle);
     assert_eq!(
-        script.active_call_frame_count(),
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .unwrap()
+            .active_call_frame_count(),
         0,
         "call context is restored"
     );
@@ -890,18 +878,34 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
         &capabilities,
     ));
 
-    let result = script
-        .call_scroll_function(
-            scroll_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let frame = crate::natives::ScriptCallFrame::default()
+        .with_script_this(scroll_handle)
+        .with_current_scroll(scroll_handle);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Scroll(scroll_handle),
             "FilterAIEvent",
             &[0, 0],
-            &mut script_domains,
-            &capabilities,
+            frame,
         )
         .expect("scroll callback runs cleanly");
 
     assert_eq!(result, scroll_handle);
-    assert_eq!(script.active_call_frame_count(), 0);
+    assert_eq!(
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .unwrap()
+            .active_call_frame_count(),
+        0
+    );
 }
 
 #[test]
@@ -935,13 +939,18 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
         .expect("nested prototype dispatch runs cleanly");
 
@@ -950,7 +959,12 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
         "the prototype's ThisActor must remain the outer event receiver"
     );
     assert_eq!(
-        script.active_call_frame_count(),
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .unwrap()
+            .active_call_frame_count(),
         0,
         "call context is restored"
     );
@@ -960,10 +974,10 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
 /// `PrototypeFilterEvent` on a sibling actor, and the nested call's
 /// return value flows back into the outer return.  Verifies that:
 ///
-///  1. The native arm returns an explicit `PendingNestedCall` outcome.
-///  2. The interpreter carries it in `StopReason::PendingNestedCall`.
-///  3. `call_actor_function`'s resume loop dispatches the queued call
-///     against the target actor's bound script.
+///  1. The native arm returns an explicit script-call yield.
+///  2. The interpreter carries it in `StopReason::Yield`.
+///  3. The shared engine driver dispatches the queued call against the target
+///     actor's bound script.
 ///  4. The result (`42`) is patched into the outer VM's
 ///     `native_return_value` and read by `Aff1NativeGetReturn`.
 ///  5. The outer VM resumes and returns the resolved sentinel.
@@ -981,10 +995,9 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
         &mut fast_grid,
     );
 
-    // Bind two synthetic actor instances.  Their entity handles don't
-    // need to map to real engine entities — `call_actor_function`
-    // only looks them up in `script.actor_instances`, and our scripts
-    // never invoke entity-lookup natives.
+    // Bind two synthetic actor instances. Their entity handles don't need to
+    // map to real engine entities because these scripts never invoke an
+    // entity-lookup native.
     let outer_handle = 1;
     let inner_handle = 2;
     assert!(script.bind_actor(
@@ -1000,13 +1013,18 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[inner_handle, 0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
         .expect("nested dispatch runs cleanly");
 
@@ -1045,21 +1063,31 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            actor_a,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let error = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(actor_a),
             "FilterAIEvent",
             &[actor_b, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(actor_a),
         )
-        .expect("recursive nested dispatch reaches the explicit limit");
+        .expect_err("recursive nested dispatch reaches the explicit limit");
 
+    assert!(error.contains("depth limit"));
     assert_eq!(
-        result, 1,
-        "the depth guard returns FilterAIEvent's base default"
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .unwrap()
+            .active_call_frame_count(),
+        0
     );
-    assert_eq!(script.active_call_frame_count(), 0);
 }
 
 #[test]
@@ -1081,16 +1109,13 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
         .expect("mission script stays present");
 
     let result = engine
-        .with_script_session(&assets, |script, script_domains, capabilities| {
-            script.call_actor_function(
-                outer_handle,
-                "FilterAIEvent",
-                &[inner_handle, 0, 0],
-                script_domains,
-                capabilities,
-            )
-        })
-        .expect("mission script stays present")
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
+            "FilterAIEvent",
+            &[inner_handle, 0, 0],
+            crate::natives::ScriptCallFrame::actor(outer_handle),
+        )
         .expect("nested dispatch runs cleanly");
 
     assert_eq!(
@@ -1129,13 +1154,18 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, 0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
         .expect("nested dispatch runs cleanly");
 
@@ -1176,13 +1206,21 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
         &capabilities,
     ));
 
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.world.entities = entity_store;
+    engine.ai.global = ai_global;
+    engine.world.fast_grid = fast_grid;
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let result = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[prototype_handle, prototype_handle, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
         .expect("nested dispatch runs cleanly");
 
@@ -1190,9 +1228,10 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
         result, 77,
         "the nested VM must read the entity mutation made before the outer VM yielded"
     );
-    drop(capabilities);
     assert_eq!(
-        entity_store
+        engine
+            .world
+            .entities
             .get_legacy_slot(1)
             .expect("prototype entity remains installed")
             .1
@@ -1244,16 +1283,13 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     engine.attach_script_bindings(&assets);
 
     let result = engine
-        .with_script_session(&assets, |script, script_domains, queries| {
-            script.call_actor_function(
-                outer_handle,
-                "FilterAIEvent",
-                &[prototype_handle, 0, 0],
-                script_domains,
-                queries,
-            )
-        })
-        .expect("mission script remains installed")
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
+            "FilterAIEvent",
+            &[prototype_handle, 0, 0],
+            crate::natives::ScriptCallFrame::actor(outer_handle),
+        )
         .expect("nested AI-global dispatch runs cleanly");
 
     assert_eq!(result, 42);
@@ -1269,7 +1305,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
 /// directly to the NPC (`RHScript.cpp:6519-6537`), and the shipped ActorScript
 /// base implementation returns one rather than synthesizing a blocked event.
 #[test]
-fn prototype_filter_event_unbound_target_uses_original_allow_default() {
+fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
@@ -1291,18 +1327,20 @@ fn prototype_filter_event_unbound_target_uses_original_allow_default() {
     ));
     // Note: don't bind anyone for handle 99.
 
-    let result = script
-        .call_actor_function(
-            outer_handle,
+    drop(capabilities);
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(script);
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    let error = engine
+        .call_script_vm(
+            &assets,
+            super::ScriptVmKey::Actor(outer_handle),
             "FilterAIEvent",
             &[99, 0, 0],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::actor(outer_handle),
         )
-        .expect("nested dispatch runs cleanly");
+        .expect_err("the native referenced a missing required target VM");
 
-    assert_eq!(
-        result, 1,
-        "missing prototype override must inherit FilterAIEvent's allow default"
-    );
+    assert!(error.contains("required VM is not bound"));
 }

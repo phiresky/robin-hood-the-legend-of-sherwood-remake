@@ -2417,7 +2417,7 @@ impl EngineInner {
     ///
     /// Runtime occupant tracking is wired at the `execute_pass_door`
     /// Enter / Leave branches in `engine::door_pass`: the same hook
-    /// that updates `game_host.building_occupants` also updates
+    /// that updates canonical `BuildingState` occupants also updates
     /// `House::occupant_ids`.
     pub(super) fn initialize_buildings(&mut self) {
         use crate::ai::{AI_DOOR_RALLY_POINT_DISTANCE, DoorRallyPoint, House, Position};
@@ -2657,24 +2657,6 @@ impl EngineInner {
             prev,
             new_overall,
         );
-    }
-
-    /// Set every NPC's `view_radius_base`, `view_radius_goal`, and
-    /// `view_radius` from `standard_view_polygon_radius`.  Called at
-    /// init and when the script changes the radius at runtime.
-    pub(super) fn propagate_view_radius(&mut self) {
-        let r = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS
-        };
-        for (_, entity) in self.world.entities.npcs_mut() {
-            if let Some(npc) = entity.npc_data_mut() {
-                npc.view_radius_base = r;
-                npc.view_radius_goal = r;
-                npc.view_radius = r;
-            }
-        }
     }
 
     // ─── Turn order processing ──────────────────────────────────
@@ -7447,33 +7429,27 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for &(npc_id, path_idx, wp_idx) in &requests {
-                let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
-                match script.call_waypoint_function(
-                    path_idx,
-                    wp_idx,
-                    "ReachPoint",
-                    &[actor_handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                        // Debug assert — `ReachPoint` is part of the
-                        // `IWaypointScript` contract, so a bound
-                        // instance failing the call is a bug.
-                        debug_assert!(
-                            false,
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                    }
+        for &(npc_id, path_idx, wp_idx) in &requests {
+            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+            match self.call_script_vm(
+                assets,
+                ScriptVmKey::Waypoint(path_idx, wp_idx),
+                "ReachPoint",
+                &[actor_handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
+                    debug_assert!(
+                        false,
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
                 }
             }
-        });
+        }
 
         // ── Phase 2: synchronous Think(EventAfterScriptGoOn) ──
         // `think(EVENT_AFTER_SCRIPT_GO_ON)` fires immediately after

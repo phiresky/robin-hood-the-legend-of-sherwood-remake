@@ -8,7 +8,7 @@
 
 use robin_assets::scb;
 use robin_engine::interp::Vm;
-use robin_engine::natives::{GameHost, NativeContext, ScriptState};
+use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
 use robin_engine::vm::{self, Instruction};
 
 fn main() -> std::process::ExitCode {
@@ -64,7 +64,7 @@ fn main() -> std::process::ExitCode {
         instructions.len()
     );
 
-    let mut game_host = GameHost::new();
+    let mut script_effects = ScriptEffects::new();
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -76,7 +76,7 @@ fn main() -> std::process::ExitCode {
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let context = NativeContext::new(
-        &mut game_host,
+        &mut script_effects,
         &mut script_state,
         &mut script_domains,
         &capabilities,
@@ -114,7 +114,10 @@ fn main() -> std::process::ExitCode {
     // Recover host and print summary
     let host = vm_state.take_host();
 
-    tracing::info!("--- {} deferred engine commands ---", host.commands.len());
+    tracing::info!(
+        "--- {} deferred engine commands ---",
+        host.engine_commands().len()
+    );
 
     if !host.script_state().globals.is_empty() {
         tracing::info!("--- Globals ---");

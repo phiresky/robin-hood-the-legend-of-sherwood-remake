@@ -853,7 +853,7 @@ impl EngineInner {
     /// We sync from the engine-owned scroll domain populated by the
     /// scroll-attachment script native.
     fn sync_speak_titbits(&mut self) {
-        // Collect (npc_id, has_scroll, force_refresh) from the game host.
+        // Collect (npc_id, has_scroll, force_refresh) from canonical entities.
         // The map uses actor script handles.
         // `force_refresh` carries the remove-then-add pulse for NPCs
         // whose attached scroll handle just changed value

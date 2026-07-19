@@ -97,6 +97,10 @@ pub struct Occupant {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SectorProduction {
     pub prod_type: Type,
+    /// Canonical script-zone attachment. The original stores a non-null
+    /// `RHSectorScript*` and asserts both single attachment and attachment
+    /// before accepting production points.
+    pub script_zone: Option<usize>,
     pub speed: u16,
     pub production_points: Vec<Point>,
     /// Captured Sherwood-side occupants.

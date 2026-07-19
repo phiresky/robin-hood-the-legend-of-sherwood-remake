@@ -248,35 +248,15 @@ impl NativeContext<'_, '_> {
                 // discriminants — using `Posture::try_from` on the
                 // raw value silently corrupts every script call.
                 // This arm dispatches on the script IDs and
-                // writes the intended internal posture / clears
-                // concussion / drops life points where directly
-                // feasible, then enqueues a
-                // `DeferredCommand::LaunchWait` so the engine
-                // fires a low-priority `Wait` after each
-                // non-error arm — every successful branch of the
-                // switch ends with `Wait()`.
+                // follows RHScript.cpp's exact Stop/broadcast/state/Wait
+                // order against live canonical owners.
                 //
-                const ID_UPRIGHT: i32 = 0;
-                const ID_LYING: i32 = 2;
-                const ID_ON_LADDER: i32 = 4;
-                const ID_SIESTA: i32 = 5;
-                const ID_CARRIED: i32 = 6;
-                const ID_TIED: i32 = 7;
-                const ID_FLYING: i32 = 8;
-                const ID_CLIMBING: i32 = 9;
-                const ID_DODGED: i32 = 10;
-                const ID_CARRYING_CORPSE: i32 = 11;
-                const ID_DEAD: i32 = 15;
-                const ID_SITTING: i32 = 16;
-                const ID_KO: i32 = 17;
-                const ID_ANONYMOUS_ARCHER: i32 = 100;
-
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
 
                 // ActorExists + IsHuman gates: warn and return on
                 // failure of either.
-                let Some(entity) = self.get_entity_mut(actor) else {
+                let Some(entity) = self.get_entity(actor) else {
                     tracing::warn!("Script Error: SetActorPosture invalid actor {actor}");
                     return 0;
                 };
@@ -285,148 +265,28 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
 
-                let is_npc = entity.is_npc();
-                let mut launch_wait = false;
                 match val {
-                    ID_UPRIGHT => {
-                        // Nested switch on current posture.
-                        let current = entity.element_data().posture;
-                        entity.set_posture(Posture::Upright);
-                        // CARRYING_CORPSE branch skips the concussion
-                        // clear; LYING and the default both clear it.
-                        if current != Posture::CarryingCorpse
-                            && let Some(h) = entity.human_data_mut()
-                        {
-                            h.concussion_of_the_brain = 0;
-                            h.unconscious = false;
-                        }
-                        // From-LYING NPC branch broadcasts
-                        // resurrection so other NPCs drop us
-                        // from their detectable-body lists.
-                        if current == Posture::Lying && is_npc {
-                            self.deferred_commands
-                                .push(DeferredCommand::BroadcastResurrection { actor });
-                        }
-                        launch_wait = true;
-                    }
-                    ID_CARRIED | ID_FLYING | ID_CLIMBING | ID_ON_LADDER | ID_CARRYING_CORPSE
-                    | ID_SIESTA => {
+                    4 | 5 | 6 | 8 | 9 | 11 => {
                         // Warn + return; never touches state.
                         // No Wait().
                         tracing::warn!(
                             "Script Error: SetActorPosture cannot set posture {val} from script"
                         );
                     }
-                    ID_LYING => {
-                        entity.set_posture(Posture::Lying);
-                        if let Some(h) = entity.human_data_mut() {
-                            h.concussion_of_the_brain = 0;
-                            h.unconscious = false;
-                        }
-                        launch_wait = true;
-                    }
-                    ID_TIED => {
-                        entity.set_posture(Posture::Tied);
-                        // NPC branch fires
-                        // Think(EVENT_LOSE_CONSCIOUSNESS) +
-                        // detect-me broadcast before the Wait()
-                        // so allies pick the body up.
-                        if is_npc {
-                            self.deferred_commands
-                                .push(DeferredCommand::BroadcastLoseConsciousness { actor });
-                        }
-                        launch_wait = true;
-                    }
-                    ID_SITTING => {
-                        entity.set_posture(Posture::Sitting);
-                        if let Some(h) = entity.human_data_mut() {
-                            h.concussion_of_the_brain = 0;
-                            h.unconscious = false;
-                        }
-                        launch_wait = true;
-                    }
-                    ID_KO => {
-                        // ID_KO sequence:
-                        // Stop(Injury) + SetPosture(LYING) +
-                        // SetConcussion(CONCUSSION_SCRIPT, force=true) +
-                        // (NPC) Think(EVENT_LOSE_CONSCIOUSNESS) +
-                        // detect-me broadcast + Wait().
-                        entity.set_posture(Posture::Lying);
-                        if let Some(h) = entity.human_data_mut() {
-                            // CONCUSSION_SCRIPT — saturating write to the
-                            // unconscious threshold; the engine's
-                            // wakeup/sleep state machine consumes this.
-                            h.concussion_of_the_brain = crate::combat::CONCUSSION_MAX;
-                            h.unconscious = true;
-                        }
-                        // Stop(Injury) before the posture stamp
-                        // tears down any preference /
-                        // normal-priority sequence the actor was
-                        // running.  Order is Stop → SetPosture →
-                        // SetConcussion → (NPC broadcasts) →
-                        // Wait; the deferred queue drains in
-                        // push order, so queue Stop first, then
-                        // the NPC broadcasts, then LaunchWait
-                        // below.
-                        self.deferred_commands
-                            .push(DeferredCommand::StopActorAtPriority {
-                                actor,
-                                priority: crate::sequence::SequencePriority::Injury,
-                            });
-                        if is_npc {
-                            self.deferred_commands
-                                .push(DeferredCommand::BroadcastLoseConsciousness { actor });
-                        }
-                        launch_wait = true;
-                    }
-                    ID_DEAD => {
-                        // SetLifePoints(0) +
-                        // SetStates(Posture::Dead, ActionState::Waiting)
-                        // + Wait().
-                        entity.set_posture(Posture::Dead);
-                        if let Some(a) = entity.actor_data_mut() {
-                            a.action_state = ActionState::Waiting;
-                        }
-                        // `SetLifePoints(0)` fires the full
-                        // death pipeline (sword-fight quit,
-                        // dying anim, titbit cleanup).  Route
-                        // through `HandleDeath`, which
-                        // dispatches a synthetic lethal
-                        // `ReceiveDamage` element (see
-                        // engine/melee.rs::handle_death).
-                        self.deferred_commands
-                            .push(DeferredCommand::HandleDeath { actor });
-                        launch_wait = true;
-                    }
-                    ID_ANONYMOUS_ARCHER => {
-                        entity.set_posture(Posture::AnonymousArcher);
-                        if let Some(a) = entity.actor_data_mut() {
-                            a.action_state = ActionState::Waiting;
-                        }
-                        // Explicit AddTitbit(HIDDEN) — the
-                        // script-level SetStates bypasses the
-                        // stealth-command transition that
-                        // normally seeds the HIDDEN titbit, so
-                        // we re-add it via the deferred queue
-                        // (handler resolves the per-PC phase).
-                        self.deferred_commands
-                            .push(DeferredCommand::AddHiddenTitbitForActor { actor });
-                        launch_wait = true;
-                    }
-                    ID_DODGED => {
-                        entity.set_posture(Posture::Crouched);
-                        if let Some(a) = entity.actor_data_mut() {
-                            a.action_state = ActionState::Waiting;
-                        }
-                        launch_wait = true;
+                    0 | 2 | 7 | 10 | 15 | 16 | 17 | 100 => {
+                        let request = crate::interp::SynchronousScriptRequest::SetActorPosture {
+                            actor,
+                            posture: val,
+                            native_return: 0,
+                        };
+                        self.pending_yield = Some(crate::interp::NativeYield {
+                            resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                            operation: crate::interp::NativeOperation::EngineAction(request),
+                        });
                     }
                     _ => {
                         tracing::warn!("Script Error: SetActorPosture illegal ID {val}");
                     }
-                }
-                if launch_wait {
-                    self.deferred_commands
-                        .push(DeferredCommand::LaunchWait { actor });
                 }
                 0
             }
@@ -479,95 +339,20 @@ impl NativeContext<'_, '_> {
             SetActorLocation => {
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
-                if loc == 0 {
-                    // NULL location: deactivate actor (the
-                    // "Honolulu" state).  Also quits swordfights,
-                    // removes unconscious stars, disables PC
-                    // playability, and script-locks NPC AI.
-                    let is_pc;
-                    let is_npc;
-                    let is_human;
-                    let is_playable;
-                    let is_unlocked_npc;
-                    if let Some(entity) = self.get_entity_mut(actor) {
-                        is_pc = entity.is_pc();
-                        is_npc = entity.is_npc();
-                        is_human = entity.is_human();
-                        is_playable = match entity {
-                            Entity::Pc(e) => e.pc.playable,
-                            _ => false,
-                        };
-                        is_unlocked_npc =
-                            entity.ai_controller().is_some_and(|ai| !ai.script_locked);
-                        let ed = entity.element_data_mut();
-                        ed.active = false;
-                        ed.in_honolulu = true;
-                    } else {
-                        return 0;
-                    }
-                    // Humans quit swordfight + remove
-                    // unconscious stars.  `QuitSwordfight`'s
-                    // handler already early-returns on
-                    // non-humans via `human_data()` so the gate
-                    // is implicit there; the unconscious-stars
-                    // removal needs an explicit gate.
-                    self.deferred_commands
-                        .push(DeferredCommand::QuitSwordfight { actor });
-                    if is_human {
-                        self.deferred_commands
-                            .push(DeferredCommand::RemoveUnconsciousStars { actor });
-                    }
-                    // Playable PCs lose playability.
-                    if is_pc && is_playable {
-                        self.deferred_commands.push(DeferredCommand::SetPlayable {
-                            actor,
-                            playable: false,
-                        });
-                    }
-                    // Unlocked NPCs get script-locked before the native
-                    // returns, matching `SetActorLocation(NULL)` in the
-                    // Original. A later `UnlockAI` in this callback must
-                    // observe this write.
-                    if is_npc && is_unlocked_npc {
-                        self.script_lock_ai(actor, false);
-                    }
-                } else if let Some((x, y)) = self.resolve_location_pos(loc) {
-                    // Read layer + sector from the resolved point
-                    // and stamp them on the actor.  Static
-                    // script locations carry that data; computed
-                    // ones leave layer/sector untouched.
-                    let dest_layer_sector = self.resolve_location_layer_sector(loc);
-                    if let Some(entity) = self.get_entity_mut(actor) {
-                        let ed = entity.element_data_mut();
-                        if ed.in_honolulu {
-                            ed.active = true;
-                            ed.in_honolulu = false;
-                        }
-                        ed.set_position_map(crate::coordinates::MapPoint { x, y });
-                        if let Some((layer, sector_num)) = dest_layer_sector {
-                            ed.set_layer(layer);
-                            ed.set_sector(crate::position_interface::SectorHandle::new(sector_num));
-                        }
-                        ed.update_grid_cell();
-                    }
-                    // The engine command handles the full position update:
-                    // SetObstacle, ComputePositionAll, ComputeDisplayOrder.
-                    self.commands.push(EngineCommand::SetActorLocation {
-                        actor_handle: actor,
-                        x,
-                        y,
-                        dest_layer_sector,
-                        // Regular SetActorLocation teleports onto an
-                        // in-map point, so no spawn-elevation recompose
-                        // is needed — `compute_position_all`
-                        // after `set_position_map` derives Z from
-                        // the sector's own plane at `(x, y)`.
-                        spawn_elevation_probe: None,
-                    });
-                } else {
-                    tracing::warn!("SetActorLocation: invalid location handle {loc}");
+                if self.get_entity(actor).is_none() {
+                    tracing::warn!("SetActorLocation: invalid actor handle {actor}");
+                    return 0;
                 }
-                0
+                let request = crate::interp::SynchronousScriptRequest::SetActorLocation {
+                    actor,
+                    location: loc,
+                    native_return: 1,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::OperationResult,
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
+                1
             }
             IsInside => {
                 let loc = stack.pop_i32();
@@ -736,8 +521,7 @@ impl NativeContext<'_, '_> {
                 let target = self
                     .actor_id(actor)
                     .expect("InflictPain: actor_exists check passed but actor_id None");
-                self.completed_sequences
-                    .push(Sequence::single_damage(target, damage, concussion));
+                self.launch_script_sequence(Sequence::single_damage(target, damage, concussion), 0);
                 // Returns true on success.
                 1
             }
@@ -767,24 +551,33 @@ impl NativeContext<'_, '_> {
                 let target = val != 0;
                 let mut launch_enter = false;
                 let frame = self.frame_counter();
-                if let Some(entity) = self.get_entity_mut(actor) {
-                    if let Some(enemy) = entity.enemy_ai_mut() {
-                        enemy.forced_attentive = target;
-                        if target && !enemy.will_be_attentive {
-                            enemy.will_be_attentive = true;
-                            launch_enter = true;
+                match self.get_entity_mut(actor) {
+                    None => {
+                        tracing::warn!("Script Error: SetAlwaysAttentive on invalid actor {actor}");
+                    }
+                    Some(entity) => match entity.enemy_ai_mut() {
+                        None => {
+                            tracing::warn!(
+                                "Script Error: SetAlwaysAttentive on non-soldier actor {actor}"
+                            );
                         }
-                    }
-                    if target
-                        && frame > 1
-                        && let Some(enemy) = entity.enemy_ai_mut()
-                        && enemy.base.current_music_alert_status == AlertLevel::Green
-                    {
-                        // Route through the soldier wrapper so view
-                        // tracks the override; SetAlwaysAttentive
-                        // already updated `forced_attentive` above.
-                        enemy.set_alert_status(AlertLevel::Yellow);
-                    }
+                        Some(enemy) => {
+                            enemy.forced_attentive = target;
+                            if target && !enemy.will_be_attentive {
+                                enemy.will_be_attentive = true;
+                                launch_enter = true;
+                            }
+                            if target
+                                && frame > 1
+                                && enemy.base.current_music_alert_status == AlertLevel::Green
+                            {
+                                // Route through the soldier wrapper so view
+                                // tracks the override; SetAlwaysAttentive
+                                // already updated `forced_attentive` above.
+                                enemy.set_alert_status(AlertLevel::Yellow);
+                            }
+                        }
+                    },
                 }
                 if launch_enter && let Some(target_id) = self.actor_id(actor) {
                     let mut seq = Sequence::new();
@@ -793,7 +586,7 @@ impl NativeContext<'_, '_> {
                         Command::EnterAttentiveMode,
                         Some(target_id),
                     ));
-                    self.completed_sequences.push(seq);
+                    self.launch_script_sequence(seq, 0);
                 }
                 0
             }
@@ -831,7 +624,7 @@ impl NativeContext<'_, '_> {
                 // engine-side state.  Validation (ActorExists +
                 // IsPC) and the actual `actor_make_crouched`
                 // call happen in the engine-side handler.
-                self.commands.push(EngineCommand::ScriptMakePCCrouched {
+                self.emit_engine(EngineCommand::ScriptMakePCCrouched {
                     actor_handle: actor,
                 });
                 0
@@ -865,7 +658,7 @@ impl NativeContext<'_, '_> {
                 // action state actually takes hold.
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
-                let Some(entity) = self.get_entity_mut(actor) else {
+                let Some(entity) = self.get_entity(actor) else {
                     tracing::warn!("Script Error: SetActorActionState invalid actor {actor}");
                     return 0;
                 };
@@ -873,16 +666,20 @@ impl NativeContext<'_, '_> {
                     tracing::warn!("Script Error: SetActorActionState target {actor} is not human");
                     return 0;
                 }
-                let Some(actor_data) = entity.actor_data_mut() else {
-                    return 0;
-                };
                 let Ok(s) = ActionState::try_from(val as u32) else {
                     tracing::warn!("SetActorActionState: invalid value {val}");
                     return 0;
                 };
-                actor_data.action_state = s;
-                self.deferred_commands
-                    .push(DeferredCommand::LaunchWait { actor });
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    operation: crate::interp::NativeOperation::EngineAction(
+                        crate::interp::SynchronousScriptRequest::SetActorActionState {
+                            actor,
+                            state: s as i32,
+                            native_return: 0,
+                        },
+                    ),
+                    resume: crate::interp::ResumePolicy::Fixed(0),
+                });
                 0
             }
 
@@ -1121,8 +918,7 @@ impl NativeContext<'_, '_> {
                             .get_entity(actor)
                             .is_some_and(|e| e.human_data().is_some())
                     {
-                        self.completed_sequences
-                            .push(Sequence::single_damage(target, 10000, 0));
+                        self.launch_script_sequence(Sequence::single_damage(target, 10000, 0), 0);
                     }
                 } else if is_npc {
                     let target_id = self.actor_id(actor);
@@ -1146,17 +942,13 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error : trying to send a message to non actor object.");
                     return 0;
                 }
-                // RHScript::SendMessage builds RHCOMMAND_SEND_MESSAGE and
-                // calls LaunchSequenceElement. EngineInner owns the
-                // sequence manager, so carry the launch request across
-                // the VM boundary instead of directly dispatching the
-                // target callback here.
-                self.deferred_commands.push(DeferredCommand::SendMessage {
-                    actor,
-                    message: msg,
-                    arg1: 0,
-                    arg2: 0,
-                });
+                // RHScript::SendMessage constructs and launches the sequence
+                // element inline. Launching through the live manager keeps
+                // its sequence id ordered with recorded Thanx sequences and
+                // yields to ProcessMessage before this callback resumes.
+                let mut sequence = Sequence::new();
+                sequence.append_element(self.build_send_message_element(1, actor, msg, 0, 0));
+                self.launch_script_sequence(sequence, 0);
                 0
             }
             SendMessageWithArguments => {
@@ -1169,14 +961,9 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error : trying to send a message to non actor object.");
                     return 0;
                 }
-                // See SendMessage above: this is a sequence-element
-                // launch request, not a post-call ProcessMessage request.
-                self.deferred_commands.push(DeferredCommand::SendMessage {
-                    actor,
-                    message: msg,
-                    arg1,
-                    arg2,
-                });
+                let mut sequence = Sequence::new();
+                sequence.append_element(self.build_send_message_element(1, actor, msg, arg1, arg2));
+                self.launch_script_sequence(sequence, 0);
                 0
             }
 

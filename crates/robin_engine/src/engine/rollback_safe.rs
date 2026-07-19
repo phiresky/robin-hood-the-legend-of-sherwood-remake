@@ -497,19 +497,19 @@ impl Engine {
         self.inner.replace_campaign(campaign);
     }
 
-    /// Run a host-side mission-script extension against the live `GameHost`
+    /// Run a host-side mission-script extension against live script effects
     /// while the Engine-owned simulation RNG is installed.
     ///
     /// Spellforge startup is outside the normal engine tick but its native
     /// shims can still draw from `sim_rng`; using this boundary advances the
     /// one authoritative stream instead of panicking for lack of a scope or
     /// inventing a second RNG. The closure must not retain the host reference.
-    pub fn with_mission_script_game_host_and_rng<R>(
+    pub fn with_mission_script_effects_and_rng<R>(
         &mut self,
         assets: &LevelAssets,
         f: impl FnOnce(
             Option<(
-                &mut crate::natives::GameHost,
+                &mut crate::natives::ScriptEffects,
                 &mut crate::natives::ScriptState,
                 &mut crate::engine::ScriptDomains,
                 &crate::natives::AttachedScriptBindings,
@@ -524,7 +524,7 @@ impl Engine {
             inner
                 .with_script_session(assets, |script, script_domains, capabilities| {
                     f(Some((
-                        &mut script.game_host,
+                        &mut script.script_effects,
                         &mut script.state,
                         script_domains,
                         &script.bindings,
@@ -633,7 +633,7 @@ impl Engine {
     // (`apply_side_effects` moves them into `Host::pending_bg_blits`)
     // so the engine no longer owns the queue between tick and render.
 
-    // `mission_script_game_host_mut` is no longer exposed — the
+    // `mission_script_script_effects_mut` is no longer exposed — the
     // host-side callers go through `refresh_selected_patch_display_doors`
     // / `queue_update_information_bars` / `PlayerCommand::*` instead.
 
@@ -976,9 +976,19 @@ mod tests {
             .mission
             .as_mut()
             .expect("fixture mission script")
-            .game_host
-            .commands
-            .push(crate::natives::EngineCommand::UpdateInformationBars);
+            .script_effects
+            .emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
+        {
+            let effects = &mut inner
+                .scripts
+                .mission
+                .as_mut()
+                .expect("fixture mission script")
+                .script_effects;
+            effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
+            effects.emit_engine(crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 });
+            effects.emit_barrier(crate::natives::DeferredCommand::FreezeAll { freeze: true });
+        }
 
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(crate::sequence::SequenceElement::new(
@@ -1179,10 +1189,29 @@ mod tests {
             &script.bindings.profile_manager,
             &assets.profile_manager
         ));
-        assert_eq!(script.game_host.commands.len(), 1);
         assert!(matches!(
-            script.game_host.commands.first(),
-            Some(crate::natives::EngineCommand::UpdateInformationBars)
+            script.script_effects.ordered.as_slices(),
+            (
+                [
+                    crate::natives::ScriptEffect::Presentation(
+                        crate::natives::EngineCommand::UpdateInformationBars
+                    ),
+                    crate::natives::ScriptEffect::ExternalSound(
+                        crate::natives::SoundCommand::SuspendAll
+                    ),
+                    crate::natives::ScriptEffect::Simulation(
+                        crate::natives::SimulationEffect::Engine(
+                            crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 }
+                        )
+                    ),
+                    crate::natives::ScriptEffect::Simulation(
+                        crate::natives::SimulationEffect::Deferred(
+                            crate::natives::DeferredCommand::FreezeAll { freeze: true }
+                        )
+                    )
+                ],
+                []
+            )
         ));
         assert_eq!(
             live.inner
@@ -1208,6 +1237,15 @@ mod tests {
             .background_transform
             .zoom_to_up = true;
         source.inner.feedback.cutscene_camera.zoom_init_done = true;
+        let queued_engine_commands = source
+            .inner
+            .scripts
+            .mission
+            .as_ref()
+            .expect("fixture script")
+            .script_effects
+            .engine_commands()
+            .len();
         let snapshot = decoded_engine(&source);
         let mut live = Engine {
             inner: EngineInner::new(),
@@ -1228,10 +1266,10 @@ mod tests {
                     .mission
                     .as_ref()
                     .expect("restored script during fixup observation")
-                    .game_host
-                    .commands
+                    .script_effects
+                    .engine_commands()
                     .len(),
-                1,
+                queued_engine_commands,
                 "save-only HUD repair must not be queued until engine fixups finish"
             );
         })
@@ -1247,8 +1285,8 @@ mod tests {
             .expect("restored script");
         assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
         assert_eq!(
-            script.game_host.commands.len(),
-            2,
+            script.script_effects.engine_commands().len(),
+            queued_engine_commands + 1,
             "saved queue must survive and save-load must append one HUD repair"
         );
         let messages = live.inner.orders.messenger.drain();

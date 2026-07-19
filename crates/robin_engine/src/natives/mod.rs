@@ -5,7 +5,7 @@
 //!
 //! 1. A name table mapping each index to its registered name (for logging
 //!    and debugging).
-//! 2. A `GameHost` struct implementing `interp::HostFunctions` that
+//! 2. A `ScriptEffects` struct implementing `interp::HostFunctions` that
 //!    dispatches native calls. Functions without a real implementation
 //!    are logged and return 0.
 //!
@@ -61,7 +61,7 @@ mod state;
 mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
-pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
+pub use commands::{DeferredCommand, EngineCommand, ScriptCommandDomain, SoundCommand};
 pub use context::{NativeContext, NativeSessionCapabilities, ScriptCallFrame};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use handle_codec::ScriptHandleCodec;
@@ -82,7 +82,8 @@ use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, Targ
 use crate::element_kinds::ElementKind;
 use crate::gate::Door;
 use crate::interp::{
-    HostFunctions, NativeCallOutcome, NativeStack, NestedCallScriptThis, PendingNestedCall,
+    HostFunctions, NativeCallOutcome, NativeOperation, NativeStack, NativeYield,
+    NestedCallScriptThis, ResumePolicy, ScriptCallRequest,
 };
 use crate::order::OrderType;
 use crate::patch::Patch;
@@ -99,69 +100,119 @@ fn anim_ordinal_to_order_type(anim: i32, native: &str) -> OrderType {
         .unwrap_or_else(|_| panic!("{native}: script passed invalid animation ordinal {anim}"))
 }
 
-/// Serialized shell for script-originated effects that have not yet moved to
-/// focused engine owners. [`NativeContext`] performs native dispatch while
-/// borrowing this queue state for the duration of a script resume.
+/// One entry in the globally ordered script-effect stream. Domain typing is
+/// retained in the enum rather than by separate queues: a later sound or
+/// simulation barrier must never overtake an earlier command from another
+/// domain.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum ScriptEffect {
+    Presentation(EngineCommand),
+    ExternalSound(SoundCommand),
+    Simulation(SimulationEffect),
+}
+
+/// Wider-context deterministic mutations in the globally ordered stream.
+/// Native-local mutations never enter this enum: only work that needs the
+/// owning `EngineInner` boundary belongs here.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum SimulationEffect {
+    Engine(EngineCommand),
+    Deferred(DeferredCommand),
+}
+
+/// Serialized script output shell. This is an effect buffer, not a host and
+/// not a world owner; deterministic state queried by natives lives in the
+/// engine capabilities borrowed by [`NativeContext`].
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
-pub struct GameHost {
-    /// Deferred commands for the engine to process after script execution.
-    pub commands: Vec<EngineCommand>,
-    /// Production sector registrations: (type, location_handle, speed).
-    /// Populated by RegisterAsProductionSector; consumed by the engine.
-    pub production_registrations: Vec<(i32, i32, i32)>,
-    /// Production point registrations: (type, location_handle).
-    /// Populated by AddProductionPoint; consumed by the engine.
-    pub production_points: Vec<(i32, i32)>,
-
-    /// Sequences completed by Thanx() that the engine should launch.
-    /// Drained by the engine after each script call.
-    pub completed_sequences: Vec<Sequence>,
-
-    /// Queued sound commands for the engine to process after script execution.
-    pub sound_commands: Vec<SoundCommand>,
-
-    /// Deferred game-logic commands for the engine to process after script.
-    pub deferred_commands: Vec<DeferredCommand>,
-
-    /// Mission-objective panel changes queued by the Spellforge
-    /// `AddObjective` / `CompleteObjective` natives. The host drains
-    /// this each frame to update its objectives UI. Empty for missions
-    /// that don't use the objectives system (i.e. all vanilla missions
-    /// — only Spellforge mods touch it).
-    pub pending_objective_changes: Vec<ObjectiveChange>,
+pub struct ScriptEffects {
+    pub ordered: std::collections::VecDeque<ScriptEffect>,
 }
 
 /// Maximum allowed depth of nested script calls (e.g. one
 /// `PrototypeFilterEvent` whose target itself calls
-/// `PrototypeFilterEvent`).  Beyond this, the engine returns the
-/// base-class default for the call (`1` for `FilterAIEvent`, `0`
-/// otherwise) without re-entering a VM.  Picked at 4 to absorb
-/// realistic A → B → A → B chains without becoming a debugging
-/// hazard if a script accidentally creates a true cycle.
+/// `PrototypeFilterEvent`). Beyond this, the sole engine driver reports an
+/// error instead of fabricating a native result. Picked at 4 to absorb
+/// realistic A → B → A → B chains without turning an accidental cycle into
+/// unbounded host recursion.
 pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
 
-impl GameHost {
+impl ScriptEffects {
     pub fn new() -> Self {
         Self {
-            commands: Vec::new(),
-            production_registrations: Vec::new(),
-            production_points: Vec::new(),
-            completed_sequences: Vec::new(),
-            sound_commands: Vec::new(),
-            deferred_commands: Vec::new(),
-            pending_objective_changes: Vec::new(),
+            ordered: std::collections::VecDeque::new(),
         }
     }
 
-    /// Drain all queued engine commands. Called by the engine after script execution.
-    pub fn drain_commands(&mut self) -> Vec<EngineCommand> {
-        std::mem::take(&mut self.commands)
+    pub fn emit_engine(&mut self, command: EngineCommand) {
+        let effect = match command.domain() {
+            ScriptCommandDomain::Presentation => ScriptEffect::Presentation(command),
+            ScriptCommandDomain::SimulationBarrier => {
+                ScriptEffect::Simulation(SimulationEffect::Engine(command))
+            }
+        };
+        self.ordered.push_back(effect);
     }
 
-    /// Drain all completed sequences (built by Start/Record*/Thanx).
-    /// Called by the engine after each script execution.
-    pub fn take_completed_sequences(&mut self) -> Vec<Sequence> {
-        std::mem::take(&mut self.completed_sequences)
+    pub fn emit_sound(&mut self, command: SoundCommand) {
+        self.ordered.push_back(ScriptEffect::ExternalSound(command));
+    }
+
+    pub fn emit_barrier(&mut self, command: DeferredCommand) {
+        self.ordered
+            .push_back(ScriptEffect::Simulation(SimulationEffect::Deferred(
+                command,
+            )));
+    }
+
+    pub fn pop_front(&mut self) -> Option<ScriptEffect> {
+        self.ordered.pop_front()
+    }
+
+    pub fn take_tail(&mut self) -> std::collections::VecDeque<ScriptEffect> {
+        std::mem::take(&mut self.ordered)
+    }
+
+    pub fn restore_tail(&mut self, tail: std::collections::VecDeque<ScriptEffect>) {
+        self.ordered.extend(tail);
+    }
+
+    pub fn engine_commands(&self) -> Vec<EngineCommand> {
+        self.ordered
+            .iter()
+            .filter_map(|effect| match effect {
+                ScriptEffect::Presentation(command)
+                | ScriptEffect::Simulation(SimulationEffect::Engine(command)) => {
+                    Some(command.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn sound_commands(&self) -> Vec<SoundCommand> {
+        self.ordered
+            .iter()
+            .filter_map(|effect| match effect {
+                ScriptEffect::ExternalSound(command) => Some(command.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn simulation_barriers(&self) -> Vec<DeferredCommand> {
+        self.ordered
+            .iter()
+            .filter_map(|effect| match effect {
+                ScriptEffect::Simulation(SimulationEffect::Deferred(command)) => {
+                    Some(command.clone())
+                }
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -310,8 +361,7 @@ impl NativeContext<'_, '_> {
                     .expect("RANSOM campaign mutation requires live mission statistics")
                     .add_collected_money(amount);
                 if amount > 0 && frame_counter > 0 {
-                    self.commands
-                        .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
+                    self.emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
                 }
             }
             crate::campaign::CampaignValue::Score => {
@@ -340,8 +390,7 @@ impl NativeContext<'_, '_> {
         let old = campaign.values[name];
         campaign.values[name] = value;
         if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
-            self.commands
-                .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
+            self.emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
         }
     }
 
@@ -487,6 +536,7 @@ impl NativeContext<'_, '_> {
 
     fn sound_source_count(&self) -> usize {
         self.sound_sources
+            .as_ref()
             .expect("script native requires a live SoundSourceManager query view")
             .num_sources()
     }
@@ -495,16 +545,101 @@ impl NativeContext<'_, '_> {
         if index >= self.sound_source_count() {
             return false;
         }
-        let handle = Self::sound_source_handle_from_index(index);
-        if self.sound_commands.iter().any(
-            |command| matches!(command, SoundCommand::Destroy(candidate) if *candidate == handle),
-        ) {
-            return false;
-        }
         self.sound_sources
+            .as_ref()
             .expect("script native requires a live SoundSourceManager query view")
             .get(index)
             .is_some()
+    }
+
+    /// Launch a script-built sequence on the live manager before returning to
+    /// the VM. `RHScript::Thanx` calls `LaunchSequence` inline; buffering the
+    /// sequence until callback exit made later natives observe stale sequence
+    /// state and assigned sequence IDs at the wrong command boundary.
+    fn launch_script_sequence(&mut self, mut sequence: Sequence, native_return: i32) {
+        for element in &mut sequence.elements {
+            if element.priority == crate::sequence::SequencePriority::NotYetSet {
+                element.priority = if element.executed_immediately() {
+                    crate::sequence::SequencePriority::Normal
+                } else {
+                    match element.owner.and_then(|id| self.entities.get(id)) {
+                        Some(entity) if entity.kind().is_actor() => {
+                            crate::element_priority::determine_priority(
+                                crate::element_priority::ActorPriorityContext {
+                                    kind: entity.kind(),
+                                    is_dead: entity.is_dead(),
+                                    is_unconscious: entity
+                                        .human_data()
+                                        .is_some_and(|human| human.unconscious),
+                                },
+                                element,
+                            )
+                        }
+                        _ => crate::sequence::SequencePriority::Normal,
+                    }
+                };
+            }
+        }
+        let sequence_manager = self
+            .sequence_manager
+            .as_mut()
+            .expect("script sequence launch requires a live SequenceManager");
+        sequence_manager.launch_sequence(sequence);
+        if let Some(action) = sequence_manager.pop_pending_immediate_action() {
+            let continuation = sequence_manager.take_pending_synchronous_actions();
+            self.pending_yield = Some(crate::interp::NativeYield {
+                operation: crate::interp::NativeOperation::SequenceAction(
+                    crate::interp::SynchronousSequenceOperation {
+                        action,
+                        continuation,
+                    },
+                ),
+                resume: crate::interp::ResumePolicy::Fixed(native_return),
+            });
+        }
+    }
+
+    /// Whether this call may yield an engine-owned synchronous operation.
+    ///
+    /// Arguments use source order, not VM pop order. Lua uses this before
+    /// invoking `HostFunctions`, so a rejected direct-host call cannot mutate
+    /// the recorder, entities, or sequence manager first.
+    pub fn requires_engine_driver(&self, native: NativeFn, args: &[i32]) -> bool {
+        match native {
+            NativeFn::Thanx
+            | NativeFn::SendMessage
+            | NativeFn::SendMessageWithArguments
+            | NativeFn::PrototypeFilterEvent
+            | NativeFn::SetActorPosture
+            | NativeFn::SetActorLocation
+            | NativeFn::SetActorActionState => true,
+            NativeFn::SetPersistentProperty => {
+                matches!(args.get(1), Some(2 | 3))
+                    && args.first().is_some_and(|actor| {
+                        self.get_entity(*actor)
+                            .is_some_and(|entity| entity.human_data().is_some())
+                    })
+            }
+            NativeFn::InflictPain => args.first().is_some_and(|actor| self.actor_exists(*actor)),
+            NativeFn::SetAlwaysAttentive => {
+                let Some((&actor, &value)) = args.first().zip(args.get(1)) else {
+                    return false;
+                };
+                value != 0
+                    && self
+                        .get_entity(actor)
+                        .and_then(|entity| entity.enemy_ai())
+                        .is_some_and(|enemy| !enemy.will_be_attentive)
+            }
+            NativeFn::EnableViewCone => {
+                self.ai_global().ezekiel_2517
+                    && args.first().is_some_and(|actor| {
+                        self.get_entity(*actor)
+                            .is_some_and(|entity| entity.human_data().is_some())
+                    })
+            }
+            _ => false,
+        }
     }
 
     fn current_animation(&self, actor: i32) -> Option<OrderType> {
@@ -517,6 +652,7 @@ impl NativeContext<'_, '_> {
         }
         let entity_id = self.actor_id(actor)?;
         self.sequence_manager
+            .as_ref()
             .expect("script native requires a live SequenceManager query view")
             .current_order_for_actor(entity_id)
             .map(|(_, _, order)| order.order_type)
@@ -836,7 +972,7 @@ impl NativeContext<'_, '_> {
                 .filter(|e| e.is_pc())
                 .and_then(|_| self.actor_id(actor_handle))
             {
-                self.commands.push(EngineCommand::HeroSpeak {
+                self.emit_engine(EngineCommand::HeroSpeak {
                     pc_id,
                     expression: crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 });
@@ -1388,9 +1524,8 @@ impl NativeContext<'_, '_> {
 /// Compute the map-edge "border" point reached by walking from
 /// `inside` in the opposite of `direction`, and an "outside" point
 /// a small margin further so the actor's sprite box sits entirely
-/// off the map.  Standalone version of [`GameHost::compute_border_point`]
-/// so level-load code (which does not hold a `GameHost`) can share the
-/// same computation.
+/// off the map. Kept standalone so level loading and native dispatch share the
+/// same computation without involving an effect buffer.
 pub(crate) fn compute_border_point_bbox(
     map_bbox: MapBBox,
     inside: (f32, f32),
@@ -1564,7 +1699,7 @@ impl NativeContext<'_, '_> {
                             .profile(&profile_manager)
                             .number_of_blazons_to_win;
                         if to_win as i32 <= current_blazons {
-                            self.commands.push(EngineCommand::Win { show_window: true });
+                            self.emit_engine(EngineCommand::Win { show_window: true });
                         }
                     }
                     crate::profiles::MissionType::Tactical => {
@@ -1600,7 +1735,7 @@ impl NativeContext<'_, '_> {
         // `UpdateInformationBars` / `UpdateBlazons` only fire in
         // campaign mode; in single-mission mode the update is skipped.
         if self.campaign.is_some() {
-            self.commands.push(EngineCommand::UpdateInformationBars);
+            self.emit_engine(EngineCommand::UpdateInformationBars);
         }
     }
 
@@ -1621,7 +1756,7 @@ impl NativeContext<'_, '_> {
                 }
                 if had_campaign {
                     // Refresh the information bars in campaign mode.
-                    self.commands.push(EngineCommand::UpdateInformationBars);
+                    self.emit_engine(EngineCommand::UpdateInformationBars);
                 }
             }
             Some(_) => {
@@ -2008,27 +2143,31 @@ impl NativeContext<'_, '_> {
                     }
                 };
             }
-            // 2: life points — requires human.  Routing through the
-            // full helper needs engine-level access (Sherwood/forest
-            // level flag, max-life lookups, the death cascade), so we
-            // queue a deferred command instead of writing the field
-            // here.
+            // 2: life points — the engine driver runs the complete setter
+            // synchronously before the VM can execute its next opcode.
             2 => {
-                let is_human = match self.get_entity(actor) {
-                    Some(e) => e.is_human(),
+                match self.get_entity(actor) {
+                    Some(entity) if entity.is_human() => {}
+                    Some(_) => {
+                        tracing::warn!(
+                            "Script Error: SetPersistentProperty 'life points' on non-human"
+                        );
+                        return false;
+                    }
                     None => {
                         tracing::warn!("Script Error: SetPersistentProperty invalid actor");
                         return false;
                     }
-                };
-                if !is_human {
-                    tracing::warn!(
-                        "Script Error: SetPersistentProperty 'life points' on non-human"
-                    );
-                    return false;
                 }
-                self.deferred_commands
-                    .push(DeferredCommand::SetScriptedLifePoints { actor, amount });
+                let request = crate::interp::SynchronousScriptRequest::SetPersistentLifePoints {
+                    actor,
+                    amount,
+                    native_return: 1,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 return true;
             }
             // 12: name — requires PC, amount selects SPECIAL_PEASANT_A/B/C.
@@ -2071,29 +2210,30 @@ impl NativeContext<'_, '_> {
                 );
                 return false;
             }
-            // 3: concussion — requires human.  The setter is called with
-            // `force_value == true`.  The KO/wakeup state-machine,
-            // swordfight quit, healing-timeout, and titbit/event side
-            // effects all live in the engine wrapper `apply_concussion`,
-            // so we defer.
+            // 3: concussion — same full synchronous engine boundary.
             3 => {
-                let is_human = match self.get_entity(actor) {
-                    Some(e) => e.is_human(),
+                match self.get_entity(actor) {
+                    Some(entity) if entity.is_human() => {}
+                    Some(_) => {
+                        tracing::warn!(
+                            "Script Error: SetPersistentProperty 'concussion' on non-human"
+                        );
+                        return false;
+                    }
                     None => {
                         tracing::warn!("Script Error: SetPersistentProperty invalid actor");
                         return false;
                     }
-                };
-                if !is_human {
-                    tracing::warn!("Script Error: SetPersistentProperty 'concussion' on non-human");
-                    return false;
                 }
-                self.deferred_commands
-                    .push(DeferredCommand::SetScriptedConcussion {
-                        actor,
-                        amount,
-                        force_value: true,
-                    });
+                let request = crate::interp::SynchronousScriptRequest::SetPersistentConcussion {
+                    actor,
+                    amount,
+                    native_return: 1,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 return true;
             }
             _ => {}
@@ -2323,7 +2463,7 @@ impl NativeContext<'_, '_> {
     }
 }
 
-impl Default for GameHost {
+impl Default for ScriptEffects {
     fn default() -> Self {
         Self::new()
     }
@@ -2355,6 +2495,118 @@ impl NativeContext<'_, '_> {
             return false;
         };
         idx >= self.bindings.script_point_count && idx < self.bindings.script_location_count
+    }
+
+    /// Attach a production type to its canonical script sector and campaign
+    /// owner before returning to the VM. RHScript.cpp calls
+    /// `SectorProduction::AttachToScriptSector` directly; there is no
+    /// post-Initialize registration phase in the Original.
+    fn register_production_sector(&mut self, prod_type: i32, loc: i32, speed: i32) {
+        let Some(kind) = crate::sector_production::Type::from_script_i32(prod_type) else {
+            panic!("RegisterAsProductionSector: invalid production type {prod_type}");
+        };
+        let loc_idx = ScriptHandleCodec::location_index(loc)
+            .unwrap_or_else(|| panic!("RegisterAsProductionSector: invalid location {loc}"));
+        assert!(
+            loc_idx >= self.bindings.script_point_count
+                && loc_idx < self.bindings.script_location_count,
+            "RegisterAsProductionSector: location {loc} is not a script sector"
+        );
+        let zone_idx = loc_idx - self.bindings.script_point_count;
+        let zone = self
+            .script_domains
+            .zones
+            .scripts
+            .get_mut(zone_idx)
+            .unwrap_or_else(|| {
+                panic!("RegisterAsProductionSector: missing script zone {zone_idx}")
+            });
+
+        let campaign = self
+            .campaign
+            .as_mut()
+            .expect("RegisterAsProductionSector requires the live Campaign");
+        let production = campaign
+            .production_sectors
+            .get_mut(prod_type as usize)
+            .unwrap_or_else(|| {
+                panic!("RegisterAsProductionSector: missing campaign production type {prod_type}")
+            });
+        assert!(
+            production.script_zone.is_none(),
+            "RegisterAsProductionSector: production type {prod_type} is already attached to script zone {:?}",
+            production.script_zone
+        );
+
+        // Original order inside AttachToScriptSector: attach/set speed, then
+        // publish the type on the script sector.
+        production.script_zone = Some(zone_idx);
+        production.speed = speed as u16;
+        production.prod_type = kind;
+        zone.production_sector_type = kind;
+    }
+
+    /// Append a production point directly to the matching canonical campaign
+    /// sector. The projection-area lookup is identical to
+    /// `EngineInner::get_projection_area_index` and uses the already-attached
+    /// immutable/runtime obstacle views.
+    fn add_production_point(&mut self, prod_type: i32, loc: i32) {
+        let Some(kind) = crate::sector_production::Type::from_script_i32(prod_type) else {
+            panic!("AddProductionPoint: invalid production type {prod_type}");
+        };
+        assert!(
+            self.is_script_point(loc),
+            "AddProductionPoint: location {loc} is not a script point"
+        );
+        let (x, y) = self
+            .resolve_location_pos(loc)
+            .unwrap_or_else(|| panic!("AddProductionPoint: invalid location {loc}"));
+        let (layer, sector) = self
+            .resolve_location_layer_sector(loc)
+            .unwrap_or_else(|| panic!("AddProductionPoint: location {loc} has no sector"));
+        let point = crate::coordinates::MapPoint::new(x, y);
+        let mut best: Option<(u16, f32)> = None;
+        let obstacles = self
+            .sight_obstacles
+            .expect("AddProductionPoint requires live sight obstacles");
+        for (index, obstacle) in obstacles.iter_indexed() {
+            if !obstacle.is_projection_area()
+                || obstacle.sector != sector
+                || obstacle.layer != layer
+                || !obstacle.box_projection.contains_point(point)
+                || !obstacle.contains_point_projection(point)
+            {
+                continue;
+            }
+            let candidate = (index as u16, obstacle.box_3d_max[2]);
+            if best.is_none_or(|(_, height)| candidate.1 > height) {
+                best = Some(candidate);
+            }
+        }
+
+        let campaign = self
+            .campaign
+            .as_mut()
+            .expect("AddProductionPoint requires the live Campaign");
+        let production = campaign
+            .production_sectors
+            .get_mut(prod_type as usize)
+            .unwrap_or_else(|| {
+                panic!("AddProductionPoint: missing campaign production type {prod_type}")
+            });
+        production.script_zone.unwrap_or_else(|| {
+            panic!("AddProductionPoint: production type {prod_type} has no attached script sector")
+        });
+        production.prod_type = kind;
+        production
+            .production_points
+            .push(crate::sector_production::Point {
+                x,
+                y,
+                layer,
+                sector,
+                obstacle: best.map_or(0xFFFF, |(index, _)| index),
+            });
     }
 
     fn resolve_profile(&self, actor: i32) -> Option<crate::profiles::CharacterProfileIdx> {
@@ -2533,15 +2785,14 @@ impl NativeContext<'_, '_> {
                     }
                 }
                 // Queue portrait bar update.
-                self.deferred_commands.push(DeferredCommand::SetPlayable {
+                self.emit_barrier(DeferredCommand::SetPlayable {
                     actor,
                     playable: activate,
                 });
                 // On deactivate, also queue engine-side cleanup of QA
                 // titbits and macro-store slots.
                 if !activate {
-                    self.deferred_commands
-                        .push(DeferredCommand::ClearAllQuickActionSlots { actor });
+                    self.emit_barrier(DeferredCommand::ClearAllQuickActionSlots { actor });
                 }
             }
             Action::General => {
@@ -2559,7 +2810,7 @@ impl NativeContext<'_, '_> {
                         entity.element_data_mut().active = activate;
                     }
                 }
-                self.commands.push(EngineCommand::SetMobileActive {
+                self.emit_engine(EngineCommand::SetMobileActive {
                     mobile_index,
                     active: activate,
                 });
@@ -2599,16 +2850,17 @@ impl NativeContext<'_, '_> {
             return;
         }
 
-        let from_lockai_command = self
+        let sequence_manager = self
             .sequence_manager
-            .expect("LockAI requires a live SequenceManager query view")
+            .as_ref()
+            .expect("LockAI requires a live SequenceManager query view");
+        let from_lockai_command = sequence_manager
             .current_element_for_actor(owner)
-            .and_then(|(sequence_id, element_index)| {
-                self.sequence_manager
-                    .expect("LockAI requires a live SequenceManager query view")
+            .is_some_and(|(sequence_id, element_index)| {
+                sequence_manager
                     .get_element(sequence_id, element_index)
-            })
-            .is_some_and(|element| element.command == Command::LockAi);
+                    .is_some_and(|element| element.command == Command::LockAi)
+            });
         let entity = self
             .entities
             .get_mut(owner)
@@ -2677,18 +2929,21 @@ impl HostFunctions for NativeContext<'_, '_> {
             let i_event = stack.pop_i32();
             let actor_source = stack.pop_i32();
             let prototype = stack.pop_i32();
-            return NativeCallOutcome::PendingNestedCall(PendingNestedCall {
-                actor_handle: prototype,
-                fn_name: "FilterAIEvent".into(),
-                params: vec![actor_source, i_event],
-                // Original: RHScript::PrototypeFilterEvent deliberately does
-                // not change pScriptThis, allowing the prototype callback to
-                // inspect the event's actual receiver via ThisActor.
-                // original-code/RHScript.cpp:6508-6535.
-                script_this: NestedCallScriptThis::PreserveCaller,
+            return NativeCallOutcome::Yield(NativeYield {
+                operation: NativeOperation::ScriptCall(ScriptCallRequest {
+                    actor_handle: prototype,
+                    fn_name: "FilterAIEvent".into(),
+                    params: vec![actor_source, i_event],
+                    script_this: NestedCallScriptThis::PreserveCaller,
+                }),
+                resume: ResumePolicy::OperationResult,
             });
         }
 
-        NativeCallOutcome::Return(dispatch::call_immediate(self, index, stack))
+        let value = dispatch::call_immediate(self, index, stack);
+        match self.pending_yield.take() {
+            Some(request) => NativeCallOutcome::Yield(request),
+            None => NativeCallOutcome::Return(value),
+        }
     }
 }

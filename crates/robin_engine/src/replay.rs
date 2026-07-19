@@ -53,9 +53,9 @@ pub struct ReplayHeader {
     pub campaign: Option<Vec<u8>>,
 }
 
-/// On-disk replay schema version. Version 3 uses tagged [`PlayerInput`] values
-/// and hashes the current nested `EngineInner` owner layout.
-pub const REPLAY_SCHEMA_VERSION: u32 = 3;
+/// On-disk replay schema version. Version 5 stores typed script effects in one
+/// global emission order and includes synchronous sequence continuation state.
+pub const REPLAY_SCHEMA_VERSION: u32 = 5;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic
 /// engine-state hash used for desync detection on replay.

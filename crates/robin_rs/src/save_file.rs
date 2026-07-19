@@ -366,7 +366,12 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   missing snapshot fields by default.
 /// - **v46** (2026-07-19, nested engine snapshot): `EngineInner` serializes
 ///   its nine current state owners instead of the historical flat field list.
-pub const SAVE_FORMAT_VERSION: u32 = 46;
+/// - **v47** (2026-07-19, script effects): mission scripts serialize the
+///   canonical `script_effects` owner with typed presentation, external, and
+///   simulation-barrier domains.
+/// - **v48** (2026-07-19, ordered script effects): typed effects serialize in
+///   one emission-ordered stream and sequence continuation state is explicit.
+pub const SAVE_FORMAT_VERSION: u32 = 48;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,8 +445,8 @@ pub struct GameSaveFile {
     /// Host-side persistent Game flags (campaign-map display state,
     /// widget-enable booleans, men-to-blazon mode).  `Option` so saves
     /// written before this field existed still round-trip; missing
-    /// values default to the current live `Game` state on load.
-    #[serde(default)]
+    /// values default to the current live `Game` state on load when this
+    /// exact-version payload explicitly stores `None`.
     pub game_persistent: Option<GamePersistentState>,
 }
 
@@ -700,13 +705,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_v45_before_deserializing_flat_engine_payload() {
+    fn read_rejects_v46_before_deserializing_previous_script_effects_payload() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("old_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 45,
+                "version": 46,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Old Save"
@@ -723,7 +728,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 46, got 45"
+            "unsupported save file version: expected 48, got 46"
         );
     }
 

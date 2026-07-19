@@ -1,40 +1,24 @@
 # GameHost mirror-removal plan
 
-## Implementation status (2026-07-18)
+## Implementation status (2026-07-19)
 
-The direct GameHost mirrored-state and ownership-transfer scope is implemented.
-`GameHost` is no longer a second world: it owns no entities, AI state, grid,
-campaign, mission stats, doors, patches, buildings, scrolls, UI flags, query
-caches, or immutable level data. `swap_engine_state`, its refresh caches,
-campaign leases, and engine-side guard/reach-through access have been removed.
-Native dispatch now borrows canonical engine domains.
+The mirror-removal and residual shell cleanup are implemented. Native dispatch
+borrows canonical engine domains, and the former seven-queue adapter is now
+`ScriptEffects` with three explicit domains: an ordered engine-command stream,
+external audio requests, and deterministic simulation barriers. There is no
+`GameHost` type or serialized compatibility spelling.
 
-The remaining serialized `GameHost` name denotes only a seven-queue script
-adapter/effect shell:
+Completed sequences, AI locks, scroll status, PC selection, sound-source
+destruction, view radius, short briefings, and Spellforge objectives mutate
+their live owners before the native returns. Production initialization uses a
+typed `ScriptDomains` buffer consumed at the original post-initialize boundary.
+Dead objective, completed-sequence, production, AI-lock, and unconsumed patrol
+queues were removed. Remaining engine/deferred variants have explicit drain
+consumers; `EngineCommand::domain` exhaustively records presentation versus
+simulation-barrier classification while preserving cross-domain command order.
 
-```text
-commands                    completed_sequences
-production_registrations    sound_commands
-production_points           deferred_commands
-pending_objective_changes
-```
-
-The first semantic cleanup wave is also complete. Dynamic sight obstacles and
-active flags are live borrowed world capabilities rather than copied script
-bindings. Scroll status and PC selection now mutate canonical state before the
-native returns, with same-callback tests; their queued follow-up work is limited
-to engine/sequence/UI effects that require the existing callback barrier.
-
-The broader queue audit is not finished. Direct `LockAI` and the Honolulu branch
-of `SetActorLocation(NULL)` now mutate the canonical NPC AI before returning,
-so same-callback `UnlockAI` observes them. The serialized deferred enum slot is
-retained only to consume undrained requests from older saves; it has no live
-producer. Completed sequence launch, actor stop, global freeze,
-posture/location side effects, patch work, and other deterministic variants
-still need Original-order characterization before they can move or be
-certified as true barriers. The next wave should migrate them in coherent
-command families with same-callback tests. Renaming the queue shell and
-narrowing the legacy Lua adapter can follow once that boundary is stable.
+Save, replay-hash, and multiplayer snapshot schemas were bumped for the new
+canonical `script_effects` serialized shape.
 
 The inventory and PR sequence below are retained as the pre-refactor design
 record. References there to current swaps, mirrors, or a world-sized GameHost

@@ -68,18 +68,18 @@ impl NativeContext<'_, '_> {
                 }
             }
             Thanx => {
-                // Errors out on "no active recording" (false) and
-                // on "empty recording" (false).  Happy path
-                // launches the sequence and returns true.
+                // No active recording returns false. An empty active
+                // recording is diagnosed and discarded, but RHScript.cpp
+                // still returns true after ending that recording.
                 if let Some(rec) = self.script_state.sequence_recorder.recording.take() {
                     match rec.finalize() {
                         Some(seq) => {
-                            self.completed_sequences.push(seq);
+                            self.launch_script_sequence(seq, 1);
                             1
                         }
                         None => {
                             tracing::error!("Script Error: Trying to launch an empty sequence");
-                            0
+                            1
                         }
                     }
                 } else {
@@ -168,8 +168,7 @@ impl NativeContext<'_, '_> {
             StopActor => {
                 let actor = stack.pop_i32();
                 if self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    self.deferred_commands
-                        .push(DeferredCommand::StopActor { actor });
+                    self.emit_barrier(DeferredCommand::StopActor { actor });
                 } else {
                     tracing::warn!("StopActor: invalid or non-actor handle {actor}");
                 }
@@ -187,14 +186,14 @@ impl NativeContext<'_, '_> {
                 match code {
                     31 => {
                         self.apply_script_selection(0, true);
-                        self.deferred_commands.push(DeferredCommand::SelectPC {
+                        self.emit_barrier(DeferredCommand::SelectPC {
                             actor: 0,
                             select: true,
                         });
                     }
                     0 => {
                         self.apply_script_selection(0, false);
-                        self.deferred_commands.push(DeferredCommand::SelectPC {
+                        self.emit_barrier(DeferredCommand::SelectPC {
                             actor: 0,
                             select: false,
                         });
@@ -265,8 +264,7 @@ impl NativeContext<'_, '_> {
             // avoid needing engine access.
             FreezeAll => {
                 let freeze = stack.pop_i32() != 0;
-                self.deferred_commands
-                    .push(DeferredCommand::FreezeAll { freeze });
+                self.emit_barrier(DeferredCommand::FreezeAll { freeze });
                 0
             }
 

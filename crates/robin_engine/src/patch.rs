@@ -16,7 +16,7 @@ use crate::coordinates::MapPoint;
 // PatchIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
-/// Index into `GameHost::patches`.  Wraps [`nonmax::NonMaxU32`] so
+/// Index into the canonical interactable patch table. Wraps [`nonmax::NonMaxU32`] so
 /// `Option<PatchIndex>` is 4 bytes via niche optimization.  `u32::MAX`
 /// would be an absurd patch count, so forbidding it costs nothing.
 #[derive(
@@ -234,7 +234,7 @@ pub struct Patch {
     pub sector: u16,
     /// Waypoint position for this patch.
     pub waypoint: MapPoint,
-    /// Indices of doors controlled by this patch (into the GameHost
+    /// Indices of doors controlled by this patch (into the canonical
     /// doors array).  Mirrors the C++ `RHPatch::maDoors` list: populated
     /// only for `triggers_door` patches.  When `PatchEffect::SwapDoors`
     /// fires inside `apply_final`, `swap_rights_patch()` is called on

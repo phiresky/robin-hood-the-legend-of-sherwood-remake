@@ -601,10 +601,10 @@ impl EnemyAi {
         let door = &global.reinforcement_doors[idx];
         let door_pos = door.position_in;
 
-        // Store chosen door's global game_host index for PointOut
+        // Store the chosen door's canonical global index for PointOut
         // movement later.  We use the global door index (not the
         // position into `reinforcement_doors`) so a single
-        // `my_door_index` semantics — a `game_host.doors` index — is
+        // `my_door_index` semantics — a global door-table index — is
         // shared between merry-man flee, RunAndAlertSoldiers, and the
         // AlertSoldiers indoor formation flow.
         self.my_door_index = Some(door.door_index.0);

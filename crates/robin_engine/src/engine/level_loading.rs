@@ -6658,13 +6658,14 @@ impl EngineInner {
             }
 
             // Clear `production_points` after the per-sector capture so
-            // the next Sherwood load's `apply_production_registrations`
-            // (which re-runs the script's `AddProductionPoint` opcodes)
+            // the next Sherwood load's script Initialize callbacks
+            // (which re-run the `AddProductionPoint` opcodes)
             // doesn't accumulate duplicate points across visits — without
             // this, `plan_bonus_spawns` iterates more points than exist
             // in the level and raises `max_amount_reached` prematurely
             // while spawning duplicate-position bonuses.
             sector.production_points.clear();
+            sector.script_zone = None;
         }
     }
 
@@ -6675,8 +6676,9 @@ impl EngineInner {
     /// and heal occupants (HEAL) for won missions.  Invoked at Sherwood
     /// entry.
     ///
-    /// Must be called AFTER `apply_production_registrations` so production
-    /// points are populated, and only when the current level is Sherwood.
+    /// Must be called after mission-script Initialize so its synchronous
+    /// production registrations have populated the points, and only when the
+    /// current level is Sherwood.
     /// Called from `Engine::new` when Sherwood is the current mission.
     pub(crate) fn apply_production_sector_data(&mut self, assets: &mut LevelAssets) {
         use crate::sector_production::Type as PT;
