@@ -37,20 +37,43 @@ use std::sync::{Arc, Mutex};
 use mlua::Lua;
 use robin_engine::natives::{GameHost, NativeSessionCapabilities, ScriptState};
 
-use crate::natives::HostPtr;
+use crate::natives::{AttachedNativeCall, NativeCallSession};
 
 /// Registry key for the `SequenceCallbacks` table. Hidden from
 /// the script's view of `_G` so the sandbox doesn't freeze it.
 pub(crate) const SEQUENCE_CALLBACKS_KEY: &str = "robin_lua.sequence_callbacks";
 
-struct HostAttachment<'lua>(&'lua Lua);
+pub(crate) struct NativeCallAttachment<'lua> {
+    lua: &'lua Lua,
+    attached: AttachedNativeCall,
+}
 
-impl Drop for HostAttachment<'_> {
+impl<'lua> NativeCallAttachment<'lua> {
+    fn attach(lua: &'lua Lua, session: &mut NativeCallSession<'_, '_>) -> mlua::Result<Self> {
+        if lua.app_data_ref::<AttachedNativeCall>().is_some() {
+            return Err(mlua::Error::RuntimeError(
+                "nested Lua native-call sessions are not supported".to_owned(),
+            ));
+        }
+        let attached = AttachedNativeCall::new(session);
+        let replaced = lua.set_app_data(attached);
+        if let Some(previous) = replaced {
+            lua.set_app_data(previous);
+            return Err(mlua::Error::RuntimeError(
+                "Lua native-call session raced with an existing attachment".to_owned(),
+            ));
+        }
+        Ok(Self { lua, attached })
+    }
+}
+
+impl Drop for NativeCallAttachment<'_> {
     fn drop(&mut self) {
-        let removed = self.0.remove_app_data::<HostPtr>();
-        assert!(
-            removed.is_some(),
-            "Lua HostPtr attachment disappeared before its scope ended"
+        let removed = self.lua.remove_app_data::<AttachedNativeCall>();
+        assert_eq!(
+            removed,
+            Some(self.attached),
+            "Lua native-call attachment changed before its scope ended"
         );
     }
 }
@@ -152,11 +175,11 @@ impl MissionLuaState {
     /// removed so a stray Lua coroutine resumed later can't see
     /// stale state.
     ///
-    /// **Safety**: the closure must not stash a reference to the host or
-    /// capability bundle that outlives this call (no `lua.create_thread` that
-    /// captures engine state, no Rust upvalues holding engine borrows). All
-    /// access happens through synchronous registered shims. `HostAttachment`
-    /// removes the one erased capability pointer on normal and error returns.
+    /// The stack-owned `NativeCallSession` holds all engine borrows together.
+    /// Registered shims can access it only synchronously; retained Lua
+    /// functions and coroutines perform a fresh app-data lookup and fail after
+    /// this method returns. `NativeCallAttachment` removes the sole erased
+    /// session pointer on normal, error, and unwind paths.
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
@@ -197,19 +220,9 @@ impl MissionLuaState {
         capabilities: &NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
-        assert!(
-            self.lua.app_data_ref::<HostPtr>().is_none(),
-            "nested Lua host attachments are not supported"
-        );
-        let replaced = self.lua.set_app_data(HostPtr::new(
-            host as *mut _,
-            script_state as *mut _,
-            script_domains as *mut _,
-            bindings as *const _,
-            capabilities,
-        ));
-        debug_assert!(replaced.is_none());
-        let _attachment = HostAttachment(&self.lua);
+        let mut session =
+            NativeCallSession::new(host, script_state, script_domains, bindings, capabilities);
+        let _attachment = NativeCallAttachment::attach(&self.lua, &mut session)?;
         f(&self.lua)
     }
 
