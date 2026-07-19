@@ -69,7 +69,9 @@ const IMPACT_MATERIAL_TABLE: [[u32; 3]; 4] = [
 // ─── Enums ──────────────────────────────────────────────────────────
 
 // Sim-side sound classification enums live in robin_engine::sound_kinds.
-pub use robin_engine::sound_kinds::{ExclamationGroup, ImpactKind, Jingle, MusicMode, StrikeKind};
+pub(crate) use robin_engine::sound_kinds::{
+    ExclamationGroup, ImpactKind, Jingle, MusicMode, StrikeKind,
+};
 
 /// Sound engine operational mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

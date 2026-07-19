@@ -1,13 +1,10 @@
 //! Visual markers — host-side renderer for `SelectionMark`.
 //!
 //! The sim state (`GroundMark`, `SelectionMark`) lives in
-//! `robin_engine::markers`; this module re-exports those types and adds the
-//! GPU renderer for the selection circle sprite.
+//! `robin_engine::markers`; this module only provides the GPU renderer for the
+//! selection circle sprite.
 
 use robin_assets::picture::Picture;
-pub use robin_engine::markers::{
-    GroundMark, GroundMarkEntry, NUMBER_OF_GROUND_FRAMES, SelectionMark,
-};
 
 use crate::gfx_types::{BlendMode, Rect};
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};

@@ -35,9 +35,10 @@ use robin_engine::position_interface as engine_position_interface;
 use robin_engine::sight_obstacle::SightObstacle;
 
 // Shared constants + types from the engine side.
-pub use robin_engine::shadow_polygon::{
-    ALPHA_DAY, ALPHA_NIGHT, ASPECT_RATIO, CHARACTER_HEIGHT, NORMAL_HALF_APERTURE, RADIUS_DAY,
-    RADIUS_NIGHT, ViewParameters, sector_to_direction,
+#[cfg(test)]
+use robin_engine::shadow_polygon::NORMAL_HALF_APERTURE;
+pub(crate) use robin_engine::shadow_polygon::{
+    ALPHA_DAY, ALPHA_NIGHT, ASPECT_RATIO, CHARACTER_HEIGHT, ViewParameters, sector_to_direction,
 };
 
 /// A visibility polygon paired with tint/fade metadata (for per-NPC alert coloring).
