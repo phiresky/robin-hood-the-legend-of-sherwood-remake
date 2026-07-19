@@ -83,6 +83,647 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 }
 
 #[test]
+fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
+    use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, DetectableType, ElementData, ElementKind, Entity, Posture};
+
+    #[derive(Debug, PartialEq)]
+    struct Observation {
+        body_before_observer: bool,
+        body_slot: u32,
+        observer_slot: u32,
+        retained_stimuli: Vec<StimulusType>,
+        body_detectables_after_tick: Vec<u32>,
+        inform_flag_after_tick: bool,
+    }
+
+    fn observe(body_before_observer: bool) -> Observation {
+        let mut engine = EngineInner::new();
+        // Keep both NPCs away from the slot-zero special value used by a few
+        // legacy AI handles, without introducing another detectable human.
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..ElementData::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let body = make_test_ai_soldier(Camp::Lacklandists);
+        let observer = make_test_ai_soldier(Camp::Lacklandists);
+        let (body_id, observer_id) = if body_before_observer {
+            (engine.add_entity(body), engine.add_entity(observer))
+        } else {
+            let observer_id = engine.add_entity(observer);
+            let body_id = engine.add_entity(body);
+            (body_id, observer_id)
+        };
+
+        for (id, x) in [(observer_id, 0.0), (body_id, 40.0)] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("creation-order body test soldier exists")
+            else {
+                panic!("creation-order body test entity changed kind")
+            };
+            soldier.element.active = true;
+            soldier
+                .element
+                .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+            soldier.element.set_position_map(MapPoint::new(x, 0.0));
+            soldier.element.set_direction_instantly(4);
+            soldier.npc.direction_old = 4;
+            soldier.npc.life_points = 100;
+            soldier.npc.view_radius = 135;
+            soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+            let ai = soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("creation-order body test soldier has enemy AI");
+            ai.base.me = id.index();
+        }
+
+        let Entity::Soldier(body) = engine
+            .get_entity_mut(body_id)
+            .expect("body exists before fixture completion")
+        else {
+            panic!("body changed kind")
+        };
+        body.human.unconscious = true;
+        body.element.posture = Posture::Lying;
+        body.npc.inform_my_friends = true;
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        // Isolate BODY detection and retain its raw stimulus so handler state
+        // changes do not obscure whether this creation slot actually saw it.
+        for id in [body_id, observer_id] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("body boundary soldier survives fixture completion")
+            else {
+                panic!("body boundary soldier changed kind after fixture")
+            };
+            for list in &mut soldier.npc.detectable_lists {
+                list.clear();
+            }
+        }
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("body observer survives fixture completion")
+        else {
+            panic!("body observer changed kind after fixture")
+        };
+        let ai = observer
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("body observer retains enemy AI");
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingJustWatching;
+        ai.current_task_priority = task_priority::NONE;
+        ai.base.locks_flag_field = AiLockFlags::FREEZE;
+
+        let mut positions_before_movement =
+            crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (entity_id, entity) in engine.world.entities.occupied() {
+            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+        }
+
+        crate::sim_rng::with_seed(0xA013_0B0D, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(
+                sim,
+                &assets,
+                &positions_before_movement,
+            )
+        });
+
+        let observer = engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("body observer remains an NPC");
+        let observer_ai = observer
+            .ai_brain
+            .enemy()
+            .expect("body observer remains enemy AI");
+        let body = engine
+            .get_entity(body_id)
+            .and_then(Entity::npc_data)
+            .expect("body remains an NPC");
+
+        Observation {
+            body_before_observer,
+            body_slot: body_id.index(),
+            observer_slot: observer_id.index(),
+            retained_stimuli: observer_ai
+                .base
+                .stimulus_queue
+                .iter()
+                .map(|stimulus| stimulus.stimulus_type)
+                .collect(),
+            body_detectables_after_tick: observer.detectable_lists[DetectableType::Body as usize]
+                .iter()
+                .map(|detectable| {
+                    detectable
+                        .element
+                        .expect("broadcast BODY detectable must retain its source")
+                        .index()
+                })
+                .collect(),
+            inform_flag_after_tick: body.inform_my_friends,
+        }
+    }
+
+    assert_eq!(
+        observe(true),
+        Observation {
+            body_before_observer: true,
+            body_slot: 1,
+            observer_slot: 2,
+            retained_stimuli: vec![StimulusType::EventSeesBody],
+            body_detectables_after_tick: vec![],
+            inform_flag_after_tick: false,
+        },
+        "an earlier body must broadcast before the later observer detects and consume it"
+    );
+    assert_eq!(
+        observe(false),
+        Observation {
+            body_before_observer: false,
+            body_slot: 2,
+            observer_slot: 1,
+            retained_stimuli: vec![],
+            body_detectables_after_tick: vec![2],
+            inform_flag_after_tick: false,
+        },
+        "a later body may queue next-frame work but must not retroactively rescan an earlier observer"
+    );
+}
+
+#[test]
+fn npc_recovery_precedes_simultaneous_body_inform_and_view() {
+    use crate::element::{Camp, Detectable, DetectableType, Entity, EyeStatus};
+
+    let mut engine = EngineInner::new();
+    let recovering_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Soldier(recovering) = engine.get_entity_mut(recovering_id).unwrap() else {
+        panic!("recovering NPC changed kind")
+    };
+    recovering.element.active = true;
+    recovering.npc.eye_status = EyeStatus::Closed;
+    recovering.npc.inform_my_friends = true;
+    let ai = recovering.npc.ai_brain.base_mut().unwrap();
+    ai.outbox.recovery.inform_resurrection = true;
+    ai.outbox.recovery.set_eye_status = Some(EyeStatus::LookForward);
+
+    let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
+        panic!("observer changed kind")
+    };
+    observer.element.active = true;
+    observer.npc.eye_status = EyeStatus::Closed;
+    observer.npc.detectable_lists[DetectableType::Body as usize] = vec![Detectable {
+        element: Some(recovering_id),
+        detectable_type: DetectableType::Body,
+        ..Detectable::default()
+    }];
+
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+    crate::sim_rng::with_seed(0xA013_5A6, |sim| {
+        engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+    });
+
+    let recovering = engine
+        .get_entity(recovering_id)
+        .and_then(Entity::npc_data)
+        .unwrap();
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .unwrap();
+    assert_eq!(recovering.eye_status, EyeStatus::LookForward);
+    assert!(!recovering.inform_my_friends);
+    assert!(
+        !recovering
+            .ai_brain
+            .base()
+            .unwrap()
+            .outbox
+            .recovery
+            .inform_resurrection
+    );
+    assert_eq!(
+        observer.detectable_lists[DetectableType::Body as usize]
+            .iter()
+            .map(|detectable| detectable.element)
+            .collect::<Vec<_>>(),
+        vec![Some(recovering_id)],
+        "recovery must delete the stale body first, then the simultaneous inform flag must re-add it"
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "NPC 0 is missing its required AI controller while applying recovery state"
+)]
+fn npc_recovery_requires_an_ai_controller() {
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    engine.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
+}
+
+#[test]
+fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
+    use crate::ai::{CrossNpcAction, Hint, Position, StimulusInfo, StimulusType};
+    use crate::element::{Camp, Entity, EyeStatus};
+
+    fn observe(receiver_before_source: bool) -> (f32, f32, EyeStatus) {
+        let mut engine = EngineInner::new();
+        let source = make_test_ai_soldier(Camp::Lacklandists);
+        let receiver = make_test_ai_soldier(Camp::Lacklandists);
+        let (source_id, receiver_id) = if receiver_before_source {
+            let receiver_id = engine.add_entity(receiver);
+            let source_id = engine.add_entity(source);
+            (source_id, receiver_id)
+        } else {
+            let source_id = engine.add_entity(source);
+            let receiver_id = engine.add_entity(receiver);
+            (source_id, receiver_id)
+        };
+        for id in [source_id, receiver_id] {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+                panic!("LOOKTHERE test NPC changed kind")
+            };
+            soldier.element.active = true;
+            soldier.npc.life_points = 100;
+            soldier.element.set_direction_instantly(4);
+            soldier.npc.direction_old = 4;
+        }
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let hint = Hint {
+            seek_point: Position {
+                x: 0.0,
+                y: 100.0,
+                sector: None,
+                level: 0,
+            },
+            seek_flags: 0,
+            who_tells_me: source_id.index(),
+        };
+        engine
+            .get_entity_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap()
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::SendStimulus {
+                target: receiver_id.index(),
+                stimulus_type: StimulusType::CallLookThere,
+                info: StimulusInfo::Hint(hint),
+                fallback_to_sender: None,
+                to_whole_patrol: false,
+            });
+
+        let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (id, entity) in engine.world.entities.occupied() {
+            positions[id] = Some(entity.element_data().position_map());
+        }
+        crate::sim_rng::with_seed(0xA013_1007, |sim| {
+            if receiver_before_source {
+                engine.refresh_npc_view_for_npc(receiver_id, &positions);
+                engine.process_synchronous_look_there_for(sim, source_id, &assets);
+            } else {
+                engine.process_synchronous_look_there_for(sim, source_id, &assets);
+                engine.refresh_npc_view_for_npc(receiver_id, &positions);
+            }
+        });
+
+        let receiver = engine
+            .get_entity(receiver_id)
+            .and_then(Entity::npc_data)
+            .unwrap();
+        (
+            receiver.view_angle,
+            receiver.view_angle_step,
+            receiver.eye_status,
+        )
+    }
+
+    let earlier = observe(true);
+    let later = observe(false);
+    assert_eq!(earlier.2, EyeStatus::Stare);
+    assert_eq!(later.2, EyeStatus::Stare);
+    assert!(
+        earlier.0.abs() < f32::EPSILON,
+        "an earlier receiver already spent its one RefreshView before LOOKTHERE"
+    );
+    assert!(
+        (later.0 - later.1).abs() < f32::EPSILON,
+        "a later receiver must advance its stateful stare exactly once at its own slot"
+    );
+}
+
+#[test]
+fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
+    use crate::ai::{AiState, StimulusType, Substate};
+    use crate::element::{AiBrain, Camp, Entity, EyeStatus, Posture};
+
+    for civilian in [false, true] {
+        let mut engine = EngineInner::new();
+        let entity = if civilian {
+            let mut entity = make_test_civilian(Posture::Lying);
+            let Entity::Civilian(civilian) = &mut entity else {
+                unreachable!()
+            };
+            civilian.npc.ai_brain =
+                AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
+            entity
+        } else {
+            make_test_ai_soldier(Camp::Lacklandists)
+        };
+        let npc_id = engine.add_entity(entity);
+        let mut assets = LevelAssets::new();
+        // Install the active soldier profile before marking the actor
+        // unconscious; the fixture intentionally skips unconscious soldiers.
+        engine
+            .get_entity_mut(npc_id)
+            .unwrap()
+            .element_data_mut()
+            .active = true;
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        if !civilian {
+            std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
+        }
+        let entity = engine.get_entity_mut(npc_id).unwrap();
+        entity.element_data_mut().posture = Posture::Lying;
+        let human = entity.human_data_mut().unwrap();
+        human.unconscious = true;
+        human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+        human.concussion_healing_timeout = 0;
+        let npc = entity.npc_data_mut().unwrap();
+        npc.life_points = 100;
+        npc.eye_status = EyeStatus::Closed;
+        npc.view_radius = 0;
+        npc.view_radius_base = 173;
+        npc.view_radius_goal = 173;
+        npc.view_longrange_radius_factor = 1.0;
+        let ai = npc.ai_brain.base_mut().unwrap();
+        ai.me = npc_id.index();
+        ai.script_locked = false;
+        ai.current_state = AiState::Sleeping;
+        ai.current_substate = Substate::SleepingUnconscious;
+
+        engine.tick_concussion_healing(&assets);
+
+        let entity = engine.get_entity(npc_id).unwrap();
+        assert!(!entity.human_data().unwrap().unconscious);
+        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.npc_data().unwrap().eye_status, EyeStatus::Closed);
+        assert_eq!(entity.npc_data().unwrap().view_radius, 0);
+        assert_eq!(
+            entity
+                .ai_controller()
+                .unwrap()
+                .outbox
+                .detection
+                .stimuli
+                .iter()
+                .map(|stimulus| stimulus.stimulus_type)
+                .collect::<Vec<_>>(),
+            vec![StimulusType::EventFitAgain]
+        );
+
+        let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (id, entity) in engine.world.entities.occupied() {
+            positions[id] = Some(entity.element_data().position_map());
+        }
+        crate::sim_rng::with_seed(0xA013_F17, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        });
+
+        let entity = engine.get_entity(npc_id).unwrap();
+        let ai = entity.ai_controller().unwrap();
+        assert_ne!(ai.current_substate, Substate::SleepingUnconscious);
+        assert_eq!(
+            entity.npc_data().unwrap().eye_status,
+            EyeStatus::LookForward
+        );
+        assert_eq!(
+            entity.npc_data().unwrap().view_radius,
+            173,
+            "owner-slot recovery must open the eyes before that NPC refreshes its view"
+        );
+        assert!(ai.outbox.detection.stimuli.is_empty());
+        assert!(!ai.outbox.recovery.inform_resurrection);
+        assert_eq!(ai.outbox.recovery.set_eye_status, None);
+    }
+}
+
+#[test]
+fn dispatch_ai_stimulus_intentionally_ignores_pcs() {
+    use crate::ai::{Stimulus, StimulusType};
+    use crate::element::{Entity, Posture};
+
+    let mut engine = EngineInner::new();
+    let pc_id = engine.add_entity(make_test_pc(Posture::Upright));
+
+    engine.dispatch_ai_stimulus(pc_id, Stimulus::new(StimulusType::EventFitAgain));
+
+    assert!(matches!(engine.get_entity(pc_id), Some(Entity::Pc(_))));
+}
+
+#[test]
+fn wake_prefix_preserves_existing_stimulus_fifo() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let ai = engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap();
+    ai.current_state = AiState::Default;
+    ai.outbox.detection.stimuli = vec![
+        Stimulus::new(StimulusType::EventLoseConsciousness),
+        Stimulus::new(StimulusType::EventFitAgain),
+        Stimulus::new(StimulusType::EventImpossible),
+    ];
+
+    let woke = crate::sim_rng::with_seed(0xA013_F1F0, |sim| {
+        engine.dispatch_pending_fit_again_for_npc(sim, npc_id, &assets)
+    });
+    assert!(woke);
+    let ai = engine
+        .get_entity(npc_id)
+        .and_then(Entity::ai_controller)
+        .unwrap();
+    assert_eq!(
+        ai.outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![StimulusType::EventImpossible],
+        "the older prefix through FITAGAIN must dispatch in FIFO order while only the suffix remains"
+    );
+    assert_eq!(ai.current_state, AiState::Sleeping);
+    assert_eq!(
+        ai.current_substate,
+        Substate::SleepingAwakening,
+        "LOSE_CONSCIOUSNESS must run before FITAGAIN; plucking FITAGAIN first would leave the NPC unconscious"
+    );
+}
+
+#[test]
+fn wake_blinks_follow_waker_and_observer_creation_order_for_both_producers() {
+    use crate::ai::{AiState, StimulusType, Substate};
+    use crate::combat::ConcussionOutcome;
+    use crate::element::{Camp, Detectable, DetectableType, Entity, EyeStatus, Posture};
+
+    type BlinkState = (bool, bool, Vec<u32>);
+
+    fn observe(waker_before_observer: bool, natural: bool) -> (BlinkState, BlinkState) {
+        let mut engine = EngineInner::new();
+        engine.ai.global.there_are_royalist_soldiers = true;
+        engine.ai.global.there_are_lacklandist_soldiers = true;
+        let waker = make_test_ai_soldier(Camp::Royalists);
+        let observer = make_test_ai_soldier(Camp::Lacklandists);
+        let (waker_id, observer_id) = if waker_before_observer {
+            (engine.add_entity(waker), engine.add_entity(observer))
+        } else {
+            let observer_id = engine.add_entity(observer);
+            let waker_id = engine.add_entity(waker);
+            (waker_id, observer_id)
+        };
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles
+            .soldiers
+            .resize_with(1, crate::profiles::SoldierProfile::default);
+        profiles.soldiers[0].wake_up = 1;
+
+        let Entity::Soldier(waker) = engine.get_entity_mut(waker_id).unwrap() else {
+            unreachable!()
+        };
+        waker.element.active = true;
+        waker.element.posture = Posture::Lying;
+        waker.npc.life_points = 100;
+        waker.npc.eye_status = EyeStatus::Closed;
+        let ai = waker.npc.ai_brain.base_mut().unwrap();
+        ai.script_locked = false;
+        ai.current_state = AiState::Sleeping;
+        ai.current_substate = Substate::SleepingUnconscious;
+        if natural {
+            waker.human.unconscious = true;
+            waker.human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
+            waker.human.concussion_healing_timeout = 0;
+        }
+        let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
+            unreachable!()
+        };
+        observer.element.active = false;
+        observer.npc.detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+            element: Some(waker_id),
+            detectable_type: DetectableType::Enemy,
+            seen_now: true,
+            seen_last_frame: true,
+            ..Detectable::default()
+        }];
+
+        if natural {
+            engine.tick_concussion_healing(&assets);
+        } else {
+            engine
+                .orders
+                .pending_concussion_side_effects
+                .push((waker_id, ConcussionOutcome::WokeUp));
+            crate::sim_rng::with_seed(0xA013_B11, |sim| {
+                engine.drain_pending_concussion_side_effects(sim, &assets)
+            });
+        }
+        assert!(
+            engine
+                .get_entity(waker_id)
+                .and_then(Entity::ai_controller)
+                .unwrap()
+                .outbox
+                .detection
+                .stimuli
+                .iter()
+                .any(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain),
+            "producer natural={natural}, waker_before_observer={waker_before_observer}, unconscious={}",
+            engine
+                .get_entity(waker_id)
+                .and_then(Entity::human_data)
+                .unwrap()
+                .unconscious
+        );
+
+        let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (id, entity) in engine.world.entities.occupied() {
+            positions[id] = Some(entity.element_data().position_map());
+        }
+        crate::sim_rng::with_seed(0xA013_B12, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        });
+
+        let snapshot = |engine: &EngineInner| {
+            let observer = engine.get_entity(observer_id).unwrap();
+            let detectable =
+                &observer.npc_data().unwrap().detectable_lists[DetectableType::Enemy as usize][0];
+            let pending = observer
+                .ai_controller()
+                .unwrap()
+                .outbox
+                .actor
+                .blink_enemy_specific
+                .iter()
+                .map(|id| id.index())
+                .collect();
+            (detectable.seen_now, detectable.seen_last_frame, pending)
+        };
+        let first_slot = snapshot(&engine);
+
+        crate::sim_rng::with_seed(0xA013_B13, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        });
+        let next_slot = snapshot(&engine);
+
+        (first_slot, next_slot)
+    }
+
+    for natural in [true, false] {
+        assert_eq!(
+            observe(true, natural),
+            ((false, false, vec![]), (false, false, vec![]))
+        );
+        assert_eq!(
+            observe(false, natural),
+            ((true, true, vec![1]), (false, false, vec![])),
+            "an earlier observer must defer a later waker's blink until its next owner slot"
+        );
+    }
+}
+
+#[test]
 fn npc_detection_observes_friend_state_at_creation_order_boundary() {
     use crate::ai::{AiState, Substate};
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};

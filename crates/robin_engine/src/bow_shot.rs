@@ -3862,10 +3862,11 @@ pub fn apply_projectile_hit(
 
     // Detect a fresh KO transition (was conscious, now unconscious).
     // Set `inform_my_friends` only on this transition; the flag is
-    // consumed on the next tick by `tick_inform_my_friends`, which
-    // broadcasts the body to nearby NPCs.  Without this, a stone-KO'd
-    // soldier would not be detected by his friends, breaking witness
-    // wiring for PC-thrown stones.
+    // consumed at that NPC's next owner slot by
+    // `tick_inform_my_friends_for_npc`, which broadcasts the body to
+    // nearby NPCs. Without this, a stone-KO'd soldier would not be
+    // detected by his friends, breaking witness wiring for PC-thrown
+    // stones.
     let Some(human) = victim.human_data() else {
         tracing::warn!(
             ?victim_id,

@@ -510,24 +510,38 @@ impl EngineInner {
 
     // ─── AI stimulus dispatch ─────────────────────────────────────────
 
-    /// Send a stimulus to an NPC soldier's AI controller.
+    /// Queue a stimulus on an NPC's common AI controller.
     ///
-    /// Used to notify the attacker's AI of combat events
-    /// (EventGoodStrike, EventLethalStrike, etc.).
+    /// Original human concussion paths use `IsNPC()`, covering soldiers and
+    /// civilians alike. Requiring `npc_data` plus a live common controller
+    /// also prevents required AI work from disappearing as a silent no-op.
     pub(crate) fn dispatch_ai_stimulus(
         &mut self,
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id) else {
-            return;
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!(
+                "NPC {} disappeared while queueing {:?}",
+                entity_id.index(),
+                stimulus.stimulus_type
+            )
+        });
+        let npc = match entity {
+            Entity::Soldier(soldier) => &mut soldier.npc,
+            Entity::Civilian(civilian) => &mut civilian.npc,
+            // Heterogeneous combat call sites intentionally include PCs;
+            // PCs have no AI Think receiver.
+            _ => return,
         };
-        if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-            // Queue the stimulus for the next AI tick rather than calling
-            // think() inline (avoids re-entrant borrow issues). The engine's
-            // detection loop will pick up any pending stimuli.
-            enemy_ai.base.outbox.detection.stimuli.push(stimulus);
-        }
+        let ai = npc.ai_brain.base_mut().unwrap_or_else(|| {
+            panic!(
+                "NPC {} is missing its required AI controller while queueing {:?}",
+                entity_id.index(),
+                stimulus.stimulus_type
+            )
+        });
+        ai.outbox.detection.stimuli.push(stimulus);
     }
 
     // ─── Tiredness tick ──────────────────────────────────────────────

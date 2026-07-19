@@ -705,6 +705,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         unreachable!();
     };
     soldier.npc.life_points = 1;
+    soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let mut final_target = make_test_pc(Posture::Upright);
     position(&mut final_target, 40.0);

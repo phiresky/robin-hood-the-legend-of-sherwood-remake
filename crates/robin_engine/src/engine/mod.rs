@@ -3918,6 +3918,15 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     }
 
     for (soldier_id, soldier) in engine.world.entities.soldiers_mut() {
+        if soldier.npc.ai_brain.is_none() {
+            soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
+                crate::ai_enemy::EnemyAi::new(soldier_id.0),
+            ));
+        }
+        let enemy_ai =
+            soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
+            });
         if !soldier.element.active || soldier.human.unconscious {
             continue;
         }
@@ -3928,20 +3937,23 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
         if profiles.soldiers[profile_idx].hth_weapon_id == 0 {
             profiles.soldiers[profile_idx].hth_weapon_id = 1;
         }
-
-        if soldier.npc.ai_brain.is_none() {
-            soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
-                crate::ai_enemy::EnemyAi::new(soldier_id.0),
-            ));
-        }
-        let enemy_ai =
-            soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
-                panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
-            });
         if enemy_ai.hth_weapon_id == 0 {
             enemy_ai.hth_weapon_id = 1;
         }
         needs_hth_weapon = true;
+    }
+
+    for (civilian_id, civilian) in engine.world.entities.civilians_mut() {
+        if civilian.npc.ai_brain.is_none() {
+            civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
+                crate::ai_friendly::FriendlyAi::new(civilian_id.0),
+            ));
+        }
+        assert!(
+            civilian.npc.ai_brain.friendly().is_some(),
+            "test civilian {} has a non-friendly AI brain",
+            civilian_id.0
+        );
     }
 
     if needs_hth_weapon && profiles.hth_weapons.is_empty() {
