@@ -764,6 +764,24 @@ fn message_script() -> MissionScript {
             quad(Opcode::EndFunction),
         ],
     };
+    let open_scroll_local_failure = ClassEntry {
+        source_file: "send_message_test.scs".into(),
+        class_name: "OpenScrollLocalFailure".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "IsTaken".into(),
+            address: 0,
+            num_parameters: 1,
+            size_of_return_value: 4,
+            size_of_parameters: 4,
+            size_of_volatile: 0,
+            size_of_temporary: 0,
+        }],
+        // The declared function has no instruction at address zero, making
+        // this a direct local RanOff failure rather than a descendant action.
+        quads: Vec::new(),
+    };
     let yielding_flavor = ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "YieldingFlavor".into(),
@@ -819,6 +837,7 @@ fn message_script() -> MissionScript {
             heap_b,
             failure_receiver,
             open_scroll_failure,
+            open_scroll_local_failure,
             yielding_flavor,
         ],
     })
@@ -1494,6 +1513,85 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
             .element_data()
             .blipped,
         "the restored parent tail was not executed after the error"
+    );
+}
+
+#[test]
+fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor() {
+    let (mut engine, reader_id, _handle) = engine_with_receiver();
+    let assets = LevelAssets::new();
+    engine
+        .get_entity_mut(reader_id)
+        .expect("reader")
+        .element_data_mut()
+        .blipped = true;
+
+    let mut scroll = crate::element::ElementScroll::default();
+    scroll.element.kind = ElementKind::ObjectScroll;
+    scroll.element.active = true;
+    let scroll_id = engine.add_entity(Entity::Scroll(scroll));
+    let scroll_handle = ScriptHandleCodec::actor_handle(scroll_id);
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &mut engine.world.entities,
+        &mut engine.ai.global,
+        &mut engine.world.fast_grid,
+    );
+    assert!(
+        engine
+            .scripts
+            .mission
+            .as_mut()
+            .expect("script installed")
+            .bind_scroll(
+                scroll_handle,
+                "OpenScrollLocalFailure",
+                &mut engine.script_domains,
+                &capabilities,
+            )
+    );
+
+    let mut open_scroll = SequenceElement::new_generic(1, Command::OpenScroll, None);
+    open_scroll.set_property(Field::Scroll, FieldValue::Element(scroll_id));
+    open_scroll.set_property(Field::ScrollReader, FieldValue::Element(reader_id));
+    let mut sequence = crate::sequence::Sequence::new();
+    sequence.append_element(open_scroll);
+    sequence.append_element(SequenceElement::new(2, Command::Unblip, Some(reader_id)));
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let error = engine
+        .drain_script_synchronous_actions(&assets, &mut Vec::new())
+        .expect_err("the malformed IsTaken VM must fail locally");
+    assert!(
+        error.detail.contains("stopped abnormally: RanOff"),
+        "unexpected error: {}",
+        error.detail
+    );
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(sequence_id)
+        .expect("OpenScroll sequence");
+    assert_eq!(sequence.elements[0].state, SequenceState::Impossible);
+    assert_eq!(
+        sequence.elements[1].state,
+        SequenceState::Impossible,
+        "sequence failure cancels the unstarted successor without dispatching it"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_pending_immediate_actions(),
+        "a locally failed OpenScroll must not register its level-2 successor"
+    );
+    assert!(
+        engine
+            .get_entity(reader_id)
+            .expect("reader")
+            .element_data()
+            .blipped,
+        "the Unblip successor must not execute after local OpenScroll failure"
     );
 }
 

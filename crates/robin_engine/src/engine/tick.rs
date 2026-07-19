@@ -8773,14 +8773,31 @@ impl EngineInner {
                         reader,
                         active_scripts,
                     );
-                    // OpenScroll itself dispatched successfully. Match
-                    // SendMessage: terminate this ancestor before propagating
-                    // a failure from work launched by its nested IsTaken
-                    // callback, so only the actual child becomes Impossible.
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(sequence_id, element_index);
-                    result?;
+                    match result {
+                        Ok(_) => {
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(sequence_id, element_index);
+                        }
+                        Err(error) if error.sequence_element_failed => {
+                            // IsTaken dispatched successfully and a nested
+                            // sequence element owns the failure. Match
+                            // SendMessage: terminate this ancestor before
+                            // propagating so only the actual child is
+                            // Impossible.
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(sequence_id, element_index);
+                            return Err(error);
+                        }
+                        Err(error) => {
+                            // The OpenScroll/IsTaken dispatch itself failed.
+                            // Leave it live so the outer action drain marks
+                            // this element Impossible without advancing its
+                            // sequence to a successor.
+                            return Err(error);
+                        }
+                    }
                 } else {
                     tracing::warn!(?scroll, ?reader, "OpenScroll missing properties");
                     self.orders
