@@ -1167,8 +1167,8 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-                let queue_start = ai.pending_stimuli.len();
-                ai.pending_stimuli.extend(stimuli.iter().copied());
+                let queue_start = ai.outbox.detection.stimuli.len();
+                ai.outbox.detection.stimuli.extend(stimuli.iter().copied());
                 Some(super::post_detection::PendingEnemyDetectionTickData::new(
                     queue_start,
                     stimuli,
@@ -1200,7 +1200,7 @@ impl EngineInner {
                 .entities
                 .get(npc_id)
                 .and_then(Entity::ai_controller)
-                .is_some_and(|ai| !ai.pending_stimuli.is_empty());
+                .is_some_and(|ai| !ai.outbox.detection.stimuli.is_empty());
             if !has_pending_stimuli {
                 assert!(
                     enemy_detection_tick_data.is_none(),
@@ -2476,7 +2476,7 @@ impl EngineInner {
                         shadow_pos,
                     );
                     if let Some(ai) = soldier.npc.ai_brain.base_mut() {
-                        ai.pending_stimuli.push(stimulus);
+                        ai.outbox.detection.stimuli.push(stimulus);
                     }
                 }
             }
@@ -3653,11 +3653,14 @@ impl EngineInner {
                     "non-Enemy detectable rising edge"
                 );
             }
-            ai.pending_stimuli.extend(queued_human_detection_stimuli(
-                event_type,
-                shadow_dispatches,
-                rising_dispatches,
-            ));
+            ai.outbox
+                .detection
+                .stimuli
+                .extend(queued_human_detection_stimuli(
+                    event_type,
+                    shadow_dispatches,
+                    rising_dispatches,
+                ));
         }
     }
 
@@ -3788,7 +3791,7 @@ impl EngineInner {
                 let mut stimulus =
                     crate::ai::Stimulus::new(crate::ai::StimulusType::EventSeesObject);
                 stimulus.info = crate::ai::StimulusInfo::Object(target_id.index());
-                ai.pending_stimuli.push(stimulus);
+                ai.outbox.detection.stimuli.push(stimulus);
                 tracing::trace!(
                     npc = ?npc_id,
                     object = ?target_id,

@@ -2072,7 +2072,9 @@ impl EngineInner {
         let Some(base) = npc.ai_brain.base_mut() else {
             return;
         };
-        base.pending_self_stimuli
+        base.outbox
+            .reentrant
+            .self_stimuli
             .push(crate::ai::StimulusType::EventStop);
     }
 

@@ -34,7 +34,7 @@ impl EnemyAi {
 
         // Set pending flag — the engine drains this after think() and
         // calls EngineInner::shoot_bow_at to launch the sequence element.
-        self.base.pending_shoot_target = Some(enemy);
+        self.base.outbox.actor.shoot_target = Some(enemy);
     }
 
     /// ProposeShotTarget.

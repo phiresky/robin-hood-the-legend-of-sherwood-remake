@@ -516,7 +516,7 @@ impl EngineInner {
                         if let Some(entity) = self.world.entities.get_mut(id)
                             && let Some(ai) = entity.ai_controller_mut()
                         {
-                            ai.pending_stimuli.push(crate::ai::Stimulus::new(
+                            ai.outbox.detection.stimuli.push(crate::ai::Stimulus::new(
                                 crate::ai::StimulusType::EventLoseConsciousness,
                             ));
                         }
@@ -2114,7 +2114,7 @@ impl EngineInner {
             };
             // Always drain — even unscripted actors should not
             // accumulate stale entries for the next tick.
-            let drained = std::mem::take(&mut ai.pending_state_change_notifications);
+            let drained = std::mem::take(&mut ai.outbox.reentrant.state_change_notifications);
             if !is_scripted {
                 continue;
             }

@@ -96,7 +96,7 @@ impl EnemyAi {
         // eye-tracking view cone doesn't stick on a stale primary
         // target while we sweep seek points. Drained by `engine/ai.rs`
         // → `unfocus`.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         // Royalists just return to duty.
         if ctx.camp == crate::element::Camp::Royalists {
@@ -1059,7 +1059,7 @@ impl EnemyAi {
         // SetState(STATE_SEEKING, SUBSTATE_SEEKING_BODY).
         // Matched implicitly by `go_near` below.
         // Focus(body).
-        self.base.pending_focus = Some(body);
+        self.base.outbox.actor.focus = Some(body);
         self.go_near(
             AiState::Seeking,
             Substate::SeekingBody,

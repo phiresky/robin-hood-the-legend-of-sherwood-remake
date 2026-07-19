@@ -209,7 +209,7 @@ impl EnemyAi {
         self.base.stop_all();
         // LOOK_LEFT kicks off the overview glance sequence before the
         // right-glance transition.
-        self.base.pending_look_sidewards = Some(LookDirection::Left);
+        self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
     }
 
     // -----------------------------------------------------------------------
@@ -299,7 +299,7 @@ impl EnemyAi {
         // Focus(NULL) at BattleDecisions entry. The decision tree will
         // re-focus on a freshly chosen primary target later (via
         // `pending_focus`) if it picks Fight / Shoot / etc.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         // Rebuild list_us from the global same-camp fighter registry on
         // entry. Do the same from the engine snapshot so deferred
@@ -438,7 +438,9 @@ impl EnemyAi {
                 if my_elevation >= self.enemy_had_this_elevation + 50 {
                     // Target is below — aim down
                     self.base
-                        .pending_launch_commands
+                        .outbox
+                        .actor
+                        .launch_commands
                         .push(crate::element::Command::EquipBowDown);
                     self.set_state(
                         AiState::Attacking,
@@ -447,7 +449,9 @@ impl EnemyAi {
                 } else {
                     // Target is at same level or above
                     self.base
-                        .pending_launch_commands
+                        .outbox
+                        .actor
+                        .launch_commands
                         .push(crate::element::Command::EquipBow);
                     self.set_state(
                         AiState::Attacking,
@@ -803,9 +807,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if target != 0 {
-                        self.base.pending_focus = Some(target);
+                        self.base.outbox.actor.focus = Some(target);
                     } else {
-                        self.base.pending_unfocus = true;
+                        self.base.outbox.actor.unfocus = true;
                     }
                     self.set_state(AiState::Attacking, Substate::AttackingReserve);
                     self.base.launch_timer(50, ctx.frame);
@@ -821,7 +825,9 @@ impl EnemyAi {
                     if ctx.self_action_state.is_sword() {
                         if crate::sim_rng::u32(crate::sim_rng::RngSite::BattleProvoke, 0..4) == 0 {
                             self.base
-                                .pending_launch_commands
+                                .outbox
+                                .actor
+                                .launch_commands
                                 .push(crate::element::Command::Provoke);
                         } else if let Some(target_pos) = self
                             .find_fighter(target, tick)
@@ -830,17 +836,17 @@ impl EnemyAi {
                         {
                             let d = pos_diff(&target_pos, &ctx.position);
                             let dir = vec_to_sector(d.0, d.1);
-                            self.base.pending_set_direction_instantly = Some(dir as i16);
+                            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
                         }
                     } else {
-                        self.base.pending_enter_swordfight =
+                        self.base.outbox.actor.enter_swordfight =
                             Some(EnterSwordfightRequest::RaiseSword);
-                        self.base.pending_enter_swordfight_jump_line = None;
+                        self.base.outbox.actor.enter_swordfight_jump_line = None;
                     }
                     if target != 0 {
-                        self.base.pending_focus = Some(target);
+                        self.base.outbox.actor.focus = Some(target);
                     } else {
-                        self.base.pending_unfocus = true;
+                        self.base.outbox.actor.unfocus = true;
                     }
                     self.set_state(AiState::Attacking, Substate::AttackingLastReserve);
                     self.base.launch_timer(50, ctx.frame);
@@ -854,9 +860,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if target != 0 {
-                        self.base.pending_focus = Some(target);
+                        self.base.outbox.actor.focus = Some(target);
                     } else {
-                        self.base.pending_unfocus = true;
+                        self.base.outbox.actor.unfocus = true;
                     }
                     self.base.set_emoticon(EmoticonType::XMark);
                     if self.combat_trainer {
@@ -908,7 +914,7 @@ impl EnemyAi {
                     let target = self.propose_shot_target(ctx, tick);
                     if target != 0 {
                         self.base.primary_target = target;
-                        self.base.pending_focus = Some(target);
+                        self.base.outbox.actor.focus = Some(target);
                         // AIMING_TIME_FORMULA = (110 - shooting_ability) / 2.
                         // Use the soldier's modified shooting ability
                         // (with alcohol penalty) — *not* IQ — so the
@@ -928,7 +934,9 @@ impl EnemyAi {
                             self.base.stop_all();
                             self.set_state(AiState::Attacking, Substate::AttackingBowLoading);
                             self.base
-                                .pending_launch_commands
+                                .outbox
+                                .actor
+                                .launch_commands
                                 .push(if self.enemy_seen_below {
                                     crate::element::Command::EquipBowDown
                                 } else {
@@ -1246,15 +1254,15 @@ impl EnemyAi {
                         if self.base.already_on_point {
                             self.base.already_on_point = false;
                             let dir = vec_to_sector(d.0, d.1);
-                            self.base.pending_set_direction_instantly = Some(dir as i16);
+                            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
                             self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
                             self.base.launch_timer(20, ctx.frame);
                         }
                     } else {
                         // Good distance — face and observe.
                         let dir = vec_to_sector(d.0, d.1);
-                        self.base.pending_set_direction_instantly = Some(dir as i16);
-                        self.base.pending_focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+                        self.base.outbox.actor.focus = Some(self.base.primary_target);
                         self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
                         self.base.launch_timer(20, ctx.frame);
                     }
@@ -1312,9 +1320,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if target != 0 {
-                        self.base.pending_focus = Some(target);
+                        self.base.outbox.actor.focus = Some(target);
                     } else {
-                        self.base.pending_unfocus = true;
+                        self.base.outbox.actor.unfocus = true;
                     }
 
                     if ctx.self_action_state.is_bow() {
@@ -1323,7 +1331,9 @@ impl EnemyAi {
                     } else {
                         self.base.stop_all();
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(if self.enemy_seen_below {
                                 crate::element::Command::EquipBowDown
                             } else {
@@ -1397,7 +1407,9 @@ impl EnemyAi {
                         }
                         // Tell the shield bearer to announce the formation.
                         self.base
-                            .pending_cross_npc_actions
+                            .outbox
+                            .reentrant
+                            .cross_npc_actions
                             .push(CrossNpcAction::Say {
                                 target: cover_shield_bearer,
                                 remark: Remark::ArchersBehindShieldBearers,
@@ -1649,7 +1661,7 @@ impl EnemyAi {
         }
         if let Some((friend, new_tgt)) = swap_action {
             self.base.primary_target = working_target;
-            self.base.pending_friend_primary_target_swap = Some((friend, new_tgt));
+            self.base.outbox.actor.friend_primary_target_swap = Some((friend, new_tgt));
         }
 
         // Primary target is in a non-stairs lift: run to the entry
@@ -1657,7 +1669,7 @@ impl EnemyAi {
         if tick.primary_target_in_lift
             && let Some(entry) = tick.primary_target_lift_entry
         {
-            self.base.pending_focus = Some(working_target);
+            self.base.outbox.actor.focus = Some(working_target);
             self.base.seek_position = entry;
             self.go_near(
                 AiState::Attacking,
@@ -1698,7 +1710,7 @@ impl EnemyAi {
         };
 
         // Lock eye-tracking onto the primary target.
-        self.base.pending_focus = Some(working_target);
+        self.base.outbox.actor.focus = Some(working_target);
 
         // Riders try charge attack first.
         if ctx.self_is_rider && self.maybe_make_rider_attack(ctx, tick, grid) {
@@ -1775,7 +1787,7 @@ impl EnemyAi {
         self.base.seek_position = pos_prim_target;
 
         // Re-focus (redundant but mirrored for parity).
-        self.base.pending_focus = Some(working_target);
+        self.base.outbox.actor.focus = Some(working_target);
 
         // Not below run distance: charge or run.
         if !b_below_run_distance {
@@ -2052,7 +2064,7 @@ impl EnemyAi {
             // Close enough to charge — begin charge pass. Drop stare
             // lock so the rider's cone follows the charge direction, not
             // the fleeing target.
-            self.base.pending_unfocus = true;
+            self.base.outbox.actor.unfocus = true;
             self.base.say(crate::ai::Remark::Warcry);
             self.go_to(
                 AiState::Attacking,
@@ -2366,7 +2378,7 @@ impl EnemyAi {
 
         // Release eye-tracking lock on swordfight entry so the soldier's
         // focus arrow / cone stops chasing the previous focus target.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         // If the target is moving and not yet swordfighting, freeze it
         // via Stop() so the swordfight starts from a stable position.
@@ -2376,7 +2388,7 @@ impl EnemyAi {
             && !target.is_swordfighting
             && target.action_state.is_moving()
         {
-            self.base.pending_stop_target = Some(self.base.primary_target);
+            self.base.outbox.actor.stop_target = Some(self.base.primary_target);
         }
 
         // No SetDirection here. Direction is set by the engine-side
@@ -2397,9 +2409,9 @@ impl EnemyAi {
         // entities get added to each other's opponent lists and action
         // states transition to sword combat. The jump-line index is
         // passed alongside for table-swordfight positioning.
-        self.base.pending_enter_swordfight =
+        self.base.outbox.actor.enter_swordfight =
             Some(EnterSwordfightRequest::Engage(self.base.primary_target));
-        self.base.pending_enter_swordfight_jump_line = tick.primary_target_jump_line;
+        self.base.outbox.actor.enter_swordfight_jump_line = tick.primary_target_jump_line;
 
         // VIPs use a different remark variant.
         if self.is_vip {
@@ -2424,6 +2436,6 @@ impl EnemyAi {
         if !ctx.is_swordfighting {
             return;
         }
-        self.base.pending_quit_swordfight = true;
+        self.base.outbox.actor.quit_swordfight = true;
     }
 }

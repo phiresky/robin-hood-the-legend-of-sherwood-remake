@@ -667,7 +667,7 @@ impl EnemyAi {
     ///    the AI side keeps no copy of `detectable_lists`.
     /// 2. Clear the parallel `other_seen_money` list.
     fn forget_all_nearby_coins(&mut self, ctx: &AiContext) {
-        self.base.pending_forget_nearby_coins = Some(ctx.position);
+        self.base.outbox.actor.forget_nearby_coins = Some(ctx.position);
         self.other_seen_money.clear();
     }
 
@@ -818,7 +818,9 @@ impl EnemyAi {
                 self.base.antagonist = h;
             }
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: h,
                     stimulus_type: StimulusType::CallFinishBrawl,
@@ -968,7 +970,7 @@ impl EnemyAi {
         } else {
             // No coins left — look around for more.
             self.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
-            self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
+            self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
         }
     }
 
@@ -1215,7 +1217,9 @@ impl EnemyAi {
             let detects_chief = self.is_detecting_360_degrees(chief as HumanHandle, ctx);
             if chief_is_soldier && detects_chief {
                 self.base
-                    .pending_cross_npc_actions
+                    .outbox
+                    .reentrant
+                    .cross_npc_actions
                     .push(CrossNpcAction::SendStimulus {
                         fallback_to_sender: None,
                         to_whole_patrol: false,
@@ -1287,7 +1291,9 @@ impl EnemyAi {
             .collect();
         for member in members {
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     fallback_to_sender: None,
                     to_whole_patrol: true,
@@ -1305,7 +1311,7 @@ impl EnemyAi {
         // on civilians.  We can't access the entity list from the
         // AI, so we set a flag for the engine to process after
         // think().
-        self.base.pending_broadcast_panic = true;
+        self.base.outbox.actor.broadcast_panic = true;
     }
 
     /// Soldier-only; walks same-camp soldiers, finds an officer in
@@ -1364,7 +1370,9 @@ impl EnemyAi {
             };
             if react {
                 self.base
-                    .pending_cross_npc_actions
+                    .outbox
+                    .reentrant
+                    .cross_npc_actions
                     .push(CrossNpcAction::SendStimulus {
                         target: officer.handle,
                         stimulus_type: StimulusType::EventSeesBrawl,
@@ -1538,7 +1546,7 @@ impl EnemyAi {
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
         self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        self.base.pending_begin_panic = Some(crate::ai::PanicRequest {
+        self.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
             center: Some(center),
             runs,
             alert: crate::ai::AlertLevel::Red,
@@ -1557,7 +1565,7 @@ impl EnemyAi {
             ctx.in_building,
             "request_enemy_in_house_alert called outside a building"
         );
-        self.base.pending_enemy_in_house_alert = true;
+        self.base.outbox.actor.enemy_in_house_alert = true;
         tracing::trace!(
             me = self.base.me,
             substate = ?self.base.current_substate,
@@ -1897,7 +1905,9 @@ impl EnemyAi {
                 StimulusType::EventAppleChaseNear
             };
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: *handle,
                     stimulus_type: stim,
@@ -1983,7 +1993,7 @@ impl EnemyAi {
             if ctx.is_swordfighting {
                 self.end_swordfight(ctx, tick);
             }
-            self.base.pending_unfocus = true;
+            self.base.outbox.actor.unfocus = true;
 
             if self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
@@ -2045,7 +2055,9 @@ impl EnemyAi {
             }
 
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: handle,
                     stimulus_type: StimulusType::CallLookThere,
@@ -2083,7 +2095,7 @@ impl EnemyAi {
                 ?dir,
                 "default_bored_standard_procedure: queueing look-sidewards"
             );
-            self.base.pending_look_sidewards = Some(dir);
+            self.base.outbox.actor.look_sidewards = Some(dir);
             return true;
         }
         tracing::trace!(
@@ -2125,7 +2137,7 @@ impl EnemyAi {
             return;
         }
         self.guarded_pc = new_pc;
-        self.base.pending_set_guarded_pc = Some((old_pc, new_pc));
+        self.base.outbox.actor.set_guarded_pc = Some((old_pc, new_pc));
     }
 
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
@@ -2171,7 +2183,7 @@ impl EnemyAi {
         // into Wondering/Attacking without going through the
         // SleepingAwakening pipeline.
         if self.base.current_state == AiState::Sleeping && state != AiState::Sleeping {
-            self.base.pending_set_eye_status = Some(crate::element::EyeStatus::LookForward);
+            self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::LookForward);
         }
 
         // Break the archer-behind-me pairing when leaving any
@@ -2276,7 +2288,9 @@ impl EnemyAi {
         // them cleanly.
         if self.base.current_state == AiState::Seeking && state != AiState::Seeking {
             self.base
-                .pending_delete_detectables
+                .outbox
+                .actor
+                .delete_detectables
                 .push(crate::element::DetectableType::Beggar);
             self.beggar_to_examine = 0;
         }
@@ -2297,7 +2311,9 @@ impl EnemyAi {
                 _ => AiStateChangeSource::SelfActor,
             };
             self.base
-                .pending_state_change_notifications
+                .outbox
+                .reentrant
+                .state_change_notifications
                 .push((state, source));
         }
 
@@ -2364,7 +2380,7 @@ impl EnemyAi {
                 | Substate::SeekingHeardstepsPreReactiontime => (bfalse_if_not_forced, false),
                 Substate::SeekingGotStopEvent => {
                     // Nothing — leave attentive flag alone.
-                    self.base.pending_set_attentive_mode = None;
+                    self.base.outbox.actor.set_attentive_mode = None;
                     return self.finish_set_state(substate);
                 }
                 _ => (true, false),
@@ -2386,7 +2402,10 @@ impl EnemyAi {
         // skipped the element launch, which in turn meant the
         // `TransitionWaitingUprightWaitingAlerted` lean-forward animation
         // never played.  `set_attentive_mode` owns the flag flip.
-        self.base.pending_set_attentive_mode = Some((target_attentive, fast_officer_variant));
+        self.base.outbox.actor.set_attentive_mode = Some(AttentiveModeEffect::new(
+            target_attentive,
+            fast_officer_variant,
+        ));
 
         // `change_alert_status` writes `alert` from the same
         // (state, substate) table and calls `set_alert_status(alert)`
@@ -2766,7 +2785,7 @@ impl EnemyAi {
                     self.forget_all_nearby_coins(ctx);
                 }
                 self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
-                self.base.pending_set_eye_status =
+                self.base.outbox.recovery.set_eye_status =
                     Some(crate::element::EyeStatus::DieOrGetUnconscious);
                 self.set_alert_status(AlertLevel::Green);
                 self.base.sorrow_level = 0;
@@ -2778,7 +2797,7 @@ impl EnemyAi {
                 self.base.break_macro();
                 self.base.set_emoticon(EmoticonType::Thunderstorm);
                 self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
-                self.base.pending_set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
                 self.base.sorrow_level = 0;
                 self.forget_attentive_mode();
                 self.base.register_log_line(LogLineType::EventRefused, 14);
@@ -2787,7 +2806,7 @@ impl EnemyAi {
             StimulusType::EventNet => {
                 self.base.break_macro();
                 self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
-                self.base.pending_set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
                 self.base.sorrow_level = 0;
                 self.forget_attentive_mode();
                 self.base.register_log_line(LogLineType::EventRefused, 15);
@@ -2870,7 +2889,9 @@ impl EnemyAi {
             self.base.couldnt_reachpoint = false;
             if self.base.think_recursion_depth < 100 {
                 self.base
-                    .pending_self_stimuli
+                    .outbox
+                    .reentrant
+                    .self_stimuli
                     .push(StimulusType::EventCouldntReachPoint);
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
@@ -2884,7 +2905,9 @@ impl EnemyAi {
             self.base.already_on_point = false;
             if self.base.think_recursion_depth < 100 {
                 self.base
-                    .pending_self_stimuli
+                    .outbox
+                    .reentrant
+                    .self_stimuli
                     .push(StimulusType::EventReachPoint);
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
@@ -2897,7 +2920,11 @@ impl EnemyAi {
         if self.base.already_turned {
             self.base.already_turned = false;
             if self.base.think_recursion_depth < 100 {
-                self.base.pending_self_stimuli.push(StimulusType::EventDone);
+                self.base
+                    .outbox
+                    .reentrant
+                    .self_stimuli
+                    .push(StimulusType::EventDone);
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
@@ -2975,7 +3002,9 @@ impl EnemyAi {
         // `BECAUSE_COULDNT_REACHPOINT`-triggered return out of
         // beggar-handling doesn't leave a stale beggar detectable.
         self.base
-            .pending_delete_detectables
+            .outbox
+            .actor
+            .delete_detectables
             .push(crate::element::DetectableType::Beggar);
         self.beggar_to_examine = 0;
         self.beggar_is_npc = false;
@@ -2983,7 +3012,7 @@ impl EnemyAi {
         // Focus(NULL) — release any stare/follow target before the
         // report-to-officer / look-for-help branches so the focus releases
         // on every exit path, including the early returns.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
         self.fleeing_seen_enemy_counter = 0;
 
         // Report to officer after seeking?
@@ -3662,7 +3691,7 @@ mod tests {
 
         assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
         assert!(matches!(
-            ai.base.pending_cross_npc_actions.as_slice(),
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [CrossNpcAction::ReportBackToOfficer {
                 officer: 2,
                 charly: 1,
@@ -3834,9 +3863,9 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
-        assert!(ai.base.pending_cross_npc_actions.is_empty());
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
         assert_eq!(
-            ai.base.pending_unalert_near_charly_seekers,
+            ai.base.outbox.actor.unalert_near_charly_seekers,
             Some(CharlySeekerTarget::SelfNpc)
         );
         assert_eq!(ai.base.when_does_timer_ring, 110);
@@ -3861,7 +3890,7 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
-        assert!(ai.base.pending_cross_npc_actions.is_empty());
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
         assert_eq!(ai.base.when_does_timer_ring, 110);
         assert_eq!(
             ai.base.substate_at_last_timer_launch,
@@ -4097,7 +4126,7 @@ mod tests {
         // for the post-think dispatcher to drain (matching the reference
         // `RHArtificialMalignity::SetState` at L9226).
         assert_eq!(
-            ai.base.pending_state_change_notifications,
+            ai.base.outbox.reentrant.state_change_notifications,
             vec![(AiState::Attacking, AiStateChangeSource::Null)]
         );
     }
@@ -4246,7 +4275,7 @@ mod tests {
         assert_eq!(ai.base.primary_target, 2);
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.base.pending_enter_swordfight, None);
+        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
     }
 
     #[test]
@@ -4387,7 +4416,7 @@ mod tests {
             Substate::WonderingApproachingToLoot
         );
         assert!(matches!(
-            ai.base.pending_cross_npc_actions.as_slice(),
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [CrossNpcAction::SetLootedAfterMoneyFight {
                 target: 3,
                 looted: true

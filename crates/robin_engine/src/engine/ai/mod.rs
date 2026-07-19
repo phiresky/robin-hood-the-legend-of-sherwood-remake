@@ -2592,9 +2592,9 @@ impl EngineInner {
                 crate::ai::AlertLevel::Yellow => yellow += 1,
                 crate::ai::AlertLevel::Red => red += 1,
             }
-            if ai.pending_instant_music_change {
+            if ai.outbox.music.instant_change {
                 any_instant_change = true;
-                ai.pending_instant_music_change = false;
+                ai.outbox.music.instant_change = false;
             }
         }
         self.ai.global.green_alert_soldiers = green;
@@ -3189,11 +3189,11 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
-            if ai.pending_inform_resurrection {
-                ai.pending_inform_resurrection = false;
+            if ai.outbox.recovery.inform_resurrection {
+                ai.outbox.recovery.inform_resurrection = false;
                 to_broadcast.push(id.into());
             }
-            if let Some(status) = ai.pending_set_eye_status.take() {
+            if let Some(status) = ai.outbox.recovery.set_eye_status.take() {
                 to_set_eye.push((id.into(), status));
             }
         }
@@ -3793,7 +3793,7 @@ impl EngineInner {
                 ai.current_remark = Remark::TheSoundOfSilence;
                 ai.current_remark_flags = 0;
                 if let Some(stimulus_type) = event {
-                    ai.pending_self_stimuli.push(stimulus_type);
+                    ai.outbox.reentrant.self_stimuli.push(stimulus_type);
                 }
             }
         }
@@ -3805,7 +3805,7 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(ai) = entity.ai_controller_mut()
             {
-                ai.pending_mytalk_flags = flags_bits;
+                ai.outbox.speech.mytalk_flags = flags_bits;
                 ai.speech_in_flight = true;
             }
         }
@@ -3835,8 +3835,8 @@ impl EngineInner {
                     ai.speech_in_flight = false;
 
                     // Fire MYTALK callback based on stored flags.
-                    let flags = SpeechFlags::from_bits_truncate(ai.pending_mytalk_flags);
-                    ai.pending_mytalk_flags = 0;
+                    let flags = SpeechFlags::from_bits_truncate(ai.outbox.speech.mytalk_flags);
+                    ai.outbox.speech.mytalk_flags = 0;
                     let event = if flags.contains(SpeechFlags::MYTALK_1) {
                         Some(StimulusType::EventMyTalk1)
                     } else if flags.contains(SpeechFlags::MYTALK_2) {
@@ -3849,7 +3849,7 @@ impl EngineInner {
                         None
                     };
                     if let Some(stimulus_type) = event {
-                        ai.pending_self_stimuli.push(stimulus_type);
+                        ai.outbox.reentrant.self_stimuli.push(stimulus_type);
                     }
                 }
             }
@@ -4057,130 +4057,40 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            let h = ai.pending_halt;
-            ai.pending_halt = false;
-            h
+            ai.outbox.actor.take_halt()
         };
         if take_halt {
             self.halt_actor(npc_id);
         }
 
-        // Read+clear `pending_stop_menace` separately — keeps the giant
-        // tuple below from growing yet another slot.
-        let stop_menace = {
+        // The halt application above is a real same-frame barrier: only now
+        // take the prefixes that the original `go_to` path launches next.
+        let preemption = {
             let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            let v = ai.pending_stop_menace;
-            ai.pending_stop_menace = false;
-            v
+            ai.outbox.actor.take_movement_prefixes()
         };
 
-        // Same shape as `pending_stop_menace` above — prepend a
-        // `Command::LowerShield` element ahead of the move when the
-        // actor is in any shield action-state, matching the
-        // any-shield-action-state arm in `go_to`.
-        let lower_shield = {
+        // Take exactly the channels read at the first post-Think barrier.
+        // Later barrier groups remain live so re-entrant sequence work can
+        // still enqueue effects that this pass observes at their Original
+        // application point.
+        let effects = {
             let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            let v = ai.pending_lower_shield;
-            ai.pending_lower_shield = false;
-            v
-        };
-
-        // Read and clear pending flags.
-        let (
-            quit,
-            enter,
-            enter_jl,
-            stop_target,
-            set_principal,
-            friend_target_swap,
-            shoot,
-            do_focus,
-            do_focus_point,
-            do_unfocus,
-            set_dir,
-            deactivate,
-            broadcast_panic,
-            launch_cmds,
-            look_sidewards,
-            add_detectables,
-            delete_detectables,
-            delete_detectable_entities,
-            slowly_open_eyes,
-            launch_on_target,
-            launch_sequences,
-            set_posture,
-        ) = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            let q = ai.pending_quit_swordfight;
-            let e = ai.pending_enter_swordfight.take();
-            let e_jl = ai.pending_enter_swordfight_jump_line.take();
-            let st = ai.pending_stop_target.take();
-            let p = ai.pending_set_principal.take();
-            let friend_swap = ai.pending_friend_primary_target_swap.take();
-            let shoot = ai.pending_shoot_target.take();
-            let focus = ai.pending_focus.take();
-            let focus_point = ai.pending_focus_point.take();
-            let uf = ai.pending_unfocus;
-            let sd = ai.pending_set_direction_instantly.take();
-            let deact = ai.pending_deactivate;
-            let panic = ai.pending_broadcast_panic;
-            let launch_cmds = std::mem::take(&mut ai.pending_launch_commands);
-            let launch_on_target = std::mem::take(&mut ai.pending_launch_on_target);
-            let launch_sequences = std::mem::take(&mut ai.pending_launch_sequences);
-            let look = ai.pending_look_sidewards.take();
-            let add_det = std::mem::take(&mut ai.pending_add_detectables);
-            let del_det = std::mem::take(&mut ai.pending_delete_detectables);
-            let del_det_entity = std::mem::take(&mut ai.pending_delete_detectable_entity);
-            let open_eyes = ai.pending_slowly_open_eyes;
-            let posture = ai.pending_posture.take();
-            ai.pending_quit_swordfight = false;
-            ai.pending_unfocus = false;
-            ai.pending_deactivate = false;
-            ai.pending_broadcast_panic = false;
-            ai.pending_slowly_open_eyes = false;
-            (
-                q,
-                e,
-                e_jl,
-                st,
-                p,
-                friend_swap,
-                shoot,
-                focus,
-                focus_point,
-                uf,
-                sd,
-                deact,
-                panic,
-                launch_cmds,
-                look,
-                add_det,
-                del_det,
-                del_det_entity,
-                open_eyes,
-                launch_on_target,
-                launch_sequences,
-                posture,
-            )
+            ai.outbox.actor.take_core()
         };
 
         // Process quit_swordfight.
-        if quit {
+        if effects.quit_swordfight {
             self.quit_swordfight(assets, npc_id);
         }
 
@@ -4190,7 +4100,7 @@ impl EngineInner {
         // queue `TRANSITION_MENACING_WAITING_SWORD` then
         // `TRANSITION_LOWERING_SWORD` before the move that
         // `launch_pending_orders_for_npc` is about to launch starts.
-        if stop_menace {
+        if preemption.stop_menace {
             let elem = crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::StopMenace,
@@ -4204,7 +4114,7 @@ impl EngineInner {
         // element here lets `dispatch_lower_shield` queue the
         // `LoweringShield` order so the shield arm completes before
         // `launch_pending_orders_for_npc` runs the move.
-        if lower_shield {
+        if preemption.lower_shield {
             let elem = crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::LowerShield,
@@ -4219,7 +4129,7 @@ impl EngineInner {
         // `enter_swordfight` so the target's in-flight Move element is
         // torn down before the engine-side ENTER_SWORDFIGHT sequence
         // runs.
-        if let Some(target_handle) = stop_target {
+        if let Some(target_handle) = effects.stop_target {
             let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
@@ -4234,7 +4144,7 @@ impl EngineInner {
         //     `GOTO_SWORD` arm, `AttackingApproachToObserve`, and
         //     menace-effect-of-hit need a sword pose held without an
         //     active fight.
-        if let Some(request) = enter {
+        if let Some(request) = effects.enter_swordfight {
             match request {
                 crate::ai::EnterSwordfightRequest::RaiseSword => {
                     let elem = crate::sequence::SequenceElement::new_generic(
@@ -4246,7 +4156,9 @@ impl EngineInner {
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
                     let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
-                    let aggressor_jl = enter_jl.and_then(crate::jump_line::JumpLineIndex::new);
+                    let aggressor_jl = effects
+                        .enter_swordfight_jump_line
+                        .and_then(crate::jump_line::JumpLineIndex::new);
                     self.enter_swordfight_with_jump_line(
                         assets,
                         npc_id,
@@ -4259,7 +4171,7 @@ impl EngineInner {
         }
 
         // Process set_as_new_principal_opponent.
-        if let Some(opponent_handle) = set_principal {
+        if let Some(opponent_handle) = effects.set_principal {
             let opponent_id = EntityId::Pc(crate::entity_id::PcId(opponent_handle));
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
@@ -4269,7 +4181,7 @@ impl EngineInner {
         // other soldier when the swap heuristic fires; we hand it off
         // here so both soldiers are updated consistently after their
         // AI ticks ran.
-        if let Some((friend_id, new_target)) = friend_target_swap
+        if let Some((friend_id, new_target)) = effects.friend_primary_target_swap
             && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
             && let Some(friend_ai) = s.npc.ai_brain.base_mut()
         {
@@ -4277,7 +4189,7 @@ impl EngineInner {
         }
 
         // Process pending bow shot.
-        if let Some(target_handle) = shoot {
+        if let Some(target_handle) = effects.shoot_target {
             let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             self.shoot_bow_at(assets, npc_id, target_id);
         }
@@ -4293,7 +4205,7 @@ impl EngineInner {
         // honour the synchronous ordering even though the channel
         // itself is deferred.
         let mut focus_channel_fired = false;
-        if let Some(target_handle) = do_focus
+        if let Some(target_handle) = effects.focus
             && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
         {
             crate::ai_vision::focus_entity(
@@ -4303,7 +4215,7 @@ impl EngineInner {
             focus_channel_fired = true;
         }
 
-        if let Some(point) = do_focus_point
+        if let Some(point) = effects.focus_point
             && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
         {
             crate::ai_vision::focus_point(
@@ -4313,7 +4225,9 @@ impl EngineInner {
             focus_channel_fired = true;
         }
 
-        if do_unfocus && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+        if effects.unfocus
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
+        {
             crate::ai_vision::unfocus(&mut s.npc);
             focus_channel_fired = true;
         }
@@ -4331,7 +4245,7 @@ impl EngineInner {
         // `ViewconeGrow`, and marks `view_transition`.  The
         // `ViewconeGrow` branch of `refresh_view` then ramps the cone
         // back open at 8 units/frame.
-        if slowly_open_eyes {
+        if effects.slowly_open_eyes {
             let standard = self.ai.standard_view_polygon_radius;
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 s.npc.view_transition = true;
@@ -4343,7 +4257,7 @@ impl EngineInner {
         }
 
         // Process pending set_direction_instantly.
-        if let Some(dir) = set_dir
+        if let Some(dir) = effects.set_direction_instantly
             && let Some(entity) = self.world.entities.get_mut(npc_id)
         {
             entity.position_iface_mut().set_direction_instantly(
@@ -4384,11 +4298,11 @@ impl EngineInner {
             if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(base) = s.npc.ai_brain.base_mut()
             {
-                take = base.pending_set_attentive_mode.take();
+                take = base.outbox.actor.set_attentive_mode.take();
             }
             take
         };
-        if let Some((target, fast_officer)) = attentive_request {
+        if let Some(request) = attentive_request {
             // Route the request through the sequence pipeline
             // so the order-driven animation handler runs —
             // identical to any other `set_soldier_attentive_mode`
@@ -4396,7 +4310,7 @@ impl EngineInner {
             // "already busy" gating when the dispatcher runs next
             // tick; snapping the flag immediately here would race
             // that.
-            self.set_soldier_attentive_mode(npc_id, target, fast_officer);
+            self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
         }
 
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI
@@ -4405,7 +4319,7 @@ impl EngineInner {
         let guard_delta = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(base) = s.npc.ai_brain.base_mut()
         {
-            base.pending_set_guarded_pc.take()
+            base.outbox.actor.set_guarded_pc.take()
         } else {
             None
         };
@@ -4433,7 +4347,9 @@ impl EngineInner {
 
         // Process pending entity deactivation (merry man leaving map).
         // Equivalent to `set_active(false)`.
-        if deactivate && let Some(entity) = self.world.entities.get_mut(npc_id) {
+        if effects.deactivate
+            && let Some(entity) = self.world.entities.get_mut(npc_id)
+        {
             entity.element_data_mut().active = false;
             tracing::debug!(
                 npc = npc_id.index(),
@@ -4448,7 +4364,7 @@ impl EngineInner {
         let reported_updates = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
-            std::mem::take(&mut ai.pending_set_reported_to_officer)
+            std::mem::take(&mut ai.outbox.actor.set_reported_to_officer)
         } else {
             Vec::new()
         };
@@ -4469,8 +4385,8 @@ impl EngineInner {
             let refill = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(ai) = s.npc.ai_brain.base_mut()
             {
-                let r = ai.pending_refill_bow_ammo;
-                ai.pending_refill_bow_ammo = false;
+                let r = ai.outbox.actor.refill_bow_ammo;
+                ai.outbox.actor.refill_bow_ammo = false;
                 r
             } else {
                 false
@@ -4529,8 +4445,8 @@ impl EngineInner {
         let unalert = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
-            let u = ai.pending_unalert_near_charly_seekers;
-            ai.pending_unalert_near_charly_seekers = None;
+            let u = ai.outbox.actor.unalert_near_charly_seekers;
+            ai.outbox.actor.unalert_near_charly_seekers = None;
             u
         } else {
             None
@@ -4684,13 +4600,13 @@ impl EngineInner {
         // Both this enemy-broadcast path and the sword-attack call
         // site funnel through the same helper, since both use
         // EVENT_PANIC with the same filter.
-        if broadcast_panic {
+        if effects.broadcast_panic {
             self.nearby_civilians_panic(assets, npc_id);
         }
 
         // Process pending launch commands — create and launch
         // sequence elements for commands the AI wants to execute.
-        for cmd in launch_cmds {
+        for cmd in effects.launch_commands {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(npc_id));
             self.launch_element(elem);
         }
@@ -4700,7 +4616,7 @@ impl EngineInner {
         // Equivalent to a `launch_sequence_element(cmd,
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
-        for (target_handle, cmd) in launch_on_target {
+        for (target_handle, cmd) in effects.launch_on_target {
             let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
             self.launch_element(elem);
@@ -4710,14 +4626,14 @@ impl EngineInner {
         // `launch_sequence(SEQ_INFO, sequence)` calls inside AI
         // handlers (e.g. the officer's turn/gather/point alert
         // sequence).
-        for seq in launch_sequences {
+        for seq in effects.launch_sequences {
             self.launch_sequence(seq);
         }
 
         // Process pending LookSidewards — build a one- or two-element
         // sequence of LookLeft / LookRight / LeanOut commands and
         // launch it.
-        if let Some(dir) = look_sidewards {
+        if let Some(dir) = effects.look_sidewards {
             use crate::ai::LookDirection;
             use crate::element::Command;
             let cmds: &[Command] = match dir {
@@ -4763,16 +4679,16 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            std::mem::take(&mut ai.pending_delete_beggar_for_all_npc)
+            std::mem::take(&mut ai.outbox.actor.delete_beggar_for_all_npc)
         };
         for beggar_id in delete_beggar_requests {
             self.delete_beggar_detectable_for_all_npc(beggar_id);
         }
 
         // Process pending detectable modifications.
-        if !add_detectables.is_empty()
-            || !delete_detectables.is_empty()
-            || !delete_detectable_entities.is_empty()
+        if !effects.add_detectables.is_empty()
+            || !effects.delete_detectables.is_empty()
+            || !effects.delete_detectable_entities.is_empty()
         {
             // Resolve target classification for each ENEMY-arm push
             // so the `add_detectable` filter can run.  Resolved
@@ -4780,7 +4696,8 @@ impl EngineInner {
             // while we read target metadata from it.
             use crate::element::DetectableType;
             let enemy_target_info: Vec<Option<(bool, bool, crate::element_kinds::Camp, bool)>> =
-                add_detectables
+                effects
+                    .add_detectables
                     .iter()
                     .map(|(eid, dt)| {
                         if *dt != DetectableType::Enemy {
@@ -4795,7 +4712,7 @@ impl EngineInner {
                 let npc_camp = s.soldier.cached_camp;
                 let npc_is_soldier = true; // dispatch already filtered to Soldier
                 // Delete all detectables of specified types.
-                for det_type in &delete_detectables {
+                for det_type in &effects.delete_detectables {
                     let idx = *det_type as usize;
                     if idx < s.npc.detectable_lists.len() {
                         s.npc.detectable_lists[idx].clear();
@@ -4804,7 +4721,7 @@ impl EngineInner {
                 // Per-entity deletes: `delete_detectable(entity, type)`
                 // drops a single (element, type) entry, leaving
                 // siblings of the same type alone.
-                for (entity_id, det_type) in &delete_detectable_entities {
+                for (entity_id, det_type) in &effects.delete_detectable_entities {
                     let idx = *det_type as usize;
                     if idx < s.npc.detectable_lists.len() {
                         s.npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
@@ -4812,7 +4729,7 @@ impl EngineInner {
                 }
                 // Add new detectables.
                 for ((entity_id, det_type), tgt) in
-                    add_detectables.iter().zip(enemy_target_info.iter())
+                    effects.add_detectables.iter().zip(enemy_target_info.iter())
                 {
                     let idx = *det_type as usize;
                     if idx >= s.npc.detectable_lists.len() {
@@ -4867,8 +4784,8 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            if ai.pending_restore_detectable_objects {
-                ai.pending_restore_detectable_objects = false;
+            if ai.outbox.actor.restore_detectable_objects {
+                ai.outbox.actor.restore_detectable_objects = false;
                 Some(ai.knocked_out_in_money_fight)
             } else {
                 None
@@ -4928,7 +4845,7 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            ai.pending_forget_nearby_coins.take()
+            ai.outbox.actor.forget_nearby_coins.take()
         };
         if let Some(pos) = forget_pos {
             use crate::element::DetectableType;
@@ -4981,7 +4898,7 @@ impl EngineInner {
         // every other posture write in the codebase (e.g.
         // `abilities.rs` `CarryingCorpse`, `melee.rs` knock-out
         // paths).
-        if let Some(p) = set_posture
+        if let Some(p) = effects.posture
             && let Some(entity) = self.world.entities.get_mut(npc_id)
         {
             entity.set_posture(p);
@@ -4998,9 +4915,9 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            let b = ai.pending_blink_all_enemies;
-            ai.pending_blink_all_enemies = false;
-            let specific = std::mem::take(&mut ai.pending_blink_enemy_specific);
+            let b = ai.outbox.actor.blink_all_enemies;
+            ai.outbox.actor.blink_all_enemies = false;
+            let specific = std::mem::take(&mut ai.outbox.actor.blink_enemy_specific);
             (b, specific)
         };
         if blink_all && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
@@ -5046,8 +4963,8 @@ impl EngineInner {
             let Some(ai) = s.npc.ai_brain.base_mut() else {
                 return;
             };
-            let v = ai.pending_enemy_in_house_alert;
-            ai.pending_enemy_in_house_alert = false;
+            let v = ai.outbox.actor.enemy_in_house_alert;
+            ai.outbox.actor.enemy_in_house_alert = false;
             v
         };
         if in_house_alert {
@@ -5100,7 +5017,7 @@ impl EngineInner {
             .entities
             .get(npc_id)
             .and_then(|entity| entity.ai_controller())
-            .is_some_and(|ai| ai.pending_script_seek_area.is_some());
+            .is_some_and(|ai| ai.outbox.actor.script_seek_area.is_some());
         if has_script_seek {
             let tick_for_seek = self.build_npc_tick_data(npc_id, &scratch, assets);
             self.process_pending_script_seek_area_for(npc_id, &ctx_for_panic, &tick_for_seek);
@@ -5271,7 +5188,7 @@ impl EngineInner {
             friendly_ai.base.directed_panic = false;
             friendly_ai.base.current_state = crate::ai::AiState::Fleeing;
             friendly_ai.base.current_substate = crate::ai::Substate::FleeingPanic;
-            friendly_ai.base.pending_begin_panic = Some(crate::ai::PanicRequest {
+            friendly_ai.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
                 center: None,
                 runs,
                 alert: crate::ai::AlertLevel::Red,
@@ -5562,7 +5479,7 @@ impl EngineInner {
         let Some(ai) = entity.ai_controller_mut() else {
             return;
         };
-        let Some(request) = ai.pending_begin_panic.take() else {
+        let Some(request) = ai.outbox.actor.begin_panic.take() else {
             return;
         };
 
@@ -5742,10 +5659,10 @@ impl EngineInner {
         let Some(ai) = entity.ai_controller_mut() else {
             return;
         };
-        if !ai.pending_panic_seek_fallback {
+        if !ai.outbox.actor.panic_seek_fallback {
             return;
         }
-        ai.pending_panic_seek_fallback = false;
+        ai.outbox.actor.panic_seek_fallback = false;
 
         let anchor = ai.nearest_seek_point_to_flee(
             &self.ai.global.seek_points,
@@ -5847,7 +5764,7 @@ impl EngineInner {
     }
 
     /// Drain a pending script-driven `SeekArea` request.  Consumes
-    /// `AiController::pending_script_seek_area` set by
+    /// `AiController::outbox.actor.script_seek_area` set by
     /// `script_set_ai_state` when a script fires
     /// `SetAIState(actor, STATE_SEEKING)`.  Dispatches into
     /// `EnemyAi::seek_area` (soldier-only — `seek_area` is defined
@@ -5866,7 +5783,7 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
-            let Some(req) = ai.pending_script_seek_area.take() else {
+            let Some(req) = ai.outbox.actor.script_seek_area.take() else {
                 return;
             };
             req
@@ -5939,7 +5856,7 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
-            let Some(direction) = ai.pending_patrol_direction_broadcast.take() else {
+            let Some(direction) = ai.outbox.patrol.direction_broadcast.take() else {
                 continue;
             };
             for &member_id in &ai.patrol {
@@ -6549,7 +6466,7 @@ impl EngineInner {
             };
             let stimulus = Stimulus::with_noise(StimulusType::EventHear, noise);
             if let Some(ai) = entity.ai_controller_mut() {
-                ai.pending_stimuli.push(stimulus);
+                ai.outbox.detection.stimuli.push(stimulus);
             }
         }
     }
@@ -7058,7 +6975,7 @@ impl EngineInner {
             .entities
             .get_mut(npc_id)
             .and_then(Entity::ai_controller_mut)
-            .is_some_and(|ai| std::mem::take(&mut ai.pending_mark_alerted));
+            .is_some_and(|ai| std::mem::take(&mut ai.outbox.detection.mark_alerted));
         if mark_alerted {
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                 panic!(
@@ -7113,7 +7030,7 @@ impl EngineInner {
                 let Some(ai) = entity.ai_controller() else {
                     break;
                 };
-                !ai.pending_self_stimuli.is_empty()
+                !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if !had_self_stimuli {
                 break;
@@ -7405,10 +7322,10 @@ impl EngineInner {
                 let Some(ai) = entity.ai_controller_mut() else {
                     return;
                 };
-                if ai.pending_self_stimuli.is_empty() {
+                if ai.outbox.reentrant.self_stimuli.is_empty() {
                     break;
                 }
-                ai.pending_self_stimuli.remove(0)
+                ai.outbox.reentrant.self_stimuli.remove(0)
             };
 
             dispatched += 1;
@@ -7491,7 +7408,7 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
-            if let Some((path_idx, wp_idx)) = ai.pending_waypoint_script_reach_point.take()
+            if let Some((path_idx, wp_idx)) = ai.outbox.reentrant.waypoint_script_reach_point.take()
                 && scripts_enabled
             {
                 requests.push((npc_id.into(), path_idx, wp_idx));

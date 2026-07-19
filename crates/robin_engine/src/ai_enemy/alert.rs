@@ -157,7 +157,9 @@ impl EnemyAi {
 
             // Send CALL_COMBAT_ALERT with the target position
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
@@ -238,7 +240,7 @@ impl EnemyAi {
                             }
                         }
                         let chosen = slots.remove(best_idx);
-                        self.base.pending_cross_npc_actions.push(
+                        self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::InstructGatherPosition {
                                 target: handle,
                                 position: chosen,
@@ -286,7 +288,7 @@ impl EnemyAi {
             point_elem.set_property(Field::Direction, FieldValue::Integer(target_dir as u32));
             seq.append_element(point_elem);
 
-            self.base.pending_launch_sequences.push(seq);
+            self.base.outbox.actor.launch_sequences.push(seq);
 
             self.base
                 .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
@@ -338,7 +340,7 @@ impl EnemyAi {
         }
 
         // Focus(NULL) — clear focus target.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         self.current_task_priority = task_priority::ALERT;
 
@@ -432,7 +434,9 @@ impl EnemyAi {
                 continue;
             }
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
@@ -452,7 +456,9 @@ impl EnemyAi {
             // Broadcast the officer's report back so each
             // soldier picks up charly / report type.
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::ConsiderReport {
                     target: cs.handle,
                     report: my_report.clone(),
@@ -619,7 +625,7 @@ impl EnemyAi {
                 if officer_in_building {
                     // Indoor → always slot 0.
                     let chosen = slots.remove(0);
-                    self.base.pending_cross_npc_actions.push(
+                    self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::InstructGatherPosition {
                             target: handle,
                             position: chosen,
@@ -647,7 +653,7 @@ impl EnemyAi {
                         }
                     }
                     let chosen = slots.remove(best_idx);
-                    self.base.pending_cross_npc_actions.push(
+                    self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::InstructGatherPosition {
                             target: handle,
                             position: chosen,
@@ -690,7 +696,7 @@ impl EnemyAi {
             // Gather the soldiers.
             seq.append_element(SequenceElement::new(2, Command::GatherSoldiers, owner));
 
-            self.base.pending_launch_sequences.push(seq);
+            self.base.outbox.actor.launch_sequences.push(seq);
 
             self.base.say(Remark::OfficerCallsGroup);
 
@@ -769,7 +775,9 @@ impl EnemyAi {
         // soldier.ConsiderReport(my_reconnaissance_report, 0)
         // — flags=0 means only update type, not bodies/charly.
         self.base
-            .pending_cross_npc_actions
+            .outbox
+            .reentrant
+            .cross_npc_actions
             .push(CrossNpcAction::UpdateReport {
                 target: soldier_handle,
                 report_type: self.base.my_reconnaissance_report.report_type,
@@ -818,7 +826,7 @@ impl EnemyAi {
         // Focus(NULL) — drop any prior gaze lock so the
         // soldier doesn't keep staring at the trigger entity while running
         // to the officer.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         self.base.alert_soldiers_point = center;
 
@@ -939,7 +947,7 @@ impl EnemyAi {
         self.current_task_priority = task_priority::ALERT;
         self.base.antagonist = officer_handle;
         // Track the officer so the soldier can detect them on the way.
-        self.base.pending_add_detectables.push((
+        self.base.outbox.actor.add_detectables.push((
             crate::element::EntityId::Soldier(crate::entity_id::SoldierId(officer_handle)),
             crate::element::DetectableType::Friend,
         ));
@@ -981,7 +989,9 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) {
         self.base
-            .pending_delete_detectables
+            .outbox
+            .actor
+            .delete_detectables
             .push(crate::element::DetectableType::Friend);
         // Remember the alert point; clear body unless this is a
         // body-alert.
@@ -1023,7 +1033,7 @@ impl EnemyAi {
             })
         });
         if let Some(h) = patrol_head {
-            self.base.pending_add_detectables.push((
+            self.base.outbox.actor.add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
                 crate::element::DetectableType::Friend,
             ));
@@ -1047,7 +1057,7 @@ impl EnemyAi {
             if !allowed {
                 continue;
             }
-            self.base.pending_add_detectables.push((
+            self.base.outbox.actor.add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(cs.handle)),
                 crate::element::DetectableType::Friend,
             ));
@@ -1258,7 +1268,9 @@ impl EnemyAi {
         // tick — same observable ordering for the target.
         for handle in &in_range_soldiers {
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: *handle,
                     stimulus_type: StimulusType::CallTowerGuardAlert,
@@ -1290,7 +1302,9 @@ impl EnemyAi {
             // Directly alert the officer — they'll come
             // investigate via `CallTowerGuardCallsMeStandardProcedure`.
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: officer,
                     stimulus_type: StimulusType::CallTowerGuardCallsMe,
@@ -1331,7 +1345,9 @@ impl EnemyAi {
 
         if let Some((runner_handle, _)) = runner {
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SendStimulus {
                     target: runner_handle,
                     stimulus_type: StimulusType::CallTowerGuardCallsMe,
@@ -1363,7 +1379,7 @@ impl EnemyAi {
         use crate::profiles::ProfileRank;
 
         // Focus(NULL) — clear focus target.
-        self.base.pending_unfocus = true;
+        self.base.outbox.actor.unfocus = true;
 
         self.base.seek_position = center;
 

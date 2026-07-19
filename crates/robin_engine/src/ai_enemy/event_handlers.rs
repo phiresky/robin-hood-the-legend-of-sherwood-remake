@@ -54,7 +54,7 @@ impl EnemyAi {
                     if already_reported {
                         return;
                     }
-                    self.base.pending_unalert_near_charly_seekers =
+                    self.base.outbox.actor.unalert_near_charly_seekers =
                         Some(CharlySeekerTarget::Npc(charly));
 
                     // If pCharly is a rank-Soldier, acquire him and wait.
@@ -64,9 +64,8 @@ impl EnemyAi {
                         .unwrap_or(false);
                     if charly_is_soldier {
                         self.base.say(Remark::FoundCharly);
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 target: charly,
                                 stimulus_type: StimulusType::CallGoToOfficer,
                                 info: StimulusInfo::Hint(crate::ai::Hint {
@@ -76,7 +75,8 @@ impl EnemyAi {
                                 }),
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
-                            });
+                            },
+                        );
                         self.base.antagonist = charly;
                         self.base.face_entity(charly, ctx);
                         self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForCharly);
@@ -123,7 +123,7 @@ impl EnemyAi {
                                     AiState::Seeking,
                                     Substate::SeekingSendCharlyToOfficer,
                                 );
-                                self.base.pending_unalert_near_charly_seekers =
+                                self.base.outbox.actor.unalert_near_charly_seekers =
                                     Some(CharlySeekerTarget::Npc(charly));
                                 self.base
                                     .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
@@ -157,7 +157,7 @@ impl EnemyAi {
             || !self.base.macro_in_progress;
         if no_sync {
             // Plain reunion — halt, go green, face charly.
-            self.base.pending_halt = true;
+            self.base.outbox.actor.halt = true;
             self.set_alert_status(AlertLevel::Green);
             self.base.face_entity(charly, ctx);
             if self.base.current_state == AiState::Default {
@@ -169,7 +169,7 @@ impl EnemyAi {
                 // SEEKING_DETECTED_CHARLY.
                 self.previous_state = self.base.current_state;
                 self.previous_substate = self.base.current_substate;
-                self.base.pending_unalert_near_charly_seekers =
+                self.base.outbox.actor.unalert_near_charly_seekers =
                     Some(CharlySeekerTarget::Npc(charly));
                 self.set_state(AiState::Seeking, Substate::SeekingDetectedCharly);
                 self.base
@@ -210,12 +210,12 @@ impl EnemyAi {
             self.base.execute_next_macro_command(ctx);
         } else {
             // Wait — register ourselves and stall.
-            self.base
-                .pending_cross_npc_actions
-                .push(CrossNpcAction::RegisterSynchronizingActor {
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::RegisterSynchronizingActor {
                     target: self.base.synchronize_charly,
                     actor: self.base.me,
-                });
+                },
+            );
             self.set_state(AiState::Default, Substate::DefaultSynchronizing);
             self.base.launch_timer(20, ctx.frame);
         }
@@ -289,7 +289,7 @@ impl EnemyAi {
                                 self.missed_pc = enemy;
                                 self.pc_missed = true;
                                 self.end_swordfight(ctx, tick);
-                                self.base.pending_unfocus = true;
+                                self.base.outbox.actor.unfocus = true;
 
                                 if tick.primary_target_is_pc
                                     && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
@@ -309,7 +309,8 @@ impl EnemyAi {
                                     let dx = self.base.seek_position.x - ctx.position.x;
                                     let dy = self.base.seek_position.y - ctx.position.y;
                                     let dir = vec_to_sector(dx, dy);
-                                    self.base.pending_set_direction_instantly = Some(dir as i16);
+                                    self.base.outbox.actor.set_direction_instantly =
+                                        Some(dir as i16);
                                     self.get_battle_overview(0, ctx, tick);
                                 }
                             }
@@ -468,8 +469,8 @@ impl EnemyAi {
                     return false;
                 }
 
-                self.base.pending_restore_detectable_objects = true;
-                self.base.pending_inform_resurrection = true;
+                self.base.outbox.actor.restore_detectable_objects = true;
+                self.base.outbox.recovery.inform_resurrection = true;
                 self.base.clear_emoticon();
 
                 if self.base.knocked_out_in_money_fight {
@@ -479,7 +480,8 @@ impl EnemyAi {
                     self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
                     self.base
                         .launch_timer(parameters_ai::AI_WAKEUP_IDLING_TIME as u32, ctx.frame);
-                    self.base.pending_set_eye_status = Some(crate::element::EyeStatus::LookForward);
+                    self.base.outbox.recovery.set_eye_status =
+                        Some(crate::element::EyeStatus::LookForward);
                 }
             }
 
@@ -557,7 +559,7 @@ impl EnemyAi {
                             // (the substate the soldier's arrival path
                             // in `SeekingRunningToOfficerSeen` expects on
                             // the officer side).
-                            self.base.pending_cross_npc_actions.push(
+                            self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
                                     fallback_to_sender: None,
                                     to_whole_patrol: false,
@@ -626,7 +628,9 @@ impl EnemyAi {
                             // list so further EVENT_SEES_SOLDIER calls
                             // don't pre-empt.
                             self.base
-                                .pending_delete_detectables
+                                .outbox
+                                .actor
+                                .delete_detectables
                                 .push(crate::element::DetectableType::Friend);
                         }
                     }
@@ -777,7 +781,7 @@ impl EnemyAi {
                     // cone grows from radius 5 back to standard), sets QM
                     // emoticon, blinks the enemy, and timers 30 frames
                     // before reacquiring.
-                    self.base.pending_slowly_open_eyes = true;
+                    self.base.outbox.actor.slowly_open_eyes = true;
                     self.set_state(AiState::Wondering, Substate::WonderingLooking1);
                     self.base.set_emoticon(EmoticonType::QuestionMark);
                     self.base.launch_timer(30, ctx.frame);
@@ -855,7 +859,9 @@ impl EnemyAi {
                     // (`engine/ai.rs` process pending orders) since we
                     // can't touch other entities from here.
                     self.base
-                        .pending_delete_beggar_for_all_npc
+                        .outbox
+                        .actor
+                        .delete_beggar_for_all_npc
                         .push(crate::element::EntityId::Pc(crate::entity_id::PcId(beggar)));
                 }
             }
@@ -1012,7 +1018,7 @@ impl EnemyAi {
                     return false;
                 }
 
-                self.base.pending_halt = true;
+                self.base.outbox.actor.halt = true;
                 self.base.face_entity(soldier, ctx);
                 self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForCharly);
                 self.base.say(Remark::FoundCharly);
@@ -1339,7 +1345,7 @@ impl EnemyAi {
                         );
                         let mut seq = Sequence::new();
                         seq.append_element(elem);
-                        self.base.pending_launch_sequences.push(seq);
+                        self.base.outbox.actor.launch_sequences.push(seq);
 
                         // SetStates(UPRIGHT, HOLDING_SHIELD) + UpdateShield
                         // are redundant with the sequence dispatch, which
@@ -1348,7 +1354,7 @@ impl EnemyAi {
                         // every frame by
                         // `EngineInner::update_shield_obstacles`.
 
-                        self.base.pending_focus = Some(shooter);
+                        self.base.outbox.actor.focus = Some(shooter);
 
                         self.set_state(AiState::Attacking, Substate::AttackingProtectingWithShield);
                         self.base.launch_timer(15, ctx.frame);
@@ -1546,7 +1552,7 @@ impl EnemyAi {
                             .map(|f| f.has_as_opponent(attacker))
                             .unwrap_or(false);
                         if !attacker_is_friend && !already_opponent {
-                            self.base.pending_enter_swordfight =
+                            self.base.outbox.actor.enter_swordfight =
                                 Some(EnterSwordfightRequest::Engage(attacker));
                         }
                     }
@@ -1561,9 +1567,9 @@ impl EnemyAi {
                             Substate::AttackingReturnToOtherPcAfterMenacing,
                         );
                         self.base.primary_target = attacker;
-                        self.base.pending_enter_swordfight =
+                        self.base.outbox.actor.enter_swordfight =
                             Some(EnterSwordfightRequest::RaiseSword);
-                        self.base.pending_enter_swordfight_jump_line = None;
+                        self.base.outbox.actor.enter_swordfight_jump_line = None;
                         self.base.face_entity(attacker, ctx);
                     }
                 } else {
@@ -1598,7 +1604,7 @@ impl EnemyAi {
                         // SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS)
                         // applies whenever the attacker info was human,
                         // regardless of which sub-arm fired.
-                        self.base.pending_set_eye_status =
+                        self.base.outbox.recovery.set_eye_status =
                             Some(crate::element::EyeStatus::DieOrGetUnconscious);
                     } else {
                         // Non-human stimulus info — clear primary_target.
@@ -1628,7 +1634,7 @@ impl EnemyAi {
                     // Apple hits visor, vision is restored gradually via
                     // SlowlyOpenEyes (view cone grows from 5 back to
                     // standard radius).
-                    self.base.pending_slowly_open_eyes = true;
+                    self.base.outbox.actor.slowly_open_eyes = true;
                     self.base.launch_timer(60, ctx.frame);
                 }
             }
@@ -1672,7 +1678,7 @@ impl EnemyAi {
                 // already tracking the PC before the EVENT_STOP would
                 // stay in SeekingGotStopEvent forever (the visibility
                 // edge-trigger never fires) once the stop timer elapses.
-                self.base.pending_blink_all_enemies = true;
+                self.base.outbox.actor.blink_all_enemies = true;
                 self.base.launch_timer(100, ctx.frame);
             }
 
@@ -1763,7 +1769,7 @@ impl EnemyAi {
             return;
         }
 
-        self.base.pending_mark_alerted = true;
+        self.base.outbox.detection.mark_alerted = true;
         self.base.frame_when_enemy_detected = ctx.frame;
         // Only meaningful for archers, who use the flag to switch to
         // bow-down posture.
@@ -1813,7 +1819,7 @@ impl EnemyAi {
         if ctx.self_action_state == crate::element::ActionState::MovingFast {
             self.set_state(AiState::Attacking, Substate::AttackingReactiontimeRunning);
             self.base.primary_target = enemy;
-            self.base.pending_focus = Some(enemy);
+            self.base.outbox.actor.focus = Some(enemy);
             self.reinitialize_them_list(ctx, tick);
             // GoNear(Position(pEnemy), Distance/3, GOTO_RUN)
             let dx = enemy_pos.x - ctx.position.x;
@@ -1839,7 +1845,7 @@ impl EnemyAi {
         self.base.say(Remark::SeesEnemy);
 
         self.base.primary_target = enemy;
-        self.base.pending_focus = Some(enemy);
+        self.base.outbox.actor.focus = Some(enemy);
         self.reinitialize_them_list(ctx, tick);
         // EventViewStandardProcedure
         // does NOT set `EMOTICON_X_MARK` here — the red `!` only
@@ -2115,7 +2121,7 @@ impl EnemyAi {
                 if b_hey_this_is_charly {
                     // The body we're seeing is charly — broadcast the
                     // unalert.
-                    self.base.pending_unalert_near_charly_seekers =
+                    self.base.outbox.actor.unalert_near_charly_seekers =
                         Some(CharlySeekerTarget::Npc(body));
                 }
                 self.run_to_examine_body(body, ctx, tick, grid);
@@ -2139,7 +2145,7 @@ impl EnemyAi {
         // Remember the body and its position.
         self.base.seek_position = body_pos;
         self.base.detected_body = body;
-        self.base.pending_focus = Some(body);
+        self.base.outbox.actor.focus = Some(body);
 
         self.set_state(AiState::Seeking, Substate::SeekingBodyReactiontime);
 
@@ -2151,7 +2157,8 @@ impl EnemyAi {
         // non-mid-seek discoveries too. The body we just saw IS charly,
         // so the sweep target is the body handle.
         if b_hey_this_is_charly {
-            self.base.pending_unalert_near_charly_seekers = Some(CharlySeekerTarget::Npc(body));
+            self.base.outbox.actor.unalert_near_charly_seekers =
+                Some(CharlySeekerTarget::Npc(body));
         }
         self.react(
             parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as u16,
@@ -2208,7 +2215,7 @@ impl EnemyAi {
             // cone onto the arrow's interesting object so the detection
             // cone narrows along the threat axis.
             if self.base.interesting_object != 0 {
-                self.base.pending_focus = Some(self.base.interesting_object);
+                self.base.outbox.actor.focus = Some(self.base.interesting_object);
             }
             self.hey_folks_look_there(pos, 200, ctx);
             if self.get_rank() == ProfileRank::Officer {
@@ -2284,7 +2291,7 @@ impl EnemyAi {
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
-                self.base.pending_focus = Some(obj);
+                self.base.outbox.actor.focus = Some(obj);
                 if self.get_rank() == ProfileRank::Officer {
                     self.base.launch_timer(60, ctx.frame);
                 } else {
@@ -2311,7 +2318,7 @@ impl EnemyAi {
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.base.interesting_object = obj;
-                self.base.pending_focus = Some(obj);
+                self.base.outbox.actor.focus = Some(obj);
                 self.set_state(AiState::Wondering, Substate::WonderingAleReactiontime);
                 self.react(parameters_ai::AI_FIRST_LOOK_TIME as u16, ctx, tick);
             }
@@ -2337,7 +2344,7 @@ impl EnemyAi {
         // Focus on the hint position — engage `EYES_STARE` with the
         // narrow stare cone so subsequent detection ticks cast a narrow
         // stare rather than the default look-forward cone.
-        self.base.pending_focus_point = Some(*pos);
+        self.base.outbox.actor.focus_point = Some(*pos);
         self.base.face_position(*pos);
         self.base.launch_timer(100, ctx.frame);
     }
@@ -2363,7 +2370,7 @@ impl EnemyAi {
         // Focus on the reported point — engages `EYES_STARE`. Without
         // this the alerted soldier sweeps a default-angle cone and may
         // miss the enemy at the edge of the stare-cone.
-        self.base.pending_focus_point = Some(hint.seek_point);
+        self.base.outbox.actor.focus_point = Some(hint.seek_point);
         self.base.face_entity(hint.who_tells_me, ctx);
         self.base.launch_timer(100, ctx.frame);
     }
@@ -2407,7 +2414,7 @@ impl EnemyAi {
         self.set_state(AiState::Seeking, Substate::SeekingCombatAlertReactiontime);
         self.base.seek_position = *pos;
         // Focus on the position — engages `EYES_STARE` before facing it.
-        self.base.pending_focus_point = Some(*pos);
+        self.base.outbox.actor.focus_point = Some(*pos);
         self.base.face_position(*pos);
         self.react(
             parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16,
@@ -2482,7 +2489,9 @@ impl EnemyAi {
             self.base.non_script_lock(crate::ai::AiLockFlags::BUSY);
             self.base.was_busy = true;
             self.base
-                .pending_self_stimuli
+                .outbox
+                .reentrant
+                .self_stimuli
                 .push(StimulusType::EventCouldntReachPoint);
             return;
         }
@@ -2678,7 +2687,7 @@ mod tests {
 
             assert_eq!(ai.base.primary_target, 77, "substate {substate:?}");
             assert_eq!(
-                ai.base.pending_enter_swordfight,
+                ai.base.outbox.actor.enter_swordfight,
                 Some(EnterSwordfightRequest::Engage(77)),
                 "substate {substate:?}"
             );
@@ -2703,7 +2712,7 @@ mod tests {
         );
 
         assert_eq!(ai.base.primary_target, 12);
-        assert_eq!(ai.base.pending_enter_swordfight, None);
+        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
     }
 }
