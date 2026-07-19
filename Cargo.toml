@@ -68,6 +68,14 @@ opt-level = 0
 [profile.dev.package.robin_state_hash_derive]
 opt-level = 0
 
+# Tests favor fast compile/link cycles over debugger-quality artifacts.  Keep
+# the production dependency graph unchanged, but use the same fast native
+# codegen backend as development builds and omit bulky test-only debuginfo.
+# Panic locations and test assertion locations remain available.
+[profile.test]
+debug = 0
+codegen-backend = "cranelift"
+
 # Full-debuginfo profile for interactive debugging (gdb/lldb).
 # `debug` is a reserved cargo profile name (alias for `dev`), so this is
 # named `dev-debug`. Use with `cargo build --profile dev-debug`.

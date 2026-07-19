@@ -162,3 +162,11 @@ native-fs = ["dep:dirs", "dep:arboard"]
 [[bin]]
 name = "robin"
 path = "src/bin/robin.rs"
+test = false
+
+# This diagnostic binary has no unit tests. Declaring it explicitly keeps
+# `cargo test` from compiling and linking an empty test harness for it.
+[[bin]]
+name = "dump_level"
+path = "src/bin/dump_level.rs"
+test = false
