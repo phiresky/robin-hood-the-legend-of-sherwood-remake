@@ -11,7 +11,10 @@
 //! `mlua` requires registered functions to be `'static`, but the engine
 //! owners are borrowed only for the current event. A stack-owned
 //! [`NativeCallSession`] aggregates those borrows, and Lua app data stores
-//! one lifetime-erased pointer to that session for the duration of the event.
+//! one lifetime-erased pointer handle to that session for the duration of the
+//! event. The handle records the attaching thread and serializes mutable
+//! session access; it is `Send` through safe standard-library types rather than
+//! a manual unsafe implementation.
 //!
 //! The safety contract is scoped access: callers invoke Lua entry points only
 //! through [`MissionLuaState::with_host`]. The
@@ -31,7 +34,9 @@
 //! just register the same Rust shim under both names — see
 //! [`NATIVE_ALIASES`].
 
-use std::ptr::NonNull;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::thread::ThreadId;
 
 use mlua::{Function, Lua, Table, Value};
 use robin_engine::engine::ScriptDomains;
@@ -45,8 +50,8 @@ use crate::state::MissionLuaState;
 
 /// All engine borrows available to one synchronous Lua event invocation.
 ///
-/// This value stays on the Rust stack. Only [`AttachedNativeCall`]'s one
-/// erased pointer crosses mlua's `'static` app-data boundary.
+/// This value stays on the Rust stack. Only [`AttachedNativeCall`]'s guarded
+/// pointer handle crosses mlua's `'static` app-data boundary.
 pub(crate) struct NativeCallSession<'call, 'owners> {
     host: &'call mut GameHost,
     script_state: &'call mut ScriptState,
@@ -83,41 +88,96 @@ impl<'call, 'owners> NativeCallSession<'call, 'owners> {
     }
 }
 
+#[derive(Debug)]
+struct AttachedNativeCallState {
+    session: AtomicPtr<()>,
+    origin_thread: ThreadId,
+    in_use: AtomicBool,
+}
+
 /// The sole lifetime-erased value installed in Lua app data while a native
 /// call session is active.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AttachedNativeCall(NonNull<()>);
+///
+/// All fields are safely `Send + Sync`. The raw pointer is never dereferenced
+/// until [`AttachedNativeCall::with_session`] verifies thread affinity and
+/// obtains exclusive access for one synchronous shim invocation.
+#[derive(Clone, Debug)]
+pub(crate) struct AttachedNativeCall(Arc<AttachedNativeCallState>);
 
-// SAFETY: the pointer is installed and removed on the thread driving the Lua
-// state. It is never exposed to Lua values or Rust upvalues, and mlua requires
-// app data to be Send when its `send` feature is enabled.
-unsafe impl Send for AttachedNativeCall {}
+struct SessionUseGuard<'attachment>(&'attachment AtomicBool);
+
+impl Drop for SessionUseGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 impl AttachedNativeCall {
     pub(crate) fn new(session: &mut NativeCallSession<'_, '_>) -> Self {
-        Self(NonNull::from(session).cast())
+        Self(Arc::new(AttachedNativeCallState {
+            session: AtomicPtr::new(std::ptr::from_mut(session).cast()),
+            origin_thread: std::thread::current().id(),
+            in_use: AtomicBool::new(false),
+        }))
+    }
+
+    pub(crate) fn is_same_attachment(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub(crate) fn invalidate(&self) {
+        self.0
+            .session
+            .store(std::ptr::null_mut(), Ordering::Release);
     }
 
     /// Reborrow the stack-owned session for one synchronous shim invocation.
     ///
-    /// # Safety
-    ///
-    /// `NativeCallAttachment` must still own the matching app-data slot, the
-    /// pointed-to session must remain on its stack frame, and no shim may
-    /// retain a borrow after this callback returns. The higher-ranked callback
-    /// prevents its result from depending on either erased lifetime.
-    unsafe fn with_session<R>(
-        self,
-        f: impl for<'call, 'owners> FnOnce(&mut NativeCallSession<'call, 'owners>) -> R,
-    ) -> R {
-        // SAFETY: guaranteed by the attachment guard and this method's
-        // contract. The concrete erased lifetimes are not observed by `R`.
-        unsafe {
-            f(&mut *self
-                .0
-                .cast::<NativeCallSession<'static, 'static>>()
-                .as_ptr())
+    /// The attachment scope gate keeps the stack frame alive. Thread affinity
+    /// prevents `mlua`'s `send` support from moving borrowed, potentially
+    /// non-`Sync` engine owners across threads. The in-use flag prevents two
+    /// overlapping mutable reborrows, including callback reentrancy while a
+    /// native is still dispatching. The higher-ranked callback prevents its
+    /// result from depending on either erased lifetime.
+    fn with_session<R>(
+        &self,
+        f: impl for<'call, 'owners> FnOnce(&mut NativeCallSession<'call, 'owners>) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        if std::thread::current().id() != self.0.origin_thread {
+            return Err(mlua::Error::RuntimeError(
+                "robin_lua: native-call session cannot be used from a thread other than the attaching thread"
+                    .to_owned(),
+            ));
         }
+
+        self.0
+            .in_use
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "robin_lua: native-call session is already in use by another native".to_owned(),
+                )
+            })?;
+        let _use_guard = SessionUseGuard(&self.0.in_use);
+
+        let session = self
+            .0
+            .session
+            .load(Ordering::Acquire)
+            .cast::<NativeCallSession<'static, 'static>>();
+        if session.is_null() {
+            return Err(mlua::Error::RuntimeError(
+                "robin_lua: native-call session is no longer attached".to_owned(),
+            ));
+        }
+        // SAFETY: `NativeCallAttachment` holds the per-state scope gate until
+        // it removes and invalidates this handle, so a non-null pointer's
+        // stack-owned session outlives this call. The origin-thread check
+        // occurs before this dereference, keeping all borrowed capabilities on
+        // their creating thread. `_use_guard` makes this the sole mutable
+        // reborrow and clears that claim on return, error, or unwind. The HRTB
+        // prevents `R` from carrying erased borrows.
+        unsafe { f(&mut *session) }
     }
 }
 
@@ -128,11 +188,9 @@ fn with_attached_session<R>(
 ) -> mlua::Result<R> {
     let attachment = lua
         .app_data_ref::<AttachedNativeCall>()
-        .map(|attachment| *attachment)
+        .map(|attachment| attachment.clone())
         .ok_or_else(missing)?;
-    // SAFETY: `MissionLuaState::with_host_state_and_bindings` owns the RAII
-    // guard for every path that installs this app-data value.
-    unsafe { attachment.with_session(f) }
+    attachment.with_session(f)
 }
 
 fn with_attached_bindings<R>(
@@ -690,3 +748,50 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
 
 // Canonical Lua enumeration is declared by
 // `robin_engine::natives::NATIVE_REGISTRY`; see `register_natives`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::entities::Entities;
+
+    #[test]
+    fn overlapping_session_reborrow_is_rejected_and_released() {
+        let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
+        let mut script_domains = ScriptDomains::default();
+        let bindings = AttachedScriptBindings::default();
+        let mut entities = Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities =
+            NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        let mut session = NativeCallSession::new(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &bindings,
+            &capabilities,
+        );
+        let attachment = AttachedNativeCall::new(&mut session);
+
+        attachment
+            .with_session(|_session| {
+                let error = attachment
+                    .with_session(|_nested| Ok(()))
+                    .expect_err("overlapping reborrow must fail");
+                assert!(error.to_string().contains("already in use"));
+                Ok(())
+            })
+            .expect("outer reborrow");
+
+        attachment
+            .with_session(|_session| Ok(()))
+            .expect("in-use guard must clear after the outer call");
+
+        attachment.invalidate();
+        let error = attachment
+            .with_session(|_session| Ok(()))
+            .expect_err("invalidated attachment must not dereference its session");
+        assert!(error.to_string().contains("no longer attached"));
+    }
+}

@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use mlua::Lua;
 use robin_engine::natives::{GameHost, NativeSessionCapabilities, ScriptState};
@@ -46,33 +46,58 @@ pub(crate) const SEQUENCE_CALLBACKS_KEY: &str = "robin_lua.sequence_callbacks";
 pub(crate) struct NativeCallAttachment<'lua> {
     lua: &'lua Lua,
     attached: AttachedNativeCall,
+    _scope_gate: MutexGuard<'lua, ()>,
 }
 
 impl<'lua> NativeCallAttachment<'lua> {
-    fn attach(lua: &'lua Lua, session: &mut NativeCallSession<'_, '_>) -> mlua::Result<Self> {
+    fn attach(
+        lua: &'lua Lua,
+        scope_gate: &'lua Mutex<()>,
+        session: &mut NativeCallSession<'_, '_>,
+    ) -> mlua::Result<Self> {
+        let scope_gate = match scope_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => {
+                return Err(mlua::Error::RuntimeError(
+                    "Lua native-call session is already active; nested and concurrent attachments are not supported"
+                        .to_owned(),
+                ));
+            }
+            // The attachment guard still removes app data while unwinding, so
+            // a prior panic does not leave unsafe state behind. Recover the
+            // otherwise healthy gate for the next event.
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        };
+
         if lua.app_data_ref::<AttachedNativeCall>().is_some() {
             return Err(mlua::Error::RuntimeError(
-                "nested Lua native-call sessions are not supported".to_owned(),
+                "Lua native-call attachment remained after its scope ended".to_owned(),
             ));
         }
         let attached = AttachedNativeCall::new(session);
-        let replaced = lua.set_app_data(attached);
+        let replaced = lua.set_app_data(attached.clone());
         if let Some(previous) = replaced {
             lua.set_app_data(previous);
             return Err(mlua::Error::RuntimeError(
-                "Lua native-call session raced with an existing attachment".to_owned(),
+                "Lua native-call attachment changed while the scope gate was held".to_owned(),
             ));
         }
-        Ok(Self { lua, attached })
+        Ok(Self {
+            lua,
+            attached,
+            _scope_gate: scope_gate,
+        })
     }
 }
 
 impl Drop for NativeCallAttachment<'_> {
     fn drop(&mut self) {
         let removed = self.lua.remove_app_data::<AttachedNativeCall>();
-        assert_eq!(
-            removed,
-            Some(self.attached),
+        self.attached.invalidate();
+        assert!(
+            removed
+                .as_ref()
+                .is_some_and(|removed| removed.is_same_attachment(&self.attached)),
             "Lua native-call attachment changed before its scope ended"
         );
     }
@@ -95,6 +120,10 @@ pub enum MissionLuaError {
 /// next to its `.rhm`. Dropped when the mission unloads.
 pub struct MissionLuaState {
     lua: Lua,
+    /// Serializes the complete attach/use/detach scope for this Lua state.
+    /// `try_lock` makes accidental same-thread recursion a typed error rather
+    /// than a deadlock and closes the app-data check/set race across threads.
+    native_call_scope_gate: Mutex<()>,
     /// Directory containing the mission's `.lua` file. Used as the
     /// root for the custom `require` resolver.
     mission_dir: PathBuf,
@@ -148,6 +177,7 @@ impl MissionLuaState {
 
         Ok(Self {
             lua,
+            native_call_scope_gate: Mutex::new(()),
             mission_dir,
             natives_registered: false,
         })
@@ -178,8 +208,9 @@ impl MissionLuaState {
     /// The stack-owned `NativeCallSession` holds all engine borrows together.
     /// Registered shims can access it only synchronously; retained Lua
     /// functions and coroutines perform a fresh app-data lookup and fail after
-    /// this method returns. `NativeCallAttachment` removes the sole erased
-    /// session pointer on normal, error, and unwind paths.
+    /// this method returns. `NativeCallAttachment` holds the Lua state's scope
+    /// gate and removes the sole erased session handle on normal, error, and
+    /// unwind paths.
     pub fn with_host<R>(
         &self,
         host: &mut GameHost,
@@ -222,7 +253,8 @@ impl MissionLuaState {
     ) -> mlua::Result<R> {
         let mut session =
             NativeCallSession::new(host, script_state, script_domains, bindings, capabilities);
-        let _attachment = NativeCallAttachment::attach(&self.lua, &mut session)?;
+        let _attachment =
+            NativeCallAttachment::attach(&self.lua, &self.native_call_scope_gate, &mut session)?;
         f(&self.lua)
     }
 

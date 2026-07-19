@@ -9,6 +9,8 @@ use robin_engine::natives::{
     ScriptState,
 };
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
+use std::sync::{Arc, mpsc};
+use std::thread;
 
 fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -604,7 +606,7 @@ fn nested_session_rejection_preserves_outer_session() {
                 assert!(
                     error
                         .to_string()
-                        .contains("nested Lua native-call sessions")
+                        .contains("native-call session is already active")
                 );
                 lua.load("InitGlobal(9, 81)").exec()?;
                 Ok(())
@@ -683,6 +685,139 @@ fn rust_to_lua_reentrancy_reuses_the_active_session() {
         .unwrap();
 
     assert_eq!(script_state.globals.get(&4), Some(&15));
+}
+
+#[test]
+fn cross_thread_native_invocation_is_rejected_while_session_is_active() {
+    let (state, _dir) = fresh_state();
+    let state = Arc::new(state);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+
+    let owner = thread::spawn({
+        let state = Arc::clone(&state);
+        move || {
+            let mut host = GameHost::new();
+            let mut entities = Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let capabilities =
+                NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut script_state = ScriptState::default();
+
+            state
+                .with_host_and_state(
+                    &mut host,
+                    &mut script_state,
+                    &mut script_domains,
+                    &capabilities,
+                    |lua: &Lua| {
+                        lua.load("InitGlobal(12, 1)").exec()?;
+                        entered_tx.send(()).expect("announce attached session");
+                        release_rx.recv().expect("release attached session");
+                        lua.load("SetGlobal(12, 2)").exec()
+                    },
+                )
+                .expect("owner-thread Lua execution");
+
+            script_state.globals.get(&12).copied()
+        }
+    });
+
+    entered_rx.recv().expect("owner attached session");
+    let error = state
+        .lua()
+        .load("SetGlobal(12, 99)")
+        .exec()
+        .expect_err("cross-thread native invocation must fail");
+    assert!(
+        error.to_string().contains("attaching thread"),
+        "unexpected cross-thread error: {error}"
+    );
+    release_tx.send(()).expect("release owner thread");
+    assert_eq!(owner.join().expect("owner thread"), Some(2));
+}
+
+#[test]
+fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
+    let (state, _dir) = fresh_state();
+    let state = Arc::new(state);
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+
+    let owner = thread::spawn({
+        let state = Arc::clone(&state);
+        move || {
+            let mut host = GameHost::new();
+            let mut entities = Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let capabilities =
+                NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut script_state = ScriptState::default();
+
+            state
+                .with_host_and_state(
+                    &mut host,
+                    &mut script_state,
+                    &mut script_domains,
+                    &capabilities,
+                    |lua: &Lua| {
+                        lua.load("InitGlobal(13, 3)").exec()?;
+                        entered_tx.send(()).expect("announce attached session");
+                        release_rx.recv().expect("release attached session");
+                        lua.load("SetGlobal(13, 4)").exec()
+                    },
+                )
+                .expect("owner-thread Lua execution");
+
+            script_state.globals.get(&13).copied()
+        }
+    });
+
+    entered_rx.recv().expect("owner attached session");
+    let mut competing_host = GameHost::new();
+    let mut competing_entities = Entities::new();
+    let mut competing_ai = robin_engine::ai::AiGlobalState::default();
+    let mut competing_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let competing_capabilities = NativeSessionCapabilities::new(
+        &mut competing_entities,
+        &mut competing_ai,
+        &mut competing_grid,
+    );
+    let mut competing_domains = robin_engine::engine::ScriptDomains::default();
+    let error = state
+        .with_host(
+            &mut competing_host,
+            &mut competing_domains,
+            &competing_capabilities,
+            |_lua: &Lua| Ok(()),
+        )
+        .expect_err("concurrent attachment must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("native-call session is already active"),
+        "unexpected concurrent-attachment error: {error}"
+    );
+
+    release_tx.send(()).expect("release owner thread");
+    assert_eq!(owner.join().expect("owner thread"), Some(4));
+
+    state
+        .with_host(
+            &mut competing_host,
+            &mut competing_domains,
+            &competing_capabilities,
+            |lua: &Lua| lua.load("DisplayMap(true)").exec(),
+        )
+        .expect("gate must be reusable after owner detaches");
+    assert!(matches!(
+        competing_host.commands.as_slice(),
+        [EngineCommand::DisplayMap { show: true }]
+    ));
 }
 
 #[test]
