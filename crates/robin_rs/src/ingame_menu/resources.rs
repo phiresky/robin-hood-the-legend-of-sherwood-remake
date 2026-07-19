@@ -238,7 +238,7 @@ pub const MT_INFOBULLE_BLAZON_WON: usize = 322;
 //   S18 — money from bonuses + soldiers, total / bonus / soldier (3x u)
 //   C01 — "with" connective (Sherwood)                  (0x)
 //   C02 — "led by %s" specialist suffix (Sherwood)      (1x s)
-pub use robin_engine::sherwood_stat::{
+pub(crate) use robin_engine::sherwood_stat::{
     MT_STR_DB_C01, MT_STR_DB_C02, MT_STR_DB_S01, MT_STR_DB_S02, MT_STR_DB_S03, MT_STR_DB_S04,
     MT_STR_DB_S05, MT_STR_DB_S12, MT_STR_DB_S14, MT_STR_DB_S16,
 };
