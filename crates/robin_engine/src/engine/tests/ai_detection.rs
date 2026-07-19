@@ -3057,10 +3057,11 @@ fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
 #[test]
 #[should_panic(expected = "eligible civilian NPC 0 has no FriendlyAi brain during detection")]
 fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
-    use crate::element::Entity;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
     let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)
         .expect("missing-AI civilian exists")
@@ -3068,10 +3069,32 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
         panic!("missing-AI observer changed kind")
     };
     civilian.element.active = true;
+    civilian.civilian.cached_camp = Camp::Lacklandists;
     civilian.npc.life_points = 100;
+    civilian.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(pc_id),
+        detectable_type: DetectableType::Enemy,
+        ..Detectable::default()
+    });
+
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(pc_id)
+        .expect("missing-AI target exists")
+    else {
+        panic!("missing-AI target changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("missing-AI civilian exists after fixture completion")
+    else {
+        panic!("missing-AI observer changed kind after fixture completion")
+    };
+    civilian.npc.ai_brain = crate::element::AiBrain::None;
     crate::sim_rng::with_seed(0xA013_BAD2, |sim| engine.tick_enemy_ai(sim, &assets));
 }
 

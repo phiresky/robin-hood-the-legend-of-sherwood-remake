@@ -829,6 +829,7 @@ fn chained_nonstraight_strike_lives(
         unreachable!();
     };
     soldier.npc.life_points = 1;
+    soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let mut final_target = make_test_pc(Posture::Upright);
     // Remain within the chained attacker's 100-unit straight range but

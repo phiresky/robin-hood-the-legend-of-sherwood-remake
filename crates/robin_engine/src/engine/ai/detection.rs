@@ -1302,7 +1302,7 @@ impl EngineInner {
     ) {
         let world = self.tick_enemy_ai_build_world_view(sim, assets);
         mutate_live_state(self);
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world);
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None);
     }
 
     #[cfg(test)]
