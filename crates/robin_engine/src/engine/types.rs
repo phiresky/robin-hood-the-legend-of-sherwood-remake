@@ -2090,6 +2090,9 @@ pub enum EngineError {
         reason: String,
     },
 
+    #[error("mission level stage '{stage}' failed: {reason}")]
+    MissionLevelStage { stage: &'static str, reason: String },
+
     #[error(transparent)]
     MissionLevelBuild(#[from] MissionLevelBuildError),
 }
