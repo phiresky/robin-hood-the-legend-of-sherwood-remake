@@ -447,7 +447,7 @@ impl EngineInner {
     }
 
     fn initialize_inner(&mut self, assets: &mut LevelAssets) {
-        // Called from `Engine::new` AFTER `consume_pending_motion_data`
+        // Called from `Engine::new` after the motion stage
         // has built out `fast_grid` (grid size + map bbox + motion
         // lines) and loaded the pathfinder graph.  Everything the
         // downstream initialization steps (scroll randomization,
@@ -3115,20 +3115,20 @@ impl EngineInner {
         }
     }
 
-    /// Drain the level-load motion / lift staging data and feed it into
+    /// Consume the typed motion-stage input and feed it into
     /// the motion grid (pathfinder graph, lift tables, obstacle states).
     /// Called once during `Engine::new`; bridges background-load and
     /// motion-area initialisation.  Must run only during level load —
     /// it mutates hashed state and is not driven by the tick pipeline,
     /// so calling it during gameplay would desync rollback.
-    pub(crate) fn consume_pending_motion_data(
+    pub(crate) fn build_motion_stage(
         &mut self,
         assets: &mut LevelAssets,
-        pending: &mut PendingLevelData,
+        staging: &mut LevelLoadStaging,
     ) {
-        if let Some(motion_data) = pending.motion_data.take() {
-            let lifts = std::mem::take(&mut pending.lifts);
-            self.initialize_motion_from_level_data(assets, pending, &motion_data, &lifts);
+        if let Some(motion_data) = staging.motion.motion_data.take() {
+            let lifts = std::mem::take(&mut staging.motion.lifts);
+            self.initialize_motion_from_level_data(assets, staging, &motion_data, &lifts);
         }
     }
 

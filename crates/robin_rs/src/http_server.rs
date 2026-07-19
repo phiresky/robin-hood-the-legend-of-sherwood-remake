@@ -1294,16 +1294,16 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
                 "bows": assets.profile_manager.bows.len(),
                 "missions": assets.profile_manager.missions.len(),
             },
-            "mission_script_programs": assets.mission_script_programs.len(),
+            "mission_script_programs": assets.scripts.mission_programs.len(),
             "hiking_paths": assets.hiking_paths.len(),
             "static_sight_obstacles": assets.static_sight_obstacles.len(),
             "accessory_sprite_prototypes": assets.accessory_sprite_prototypes.len(),
             "water_zones": assets.water_zones.zones.len(),
             "material_sectors": assets.material_sectors.sectors.len(),
-            "script_locations": assets.script_location_count,
-            "script_points": assets.script_point_count,
-            "script_buildings": assets.script_building_count,
-            "script_hiking_paths": assets.script_hiking_path_count,
+            "script_locations": assets.scripts.location_count,
+            "script_points": assets.scripts.point_count,
+            "script_buildings": assets.scripts.building_count,
+            "script_hiking_paths": assets.scripts.hiking_path_count,
         }),
     );
     root.insert(
@@ -1322,7 +1322,7 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
     insert_json(
         &mut asset,
         "mission_script_programs",
-        &*assets.mission_script_programs,
+        &*assets.scripts.mission_programs,
     )?;
     insert_json(&mut asset, "peasant_firstnames", &assets.peasant_firstnames)?;
     insert_json(&mut asset, "peasant_surnames", &assets.peasant_surnames)?;
@@ -1345,18 +1345,22 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
     insert_json(
         &mut asset,
         "patch_entity_handles",
-        &assets.patch_entity_handles,
+        &assets.entities.patch_animation_entities,
     )?;
-    insert_json(&mut asset, "scroll_entity_ids", &assets.scroll_entity_ids)?;
+    insert_json(
+        &mut asset,
+        "scroll_entity_ids",
+        &assets.entities.scroll_entity_ids,
+    )?;
     insert_json(
         &mut asset,
         "all_soldier_entity_ids",
-        &assets.all_soldier_entity_ids,
+        &assets.entities.soldier_entity_ids,
     )?;
     insert_json(
         &mut asset,
         "soldier_subordinate_ids",
-        &assets.soldier_subordinate_ids,
+        &assets.entities.soldier_subordinate_ids,
     )?;
     insert_json(&mut asset, "water_zones", &assets.water_zones)?;
     insert_json(&mut asset, "material_sectors", &assets.material_sectors)?;
@@ -1368,38 +1372,42 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
     insert_json(
         &mut asset,
         "script_location_count",
-        &assets.script_location_count,
+        &assets.scripts.location_count,
     )?;
-    insert_json(&mut asset, "script_point_count", &assets.script_point_count)?;
+    insert_json(
+        &mut asset,
+        "script_point_count",
+        &assets.scripts.point_count,
+    )?;
     insert_json(
         &mut asset,
         "script_location_positions",
-        &assets.script_location_positions,
+        &assets.scripts.location_positions,
     )?;
     insert_json(
         &mut asset,
         "script_location_layers",
-        &assets.script_location_layers,
+        &assets.scripts.location_layers,
     )?;
     insert_json(
         &mut asset,
         "script_location_sectors",
-        &assets.script_location_sectors,
+        &assets.scripts.location_sectors,
     )?;
     insert_json(
         &mut asset,
         "script_building_count",
-        &assets.script_building_count,
+        &assets.scripts.building_count,
     )?;
     insert_json(
         &mut asset,
         "script_hiking_path_count",
-        &assets.script_hiking_path_count,
+        &assets.scripts.hiking_path_count,
     )?;
     insert_json(
         &mut asset,
         "script_zone_grid_indices",
-        &assets.script_zone_grid_indices,
+        &assets.scripts.zone_grid_indices,
     )?;
     root.insert("assets".into(), serde_json::Value::Object(asset));
 

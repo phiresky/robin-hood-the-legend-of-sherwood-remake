@@ -37,7 +37,10 @@ impl ScriptRuntime {
     /// Validate the decoded script identity and immutable program lookup
     /// without mutating the candidate runtime.
     pub(crate) fn preflight_level_assets(&self, assets: &LevelAssets) -> Result<(), String> {
-        match (self.mission.as_ref(), assets.mission_script_name.as_deref()) {
+        match (
+            self.mission.as_ref(),
+            assets.scripts.mission_name.as_deref(),
+        ) {
             (None, None) => return Ok(()),
             (None, Some(expected)) => {
                 return Err(format!(
@@ -58,7 +61,8 @@ impl ScriptRuntime {
             }
             (Some(script), Some(_)) => {
                 assets
-                    .mission_script_programs
+                    .scripts
+                    .mission_programs
                     .get(&script.script_name)
                     .ok_or_else(|| {
                         format!(
@@ -80,7 +84,8 @@ impl ScriptRuntime {
 
         if !script.script_name.is_empty() {
             let program = assets
-                .mission_script_programs
+                .scripts
+                .mission_programs
                 .get(&script.script_name)
                 .expect("mission script program was preflighted");
             script.attach_program(Arc::clone(program));
@@ -105,16 +110,16 @@ impl ScriptRuntime {
         script.attach_bindings(crate::natives::AttachedScriptBindings {
             profile_manager: assets.profile_manager.clone(),
             hiking_paths: assets.hiking_paths.clone(),
-            script_location_count: assets.script_location_count,
-            script_point_count: assets.script_point_count,
-            script_building_count: assets.script_building_count,
-            script_hiking_path_count: assets.script_hiking_path_count,
-            location_positions: assets.script_location_positions.clone(),
-            location_layers: assets.script_location_layers.clone(),
-            location_sectors: assets.script_location_sectors.clone(),
-            script_zone_grid_indices: assets.script_zone_grid_indices.clone(),
-            patch_animation_entities: assets.patch_entity_handles.clone(),
-            lua_names: assets.script_names.clone(),
+            script_location_count: assets.scripts.location_count,
+            script_point_count: assets.scripts.point_count,
+            script_building_count: assets.scripts.building_count,
+            script_hiking_path_count: assets.scripts.hiking_path_count,
+            location_positions: assets.scripts.location_positions.clone(),
+            location_layers: assets.scripts.location_layers.clone(),
+            location_sectors: assets.scripts.location_sectors.clone(),
+            script_zone_grid_indices: assets.scripts.zone_grid_indices.clone(),
+            patch_animation_entities: assets.entities.patch_animation_entities.clone(),
+            lua_names: assets.scripts.names.clone(),
         });
     }
 

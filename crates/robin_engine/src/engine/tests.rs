@@ -2139,7 +2139,7 @@ fn ground_mark_hourglass_freezes_off_screen_marks() {
 #[test]
 fn mission_stat_resets_on_new_mission() {
     let mut assets = LevelAssets::new();
-    let mut pending = PendingLevelData::default();
+    let mut staging = LevelLoadStaging::default();
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.mission_domain.mission_stat.add_collected_money(500);
@@ -2148,7 +2148,9 @@ fn mission_stat_resets_on_new_mission() {
     let loaded = crate::level_data::LoadedLevel::empty_for_test();
     let _ = engine.initialize_from_mission(
         &mut assets,
-        &mut pending,
+        &mut staging,
+        true,
+        false,
         "test_mission",
         "test_proto",
         loaded,

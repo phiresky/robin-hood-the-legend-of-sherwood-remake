@@ -824,7 +824,7 @@ mod tests {
 
         let (mut live_engine, mut assets) = fresh_engine();
         live_engine.test_set_frame_counter(999);
-        assets.mobile_element_count = 1;
+        assets.entities.mobile_element_count = 1;
         let mut live_host = Host::scratch(800.0, 600.0);
         live_host.input.left_mouse_down = true;
 

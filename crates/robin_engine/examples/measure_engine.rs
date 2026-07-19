@@ -297,6 +297,8 @@ fn main() {
         ground_mark_sprite: None,
         titbit_row_frame_counts: Vec::new(),
         rng_seed: 0,
+        script_enabled: true,
+        highlander2: false,
         goldeneye: false,
     })
     .expect("load level");

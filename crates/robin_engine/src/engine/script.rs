@@ -676,13 +676,14 @@ impl EngineInner {
     /// Load a mission script from the level directory.
     ///
     /// Looks up the pre-decoded script program in
-    /// `assets.mission_script_programs` and installs it into
+    /// `assets.scripts.mission_programs` and installs it into
     /// `self.scripts.mission`.
     pub(crate) fn load_mission_script(&mut self, assets: &LevelAssets, scb_path: &std::path::Path) {
         let stem = scb_path.file_stem().and_then(|s| s.to_str());
         let program = stem.and_then(|name| {
             assets
-                .mission_script_programs
+                .scripts
+                .mission_programs
                 .get(name)
                 .map(std::sync::Arc::clone)
         });
@@ -1295,7 +1296,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Vec<(usize, crate::entity_id::EntityId, i32)> {
         let mut entries: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
-        if assets.script_zone_grid_indices.is_empty() {
+        if assets.scripts.zone_grid_indices.is_empty() {
             return entries;
         }
         for (actor_id, entity) in self.world.entities.actors() {
@@ -1312,7 +1313,7 @@ impl EngineInner {
             let layer = ed.layer();
             let handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
 
-            for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
+            for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
                 // Skip zones that `DefineFlatTrajectoryZone` converted
                 // into apex sectors — once converted, the SECTOR_SCRIPT
                 // flag is dropped so the engine stops scanning them.
@@ -1391,7 +1392,7 @@ impl EngineInner {
     /// to reconcile zone membership after post-mission teleports.
     pub(crate) fn refresh_zone_occupants_silent(&mut self, assets: &LevelAssets) {
         self.empty_all_script_sectors();
-        if assets.script_zone_grid_indices.is_empty() {
+        if assets.scripts.zone_grid_indices.is_empty() {
             return;
         }
         let entries = self.scan_zone_occupant_entries(assets);
@@ -1412,7 +1413,7 @@ impl EngineInner {
     /// The refresh path (`refresh_zone_occupants_silent`) uses the
     /// silent helpers and skips the dispatch.
     pub(crate) fn initialize_zone_occupants(&mut self, assets: &LevelAssets) {
-        if assets.script_zone_grid_indices.is_empty() {
+        if assets.scripts.zone_grid_indices.is_empty() {
             return;
         }
 
@@ -1441,7 +1442,7 @@ impl EngineInner {
         tracing::info!(
             "Initialized {} zone occupant entries across {} zones",
             entries.len(),
-            assets.script_zone_grid_indices.len()
+            assets.scripts.zone_grid_indices.len()
         );
     }
 
@@ -1453,7 +1454,7 @@ impl EngineInner {
     ///
     /// Called once per frame from `perform_hourglass`, after movement tick.
     pub(crate) fn tick_zone_occupants(&mut self, assets: &LevelAssets) {
-        if assets.script_zone_grid_indices.is_empty() || self.scripts.mission.is_none() {
+        if assets.scripts.zone_grid_indices.is_empty() || self.scripts.mission.is_none() {
             return;
         }
 
@@ -1470,7 +1471,7 @@ impl EngineInner {
             let layer = ed.layer();
             let handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
 
-            for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
+            for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
                 if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                     continue;
@@ -1598,7 +1599,8 @@ impl EngineInner {
         // Points come before sectors in the script-location payload
         // layout, so a sector's zone index is `location_index - points_count`.
         let points_count = assets
-            .script_location_positions
+            .scripts
+            .location_positions
             .len()
             .saturating_sub(self.script_domains.zones.scripts.len());
 
@@ -1656,12 +1658,12 @@ impl EngineInner {
             else {
                 continue;
             };
-            if loc_idx >= assets.script_location_positions.len() {
+            if loc_idx >= assets.scripts.location_positions.len() {
                 continue;
             }
-            let (x, y) = assets.script_location_positions[loc_idx];
-            let layer = assets.script_location_layers[loc_idx];
-            let sector = assets.script_location_sectors[loc_idx];
+            let (x, y) = assets.scripts.location_positions[loc_idx];
+            let layer = assets.scripts.location_layers[loc_idx];
+            let sector = assets.scripts.location_sectors[loc_idx];
             // GetProjectionArea(point) → GetObstacleIndex.
             let obstacle = self
                 .get_projection_area_index(
@@ -2098,7 +2100,9 @@ impl EngineInner {
     pub(crate) fn initialize_from_campaign(
         &mut self,
         assets: &mut LevelAssets,
-        pending: &mut PendingLevelData,
+        staging: &mut LevelLoadStaging,
+        script_enabled: bool,
+        highlander2: bool,
         loaded: crate::level_data::LoadedLevel,
         level_directory: &str,
         bg_pixel_dims: (f32, f32),
@@ -2116,7 +2120,9 @@ impl EngineInner {
 
         self.initialize_from_mission(
             assets,
-            pending,
+            staging,
+            script_enabled,
+            highlander2,
             &mission_filename,
             &proto_level_filename,
             loaded,
@@ -2188,7 +2194,8 @@ impl EngineInner {
     ) -> Option<crate::coordinates::MapPoint> {
         let idx = crate::natives::ScriptHandleCodec::location_index(handle)?;
         assets
-            .script_location_positions
+            .scripts
+            .location_positions
             .get(idx)
             .map(|&(x, y)| crate::coordinates::MapPoint::new(x, y))
     }
@@ -2386,7 +2393,8 @@ impl EngineInner {
                     // `[script_points..., script_sectors...]`; the sector
                     // slice starts at `script_location_count - script_zone_data.len()`.
                     let points_count = assets
-                        .script_location_positions
+                        .scripts
+                        .location_positions
                         .len()
                         .saturating_sub(self.script_domains.zones.scripts.len());
                     let Some(loc_idx) =
@@ -2397,7 +2405,8 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    if loc_idx < points_count || loc_idx >= assets.script_location_positions.len() {
+                    if loc_idx < points_count || loc_idx >= assets.scripts.location_positions.len()
+                    {
                         tracing::warn!(
                             "DefineFlatTrajectoryZone(loc={location_handle}): handle is not a script zone sector"
                         );
@@ -2418,7 +2427,7 @@ impl EngineInner {
                                 // the static sector_type) so the geometry
                                 // arena stays purely level-loaded.
                                 if let Some(&grid_idx) =
-                                    assets.script_zone_grid_indices.get(zone_idx)
+                                    assets.scripts.zone_grid_indices.get(zone_idx)
                                 {
                                     self.world.fast_grid.or_sector_type_overlay(
                                         grid_idx,

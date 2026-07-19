@@ -74,7 +74,7 @@ fn main() {
                 name,
                 std::sync::Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(scb)),
             );
-            assets.mission_script_programs = std::sync::Arc::new(m);
+            assets.scripts.mission_programs = std::sync::Arc::new(m);
         }
     }
 
@@ -100,6 +100,8 @@ fn main() {
         ground_mark_sprite: None,
         titbit_row_frame_counts: Vec::new(),
         rng_seed: 0,
+        script_enabled: true,
+        highlander2: false,
         goldeneye: false,
     })
     .expect("load level");

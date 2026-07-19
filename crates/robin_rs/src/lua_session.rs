@@ -873,10 +873,11 @@ mod tests {
                 mission_filename: "lua_campaign_owner_test".into(),
                 ..MissionProfile::default()
             });
-        assets.mission_script_programs = std::sync::Arc::new(std::collections::BTreeMap::from([(
-            "lua_campaign_owner_test".to_owned(),
-            std::sync::Arc::new(program),
-        )]));
+        assets.scripts.mission_programs =
+            std::sync::Arc::new(std::collections::BTreeMap::from([(
+                "lua_campaign_owner_test".to_owned(),
+                std::sync::Arc::new(program),
+            )]));
 
         let mut engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("construct engine with the minimal mission script");
@@ -931,15 +932,16 @@ mod tests {
                 mission_filename: "lua_ai_owner_test".into(),
                 ..MissionProfile::default()
             });
-        assets.mission_script_programs = std::sync::Arc::new(std::collections::BTreeMap::from([(
-            "lua_ai_owner_test".to_owned(),
-            std::sync::Arc::new(program),
-        )]));
-        assets.script_location_count = 1;
-        assets.script_point_count = 1;
-        assets.script_location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
-        assets.script_location_layers = std::sync::Arc::new(vec![2]);
-        assets.script_location_sectors = std::sync::Arc::new(vec![44]);
+        assets.scripts.mission_programs =
+            std::sync::Arc::new(std::collections::BTreeMap::from([(
+                "lua_ai_owner_test".to_owned(),
+                std::sync::Arc::new(program),
+            )]));
+        assets.scripts.location_count = 1;
+        assets.scripts.point_count = 1;
+        assets.scripts.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+        assets.scripts.location_layers = std::sync::Arc::new(vec![2]);
+        assets.scripts.location_sectors = std::sync::Arc::new(vec![44]);
 
         let mut engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("construct engine with the minimal mission script");
