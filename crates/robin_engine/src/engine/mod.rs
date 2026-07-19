@@ -44,6 +44,7 @@ mod sector_motion;
 mod selection;
 #[cfg(test)]
 mod send_message_tests;
+mod sequence_runtime;
 mod sequence_validity;
 mod simulation_gate;
 mod snapshot;
