@@ -413,7 +413,7 @@ pub async fn show_shortcuts(
 
         // Scrollbar on the right edge.
         if needs_scrollbar {
-            draw_listbox_scrollbar(
+            widget_bridge::draw_listbox_scrollbar(
                 renderer,
                 transform,
                 resources,
@@ -504,115 +504,6 @@ fn apply_user_defined(working: &mut KeyConfig, custom: &KeyConfig, working_dirty
     *working = custom.clone();
     working.key_type = 1; // UserDefined
     *working_dirty = false;
-}
-
-/// Draw the listbox scrollbar: 3-slice track + 3-slice thumb.
-///
-/// We blit each 3-slice component directly each frame rather than
-/// pre-composing the full-height track and thumb into cached surfaces.
-/// Simpler, and makes the thumb resize for free when the item count
-/// changes.
-///
-/// Arguments:
-/// - `(track_x, track_y, track_w, track_h)`: the track's bounding box
-///   (right edge of the list, full list height).
-/// - `scroll_offset`: index of the topmost visible row.
-/// - `visible_rows`: how many rows fit in the list area.
-/// - `total_rows`: total row count (drives `before_ratio` / `knob_ratio`).
-#[allow(clippy::too_many_arguments)]
-fn draw_listbox_scrollbar(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    resources: &IngameMenuResources,
-    track_x: i32,
-    track_y: i32,
-    track_w: i32,
-    track_h: i32,
-    scroll_offset: usize,
-    visible_rows: usize,
-    total_rows: usize,
-) {
-    let slices = &resources.list_scrollbar;
-    let (Some(back_start), Some(back_fill), Some(back_end)) = (slices[0], slices[1], slices[2])
-    else {
-        return;
-    };
-    let (Some(thumb_start), Some(thumb_fill), Some(thumb_end)) = (slices[3], slices[4], slices[5])
-    else {
-        return;
-    };
-
-    // Track (3-slice vertical): top cap, tiled fill, bottom cap.
-    let start_h = back_start.height.min(track_h);
-    let end_h = back_end.height.min(track_h - start_h);
-    let fill_y = track_y + start_h;
-    let fill_h = (track_h - start_h - end_h).max(0);
-    draw_background(
-        renderer,
-        transform,
-        &back_start,
-        track_x,
-        track_y,
-        track_w,
-        start_h,
-    );
-    if fill_h > 0 {
-        draw_background(
-            renderer, transform, &back_fill, track_x, fill_y, track_w, fill_h,
-        );
-    }
-    draw_background(
-        renderer,
-        transform,
-        &back_end,
-        track_x,
-        track_y + track_h - end_h,
-        track_w,
-        end_h,
-    );
-
-    // Thumb (3-slice vertical).  Placed inside a `track_h - 2` range
-    // with a 1px inset top/bottom.
-    let total = total_rows.max(1) as f32;
-    let before_ratio = (scroll_offset as f32 / total).clamp(0.0, 1.0);
-    let knob_ratio = (visible_rows as f32 / total).clamp(0.0, 1.0);
-    let usable = (track_h - 2).max(0) as f32;
-    let thumb_top = track_y + 1 + (usable * before_ratio) as i32;
-    let thumb_bot = track_y + 1 + (usable * (before_ratio + knob_ratio)) as i32;
-    let thumb_h = (thumb_bot - thumb_top).max(thumb_start.height + thumb_end.height);
-
-    let thumb_start_h = thumb_start.height.min(thumb_h);
-    let thumb_end_h = thumb_end.height.min(thumb_h - thumb_start_h);
-    let thumb_fill_h = (thumb_h - thumb_start_h - thumb_end_h).max(0);
-    draw_background(
-        renderer,
-        transform,
-        &thumb_start,
-        track_x,
-        thumb_top,
-        track_w,
-        thumb_start_h,
-    );
-    if thumb_fill_h > 0 {
-        draw_background(
-            renderer,
-            transform,
-            &thumb_fill,
-            track_x,
-            thumb_top + thumb_start_h,
-            track_w,
-            thumb_fill_h,
-        );
-    }
-    draw_background(
-        renderer,
-        transform,
-        &thumb_end,
-        track_x,
-        thumb_top + thumb_h - thumb_end_h,
-        track_w,
-        thumb_end_h,
-    );
 }
 
 /// Bind `key` to `target_index`, first clearing any other slot
