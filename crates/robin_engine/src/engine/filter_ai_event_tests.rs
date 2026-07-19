@@ -1587,6 +1587,46 @@ fn observed_action_args(engine: &EngineInner, actor: EntityId) -> (i32, i32) {
 }
 
 #[test]
+fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(build_action_change_scb(handle, handle))
+            .expect("unbound ActionChange SCB builds"),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    install_test_action(
+        &mut engine,
+        actor,
+        crate::order::OrderType::WalkingUpright,
+        crate::order::OrderType::WaitingUpright,
+    );
+
+    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+
+    let actor_data = engine
+        .world
+        .entities
+        .get(actor)
+        .expect("unbound action-change actor remains installed")
+        .actor_data()
+        .expect("unbound action-change actor remains typed");
+    assert_eq!(
+        actor_data.old_action,
+        crate::order::OrderType::WaitingUpright,
+        "a class name without an instantiated actor VM is not scripted and must not consume the transition"
+    );
+    assert_eq!(
+        observed_action_args(&engine, actor),
+        (0, 0),
+        "the unbound actor callback must not execute"
+    );
+}
+
+#[test]
 fn action_change_earlier_callback_changes_later_actor_snapshot() {
     let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(true);
 

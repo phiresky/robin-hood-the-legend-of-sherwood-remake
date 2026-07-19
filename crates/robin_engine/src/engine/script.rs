@@ -1387,7 +1387,13 @@ impl EngineInner {
             let Some(actor) = entity.actor_data() else {
                 return;
             };
-            if actor.script_class.is_empty() {
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
+            if !self
+                .scripts
+                .mission
+                .as_ref()
+                .is_some_and(|script| script.has_script_vm(ScriptVmKey::Actor(handle)))
+            {
                 return;
             }
 
@@ -1397,11 +1403,7 @@ impl EngineInner {
                 .current_order_for_actor(entity_id)
                 .map(|(_, _, order)| order.order_type)
                 .unwrap_or(crate::order::OrderType::NonanimationEnd);
-            (
-                new_action,
-                actor.old_action,
-                crate::natives::ScriptHandleCodec::actor_handle(entity_id),
-            )
+            (new_action, actor.old_action, handle)
         };
 
         if new_action == old_action {
