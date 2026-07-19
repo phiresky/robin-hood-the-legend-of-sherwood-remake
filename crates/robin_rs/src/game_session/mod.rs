@@ -341,6 +341,21 @@ pub(crate) fn establish_mission_restart_boundary(
     campaign
 }
 
+/// Restore construction-time simulation controls for a mission restart while
+/// retaining the profile setting the player deterministically changed during
+/// the just-finished attempt. Replay restarts must instead return to their
+/// exact header config and let the recorded command reapply the edit.
+fn simulation_config_for_level_restart(
+    mut checkpoint: engine_api::SimConfig,
+    outcome: engine_api::SimConfig,
+    replay_restart: bool,
+) -> engine_api::SimConfig {
+    if !replay_restart {
+        checkpoint.amount_of_speaking = outcome.amount_of_speaking;
+    }
+    checkpoint
+}
+
 pub(crate) async fn run_mission_headless(
     callbacks: &mut RustCallbacks,
     mut campaign: Campaign,
@@ -378,11 +393,13 @@ pub(crate) async fn run_mission_headless(
         if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
             return outcome;
         }
+        let outcome_sim_config = outcome.sim_config;
         campaign = outcome.campaign;
         if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
             campaign = replay_campaign.clone();
             rng_seed = *replay_seed;
-            sim_config = *replay_config;
+            sim_config =
+                simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
             if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
                 return MissionOutcome::new(
@@ -395,7 +412,10 @@ pub(crate) async fn run_mission_headless(
                     ),
                 );
             }
-            (rng_seed, sim_config) = campaign.restart_simulation_checkpoint();
+            let checkpoint = campaign.restart_simulation_checkpoint();
+            rng_seed = checkpoint.0;
+            sim_config =
+                simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
         }
     }
 }
@@ -615,7 +635,11 @@ pub(crate) async fn run_session(
                     }
                 }
                 authoritative_rng_seed = restart_rng_seed;
-                authoritative_sim_config = restart_sim_config;
+                authoritative_sim_config = simulation_config_for_level_restart(
+                    restart_sim_config,
+                    authoritative_sim_config,
+                    replay_for_restart.is_some(),
+                );
                 replay_restart = replay_for_restart;
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
@@ -767,11 +791,13 @@ pub(crate) async fn run_mission(
         if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
             return outcome;
         }
+        let outcome_sim_config = outcome.sim_config;
         campaign = outcome.campaign;
         if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
             campaign = replay_campaign.clone();
             rng_seed = *replay_seed;
-            sim_config = *replay_config;
+            sim_config =
+                simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
             if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
                 return MissionOutcome::new(
@@ -784,7 +810,10 @@ pub(crate) async fn run_mission(
                     ),
                 );
             }
-            (rng_seed, sim_config) = campaign.restart_simulation_checkpoint();
+            let checkpoint = campaign.restart_simulation_checkpoint();
+            rng_seed = checkpoint.0;
+            sim_config =
+                simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
         }
     }
 }
@@ -828,7 +857,7 @@ async fn run_mission_with_seed(
 mod required_state_tests {
     use super::{
         MissionOutcome, choose_pending_replay, establish_mission_restart_boundary,
-        prepare_replay_mission, required_menu_resources,
+        prepare_replay_mission, required_menu_resources, simulation_config_for_level_restart,
     };
     use crate::ingame_menu::IngameMenuResources;
     use robin_engine::campaign::{Campaign, CampaignValue};
@@ -912,6 +941,70 @@ mod required_state_tests {
         assert_eq!(launched.next_mission_idx, None);
         assert_eq!(launched.values[CampaignValue::Custom20], 17);
         assert_eq!(launched.restart_simulation_checkpoint(), (0x5151, config));
+    }
+
+    fn commanded_level_restart_fixture() -> (robin_engine::engine::SimConfig, MissionOutcome) {
+        let mut checkpoint = robin_engine::engine::SimConfig::default();
+        checkpoint.amount_of_speaking = 3;
+        checkpoint.highlander2 = true;
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut engine = robin_engine::engine::Engine::new_for_test_with_simulation(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+            0x5151,
+            checkpoint,
+        )
+        .unwrap();
+        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut input = robin_engine::engine::InputState::default();
+        engine.apply_command(
+            &mut display,
+            &mut input,
+            &assets,
+            &robin_engine::player_command::PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+        );
+        let outcome = MissionOutcome::new(
+            engine.campaign().clone(),
+            engine.rng_seed(),
+            engine.sim_config(),
+            Ok(GameCode::LevelRestart),
+        );
+        (checkpoint, outcome)
+    }
+
+    #[test]
+    fn session_restart_preserves_commanded_amount_of_speaking_only() {
+        let (checkpoint, outcome) = commanded_level_restart_fixture();
+        assert!(matches!(outcome.result, Ok(GameCode::LevelRestart)));
+
+        let restarted = simulation_config_for_level_restart(checkpoint, outcome.sim_config, false);
+
+        assert_eq!(restarted.amount_of_speaking, 9);
+        assert!(restarted.highlander2, "other construction config resets");
+    }
+
+    #[test]
+    fn direct_restart_preserves_commanded_amount_of_speaking_only() {
+        let (checkpoint, outcome) = commanded_level_restart_fixture();
+        assert!(matches!(outcome.result, Ok(GameCode::LevelRestart)));
+
+        let restarted = simulation_config_for_level_restart(checkpoint, outcome.sim_config, false);
+
+        assert_eq!(restarted.amount_of_speaking, 9);
+        assert!(restarted.highlander2, "direct launch uses its checkpoint");
+    }
+
+    #[test]
+    fn replay_restart_keeps_exact_frame_zero_config_for_command_replay() {
+        let (checkpoint, outcome) = commanded_level_restart_fixture();
+        assert!(matches!(outcome.result, Ok(GameCode::LevelRestart)));
+
+        let restarted = simulation_config_for_level_restart(checkpoint, outcome.sim_config, true);
+
+        assert_eq!(restarted, checkpoint);
+        assert_eq!(restarted.amount_of_speaking, 3);
     }
 
     #[test]
