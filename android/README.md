@@ -32,3 +32,9 @@ The Android boot path reads the bundled shipping datadir from APK
 assets. Loose filesystem data remains available for debug installs by
 putting a `Data/` directory in the app external files directory, or by
 setting `ROBINHOOD_DATA_DIR` before startup in a custom launcher.
+
+Android forces the graphical main menu for the bundled demo and disables
+the desktop script-RPC HTTP listener. Hosting the standalone lobby broker
+with `--lobby-server` is not supported. Multiplayer clients do not use a
+hard-coded server: a custom launcher may provide `ROBINHOOD_LOBBY_WS`, and
+the lobby UI reports that multiplayer is unavailable when it is unset.
