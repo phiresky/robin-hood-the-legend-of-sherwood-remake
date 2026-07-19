@@ -6,27 +6,25 @@
 //! script and an `.scb` script behave identically when they invoke
 //! the same engine function.
 //!
-//! ## Host pointer plumbing
+//! ## Native-call session plumbing
 //!
-//! `mlua` requires registered functions to be `'static`, but the
-//! `GameHost` and [`NativeSessionCapabilities`] live on the engine and have
-//! lifetimes tied to the current event call. Lua app-data stores ordinary raw
-//! pointers plus exactly one lifetime-erased capability-bundle pointer in
-//! [`HostPtr`] for the duration of one event:
+//! `mlua` requires registered functions to be `'static`, but the engine
+//! owners are borrowed only for the current event. A stack-owned
+//! [`NativeCallSession`] aggregates those borrows, and Lua app data stores
+//! one lifetime-erased pointer handle to that session for the duration of the
+//! event. The handle records the attaching thread and serializes mutable
+//! session access; it is `Send` through safe standard-library types rather than
+//! a manual unsafe implementation.
 //!
-//! ```ignore
-//! state.lua().set_app_data(HostPtr::new(host));
-//! state.run("Initialize")?;
-//! state.lua().remove_app_data::<HostPtr>();
-//! ```
+//! The safety contract is scoped access: callers invoke Lua entry points only
+//! through [`MissionLuaState::with_host`]. The
+//! [`crate::state::NativeCallAttachment`] guard removes app data on success,
+//! error, and unwind. Each shim reborrows the aggregate for one synchronous
+//! native call and never exposes it to Lua values or Rust upvalues.
 //!
-//! The safety contract is **scoped access**: callers may only invoke
-//! Lua entry points wrapped in [`MissionLuaState::with_host`] (added
-//! by the event-dispatch layer in `engine/script.rs`), which
-//! guarantees every pointer is live and exclusively borrowed. The
-//! [`crate::state::HostAttachment`] guard removes the app-data on both success
-//! and error; registered shims recover the capability reference only for the
-//! synchronous native call and never let it escape to Lua or an upvalue.
+//! `mlua::Scope` is intentionally not used here: scoped callbacks become
+//! invalid when their scope exits, while mission globals must retain stable
+//! native functions across every event in the mission.
 //!
 //! ## Alias table
 //!
@@ -36,7 +34,9 @@
 //! just register the same Rust shim under both names — see
 //! [`NATIVE_ALIASES`].
 
-use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::thread::ThreadId;
 
 use mlua::{Function, Lua, Table, Value};
 use robin_engine::engine::ScriptDomains;
@@ -48,106 +48,164 @@ use robin_engine::natives::{
 
 use crate::state::MissionLuaState;
 
-/// Type-erased pointers attached for one Lua event invocation. The single
-/// `capabilities` pointer represents entities, AI, grid, campaign/stat, and
-/// immutable query views together; adding parallel erased owner pointers
-/// would break the one-session-bundle invariant. See module docs for the
-/// safety contract.
+/// All engine borrows available to one synchronous Lua event invocation.
 ///
-/// Stored as Lua app data; closures retrieve it via
-/// [`Lua::app_data_ref`].
-#[derive(Clone)]
-pub(crate) struct HostPtr {
-    host: Cell<*mut GameHost>,
-    script_state: Cell<*mut ScriptState>,
-    script_domains: Cell<*mut ScriptDomains>,
-    bindings: Cell<*const AttachedScriptBindings>,
-    capabilities: Cell<*const ()>,
+/// This value stays on the Rust stack. Only [`AttachedNativeCall`]'s guarded
+/// pointer handle crosses mlua's `'static` app-data boundary.
+pub(crate) struct NativeCallSession<'call, 'owners> {
+    host: &'call mut GameHost,
+    script_state: &'call mut ScriptState,
+    script_domains: &'call mut ScriptDomains,
+    bindings: &'call AttachedScriptBindings,
+    capabilities: &'call NativeSessionCapabilities<'owners>,
 }
 
-// SAFETY: `HostPtr` is only accessed from the thread that called
-// [`MissionLuaState::with_host`]; we never let it escape Lua, and
-// Lua itself is `Send` (mlua's `send` feature). Sync is not needed.
-unsafe impl Send for HostPtr {}
-
-impl HostPtr {
+impl<'call, 'owners> NativeCallSession<'call, 'owners> {
     pub(crate) fn new(
-        host: *mut GameHost,
-        script_state: *mut ScriptState,
-        script_domains: *mut ScriptDomains,
-        bindings: *const AttachedScriptBindings,
-        capabilities: &NativeSessionCapabilities<'_>,
+        host: &'call mut GameHost,
+        script_state: &'call mut ScriptState,
+        script_domains: &'call mut ScriptDomains,
+        bindings: &'call AttachedScriptBindings,
+        capabilities: &'call NativeSessionCapabilities<'owners>,
     ) -> Self {
-        // SAFETY CONTRACT: the reference lifetime is erased only because
-        // HostAttachment removes this HostPtr before the enclosing
-        // with_host_state_and_bindings call returns. Native shims reborrow it
-        // synchronously and NativeContext retains only short RefMut guards and
-        // copied immutable query references, never this bundle reference.
         Self {
-            host: Cell::new(host),
-            script_state: Cell::new(script_state),
-            script_domains: Cell::new(script_domains),
-            bindings: Cell::new(bindings),
-            capabilities: Cell::new(capabilities as *const _ as *const ()),
+            host,
+            script_state,
+            script_domains,
+            bindings,
+            capabilities,
         }
     }
 
-    /// Borrow the host mutably. Panics if the pointer is null,
-    /// which means a script reached a native outside of a
-    /// [`MissionLuaState::with_host`] scope (a host bug, not a
-    /// script bug).
+    fn native_context(&mut self) -> NativeContext<'_, 'owners> {
+        NativeContext::with_bindings(
+            self.host,
+            self.script_state,
+            self.script_domains,
+            self.bindings,
+            self.capabilities,
+        )
+    }
+}
+
+#[derive(Debug)]
+struct AttachedNativeCallState {
+    session: AtomicPtr<()>,
+    origin_thread: ThreadId,
+    in_use: AtomicBool,
+}
+
+/// The sole lifetime-erased value installed in Lua app data while a native
+/// call session is active.
+///
+/// All fields are safely `Send + Sync`. The raw pointer is never dereferenced
+/// until [`AttachedNativeCall::with_session`] verifies thread affinity and
+/// obtains exclusive access for one synchronous shim invocation.
+#[derive(Clone, Debug)]
+pub(crate) struct AttachedNativeCall(Arc<AttachedNativeCallState>);
+
+struct SessionUseGuard<'attachment>(&'attachment AtomicBool);
+
+impl Drop for SessionUseGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+impl AttachedNativeCall {
+    pub(crate) fn new(session: &mut NativeCallSession<'_, '_>) -> Self {
+        Self(Arc::new(AttachedNativeCallState {
+            session: AtomicPtr::new(std::ptr::from_mut(session).cast()),
+            origin_thread: std::thread::current().id(),
+            in_use: AtomicBool::new(false),
+        }))
+    }
+
+    pub(crate) fn is_same_attachment(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub(crate) fn invalidate(&self) {
+        self.0
+            .session
+            .store(std::ptr::null_mut(), Ordering::Release);
+    }
+
+    /// Reborrow the stack-owned session for one synchronous shim invocation.
     ///
-    /// Returns a raw pointer rather than `&mut GameHost` so the
-    /// Rust borrow checker doesn't infer a conflicting lifetime
-    /// between repeated calls within the same native — every
-    /// shim re-derefs at the top so the lifetime is fresh per
-    /// call. Clippy's `mut_from_ref` lint correctly flags the
-    /// alternative `&self -> &mut T` shape as a lifetime lie.
-    fn host_ptr(&self) -> *mut GameHost {
-        let ptr = self.host.get();
-        assert!(
-            !ptr.is_null(),
-            "robin_lua: native invoked with no GameHost attached; \
-             wrap the call site in MissionLuaState::with_host"
-        );
-        ptr
-    }
+    /// The attachment scope gate keeps the stack frame alive. Thread affinity
+    /// prevents `mlua`'s `send` support from moving borrowed, potentially
+    /// non-`Sync` engine owners across threads. The in-use flag prevents two
+    /// overlapping mutable reborrows, including callback reentrancy while a
+    /// native is still dispatching. The higher-ranked callback prevents its
+    /// result from depending on either erased lifetime.
+    fn with_session<R>(
+        &self,
+        f: impl for<'call, 'owners> FnOnce(&mut NativeCallSession<'call, 'owners>) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        if std::thread::current().id() != self.0.origin_thread {
+            return Err(mlua::Error::RuntimeError(
+                "robin_lua: native-call session cannot be used from a thread other than the attaching thread"
+                    .to_owned(),
+            ));
+        }
 
-    fn script_state_ptr(&self) -> *mut ScriptState {
-        let ptr = self.script_state.get();
-        assert!(
-            !ptr.is_null(),
-            "robin_lua: native invoked with no ScriptState attached; wrap the call site in MissionLuaState::with_host"
-        );
-        ptr
-    }
+        self.0
+            .in_use
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "robin_lua: native-call session is already in use by another native".to_owned(),
+                )
+            })?;
+        let _use_guard = SessionUseGuard(&self.0.in_use);
 
-    fn capabilities_ptr(&self) -> *const () {
-        let ptr = self.capabilities.get();
-        assert!(
-            !ptr.is_null(),
-            "robin_lua: native invoked with no session capabilities attached"
-        );
-        ptr
+        let session = self
+            .0
+            .session
+            .load(Ordering::Acquire)
+            .cast::<NativeCallSession<'static, 'static>>();
+        if session.is_null() {
+            return Err(mlua::Error::RuntimeError(
+                "robin_lua: native-call session is no longer attached".to_owned(),
+            ));
+        }
+        // SAFETY: `NativeCallAttachment` holds the per-state scope gate until
+        // it removes and invalidates this handle, so a non-null pointer's
+        // stack-owned session outlives this call. The origin-thread check
+        // occurs before this dereference, keeping all borrowed capabilities on
+        // their creating thread. `_use_guard` makes this the sole mutable
+        // reborrow and clears that claim on return, error, or unwind. The HRTB
+        // prevents `R` from carrying erased borrows.
+        unsafe { f(&mut *session) }
     }
+}
 
-    fn script_domains_ptr(&self) -> *mut ScriptDomains {
-        let ptr = self.script_domains.get();
-        assert!(
-            !ptr.is_null(),
-            "robin_lua: native invoked with no ScriptDomains capability attached; wrap the call site in MissionLuaState::with_host"
-        );
-        ptr
-    }
+fn with_attached_session<R>(
+    lua: &Lua,
+    missing: impl FnOnce() -> mlua::Error,
+    f: impl for<'call, 'owners> FnOnce(&mut NativeCallSession<'call, 'owners>) -> mlua::Result<R>,
+) -> mlua::Result<R> {
+    let attachment = lua
+        .app_data_ref::<AttachedNativeCall>()
+        .map(|attachment| attachment.clone())
+        .ok_or_else(missing)?;
+    attachment.with_session(f)
+}
 
-    fn bindings_ptr(&self) -> *const AttachedScriptBindings {
-        let ptr = self.bindings.get();
-        assert!(
-            !ptr.is_null(),
-            "robin_lua: native invoked with no ScriptBindings attached"
-        );
-        ptr
-    }
+fn with_attached_bindings<R>(
+    lua: &Lua,
+    f: impl FnOnce(&AttachedScriptBindings) -> mlua::Result<R>,
+) -> mlua::Result<R> {
+    with_attached_session(
+        lua,
+        || {
+            mlua::Error::RuntimeError(
+                "robin_lua: native invoked with no ScriptBindings attached".to_owned(),
+            )
+        },
+        |session| f(session.bindings),
+    )
 }
 
 /// Spellforge name → engine name aliases.
@@ -426,51 +484,48 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                 actual: args.len(),
             }));
         }
-        let host_ptr = lua
-            .app_data_ref::<HostPtr>()
-            .ok_or_else(|| {
-                mlua::Error::RuntimeError(format!("{}: called with no GameHost attached", sig.name))
-            })?
-            .clone();
-        // SAFETY: see HostPtr module docs — the pointer is
-        // exclusively borrowed for the duration of `with_host`,
-        // which is the only place this shim runs.
-        let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
-        let capabilities: &NativeSessionCapabilities<'_> = unsafe {
-            &*(host_ptr.capabilities_ptr() as *const NativeSessionCapabilities<'_>)
-        };
-        let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
-        let script_domains: &mut ScriptDomains = unsafe { &mut *host_ptr.script_domains_ptr() };
-        let bindings: &AttachedScriptBindings = unsafe { &*host_ptr.bindings_ptr() };
-        let mut native_context = NativeContext::with_bindings(
-            host,
-            script_state,
-            script_domains,
-            bindings,
-            capabilities,
-        );
-        let mut stack = NativeStack::default();
-        // Push in argument order — the engine's `pop_i32()` pulls
-        // them off in *reverse*, so the last arg ends up on top of
-        // the stack. The .scb VM produced this exact order, so we
-        // mirror it.
-        for (index, ((value, param), abi_type)) in args
-            .iter()
-            .zip(sig.params.iter())
-            .zip(param_types.iter())
-            .enumerate()
-        {
-            stack.push_i32(argument_to_stack_word(
-                value, *abi_type, sig, index, param.name,
-            )?);
-        }
-        match robin_engine::interp::HostFunctions::call(&mut native_context, index, &mut stack) {
-            NativeCallOutcome::Return(ret) => Ok(return_from_stack_word(ret, return_type)),
-            NativeCallOutcome::PendingNestedCall(call) => Err(mlua::Error::RuntimeError(format!(
-                "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
-                sig.name
-            ))),
-        }
+        with_attached_session(
+            lua,
+            || {
+                mlua::Error::RuntimeError(format!(
+                    "{}: called with no GameHost attached",
+                    sig.name
+                ))
+            },
+            |session| {
+                let mut native_context = session.native_context();
+                let mut stack = NativeStack::default();
+                // Push in argument order — the engine's `pop_i32()` pulls
+                // them off in *reverse*, so the last arg ends up on top of
+                // the stack. The .scb VM produced this exact order, so we
+                // mirror it.
+                for (index, ((value, param), abi_type)) in args
+                    .iter()
+                    .zip(sig.params.iter())
+                    .zip(param_types.iter())
+                    .enumerate()
+                {
+                    stack.push_i32(argument_to_stack_word(
+                        value, *abi_type, sig, index, param.name,
+                    )?);
+                }
+                match robin_engine::interp::HostFunctions::call(
+                    &mut native_context,
+                    index,
+                    &mut stack,
+                ) {
+                    NativeCallOutcome::Return(ret) => {
+                        Ok(return_from_stack_word(ret, return_type))
+                    }
+                    NativeCallOutcome::PendingNestedCall(call) => {
+                        Err(mlua::Error::RuntimeError(format!(
+                            "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
+                            sig.name
+                        )))
+                    }
+                }
+            },
+        )
     })
 }
 
@@ -564,61 +619,60 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     // string identifier. The mission loader fills the matching
     // BTreeMap on GameHost; these natives just look up by name.
     let get_actor = lua.create_function(|lua, name: String| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        Ok(names.lua_names.actors.get(&name).copied().unwrap_or(0))
+        with_attached_bindings(lua, |bindings| {
+            Ok(bindings.lua_names.actors.get(&name).copied().unwrap_or(0))
+        })
     })?;
     globals.set("GetActor", get_actor)?;
 
     let get_item = lua.create_function(|lua, name: String| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        Ok(names.lua_names.items.get(&name).copied().unwrap_or(0))
+        with_attached_bindings(lua, |bindings| {
+            Ok(bindings.lua_names.items.get(&name).copied().unwrap_or(0))
+        })
     })?;
     globals.set("GetItem", get_item)?;
 
     let get_location = lua.create_function(|lua, name: String| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        Ok(names.lua_names.locations.get(&name).copied().unwrap_or(0))
+        with_attached_bindings(lua, |bindings| {
+            Ok(bindings
+                .lua_names
+                .locations
+                .get(&name)
+                .copied()
+                .unwrap_or(0))
+        })
     })?;
     globals.set("GetLocation", get_location)?;
 
     let get_patrol = lua.create_function(|lua, name: String| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        Ok(names.lua_names.patrols.get(&name).copied().unwrap_or(0))
+        with_attached_bindings(lua, |bindings| {
+            Ok(bindings.lua_names.patrols.get(&name).copied().unwrap_or(0))
+        })
     })?;
     globals.set("GetPatrol", get_patrol)?;
 
     let get_scroll = lua.create_function(|lua, name: String| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        Ok(names.lua_names.scrolls.get(&name).copied().unwrap_or(0))
+        with_attached_bindings(lua, |bindings| {
+            Ok(bindings.lua_names.scrolls.get(&name).copied().unwrap_or(0))
+        })
     })?;
     globals.set("GetScroll", get_scroll)?;
 
     // ── Reverse lookup: handle → name ──
     let get_actor_name = lua.create_function(|lua, handle: i32| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        // Linear scan — Spellforge's DLL does the same. The maps
-        // are mission-scoped (low hundreds of entries), so this
-        // doesn't merit a reverse index.
-        for (name, h) in &names.lua_names.actors {
-            if *h == handle {
-                return Ok(name.clone());
+        with_attached_bindings(lua, |bindings| {
+            // Linear scan — Spellforge's DLL does the same. The maps
+            // are mission-scoped (low hundreds of entries), so this
+            // doesn't merit a reverse index.
+            for (name, h) in &bindings.lua_names.actors {
+                if *h == handle {
+                    return Ok(name.clone());
+                }
             }
-        }
-        // Spellforge returns the literal "<not found>" sentinel
-        // when no name matches — preserved here for script parity.
-        Ok("<not found>".to_owned())
+            // Spellforge returns the literal "<not found>" sentinel
+            // when no name matches — preserved here for script parity.
+            Ok("<not found>".to_owned())
+        })
     })?;
     globals.set("GetActorName", get_actor_name)?;
 
@@ -627,14 +681,13 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     // Used by Spellforge's `lib/common.lua` to iterate every named
     // actor and assign patrols / cutscene roles in bulk.
     let get_all_actors = lua.create_function(|lua, ()| {
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let names = unsafe { &*bindings_ptr(lua)? };
-        let t = lua.create_table_with_capacity(0, names.lua_names.actors.len())?;
-        for (name, handle) in &names.lua_names.actors {
-            t.set(name.clone(), *handle)?;
-        }
-        Ok(t)
+        with_attached_bindings(lua, |bindings| {
+            let table = lua.create_table_with_capacity(0, bindings.lua_names.actors.len())?;
+            for (name, handle) in &bindings.lua_names.actors {
+                table.set(name.clone(), *handle)?;
+            }
+            Ok(table)
+        })
     })?;
     globals.set("GetAllActors", get_all_actors)?;
 
@@ -663,87 +716,82 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // actor handle) — when it dispatches we pull the closure
         // back out. Equivalent to Spellforge's
         // `SequenceSendMessage(God(), id)`.
-        // SAFETY: see HostPtr docs — pointer is valid for the
-        // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        let capabilities: &NativeSessionCapabilities<'_> =
-            unsafe { &*(capabilities_ptr(lua)? as *const NativeSessionCapabilities<'_>) };
-        let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
-        let script_domains: &mut ScriptDomains = unsafe { &mut *script_domains_ptr(lua)? };
-        let bindings: &AttachedScriptBindings = unsafe { &*bindings_ptr(lua)? };
-        let mut native_context = NativeContext::with_bindings(
-            host,
-            script_state,
-            script_domains,
-            bindings,
-            capabilities,
-        );
-        let mut stack = NativeStack::default();
-        // RecordSendMessage(actor, message) pops `message` first
-        // (top of stack), then `actor`. So push actor, then
-        // message — matching the engine's evaluation order.
-        stack.push_i32(0); // actor = God
-        stack.push_i32(next);
-        robin_engine::interp::HostFunctions::call(
-            &mut native_context,
-            NativeFn::RecordSendMessage as u32,
-            &mut stack,
+        with_attached_session(
+            lua,
+            || {
+                mlua::Error::RuntimeError(
+                    "robin_lua: SequenceCall invoked with no native session attached".to_owned(),
+                )
+            },
+            |session| {
+                let mut native_context = session.native_context();
+                let mut stack = NativeStack::default();
+                // RecordSendMessage(actor, message) pops `message` first
+                // (top of stack), then `actor`. So push actor, then
+                // message — matching the engine's evaluation order.
+                stack.push_i32(0); // actor = God
+                stack.push_i32(next);
+                robin_engine::interp::HostFunctions::call(
+                    &mut native_context,
+                    NativeFn::RecordSendMessage as u32,
+                    &mut stack,
+                )
+                .expect_return("Lua SequenceCall/RecordSendMessage");
+                Ok(())
+            },
         )
-        .expect_return("Lua SequenceCall/RecordSendMessage");
-        Ok(())
     })?;
     globals.set("SequenceCall", sequence_call)?;
 
     Ok(())
 }
 
-/// Helper for Lua-only shims that need the host. Wraps the app-data
-/// lookup with a clearer error message than the raw assertion in
-/// `HostPtr::host_ptr`.
-///
-/// Returns a `*mut` rather than `&mut` so the borrow-checker
-/// doesn't infer a conflicting lifetime between repeated calls
-/// inside the same shim — each call site dereferences afresh.
-fn host_ptr(lua: &Lua) -> mlua::Result<*mut GameHost> {
-    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
-        mlua::Error::RuntimeError("robin_lua: native invoked with no GameHost attached".to_owned())
-    })?;
-    Ok(ptr.host_ptr())
-}
-
-fn capabilities_ptr(lua: &Lua) -> mlua::Result<*const ()> {
-    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
-        mlua::Error::RuntimeError(
-            "robin_lua: native invoked with no session capabilities attached".to_owned(),
-        )
-    })?;
-    Ok(ptr.capabilities_ptr())
-}
-
-fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {
-    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
-        mlua::Error::RuntimeError(
-            "robin_lua: native invoked with no ScriptState attached".to_owned(),
-        )
-    })?;
-    Ok(ptr.script_state_ptr())
-}
-
-fn script_domains_ptr(lua: &Lua) -> mlua::Result<*mut ScriptDomains> {
-    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
-        mlua::Error::RuntimeError("native called with no ScriptDomains attached".into())
-    })?;
-    Ok(ptr.script_domains_ptr())
-}
-
-fn bindings_ptr(lua: &Lua) -> mlua::Result<*const AttachedScriptBindings> {
-    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
-        mlua::Error::RuntimeError(
-            "robin_lua: native invoked with no ScriptBindings attached".to_owned(),
-        )
-    })?;
-    Ok(ptr.bindings_ptr())
-}
-
 // Canonical Lua enumeration is declared by
 // `robin_engine::natives::NATIVE_REGISTRY`; see `register_natives`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::entities::Entities;
+
+    #[test]
+    fn overlapping_session_reborrow_is_rejected_and_released() {
+        let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
+        let mut script_domains = ScriptDomains::default();
+        let bindings = AttachedScriptBindings::default();
+        let mut entities = Entities::new();
+        let mut ai_global = robin_engine::ai::AiGlobalState::default();
+        let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+        let capabilities =
+            NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        let mut session = NativeCallSession::new(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &bindings,
+            &capabilities,
+        );
+        let attachment = AttachedNativeCall::new(&mut session);
+
+        attachment
+            .with_session(|_session| {
+                let error = attachment
+                    .with_session(|_nested| Ok(()))
+                    .expect_err("overlapping reborrow must fail");
+                assert!(error.to_string().contains("already in use"));
+                Ok(())
+            })
+            .expect("outer reborrow");
+
+        attachment
+            .with_session(|_session| Ok(()))
+            .expect("in-use guard must clear after the outer call");
+
+        attachment.invalidate();
+        let error = attachment
+            .with_session(|_session| Ok(()))
+            .expect_err("invalidated attachment must not dereference its session");
+        assert!(error.to_string().contains("no longer attached"));
+    }
+}
