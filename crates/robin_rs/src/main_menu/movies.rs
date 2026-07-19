@@ -10,6 +10,7 @@
 //! a deliberate deviation in `parity-audit/RHMenuMovies-01.md`.
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuTransform, align_bottom_right, draw_screen_background,
@@ -20,7 +21,6 @@ use crate::ingame_menu::widget_bridge::{self, ModalInputState};
 use crate::renderer::Renderer;
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
-use robin_engine::player_profile::PlayerProfileManager;
 
 const ID_INTRO: u32 = 0;
 const ID_OUTRO: u32 = 1;
@@ -28,6 +28,7 @@ const ID_OK: u32 = 2;
 
 /// Display the movies menu. Returns once the player picks Back / Escape.
 pub(crate) async fn show_movies(
+    application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
@@ -37,10 +38,11 @@ pub(crate) async fn show_movies(
 
     // Outro stays out of the focus group until the player has finished
     // the campaign (progression < 100).
-    let outro_enabled = PlayerProfileManager::global()
-        .as_ref()
-        .and_then(|mgr| mgr.get_active())
-        .is_some_and(|p| p.progression >= 100);
+    let outro_enabled = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("Show Movies requires an active profile: {error}"))
+        .progression
+        >= 100;
 
     // Localised labels for the Intro / Outro buttons. The original game
     // leaves the label empty and relies on the sprite to convey meaning;
@@ -151,17 +153,23 @@ pub(crate) async fn show_movies(
         if let Some(id) = activated {
             match id {
                 ID_INTRO => {
-                    if let Err(e) =
-                        crate::video_player::play_video(event_pump, "Data/Cinematics/Intro.ogg")
-                            .await
+                    if let Err(e) = crate::video_player::play_video(
+                        application_context,
+                        event_pump,
+                        "Data/Cinematics/Intro.ogg",
+                    )
+                    .await
                     {
                         tracing::warn!("Intro video error: {e}");
                     }
                 }
                 ID_OUTRO if outro_enabled => {
-                    if let Err(e) =
-                        crate::video_player::play_video(event_pump, "Data/Cinematics/Outro.ogg")
-                            .await
+                    if let Err(e) = crate::video_player::play_video(
+                        application_context,
+                        event_pump,
+                        "Data/Cinematics/Outro.ogg",
+                    )
+                    .await
                     {
                         tracing::warn!("Outro video error: {e}");
                     }

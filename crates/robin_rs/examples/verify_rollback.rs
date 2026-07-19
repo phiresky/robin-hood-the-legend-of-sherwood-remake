@@ -48,7 +48,7 @@ fn main() {
 
     let mut assets = LevelAssets::new();
     assets.profile_manager = profiles.clone();
-    let mut host = Host::new(1024.0, 768.0);
+    let mut host = Host::scratch(1024.0, 768.0);
     if let Err(e) = host.frame_holder_mut().initialize_sprite_bank(".") {
         tracing::warn!("sprite bank: {e}");
     }

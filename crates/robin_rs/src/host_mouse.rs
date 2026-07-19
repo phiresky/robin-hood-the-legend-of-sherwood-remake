@@ -114,7 +114,7 @@ pub fn choose_mouse_pointer_for_no_action(
     host.input.display_door = true;
 
     // Dragging while swordfighting → swordfight cursor.
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     let selected = engine.seat_selection(local_seat);
 
     if host.input.left_mouse_down && engine.is_seat_selection_swordfighting(local_seat) {
@@ -472,7 +472,7 @@ pub fn choose_mouse_pointer_for_no_action(
                     // instead of `find_map`.
                     let mut jump_line_idx: Option<u32> = None;
                     let mut jumper_on_shoulders = false;
-                    for &pc_id in engine.seat_selection(host.local_seat) {
+                    for &pc_id in engine.seat_selection(host.transport.local_seat) {
                         if !engine.selected_pc_has_contextual_action(
                             assets,
                             Some(pc_id),
@@ -712,7 +712,7 @@ pub fn update_mouse(
     // The reference is used by `get_sector` to tie-break overlapping
     // jump sectors (nearest-mid wins).
     let reference = engine
-        .seat_selection(host.local_seat)
+        .seat_selection(host.transport.local_seat)
         .first()
         .and_then(|&id| engine.get_entity(id))
         .map(|e| {
@@ -825,7 +825,7 @@ pub fn update_mouse(
         return RHMOUSE_VIEW;
     }
 
-    let selected_action = engine.selected_action_for_seat(host.local_seat);
+    let selected_action = engine.selected_action_for_seat(host.transport.local_seat);
 
     match selected_action {
         // ── NoAction ───────────────
@@ -841,11 +841,11 @@ pub fn update_mouse(
 
         // ── Bow ───────────────────
         Action::Bow => {
-            if engine.seat_selection(host.local_seat).is_empty() {
+            if engine.seat_selection(host.transport.local_seat).is_empty() {
                 return RHMOUSE_BOW_NO;
             }
             let mut cursor = RHMOUSE_BOW_NO;
-            let pc_id = engine.seat_selection(host.local_seat)[0];
+            let pc_id = engine.seat_selection(host.transport.local_seat)[0];
 
             // When recording a macro, take the shorter path — no
             // range/trajectory checks, just BOW_YES over any
@@ -1011,7 +1011,10 @@ pub fn update_mouse(
         // ── Apple ─────────────────
         Action::Apple => {
             let mut cursor = RHMOUSE_APPLE_NO;
-            let pc_id = engine.seat_selection(host.local_seat).first().copied();
+            let pc_id = engine
+                .seat_selection(host.transport.local_seat)
+                .first()
+                .copied();
 
             if !engine.is_selected_pc_in_restricted_sector() {
                 if let Some(target_id) = engine.find_focusable_entity(
@@ -1071,7 +1074,10 @@ pub fn update_mouse(
         // ── Stone ─────────────────
         Action::Stone => {
             let mut cursor = RHMOUSE_STONE_NO;
-            let pc_id = engine.seat_selection(host.local_seat).first().copied();
+            let pc_id = engine
+                .seat_selection(host.transport.local_seat)
+                .first()
+                .copied();
 
             if !engine.is_selected_pc_in_restricted_sector() {
                 if let Some(target_id) = engine.find_focusable_entity(
@@ -1137,7 +1143,10 @@ pub fn update_mouse(
         Action::Purse => {
             let mut cursor = RHMOUSE_PURSE_NO;
             let mouse_elem = mouse_map_pt;
-            let pc_id = engine.seat_selection(host.local_seat).first().copied();
+            let pc_id = engine
+                .seat_selection(host.transport.local_seat)
+                .first()
+                .copied();
 
             if !engine.is_selected_pc_in_restricted_sector()
                 && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
@@ -1188,7 +1197,10 @@ pub fn update_mouse(
         Action::WaspNest => {
             let mut cursor = RHMOUSE_WASP_NEST_NO;
             let mouse_elem = mouse_map_pt;
-            let pc_id = engine.seat_selection(host.local_seat).first().copied();
+            let pc_id = engine
+                .seat_selection(host.transport.local_seat)
+                .first()
+                .copied();
 
             if !engine.is_selected_pc_in_restricted_sector() {
                 let in_range = pc_id.is_some_and(|pid| {
@@ -1225,7 +1237,7 @@ pub fn update_mouse(
         // ── HelpToClimb ─────────
         Action::HelpToClimb => {
             let posture = engine
-                .seat_selection(host.local_seat)
+                .seat_selection(host.transport.local_seat)
                 .first()
                 .and_then(|&id| engine.get_entity(id))
                 .map(|e| e.element_data().posture)
@@ -1284,7 +1296,10 @@ pub fn update_mouse(
             let mut cursor = RHMOUSE_NET_NO;
             let mouse_elem = mouse_map_pt;
 
-            let pc_id = engine.seat_selection(host.local_seat).first().copied();
+            let pc_id = engine
+                .seat_selection(host.transport.local_seat)
+                .first()
+                .copied();
             if !engine.is_selected_pc_in_restricted_sector()
                 && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
             {
@@ -1361,7 +1376,7 @@ pub fn update_mouse(
         // ── Beggar ────────────────
         Action::Beggar => {
             let posture = engine
-                .seat_selection(host.local_seat)
+                .seat_selection(host.transport.local_seat)
                 .first()
                 .and_then(|&id| engine.get_entity(id))
                 .map(|e| e.element_data().posture)
@@ -1376,7 +1391,7 @@ pub fn update_mouse(
         // ── Listen ────────────────
         Action::Listen => {
             let action_state = engine
-                .seat_selection(host.local_seat)
+                .seat_selection(host.transport.local_seat)
                 .first()
                 .and_then(|&id| engine.get_entity(id))
                 .and_then(|e| e.actor_data())

@@ -225,7 +225,7 @@ async fn render_terminal_debriefing_and_picker(
                     page.mission_id,
                     Some(&context.assets.profile_manager),
                     SaveLoadMode::Load,
-                    Some(&mut context.host.sound),
+                    Some(&mut context.host.audio.sound),
                     context
                         .audio
                         .backend

@@ -66,8 +66,8 @@ pub(crate) struct MultiplayerRollbackTelemetry {
 /// frame inputs and apply any required network state corrections.
 ///
 /// Also folds `AssignedLocalSeat` events (late seat-assignment
-/// races) into `host.local_seat` and logs other diagnostic events.
-/// `Disconnected` clears `host.net` so subsequent frames fall back
+/// races) into `host.transport.local_seat` and logs other diagnostic events.
+/// `Disconnected` clears `host.transport.net` so subsequent frames fall back
 /// to single-player.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_net_inputs(
@@ -80,7 +80,7 @@ pub(crate) fn drain_net_inputs(
 ) -> NetDrainResult {
     use crate::multiplayer::NetEvent;
 
-    let Some(net) = host.net.as_ref() else {
+    let Some(net) = host.transport.net.as_ref() else {
         // Not in a session — drain anything sitting in pending and
         // return.  Pending should be empty in single-player but is
         // safe to flush.
@@ -134,7 +134,7 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::AssignedLocalSeat(seat) => {
                 tracing::info!(?seat, "multiplayer: local seat assigned (late)");
-                host.local_seat = seat;
+                host.transport.local_seat = seat;
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
@@ -142,7 +142,7 @@ pub(crate) fn drain_net_inputs(
                     "multiplayer: peer disconnected — transport will auto-reconnect; \
                      local play continues with cached state"
                 );
-                // Don't drop host.net: the I/O thread retries with
+                // Don't drop host.transport.net: the I/O thread retries with
                 // backoff and will re-emit Reconnected when it
                 // re-handshakes.  The user can play offline-style
                 // until that lands; late inputs will roll back into
@@ -156,7 +156,7 @@ pub(crate) fn drain_net_inputs(
                 // engine init.  Stash on host so a late re-roll
                 // (e.g. on reconnect to a different mission) can
                 // pick it up if the game loop later needs it.
-                host.mp_mission_seed = Some(seed);
+                host.transport.mission_seed = Some(seed);
             }
             NetEvent::InitialSnapshot {
                 frame,
@@ -191,7 +191,7 @@ pub(crate) fn drain_net_inputs(
                                     "multiplayer: skipping frame-0 snapshot adopt; \
                                      local engine already matches host"
                                 );
-                                if let Some(net) = host.net.as_ref() {
+                                if let Some(net) = host.transport.net.as_ref() {
                                     net.send_ready_to_sim(frame);
                                 }
                             } else {
@@ -212,7 +212,7 @@ pub(crate) fn drain_net_inputs(
                                         recent_timeline_history.clear();
                                         peer_hashes.retain(|&f, _| f >= frame);
                                         rewrote_sim_state = true;
-                                        if let Some(net) = host.net.as_ref() {
+                                        if let Some(net) = host.transport.net.as_ref() {
                                             net.send_ready_to_sim(frame);
                                         }
                                     }
@@ -254,7 +254,7 @@ pub(crate) fn drain_net_inputs(
                                     "multiplayer: adopting host's engine snapshot"
                                 );
                                 manager.set_sim_frame(frame);
-                                if let Some(net) = host.net.as_ref() {
+                                if let Some(net) = host.transport.net.as_ref() {
                                     net.send_ready_to_sim(frame);
                                 }
                                 *rewind_buffer = RewindBuffer::new();
@@ -556,7 +556,7 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 /// On `--server`: starts the listener thread with this process at
 /// seat 0 ([`PlayerId::HOST`]).
 /// On `--connect`: dials the server, blocks briefly waiting for
-/// the assigned-seat handshake, then sets `host.local_seat` so
+/// the assigned-seat handshake, then sets `host.transport.local_seat` so
 /// outgoing inputs are stamped correctly.
 ///
 /// Network failures abort multiplayer startup so the caller can return
@@ -619,10 +619,10 @@ pub(super) fn setup_multiplayer_session(
                         seed,
                         "multiplayer: hosting on {bind_addr}"
                     );
-                    host.local_seat = handle.local_seat;
+                    host.transport.local_seat = handle.local_seat;
                     channels.attach_runtime(handle);
-                    host.net = Some(channels);
-                    host.mp_mission_seed = Some(seed);
+                    host.transport.net = Some(channels);
+                    host.transport.mission_seed = Some(seed);
                 }
                 Err(e) => {
                     return Err(format!(
@@ -637,7 +637,7 @@ pub(super) fn setup_multiplayer_session(
         match connect_client(addr, nickname.clone(), in_tx, out_rx) {
             Ok(handle) => {
                 if let Some(seed) = handle.mission_seed() {
-                    host.mp_mission_seed = Some(seed);
+                    host.transport.mission_seed = Some(seed);
                 }
                 tracing::info!(
                     server = %addr,
@@ -645,7 +645,7 @@ pub(super) fn setup_multiplayer_session(
                     "multiplayer: connected to {addr}"
                 );
                 // Wait briefly for the AssignedLocalSeat event so
-                // host.local_seat is correct before the mission
+                // host.transport.local_seat is correct before the mission
                 // starts emitting outgoing inputs.  Long timeouts
                 // get logged but don't abort — inputs queued before
                 // the assignment lands just sit in the channel until
@@ -660,7 +660,7 @@ pub(super) fn setup_multiplayer_session(
                     while Instant::now() < deadline {
                         match channels.incoming.recv_timeout(Duration::from_millis(100)) {
                             Ok(NetEvent::AssignedLocalSeat(seat)) => {
-                                host.local_seat = seat;
+                                host.transport.local_seat = seat;
                                 tracing::info!(?seat, "multiplayer: assigned seat");
                                 break;
                             }
@@ -671,7 +671,7 @@ pub(super) fn setup_multiplayer_session(
                     }
                 }
                 channels.attach_runtime(handle);
-                host.net = Some(channels);
+                host.transport.net = Some(channels);
             }
             Err(e) => {
                 return Err(format!("multiplayer: failed to connect to {addr}: {e}"));

@@ -3,6 +3,7 @@
 use crate::campaign::Campaign;
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, dim_screen, draw_screen_background,
     enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
@@ -14,7 +15,6 @@ use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::widget::{ColumnAlign, ColumnLayout, FrameWnd};
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
-use robin_engine::player_profile as engine_player_profile;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,7 @@ pub(crate) async fn show_multiplayer_lobby(
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
+    application_context: &ApplicationContext,
 ) -> Option<MultiplayerLaunch> {
     let lobby_url = match lobby::lobby_url_from_env() {
         Ok(url) => url,
@@ -85,7 +86,7 @@ pub(crate) async fn show_multiplayer_lobby(
             err
         }
     };
-    let nickname = multiplayer_nickname();
+    let nickname = multiplayer_nickname(application_context);
     let missions = mission_choices(campaign, profiles);
     let lobby_client = if lobby_url.starts_with("ws://") || lobby_url.starts_with("wss://") {
         match lobby::LobbyClient::connect(&lobby_url) {
@@ -725,13 +726,12 @@ fn mission_choices(
         .collect()
 }
 
-fn multiplayer_nickname() -> String {
-    if let Some(name) = engine_player_profile::PlayerProfileManager::global()
-        .as_ref()
-        .and_then(|mgr| mgr.get_active())
-        .map(|p| p.name.clone())
-        .filter(|s| !s.trim().is_empty())
-    {
+fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
+    let name = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("multiplayer lobby requires an active profile: {error}"))
+        .name;
+    if !name.trim().is_empty() {
         return name;
     }
     std::env::var("USER")

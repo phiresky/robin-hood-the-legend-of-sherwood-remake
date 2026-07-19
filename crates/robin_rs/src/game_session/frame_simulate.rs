@@ -10,6 +10,7 @@ use super::runtime::FrameContractStage;
 use super::terminal_debriefing::{TerminalDebriefingContext, drive_tick_exit_modals};
 use super::*;
 use crate::game::Game;
+use crate::host::HostSignal;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct FramePresentationHandoff {
@@ -96,8 +97,8 @@ impl SimulationVisualRefresh<'_> {
         if dev.debug.all_dialogues {
             dev.debug.all_dialogues = false;
             if let Some(descriptors) = &resources.level_descriptors {
-                host.pending_dialogues
-                    .extend((0..descriptors.dialogues.len()).map(|index| index as i32));
+                host.effects
+                    .extend_dialogues((0..descriptors.dialogues.len()).map(|index| index as i32));
             } else {
                 tracing::warn!("cheat all_dialogues: level descriptors unavailable");
             }
@@ -105,7 +106,7 @@ impl SimulationVisualRefresh<'_> {
         if dev.debug.all_popup_texts {
             dev.debug.all_popup_texts = false;
             if let Some(descriptors) = &resources.level_descriptors {
-                host.pending_popup_texts.extend(
+                host.effects.extend_popup_texts(
                     (0..descriptors.popup_text.picture_ids.len()).map(|index| index as i32),
                 );
             } else {
@@ -115,11 +116,11 @@ impl SimulationVisualRefresh<'_> {
         if dev.debug.all_debriefings {
             dev.debug.all_debriefings = false;
             if let Some(descriptors) = &resources.level_descriptors {
-                host.pending_debriefings.extend(
+                host.effects.extend_debriefings(
                     (0..descriptors.debriefing.lose_count as usize)
                         .map(|index| engine_player_command::DebriefingTextId::Lose { index }),
                 );
-                host.pending_debriefings.extend(
+                host.effects.extend_debriefings(
                     (0..descriptors.debriefing.win_count as usize)
                         .map(|index| engine_player_command::DebriefingTextId::Win { index }),
                 );
@@ -340,11 +341,12 @@ fn drive_leave_mission_prompt(
     mode: ScriptedModalMode,
     rendered: bool,
 ) -> bool {
-    if rendered || (!host.pending_mission_state_popup && ui.active_modal.is_none()) {
+    if rendered
+        || (!host.effects.has_signal(HostSignal::MissionStatePopup) && ui.active_modal.is_none())
+    {
         return rendered;
     }
-    if host.pending_mission_state_popup {
-        host.pending_mission_state_popup = false;
+    if host.effects.take_signal(HostSignal::MissionStatePopup) {
         if mode == ScriptedModalMode::AutoDismiss {
             let cmd = PlayerCommand::QuitMissionRequested;
             dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
@@ -419,7 +421,7 @@ fn drain_deferred_save_load_after_zoom(
 }
 
 fn reset_input_after_tick_request(host: &mut Host, input: &mut super::interactive::MissionInput) {
-    if !std::mem::take(&mut host.pending_reset_input) {
+    if !host.effects.take_signal(HostSignal::ResetInput) {
         return;
     }
     input.reset_after_engine_request();
@@ -714,9 +716,9 @@ impl InteractiveFrameSimulation {
         // that just finished.  No-op when the HTTP server is disabled
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
-        let net = host.net.take();
+        let net = host.transport.net.take();
         crate::http_server::drain_global(manager, host, &assets, net.as_ref());
-        host.net = net;
+        host.transport.net = net;
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames
@@ -733,8 +735,8 @@ impl InteractiveFrameSimulation {
                 },
             );
             manager.sim_frame += 1;
-            if let Some(net) = host.net.as_ref()
-                && host.local_seat == engine_player_command::PlayerId::HOST
+            if let Some(net) = host.transport.net.as_ref()
+                && host.transport.local_seat == engine_player_command::PlayerId::HOST
             {
                 net.set_initial_snapshot(manager.sim_frame, &manager.engine);
             }
@@ -839,8 +841,8 @@ impl InteractiveFrameSimulation {
                     step_frame_cmds = buffered_cmds;
                 }
                 manager.engine.apply_commands(
-                    &mut host.engine_display,
-                    &mut host.input,
+                    &mut host.frontend.engine_display,
+                    &mut host.frontend.input,
                     &assets,
                     &step_frame_cmds,
                 );

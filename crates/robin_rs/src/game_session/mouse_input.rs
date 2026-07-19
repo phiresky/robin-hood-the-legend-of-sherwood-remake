@@ -26,11 +26,9 @@ use crate::ingame_menu::{
 };
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
-use crate::key_config_store::KeyConfigStore;
 use crate::main_entry::{RustCallbacks, SaveLoadRequest, current_mission_id};
 use crate::menu::CampaignMapState;
 use crate::player_command::{FrameCommands, PlayerCommand};
-use crate::player_profile::PlayerProfileManager;
 use crate::profiles::Action;
 use crate::renderer::Renderer;
 use crate::resource_manager::ResourceManager;
@@ -83,7 +81,7 @@ pub(super) fn handle_mouse_input(
     ctrl_held: bool,
 ) {
     let engine = &mut manager.engine;
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     // ── Portrait action countdown ──
     // Decrements once per frame. MakeFast fires on double-click within window.
     if host.input.portrait_action_countdown > 0 {
@@ -1087,7 +1085,7 @@ pub(super) async fn handle_pause_menu_events(
                 event,
                 screen_w,
                 screen_h,
-                Some(&mut host.sound),
+                Some(&mut host.audio.sound),
                 backend,
                 Some(sample_loader),
             ) {
@@ -1117,21 +1115,16 @@ pub(super) async fn handle_pause_menu_events(
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
                 if let Some(resources) = menu_resources.as_ref() {
-                    // Snapshot profile-backed settings, release the global
-                    // manager lock, then enter the async modal. A nested UI
-                    // path may need the same manager while this task yields.
-                    let profile_settings = {
-                        let guard = PlayerProfileManager::global();
-                        guard.as_ref().and_then(|mgr| {
-                            mgr.get_active().map(|profile| {
-                                (
-                                    profile.id,
-                                    profile.graphic_config.clone(),
-                                    profile.sound_config,
-                                )
-                            })
-                        })
-                    };
+                    // Snapshot profile-backed settings before entering the
+                    // async modal. No ApplicationContext lock crosses await.
+                    let profile = host
+                        .application_context
+                        .active_profile_snapshot()
+                        .unwrap_or_else(|error| {
+                            panic!("in-game Options requires an active profile: {error}")
+                        });
+                    let profile_settings =
+                        Some((profile.id, profile.graphic_config, profile.sound_config));
 
                     if let Some((profile_id, mut graphic_config, mut sound_config)) =
                         profile_settings
@@ -1145,9 +1138,9 @@ pub(super) async fn handle_pause_menu_events(
                             cursor,
                             &mut graphic_config,
                             &mut sound_config,
-                            &mut host.key_config,
-                            &mut host.custom_key_config,
-                            Some(&mut host.sound),
+                            &mut host.frontend.key_config,
+                            &mut host.frontend.custom_key_config,
+                            Some(&mut host.audio.sound),
                             audio_backend
                                 .as_mut()
                                 .map(|b| b as &mut dyn crate::sound::AudioBackend),
@@ -1159,27 +1152,24 @@ pub(super) async fn handle_pause_menu_events(
                         // profile we opened with. Do not silently redirect
                         // changes if active-profile state changed reentrantly.
                         if options_outcome.changed {
-                            let mut guard = PlayerProfileManager::global();
-                            match guard.as_mut().and_then(|mgr| {
-                                mgr.profiles
-                                    .iter_mut()
-                                    .find(|profile| profile.id == profile_id)
-                            }) {
-                                Some(profile) => {
+                            host.application_context
+                                .with_player_profiles_mut(|mgr| {
+                                    let profile = mgr
+                                        .profiles
+                                        .iter_mut()
+                                        .find(|profile| profile.id == profile_id)
+                                        .expect("Options profile disappeared while modal was open");
                                     profile.graphic_config = graphic_config.clone();
                                     profile.sound_config = sound_config;
-                                    if let Some(mgr) = guard.as_ref()
-                                        && let Err(err) = mgr.save()
-                                    {
+                                    if let Err(err) = mgr.save() {
                                         tracing::error!(
                                             "Options: failed to save profile manager: {err:#}"
                                         );
                                     }
-                                }
-                                None => tracing::error!(
-                                    "Options: profile {profile_id} disappeared while modal was open; changes were not persisted"
-                                ),
-                            }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options profile update failed: {error}")
+                                });
                         }
 
                         let new_resolution = options_outcome
@@ -1222,21 +1212,20 @@ pub(super) async fn handle_pause_menu_events(
                         engine.change_detail_level();
 
                         if options_outcome.key_config_changed {
-                            let mut store_guard = KeyConfigStore::global();
-                            if let Some(store) = store_guard.as_mut() {
-                                let entry = store.entry_or_default(profile_id);
-                                entry.active = host.key_config.clone();
-                                entry.custom = host.custom_key_config.clone();
-                                if let Err(err) = store.save() {
-                                    tracing::error!(
-                                        "Options: failed to save key configs after change: {err:#}"
-                                    );
-                                }
-                            } else {
-                                tracing::error!(
-                                    "Options: key-config store is unavailable; bindings were not persisted"
-                                );
-                            }
+                            host.application_context
+                                .with_key_configs_mut(|store| {
+                                    let entry = store.entry_or_default(profile_id);
+                                    entry.active = host.key_config.clone();
+                                    entry.custom = host.custom_key_config.clone();
+                                    if let Err(err) = store.save() {
+                                        tracing::error!(
+                                            "Options: failed to save key configs after change: {err:#}"
+                                        );
+                                    }
+                                })
+                                .unwrap_or_else(|error| {
+                                    panic!("Options key-config update failed: {error}")
+                                });
                             input_translator.load_bindings_from_keyconfig(&host.key_config);
                             host.minimap_fast_key =
                                 input_translator.get_binding(GameKey::DisplayMap);
@@ -1273,7 +1262,7 @@ pub(super) async fn handle_pause_menu_events(
                     mission_id,
                     Some(&assets.profile_manager),
                     mode,
-                    Some(&mut host.sound),
+                    Some(&mut host.audio.sound),
                     audio_backend
                         .as_mut()
                         .map(|b| b as &mut dyn crate::sound::AudioBackend),
@@ -1358,7 +1347,7 @@ pub(super) fn dispatch_corner_button_left_click(
     assets: &engine_api::LevelAssets,
     frame_cmds: &mut FrameCommands,
 ) {
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     match btn {
         CornerButton::Clock => {
             if manager.engine.seat_selection(local_seat).is_empty() {

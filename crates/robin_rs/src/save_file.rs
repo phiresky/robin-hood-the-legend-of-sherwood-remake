@@ -40,7 +40,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::game::GamePersistentState;
-use crate::player_profile::PlayerProfileManager;
 use crate::sound::SoundManager;
 
 // ─── Thumbnail ───────────────────────────────────────────────────────
@@ -456,7 +455,7 @@ impl GameSaveFile {
         Self {
             header: SaveHeader::new(mission_id, display_text),
             engine: engine.clone(),
-            sound: host.sound.clone(),
+            sound: host.audio.sound.clone(),
             game_persistent: None,
         }
     }
@@ -502,10 +501,10 @@ impl GameSaveFile {
         assets: &LevelAssets,
     ) -> std::result::Result<(), SnapshotRestoreError> {
         engine.try_restore(&mut host.engine_display, self.engine, assets)?;
-        host.sound = self.sound;
+        host.audio.sound = self.sound;
         // Re-arm the sound engine and prime the next hourglass to
         // (re)load music + resolve pendings.
-        host.sound.after_load(&engine.sound_sim().sources);
+        host.audio.sound.after_load(&engine.sound_sim().sources);
         host.post_load_reset();
         Ok(())
     }
@@ -617,23 +616,6 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
     default_save_directory().join(profile_save_subdirectory(profile_id))
 }
 
-/// Save directory for the currently active profile in the global
-/// [`crate::player_profile::PlayerProfileManager`]. Panics if no active
-/// profile is set — matching the project rule of not silently falling
-/// back to placeholder data (see CLAUDE.md).
-pub fn save_directory_for_active_profile() -> PathBuf {
-    let guard = PlayerProfileManager::global();
-    let mgr = guard.as_ref().expect(
-        "save_directory_for_active_profile: global PlayerProfileManager not initialised — \
-             call init_global_player_profile_manager() before requesting a save directory",
-    );
-    let profile = mgr.get_active().expect(
-        "save_directory_for_active_profile: no active profile in the global \
-             PlayerProfileManager — main-menu select-player flow should have set one",
-    );
-    save_directory_for_profile(profile.id)
-}
-
 // ─── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -681,7 +663,7 @@ mod tests {
         let (mut engine, _assets) = fresh_engine();
         engine.test_set_frame_counter(12345);
         engine.test_set_mission_flags(false, false, true);
-        let host = Host::new(800.0, 600.0);
+        let host = Host::scratch(800.0, 600.0);
 
         let save = GameSaveFile::capture(&engine, &host, 7, "Test Save".into());
 
@@ -692,7 +674,7 @@ mod tests {
         assert_eq!(decoded.header.display_text, "Test Save");
 
         let (mut engine2, assets2) = fresh_engine();
-        let mut host2 = Host::new(800.0, 600.0);
+        let mut host2 = Host::scratch(800.0, 600.0);
         decoded
             .apply_to(&mut engine2, &mut host2, &assets2)
             .expect("apply decoded save");
@@ -707,7 +689,7 @@ mod tests {
         let path = dir.path().join("test_save.json");
 
         let (mut engine, _assets) = fresh_engine();
-        let host = Host::new(800.0, 600.0);
+        let host = Host::scratch(800.0, 600.0);
         engine.test_set_frame_counter(999);
         let save = GameSaveFile::capture(&engine, &host, 1, "Disk Save".into());
         save.write_to(&path).unwrap();
@@ -814,12 +796,12 @@ mod tests {
         // surfaces, reset per-frame host scratch.  Engine-side transient
         // clearing is covered by tests in the engine crate.
         let (engine, _assets) = fresh_engine();
-        let host = Host::new(800.0, 600.0);
+        let host = Host::scratch(800.0, 600.0);
 
         let save = GameSaveFile::capture(&engine, &host, 0, String::new());
 
         let (mut engine3, assets3) = fresh_engine();
-        let mut host2 = Host::new(800.0, 600.0);
+        let mut host2 = Host::scratch(800.0, 600.0);
         host2.input.multi_selection_active = true;
         host2.input.left_mouse_down = true;
         host2.valid_trajectory = true;
@@ -837,13 +819,13 @@ mod tests {
     fn failed_apply_preserves_live_engine_and_host_state() {
         let (mut saved_engine, _saved_assets) = fresh_engine();
         saved_engine.test_set_frame_counter(123);
-        let saved_host = Host::new(800.0, 600.0);
+        let saved_host = Host::scratch(800.0, 600.0);
         let save = GameSaveFile::capture(&saved_engine, &saved_host, 0, String::new());
 
         let (mut live_engine, mut assets) = fresh_engine();
         live_engine.test_set_frame_counter(999);
         assets.mobile_element_count = 1;
-        let mut live_host = Host::new(800.0, 600.0);
+        let mut live_host = Host::scratch(800.0, 600.0);
         live_host.input.left_mouse_down = true;
 
         let error = save

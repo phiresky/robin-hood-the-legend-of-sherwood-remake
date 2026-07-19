@@ -194,8 +194,10 @@ impl HeadlessMission {
             dev,
         } = world;
 
-        if host.pending_mission_state_popup {
-            host.pending_mission_state_popup = false;
+        if host
+            .effects
+            .take_signal(crate::host::HostSignal::MissionStatePopup)
+        {
             let kind = robin_engine::player_command::ModalKind::MissionState {
                 kind: robin_engine::player_command::MissionStateModalKind::LeaveMissionNow,
             };
@@ -206,19 +208,19 @@ impl HeadlessMission {
                 .push(PlayerCommand::ModalDismiss { kind, result });
             if result == robin_engine::player_command::DialogResult::Completed {
                 let command = PlayerCommand::QuitMissionRequested;
-                if let Some(net) = host.net.as_ref() {
+                if let Some(net) = host.transport.net.as_ref() {
                     net.send_input(command.clone());
                 } else {
                     manager.engine.apply_local_commands(
-                        &mut host.engine_display,
-                        &mut host.input,
+                        &mut host.frontend.engine_display,
+                        &mut host.frontend.input,
                         assets,
                         std::slice::from_ref(&command),
                     );
                 }
                 frame
                     .commands
-                    .push(PlayerInput::new(host.local_seat, command));
+                    .push(PlayerInput::new(host.transport.local_seat, command));
             }
         }
 

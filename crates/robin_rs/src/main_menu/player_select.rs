@@ -1,6 +1,6 @@
 //! Main-menu "Select Player" screen.
 //!
-//! Shows the global [`PlayerProfileManager`] roster, lets the player
+//! Shows the application-owned [`PlayerProfileManager`] roster, lets the player
 //! pick an entry to set as active, create a new profile (name +
 //! difficulty), delete, or rename via a small modal backed by the winit
 //! text-input pipeline (IME composition, dead keys, non-ASCII
@@ -10,6 +10,7 @@ use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
+use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
     draw_fallback_panel, draw_screen_background, enter_modal_gpu_phase, render_text_virt,
@@ -22,7 +23,7 @@ use crate::ingame_menu::resources::{
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
-use crate::player_profile::{DifficultyLevel, PlayerProfile, PlayerProfileManager};
+use crate::player_profile::{DifficultyLevel, PlayerProfile};
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
@@ -45,12 +46,13 @@ const ID_RENAME: u32 = 2;
 const ID_DELETE: u32 = 3;
 const ID_CLOSE: u32 = 4;
 
-/// Display the Select Player screen.  Mutates the global
-/// [`PlayerProfileManager`] when the player confirms a selection,
+/// Display the Select Player screen. Mutates the application-owned profile
+/// manager when the player confirms a selection,
 /// creates, or deletes a profile.  Returns once the player closes the
 /// dialog via Select/Escape — there's no outcome to carry back to
-/// the caller; the active profile lives on the global manager.
+/// the caller; the active profile lives on `application_context`.
 pub(crate) async fn show_select_player(
+    application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
@@ -100,7 +102,7 @@ pub(crate) async fn show_select_player(
 
     // Track the highlighted row locally; `active_index` on the manager
     // only changes when the player commits via Select or double-click.
-    let mut selected: Option<usize> = profiles_snapshot().and_then(|(_, active)| active);
+    let mut selected: Option<usize> = profiles_snapshot(application_context).1;
 
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
@@ -120,16 +122,7 @@ pub(crate) async fn show_select_player(
         // entries. The button frame itself stays alive across frames so
         // mouse-down state is still present when the matching mouse-up
         // arrives.
-        let (profiles, _active) = match profiles_snapshot() {
-            Some(snap) => snap,
-            None => {
-                // No global manager — there's nothing sensible to show.
-                tracing::warn!(
-                    "Select Player: global PlayerProfileManager not initialised; closing"
-                );
-                return;
-            }
-        };
+        let (profiles, _active) = profiles_snapshot(application_context);
         // Button enablement is purely a function of the profile count.
         // Selection state is enforced inside the handlers (see
         // `selected.is_some()` guards below) rather than at the
@@ -138,7 +131,9 @@ pub(crate) async fn show_select_player(
         let can_select = has_profile;
         let can_new = profiles.len() < MAX_PROFILES;
         let can_rename = has_profile;
-        let can_delete = has_profile;
+        // A completed application context must always have a final active
+        // profile before menus, saves, or sessions can continue.
+        let can_delete = can_delete_profile(profiles.len());
 
         set_button_enabled(&mut frame, ID_SELECT, can_select);
         set_button_enabled(&mut frame, ID_NEW, can_new);
@@ -225,7 +220,7 @@ pub(crate) async fn show_select_player(
                 ID_CLOSE => break,
                 ID_SELECT => {
                     if let Some(idx) = selected {
-                        commit_active(idx);
+                        commit_active(application_context, idx);
                     }
                     break;
                 }
@@ -235,7 +230,7 @@ pub(crate) async fn show_select_player(
                         event_pump,
                         renderer,
                         resources,
-                        default_new_player_name(),
+                        default_new_player_name(application_context),
                         cursor.as_mut().map(|c| c.reborrow()),
                     )
                     .await
@@ -253,7 +248,12 @@ pub(crate) async fn show_select_player(
                             renderer.screen_width() as u32,
                             renderer.screen_height() as u32,
                         );
-                        let idx = create_new_profile(final_name, difficulty, Some(screen_dims));
+                        let idx = create_new_profile(
+                            application_context,
+                            final_name,
+                            difficulty,
+                            Some(screen_dims),
+                        );
                         selected = idx;
                     }
                 }
@@ -273,7 +273,7 @@ pub(crate) async fn show_select_player(
                         )
                         .await
                     {
-                        rename_profile(idx, new_name);
+                        rename_profile(application_context, idx, new_name);
                     }
                 }
                 ID_DELETE => {
@@ -288,9 +288,9 @@ pub(crate) async fn show_select_player(
                         )
                         .await
                         {
-                            delete_profile(idx);
+                            delete_profile(application_context, idx);
                             // Clamp selection against the shrunken list.
-                            let new_len = profile_count();
+                            let new_len = profile_count(application_context);
                             selected = if new_len == 0 {
                                 None
                             } else {
@@ -371,15 +371,16 @@ pub(crate) async fn show_select_player(
     }
 }
 
-/// Take a cheap snapshot of the global profile manager.
+/// Take a cheap snapshot of the application-owned profile manager.
 ///
-/// Returns `(profiles, active_index)` cloned out of the global lock so
+/// Returns `(profiles, active_index)` cloned out of the context lock so
 /// the event loop doesn't hold it while rendering.
-fn profiles_snapshot() -> Option<(Vec<PlayerProfile>, Option<usize>)> {
-    let guard = PlayerProfileManager::global();
-    guard
-        .as_ref()
-        .map(|mgr| (mgr.profiles.clone(), mgr.active_index))
+fn profiles_snapshot(
+    application_context: &ApplicationContext,
+) -> (Vec<PlayerProfile>, Option<usize>) {
+    application_context
+        .with_player_profiles(|mgr| (mgr.profiles.clone(), mgr.active_index))
+        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
 }
 
 fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize> {
@@ -398,11 +399,14 @@ fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize>
     Some(row as usize)
 }
 
-fn profile_count() -> usize {
-    PlayerProfileManager::global()
-        .as_ref()
-        .map(|mgr| mgr.profile_count())
-        .unwrap_or(0)
+fn profile_count(application_context: &ApplicationContext) -> usize {
+    application_context
+        .with_player_profiles(|mgr| mgr.profile_count())
+        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
+}
+
+fn can_delete_profile(profile_count: usize) -> bool {
+    profile_count > 1
 }
 
 fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: bool) {
@@ -414,16 +418,27 @@ fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: boo
     }
 }
 
-fn commit_active(idx: usize) {
-    let mut guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_mut() else {
-        panic!("Select Player commit: global PlayerProfileManager missing")
-    };
-    if idx < mgr.profile_count() {
-        mgr.set_active(idx);
-        if let Err(err) = mgr.save() {
-            tracing::error!("Select Player: failed to persist active profile change: {err:#}");
-        }
+fn commit_active(application_context: &ApplicationContext, idx: usize) {
+    let profile_id = application_context
+        .with_player_profiles_mut(|mgr| {
+            if idx < mgr.profile_count() {
+                mgr.set_active(idx);
+                if let Err(err) = mgr.save() {
+                    tracing::error!(
+                        "Select Player: failed to persist active profile change: {err:#}"
+                    );
+                }
+                return Some(mgr.profiles[idx].id);
+            }
+            None
+        })
+        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"));
+    if let Some(profile_id) = profile_id {
+        application_context
+            .with_key_configs_mut(|store| {
+                store.entry_or_default(profile_id);
+            })
+            .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
     }
 }
 
@@ -432,50 +447,53 @@ fn commit_active(idx: usize) {
 /// so the user can accept it unchanged, and so the OK button is
 /// immediately usable rather than relying on the empty→Anonymous
 /// fallback.
-fn default_new_player_name() -> String {
-    let guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_ref() else {
-        return "Player".to_string();
-    };
-    if !mgr.has_profile("Player") {
-        return "Player".to_string();
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("Player {n}");
-        if !mgr.has_profile(&candidate) {
-            return candidate;
-        }
-        n += 1;
-    }
+fn default_new_player_name(application_context: &ApplicationContext) -> String {
+    application_context
+        .with_player_profiles(|mgr| {
+            if !mgr.has_profile("Player") {
+                return "Player".to_string();
+            }
+            let mut n = 2;
+            loop {
+                let candidate = format!("Player {n}");
+                if !mgr.has_profile(&candidate) {
+                    return candidate;
+                }
+                n += 1;
+            }
+        })
+        .unwrap_or_else(|error| panic!("Select Player name generation failed: {error}"))
 }
 
 fn create_new_profile(
+    application_context: &ApplicationContext,
     name: String,
     difficulty: DifficultyLevel,
     screen_dims: Option<(u32, u32)>,
 ) -> Option<usize> {
-    let mut guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_mut() else {
-        panic!("Select Player create: global PlayerProfileManager missing")
-    };
     // Creation only inserts; it does not promote the new profile to
     // active and does not save.  The user must press Select (or
     // double-click) to commit and persist.  Pass the live window
     // dimensions so the new profile inherits them when no other profile
     // is active (the "screen open" arm of profile creation).
-    let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
+    let (idx, profile_id) = application_context
+        .with_player_profiles_mut(|mgr| {
+            let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
+            (idx, mgr.profiles[idx].id)
+        })
+        .unwrap_or_else(|error| panic!("Select Player create failed: {error}"));
+    application_context
+        .with_key_configs_mut(|store| {
+            store.configs.insert(
+                profile_id,
+                crate::key_config_store::ProfileKeyConfig::fresh(),
+            );
+        })
+        .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
     Some(idx)
 }
 
-fn rename_profile(idx: usize, new_name: String) {
-    let mut guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_mut() else {
-        panic!("Select Player rename: global PlayerProfileManager missing")
-    };
-    if idx >= mgr.profile_count() {
-        return;
-    }
+fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name: String) {
     // Trim the entered text, fall back to "Robin" when empty, then
     // unconditionally promote the renamed profile to active and save.
     // The "last-edited profile wins" side effect is part of the
@@ -483,31 +501,56 @@ fn rename_profile(idx: usize, new_name: String) {
     // the active slot.
     let trimmed = new_name.trim();
     let final_name = if trimmed.is_empty() { "Robin" } else { trimmed };
-    mgr.profiles[idx].name = final_name.to_string();
-    mgr.set_active(idx);
-    if let Err(err) = mgr.save() {
-        tracing::error!("Select Player: failed to persist rename: {err:#}");
-    }
+    application_context
+        .with_player_profiles_mut(|mgr| {
+            if idx >= mgr.profile_count() {
+                return;
+            }
+            mgr.profiles[idx].name = final_name.to_string();
+            mgr.set_active(idx);
+            if let Err(err) = mgr.save() {
+                tracing::error!("Select Player: failed to persist rename: {err:#}");
+            }
+        })
+        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"));
 }
 
-fn delete_profile(idx: usize) {
-    let mut guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_mut() else {
-        panic!("Select Player delete: global PlayerProfileManager missing")
-    };
-    if idx >= mgr.profile_count() {
-        return;
-    }
+fn delete_profile(application_context: &ApplicationContext, idx: usize) {
     // `delete_profile` itself wipes `<save_directory>/Profile_NNN`.
-    mgr.delete_profile(idx);
-    // Unconditionally promote index 0 to active whenever any profile
-    // remains — regardless of whether the deleted one was the active
-    // one.
-    if mgr.profile_count() > 0 {
-        mgr.set_active(0);
-    }
-    if let Err(err) = mgr.save() {
-        tracing::error!("Select Player: failed to persist deletion: {err:#}");
+    let deleted_profile_id = application_context
+        .with_player_profiles_mut(|mgr| {
+            if idx >= mgr.profile_count() {
+                return None;
+            }
+            if mgr.profile_count() == 1 {
+                tracing::warn!(
+                    "Select Player: refusing to delete the final profile; create a replacement first"
+                );
+                return None;
+            }
+            let profile_id = mgr.profiles[idx].id;
+            mgr.delete_profile(idx);
+            // Unconditionally promote index 0 to active whenever any profile
+            // remains — regardless of whether the deleted one was the active
+            // one.
+            if mgr.profile_count() > 0 {
+                mgr.set_active(0);
+            }
+            if let Err(err) = mgr.save() {
+                tracing::error!("Select Player: failed to persist deletion: {err:#}");
+            }
+            Some(profile_id)
+        })
+        .unwrap_or_else(|error| panic!("Select Player delete failed: {error}"));
+    if let Some(profile_id) = deleted_profile_id {
+        application_context
+            .with_key_configs_mut(|store| {
+                store.configs.remove(&profile_id);
+                if let Err(err) = store.save() {
+                    tracing::error!("Select Player: failed to persist deleted key config: {err:#}");
+                }
+            })
+            .unwrap_or_else(|error| panic!("Select Player key deletion failed: {error}"));
     }
 }
 
@@ -1039,4 +1082,40 @@ async fn run_name_prompt(
     };
     crate::window::stop_text_input();
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::key_config_store::KeyConfigStore;
+    use robin_engine::engine::GlobalOptions;
+    use robin_engine::player_profile::PlayerProfileManager;
+
+    #[test]
+    fn deleting_the_final_profile_is_refused() {
+        assert!(!can_delete_profile(1));
+        assert!(can_delete_profile(2));
+
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let index = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        profiles.set_active(index);
+
+        let mut keys = KeyConfigStore::new(root_path);
+        keys.entry_or_default(profiles.profiles[index].id);
+        let context =
+            ApplicationContext::complete(GlobalOptions::default(), profiles, keys, None).unwrap();
+
+        delete_profile(&context, 0);
+
+        context
+            .with_player_profiles(|profiles| {
+                assert_eq!(profiles.profile_count(), 1);
+                assert_eq!(profiles.active_index, Some(0));
+                assert_eq!(profiles.get_active().unwrap().name, "Robin");
+            })
+            .unwrap();
+        assert!(context.active_key_configs().is_ok());
+    }
 }

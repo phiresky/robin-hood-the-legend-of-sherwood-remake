@@ -8,20 +8,19 @@
 
 use crate::audio_backend::{self, KiraAudioBackend};
 use crate::graphic_config::GraphicConfig;
+use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, show_options};
-use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
-use crate::player_profile::PlayerProfileManager;
+use crate::key_config_store::ProfileKeyConfig;
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
-use crate::sound_config::SoundConfig;
 use robin_engine::engine as engine_api;
 
 /// Show the options dialog over the main-menu background.
 ///
 /// Edits the active profile's configs in place and persists the manager
 /// so changes survive across runs.  Key bindings are routed through the
-/// global [`KeyConfigStore`] so the active and custom key-config slots
+/// application-owned key-config store so the active and custom key-config slots
 /// persist across sessions.
 ///
 /// Spins up a short-lived [`KiraAudioBackend`] + [`SoundManager`] +
@@ -31,55 +30,29 @@ use robin_engine::engine as engine_api;
 /// Options modal is open — `run_session` creates its own backend when
 /// a mission starts, so there's no conflict.
 pub(crate) async fn show_main_menu_options(
+    application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
 ) {
-    let (active_profile_id, mut graphic, mut sound_cfg, mut key_cfg) = {
-        let profile_guard = PlayerProfileManager::global();
-        let store_guard = KeyConfigStore::global();
-        match (
-            profile_guard.as_ref().and_then(|mgr| mgr.get_active()),
-            store_guard.as_ref(),
-        ) {
-            (Some(profile), Some(store)) => {
-                let key_cfg = store
-                    .get(profile.id)
-                    .cloned()
-                    .unwrap_or_else(ProfileKeyConfig::fresh);
-                (
-                    Some(profile.id),
-                    profile.graphic_config.clone(),
-                    profile.sound_config,
-                    key_cfg,
-                )
-            }
-            _ => {
-                tracing::warn!(
-                    "Main menu Options: missing active profile or key-config store — editing temporary configs only"
-                );
-                (
-                    None,
-                    GraphicConfig::default(),
-                    SoundConfig::default(),
-                    ProfileKeyConfig::fresh(),
-                )
-            }
-        }
-    };
+    let profile = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("Main menu Options requires an active profile: {error}"));
+    let active_profile_id = profile.id;
+    let mut graphic = profile.graphic_config;
+    let mut sound_cfg = profile.sound_config;
+    let (active, custom) = application_context
+        .active_key_configs()
+        .unwrap_or_else(|error| panic!("Main menu Options requires active key configs: {error}"));
+    let mut key_cfg = ProfileKeyConfig { active, custom };
 
     // Short-lived audio setup so slider ticks play at the main menu.
     // Falls back silently (`None`) on any failure — the menu still
     // works without sound, matching what happens when the system has
     // no audio device.
     //
-    // Sound/music directory defaults (`Data/Sounds` / `Data/Musics`)
-    // match `engine::GlobalOptions::default()`.  The main menu runs
-    // before we have a `Game` instance that could carry user-tweaked
-    // paths through `-SOUNDDIR` / `-MUSICDIR` flags, so this is best
-    // effort — command-line overrides only affect session-time audio.
-    let sound_dir = std::path::PathBuf::from("Data/Sounds");
+    let sound_dir = std::path::PathBuf::from(&application_context.options().sound_directory);
     let mut audio_backend = KiraAudioBackend::new(&sound_dir, crate::sound::NUM_CHANNELS).ok();
     let mut sound_mgr = SoundManager::default();
     if let Some(ref mut backend) = audio_backend
@@ -146,28 +119,31 @@ pub(crate) async fn show_main_menu_options(
     }
     renderer.set_shader_preset(graphic.shader_preset.clone());
 
-    if let Some(profile_id) = active_profile_id {
-        if outcome.changed {
-            let mut profile_guard = PlayerProfileManager::global();
-            if let Some(mgr) = profile_guard.as_mut()
-                && let Some(profile) = mgr.profiles.iter_mut().find(|p| p.id == profile_id)
-            {
+    if outcome.changed {
+        application_context
+            .with_player_profiles_mut(|mgr| {
+                let profile = mgr
+                    .profiles
+                    .iter_mut()
+                    .find(|profile| profile.id == active_profile_id)
+                    .expect("active profile disappeared while Options was open");
                 profile.graphic_config = graphic;
                 profile.sound_config = sound_cfg;
                 if let Err(err) = mgr.save() {
                     tracing::error!("Main menu Options: failed to save profile manager: {err:#}");
                 }
-            }
-        }
-        if outcome.key_config_changed {
-            let mut store_guard = KeyConfigStore::global();
-            if let Some(store) = store_guard.as_mut() {
-                *store.entry_or_default(profile_id) = key_cfg;
+            })
+            .unwrap_or_else(|error| panic!("Main menu Options profile update failed: {error}"));
+    }
+    if outcome.key_config_changed {
+        application_context
+            .with_key_configs_mut(|store| {
+                *store.entry_or_default(active_profile_id) = key_cfg;
                 if let Err(err) = store.save() {
                     tracing::error!("Main menu Options: failed to save key configs: {err:#}");
                 }
-            }
-        }
+            })
+            .unwrap_or_else(|error| panic!("Main menu Options key update failed: {error}"));
     }
     // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.

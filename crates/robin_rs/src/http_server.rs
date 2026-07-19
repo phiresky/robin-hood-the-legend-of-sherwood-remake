@@ -786,10 +786,10 @@ pub fn drain_global(
                 let reply = dispatch_in_engine(
                     other,
                     engine,
-                    &mut host.engine_display,
+                    &mut host.frontend.engine_display,
                     assets,
-                    &mut host.input,
-                    &mut host.selected_view_element,
+                    &mut host.frontend.input,
+                    &mut host.frontend.selected_view_element,
                     net,
                 );
                 req.response_tx.send(reply);
@@ -899,8 +899,11 @@ fn snapshot_host_debug(
     host: &crate::Host,
     assets: &LevelAssets,
 ) -> serde_json::Value {
-    let selected_action = engine.selected_action_for_seat(host.local_seat);
-    let selected_pc = engine.seat_selection(host.local_seat).first().copied();
+    let selected_action = engine.selected_action_for_seat(host.transport.local_seat);
+    let selected_pc = engine
+        .seat_selection(host.transport.local_seat)
+        .first()
+        .copied();
     let selected_pc_state = selected_pc.and_then(|id| {
         engine.get_entity(id).map(|entity| {
             serde_json::json!({
@@ -938,7 +941,7 @@ fn snapshot_host_debug(
     serde_json::json!({
         "frame": engine.frame_counter(),
         "selected_action": selected_action,
-        "selection": engine.seat_selection(host.local_seat),
+        "selection": engine.seat_selection(host.transport.local_seat),
         "selected_pc": selected_pc_state,
         "valid_trajectory": host.valid_trajectory,
         "trajectory_preview_points_len": host.trajectory_preview_points.len(),

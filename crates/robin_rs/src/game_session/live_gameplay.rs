@@ -146,7 +146,7 @@ fn dispatch_gameplay_action(
             );
         }
         GameAction::SelectAction { index } => {
-            let selected = manager.engine.seat_selection(host.local_seat);
+            let selected = manager.engine.seat_selection(host.transport.local_seat);
             if selected.len() == 1 {
                 let command = PlayerCommand::SelectAction {
                     pc_id: selected[0],
@@ -240,7 +240,11 @@ fn dispatch_gameplay_action(
         GameAction::Teleport => {
             let mouse_screen = input.threaded.position();
             if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {
-                if !manager.engine.seat_selection(host.local_seat).is_empty() {
+                if !manager
+                    .engine
+                    .seat_selection(host.transport.local_seat)
+                    .is_empty()
+                {
                     let accessible = manager
                         .engine
                         .fast_grid()
@@ -370,7 +374,7 @@ pub(super) async fn drive_live_gameplay_input(
         HandlerAction::Exit(code) => {
             execute_app_effects(
                 &mut context.callbacks.app_effects,
-                &mut context.host.sound,
+                &mut context.host.audio.sound,
                 &mut context.input.threaded,
                 context
                     .audio
