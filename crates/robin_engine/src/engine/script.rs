@@ -1369,12 +1369,104 @@ impl EngineInner {
 
     // ─── Per-actor script event dispatch ───────────────────────────
 
-    /// Check all scripted actors for animation changes and dispatch
-    /// `ActionChange(newAction, oldAction)` to their per-actor scripts.
-    ///
-    /// Calls `ActionChange` when the current animation differs from
-    /// `old_action`.  Called once per frame from `perform_hourglass`,
-    /// after all animation updates.
+    /// Check one actor for an animation change and synchronously dispatch
+    /// `ActionChange(newAction, oldAction)` to its per-actor script.
+    fn dispatch_actor_action_change_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: crate::element::EntityId,
+    ) {
+        let (new_action, old_action, handle) = {
+            let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "ActionChange creation slot {} lost typed entity {entity_id:?} before dispatch",
+                    entity_id.index()
+                )
+            });
+            let Some(actor) = entity.actor_data() else {
+                return;
+            };
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
+            if !self
+                .scripts
+                .mission
+                .as_ref()
+                .is_some_and(|script| script.has_script_vm(ScriptVmKey::Actor(handle)))
+            {
+                return;
+            }
+
+            let new_action = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd);
+            (new_action, actor.old_action, handle)
+        };
+
+        if new_action == old_action {
+            return;
+        }
+
+        if let Err(error) = self.call_script_vm(
+            sim,
+            assets,
+            ScriptVmKey::Actor(handle),
+            "ActionChange",
+            &[new_action as i32, old_action as i32],
+            crate::natives::ScriptCallFrame::actor(handle),
+        ) {
+            tracing::warn!("ActionChange (handle {handle}): {error}");
+        }
+
+        // The callback may synchronously replace this actor's current order.
+        // Match RHElementActor::Hourglass by rereading GetAnimation only after
+        // ActionChange returns, then retain that live value for the next pass.
+        self.world
+            .entities
+            .get(entity_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ActionChange callback for handle {handle} removed or replaced typed entity \
+                     {entity_id:?} at creation slot {}",
+                    entity_id.index()
+                )
+            })
+            .actor_data()
+            .unwrap_or_else(|| {
+                panic!(
+                    "ActionChange callback for handle {handle} changed typed actor \
+                     {entity_id:?} into a non-actor"
+                )
+            });
+        let live_action = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!(
+                "validated ActionChange actor {entity_id:?} for handle {handle} vanished before \
+                 old_action retention at creation slot {}",
+                entity_id.index()
+            )
+        });
+        entity
+            .actor_data_mut()
+            .unwrap_or_else(|| {
+                panic!(
+                    "validated ActionChange actor {entity_id:?} for handle {handle} lost ActorData \
+                     before old_action retention"
+                )
+            })
+            .old_action = live_action;
+    }
+
+    /// Walk the live legacy element array in creation order and dispatch each
+    /// scripted actor's animation change before advancing to the next slot.
     pub(crate) fn dispatch_actor_action_changes(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1384,66 +1476,14 @@ impl EngineInner {
             return;
         }
 
-        // Phase 1: Collect actors whose animation changed.
-        // Current animation = front order of the actor's current
-        // in-progress sequence element.
-        let mut changes = Vec::new();
-        for (entity_id, entity) in self.world.entities.actors() {
-            let Some(actor) = entity.actor_data() else {
-                continue;
-            };
-            if actor.script_class.is_empty() {
-                continue;
+        // TODO(original-parity): this coordinator remains after batched
+        // animation, not yet at the exact per-actor base-Hourglass position.
+        let mut slot = 0;
+        while slot < self.world.entities.len() {
+            if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
+                self.dispatch_actor_action_change_for(sim, assets, entity_id);
             }
-
-            let current_anim = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(entity_id)
-                .map(|(_, _, o)| o.order_type)
-                .unwrap_or(crate::order::OrderType::WaitingUpright);
-
-            if current_anim != actor.old_action {
-                changes.push((entity_id, current_anim, actor.old_action));
-            }
-        }
-        // Apply old_action updates in a second pass (the peek loop
-        // above only reads self.world.entities to avoid conflicting with the
-        // sequence_manager borrow).
-        for &(entity_id, new_anim, _) in &changes {
-            if let Some(entity) = self.world.entities.get_mut(entity_id)
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                actor.old_action = new_anim;
-            }
-        }
-        let changes: Vec<(i32, i32, i32)> = changes
-            .into_iter()
-            .map(|(entity_id, new_anim, old_anim)| {
-                (
-                    crate::natives::ScriptHandleCodec::actor_handle(entity_id),
-                    new_anim as i32,
-                    old_anim as i32,
-                )
-            })
-            .collect();
-
-        if changes.is_empty() {
-            return;
-        }
-
-        // Phase 2: Dispatch to scripts in collection order.
-        for (handle, new_anim, old_anim) in &changes {
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Actor(*handle),
-                "ActionChange",
-                &[*new_anim, *old_anim],
-                crate::natives::ScriptCallFrame::actor(*handle),
-            ) {
-                tracing::warn!("ActionChange (handle {handle}): {error}");
-            }
+            slot += 1;
         }
     }
 

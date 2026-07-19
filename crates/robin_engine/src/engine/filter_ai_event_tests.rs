@@ -1394,3 +1394,328 @@ fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
 
     assert!(error.contains("required VM is not bound"));
 }
+
+// ───────── Creation-ordered ActionChange dispatch ─────────
+
+fn action_change_class(class_name: &str, temporary_count: u16, body: Vec<Quad>) -> ClassEntry {
+    let mut quads = vec![q_begin_function(0, temporary_count)];
+    quads.extend(body);
+    quads.extend([q_return(), q_end_function()]);
+    ClassEntry {
+        source_file: "action_change_test.scs".into(),
+        class_name: class_name.into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![Function {
+            name: "ActionChange".into(),
+            address: 0,
+            num_parameters: 2,
+            size_of_return_value: 0,
+            size_of_parameters: 8,
+            size_of_volatile: 0,
+            size_of_temporary: i32::from(temporary_count) * 4,
+        }],
+        quads,
+    }
+}
+
+fn action_change_record_body(actor_handle: i32) -> Vec<Quad> {
+    vec![
+        q_aff1_get_param(TMP0, 0),
+        q_aff1_get_param(TMP1, 4),
+        q_aff0_iconstant(TMP2, actor_handle),
+        q_aff0_iconstant(TMP3, 0),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_param(TMP0),
+        q_native_call(crate::natives::NativeFn::SetCustomNPCValue as u32),
+        q_aff0_iconstant(TMP3, 1),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::SetCustomNPCValue as u32),
+    ]
+}
+
+fn build_action_change_scb(target_handle: i32, observer_handle: i32) -> ScbFile {
+    let mut self_mutator = action_change_record_body(observer_handle);
+    self_mutator.extend([
+        q_aff0_iconstant(TMP3, 10),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_call(crate::natives::NativeFn::SetActorPosture as u32),
+    ]);
+
+    ScbFile {
+        version: crate::scb::SCB_VERSION,
+        classes: vec![
+            ClassEntry {
+                source_file: "action_change_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: vec![],
+                functions: vec![],
+                quads: vec![],
+            },
+            action_change_class(
+                "PostureMutator",
+                2,
+                vec![
+                    q_aff0_iconstant(TMP0, target_handle),
+                    q_aff0_iconstant(TMP1, 10),
+                    q_native_param(TMP0),
+                    q_native_param(TMP1),
+                    q_native_call(crate::natives::NativeFn::SetActorPosture as u32),
+                ],
+            ),
+            action_change_class(
+                "ActionObserver",
+                4,
+                action_change_record_body(observer_handle),
+            ),
+            action_change_class("SelfPostureMutator", 4, self_mutator),
+        ],
+    }
+}
+
+fn install_test_action(
+    engine: &mut EngineInner,
+    actor: EntityId,
+    action: crate::order::OrderType,
+    old_action: crate::order::OrderType,
+) {
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .expect("action-change fixture actor exists")
+        .actor_data_mut()
+        .expect("action-change fixture entity is an actor")
+        .old_action = old_action;
+    let mut element =
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(actor));
+    element.priority = crate::sequence::SequencePriority::Wait;
+    element
+        .orders
+        .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions()
+            .len(),
+        1,
+        "the fixture consumes the synthetic wait element's initial Instruct"
+    );
+}
+
+fn action_change_ordering_engine(
+    mutator_before_observer: bool,
+) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+
+    let (first_class, second_class) = if mutator_before_observer {
+        ("PostureMutator", "ActionObserver")
+    } else {
+        ("ActionObserver", "PostureMutator")
+    };
+    let first = engine.add_entity(make_scripted_soldier(first_class));
+    let second = engine.add_entity(make_scripted_soldier(second_class));
+    let (mutator, observer) = if mutator_before_observer {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let mutator_handle = crate::natives::ScriptHandleCodec::actor_handle(mutator);
+    let observer_handle = crate::natives::ScriptHandleCodec::actor_handle(observer);
+
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(build_action_change_scb(observer_handle, observer_handle))
+            .expect("action-change SCB builds"),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |script, domains, capabilities| {
+                assert!(
+                    script.bind_actor(mutator_handle, "PostureMutator", domains, capabilities,)
+                );
+                assert!(script.bind_actor(
+                    observer_handle,
+                    "ActionObserver",
+                    domains,
+                    capabilities,
+                ));
+            },
+        )
+        .expect("action-change mission remains installed");
+
+    install_test_action(
+        &mut engine,
+        mutator,
+        crate::order::OrderType::RunningUpright,
+        crate::order::OrderType::WaitingUpright,
+    );
+    install_test_action(
+        &mut engine,
+        observer,
+        crate::order::OrderType::WalkingUpright,
+        crate::order::OrderType::WaitingUpright,
+    );
+    (engine, assets, mutator, observer)
+}
+
+fn observed_action_args(engine: &EngineInner, actor: EntityId) -> (i32, i32) {
+    let values = &engine
+        .world
+        .entities
+        .get(actor)
+        .expect("observed action actor remains installed")
+        .npc_data()
+        .expect("observed action actor remains an NPC")
+        .custom_values;
+    (values[0], values[1])
+}
+
+#[test]
+fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(build_action_change_scb(handle, handle))
+            .expect("unbound ActionChange SCB builds"),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    install_test_action(
+        &mut engine,
+        actor,
+        crate::order::OrderType::WalkingUpright,
+        crate::order::OrderType::WaitingUpright,
+    );
+
+    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+
+    let actor_data = engine
+        .world
+        .entities
+        .get(actor)
+        .expect("unbound action-change actor remains installed")
+        .actor_data()
+        .expect("unbound action-change actor remains typed");
+    assert_eq!(
+        actor_data.old_action,
+        crate::order::OrderType::WaitingUpright,
+        "a class name without an instantiated actor VM is not scripted and must not consume the transition"
+    );
+    assert_eq!(
+        observed_action_args(&engine, actor),
+        (0, 0),
+        "the unbound actor callback must not execute"
+    );
+}
+
+#[test]
+fn action_change_earlier_callback_changes_later_actor_snapshot() {
+    let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(true);
+
+    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        observed_action_args(&engine, observer),
+        (
+            crate::order::OrderType::WaitingCrouched as i32,
+            crate::order::OrderType::WaitingUpright as i32,
+        ),
+        "the later actor must snapshot the animation installed by the earlier callback"
+    );
+}
+
+#[test]
+fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
+    let (mut engine, assets, _mutator, observer) = action_change_ordering_engine(false);
+    let sim = crate::sim_rng::test_context();
+
+    engine.dispatch_actor_action_changes(&sim, &assets);
+    assert_eq!(
+        observed_action_args(&engine, observer),
+        (
+            crate::order::OrderType::WalkingUpright as i32,
+            crate::order::OrderType::WaitingUpright as i32,
+        ),
+        "an already visited actor keeps its pre-mutation callback arguments"
+    );
+
+    engine.dispatch_actor_action_changes(&sim, &assets);
+    assert_eq!(
+        observed_action_args(&engine, observer),
+        (
+            crate::order::OrderType::WaitingCrouched as i32,
+            crate::order::OrderType::WalkingUpright as i32,
+        ),
+        "the later mutation must become the visited actor's next-pass transition"
+    );
+}
+
+#[test]
+fn action_change_self_mutation_stores_live_post_callback_animation() {
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let actor = engine.add_entity(make_scripted_soldier("SelfPostureMutator"));
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(build_action_change_scb(handle, handle))
+            .expect("self-mutation ActionChange SCB builds"),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |script, domains, capabilities| {
+                assert!(script.bind_actor(handle, "SelfPostureMutator", domains, capabilities,));
+            },
+        )
+        .expect("self-mutation mission remains installed");
+    install_test_action(
+        &mut engine,
+        actor,
+        crate::order::OrderType::WalkingUpright,
+        crate::order::OrderType::WaitingUpright,
+    );
+
+    engine.dispatch_actor_action_changes(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        observed_action_args(&engine, actor),
+        (
+            crate::order::OrderType::WalkingUpright as i32,
+            crate::order::OrderType::WaitingUpright as i32,
+        ),
+        "callback arguments must remain the pre-callback animation snapshot"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .expect("self-mutating actor remains installed")
+            .actor_data()
+            .expect("self-mutating actor remains typed")
+            .old_action,
+        crate::order::OrderType::WaitingCrouched,
+        "old_action must retain the post-callback live animation"
+    );
+}
