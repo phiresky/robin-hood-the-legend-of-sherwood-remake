@@ -1313,7 +1313,7 @@ pub(super) fn load_level_and_sprite_bank(
             )
         })
         .collect();
-    assets.mission_script_programs = std::sync::Arc::new(script_programs);
+    assets.scripts.mission_programs = std::sync::Arc::new(script_programs);
 
     // Initialize Game's per-mission state from the campaign before we
     // hand it off to the engine.

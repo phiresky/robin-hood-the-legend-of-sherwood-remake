@@ -717,24 +717,12 @@ pub struct LevelAssets {
     /// this to its frame-holder signature after the sprite bank is
     /// loaded — engine code reads it during sprite-script lookups.
     pub bank_signature: u32,
-    /// Pre-decoded immutable script bytecode, keyed by mission base
-    /// filename. This is level asset data; engine snapshots serialize
-    /// the mutable VM/static state and reattach this after decode.
-    pub mission_script_programs: std::sync::Arc<
-        std::collections::BTreeMap<String, std::sync::Arc<crate::script_manager::ScriptProgram>>,
-    >,
-    /// Mission script identity selected during level construction. Snapshot
-    /// attachment validates this exact name instead of inferring identity from
-    /// whichever programs happen to be present in the asset cache.
-    pub mission_script_name: Option<String>,
-    /// Number of level-authored mobile elements. Their runtime state is
-    /// serialized, but dropping or inventing a whole mobile in a decoded
-    /// snapshot is incompatible with the loaded level.
-    pub mobile_element_count: usize,
-    /// Spellforge name tables used by Lua-only native lookups. Vanilla
-    /// missions leave this empty; like the other script bindings it is
-    /// reattached rather than serialized with simulation state.
-    pub script_names: std::sync::Arc<crate::natives::ScriptNameBindings>,
+    /// Immutable mission bytecode and script-indexed authored data.
+    pub scripts: LevelScriptAssets,
+    /// Immutable entity identities and construction-time script attachments.
+    pub entities: LevelEntityAssets,
+    // TODO(level-assets): migrate rendering, navigation, environment, and
+    // audio fields into equivalent domain groups in focused follow-up slices.
     /// Host-provided per-pixel sprite hit-test callback. `None` before
     /// the host wires it up; engine code that wants per-pixel sprite
     /// pick behaviour falls back to bbox-only when missing.
@@ -772,29 +760,6 @@ pub struct LevelAssets {
     /// `SoundCache::initialize_sound_source_cache`, immediately after
     /// the source manager is loaded.
     pub sound_source_required_ids: std::collections::BTreeSet<u32>,
-    /// Patch index → FX entity actor handle, or `None` when the patch
-    /// has no animation).  Populated during level load when each patch's
-    /// FX entity is spawned; borrowed by script natives through the
-    /// mission's transient `ScriptBindings`. Level-scoped static data — never
-    /// mutated after load.
-    pub patch_entity_handles: std::sync::Arc<Vec<Option<i32>>>,
-    /// Scroll entities in creation order.  Indexed by the `u16` scroll
-    /// IDs stored in each beggar's [`CivilianData::beggar_scroll_sets`]
-    /// — the `RevealScrolls` flow resolves an ID to its scroll entity
-    /// this way.  Populated in `spawn_scrolls` during level load;
-    /// level-scoped static data — never mutated after load.
-    ///
-    /// [`CivilianData::beggar_scroll_sets`]: crate::element::CivilianData::beggar_scroll_sets
-    pub scroll_entity_ids: Vec<super::EntityId>,
-    /// Soldier load-order index → EntityId.  Used by `InitializePatrol` to
-    /// resolve patrol member IDs (indices into the all-soldiers array) to
-    /// entity IDs. Populated during level load; never mutated after.
-    pub all_soldier_entity_ids: Vec<super::EntityId>,
-    /// Soldier load-order index → subordinate soldier load-order IDs.
-    /// Construction-only patrol data from the mission stream. `init_ai`
-    /// uses this to build each controller's runtime `theoretical_patrol`,
-    /// keeping raw mission IDs out of persistent AI state.
-    pub soldier_subordinate_ids: Vec<Vec<u16>>,
     /// Water/hole zones for projectile-splash detection. Rebuilt from
     /// the proto material chunk at level load. Used by the water/hole
     /// determination path.
@@ -815,36 +780,52 @@ pub struct LevelAssets {
     /// participates in rollback hashing; this immutable geometry does
     /// not.
     pub static_sight_obstacles: std::sync::Arc<Vec<crate::sight_obstacle::SightObstacle>>,
+}
 
-    // ── Script-indexed level data ─────────────────────────────────
-    // Level-load-only collections that scripts index by script handle.
-    // Borrowed by script natives through `ScriptBindings` and read by engine
-    // methods that resolve script location handles to world positions.
-    /// Number of script objects (locations) in the level.
-    pub script_location_count: usize,
-    /// Number of script-point locations (as opposed to sectors); points
-    /// come first in the `script_location_*` arrays. Handles in
-    /// `0..script_point_count` are points, the rest are sectors.
-    pub script_point_count: usize,
-    /// Positions of script locations (points then sectors), indexed by
-    /// script location index. Points use their (x, y);
-    /// sectors use their polygon centroid. Populated from `RawScriptObjects`.
-    pub script_location_positions: std::sync::Arc<Vec<(f32, f32)>>,
-    /// Layer (floor) for each script location, parallel to
-    /// `script_location_positions`. The layer is the destination
-    /// level the script's location resolves to.
-    pub script_location_layers: std::sync::Arc<Vec<u16>>,
-    /// Sector number for each script location, parallel to
-    /// `script_location_positions`.
-    pub script_location_sectors: std::sync::Arc<Vec<u16>>,
-    /// Number of buildings available to scripts.
-    pub script_building_count: usize,
-    /// Number of hiking paths available to scripts.
-    pub script_hiking_path_count: usize,
-    /// Indices into `fast_grid.level.sectors` for script zone sectors.
-    /// Used for per-frame occupant checking (enter/exit dispatch).
-    /// Populated from `RawScriptSector` data.
-    pub script_zone_grid_indices: std::sync::Arc<Vec<u32>>,
+/// Script-facing immutable level data, grouped separately from rendering and
+/// navigation assets. It is populated only while constructing a mission and is
+/// borrowed read-only after [`Engine`](super::Engine) creation.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelScriptAssets {
+    /// Pre-decoded bytecode in host load order, keyed by mission base name.
+    pub mission_programs: std::sync::Arc<
+        std::collections::BTreeMap<String, std::sync::Arc<crate::script_manager::ScriptProgram>>,
+    >,
+    /// Exact mission script identity selected during construction.
+    pub mission_name: Option<String>,
+    /// Spellforge Lua name tables. Vanilla missions leave these empty.
+    pub names: std::sync::Arc<crate::natives::ScriptNameBindings>,
+    /// Number of authored script locations.
+    pub location_count: usize,
+    /// Number of point locations at the front of the location arrays.
+    pub point_count: usize,
+    /// Positions of points, lines, then sectors in authored order.
+    pub location_positions: std::sync::Arc<Vec<(f32, f32)>>,
+    /// Layers parallel to `location_positions`.
+    pub location_layers: std::sync::Arc<Vec<u16>>,
+    /// Motion-sector numbers parallel to `location_positions`.
+    pub location_sectors: std::sync::Arc<Vec<u16>>,
+    /// Number of buildings exposed to the mission script.
+    pub building_count: usize,
+    /// Number of hiking paths exposed to the mission script.
+    pub hiking_path_count: usize,
+    /// Fast-grid indices for authored script zones, in authored sector order.
+    pub zone_grid_indices: std::sync::Arc<Vec<u32>>,
+}
+
+/// Immutable entity bindings created while loading a mission.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelEntityAssets {
+    /// Number of authored mobile elements required by compatible snapshots.
+    pub mobile_element_count: usize,
+    /// Patch index to optional FX actor handle, in proto-then-mission order.
+    pub patch_animation_entities: std::sync::Arc<Vec<Option<i32>>>,
+    /// Scroll entity IDs in authored creation order.
+    pub scroll_entity_ids: Vec<super::EntityId>,
+    /// Soldier load-order index to typed entity ID.
+    pub soldier_entity_ids: Vec<super::EntityId>,
+    /// Soldier load-order index to subordinate soldier load-order IDs.
+    pub soldier_subordinate_ids: Vec<Vec<u16>>,
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by
@@ -873,10 +854,8 @@ impl LevelAssets {
             hiking_paths: std::sync::Arc::new(Vec::new()),
             profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
             bank_signature: 0,
-            mission_script_programs: std::sync::Arc::new(std::collections::BTreeMap::new()),
-            mission_script_name: None,
-            mobile_element_count: 0,
-            script_names: std::sync::Arc::new(crate::natives::ScriptNameBindings::default()),
+            scripts: LevelScriptAssets::default(),
+            entities: LevelEntityAssets::default(),
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),
@@ -884,21 +863,9 @@ impl LevelAssets {
             exclamation_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             source_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             sound_source_required_ids: std::collections::BTreeSet::new(),
-            patch_entity_handles: std::sync::Arc::new(Vec::new()),
-            scroll_entity_ids: Vec::new(),
-            all_soldier_entity_ids: Vec::new(),
-            soldier_subordinate_ids: Vec::new(),
             water_zones: crate::water_zones::WaterZones::new(),
             material_sectors: crate::material_sectors::MaterialSectors::new(),
             static_sight_obstacles: std::sync::Arc::new(Vec::new()),
-            script_location_count: 0,
-            script_point_count: 0,
-            script_location_positions: std::sync::Arc::new(Vec::new()),
-            script_location_layers: std::sync::Arc::new(Vec::new()),
-            script_location_sectors: std::sync::Arc::new(Vec::new()),
-            script_building_count: 0,
-            script_hiking_path_count: 0,
-            script_zone_grid_indices: std::sync::Arc::new(Vec::new()),
         }
     }
 
@@ -945,8 +912,18 @@ impl Default for SimScratch {
 /// These fields are transient: populated during the level load sequence,
 /// fully drained before the first tick runs, and empty for the rest of
 /// the mission. They are not simulation state and are never serialized.
-#[derive(Clone, Default)]
-pub struct PendingLevelData {
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelLoadStaging {
+    /// Proto geometry that must wait until map dimensions are known.
+    pub motion: MotionStageInput,
+    /// Attachments produced while building geometry and consumed after the
+    /// canonical authored door table exists.
+    pub attachments: DeferredLevelAttachments,
+}
+
+/// Typed input to the motion/grid construction stage.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MotionStageInput {
     /// Motion data loaded from proto level, processed when background is loaded.
     pub motion_data: Option<crate::level_data::RawMotionData>,
     /// Lift proto data, consumed alongside motion data for sector fixup.
@@ -965,32 +942,23 @@ pub struct PendingLevelData {
     /// Building sector_numbers allocated by `rewire_building_doors` during
     /// the initial level load.  Consumed by `initialize_motion_from_level_data`.
     pub building_sector_numbers: Vec<i16>,
-    /// Raw mask refs per patch (old, new), stashed by `populate_game_host_from_level`
-    /// because mask indices aren't valid until `initialize_motion_from_level_data`
-    /// has registered every mask in the grid.  Consumed by
-    /// `resolve_patch_mask_refs` which runs right after.
-    pub patch_mask_refs: Vec<(
-        Vec<crate::level_data::MaskRef>,
-        Vec<crate::level_data::MaskRef>,
-    )>,
     /// Raw light/shadow sectors from the LIGHT/DARK proto chunk.  Consumed by
     /// `initialize_motion_from_level_data` after the grid is sized and layers
     /// are allocated — each sector becomes a `SectorType::SHADOW` grid sector
     /// iff its ambience bitmask overlaps the mission's ambience.
     pub light_sectors: Vec<crate::level_data::RawLightSector>,
-    /// Jump-gate `Door` specs produced by `load_jump_lines_from_proto`,
-    /// pushed into `self.script_domains.interactables.doors` once `populate_game_host_from_level`
-    /// has run.  The proto-stream jump-init phase now runs *before* the
-    /// mission script is loaded (so beam-me / soldier sector validations
-    /// see the populated grid), but `game_host` doesn't exist that early
-    /// — so we stage the jump-gate Doors here and drain them in
-    /// `register_pending_jump_gates`.
-    pub jump_gate_specs: Vec<PendingJumpGate>,
 }
 
-/// Deferred jump-gate `Door` spec — see `PendingLevelData::jump_gate_specs`.
-#[derive(Clone, Debug)]
-pub struct PendingJumpGate {
+/// Typed late attachments that depend on both grid geometry and script domains.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct DeferredLevelAttachments {
+    /// Jump gates produced by proto geometry in exact jump-pair order.
+    pub jump_gates: Vec<JumpGateAttachment>,
+}
+
+/// Deferred jump-gate attachment produced by the motion stage.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct JumpGateAttachment {
     pub point_out: crate::coordinates::MapPoint,
     pub point_in: crate::coordinates::MapPoint,
     pub layer_out: u16,
@@ -3040,4 +3008,90 @@ pub enum EngineError {
         profile_id: u32,
         reason: String,
     },
+
+    #[error(transparent)]
+    MissionLevelBuild(#[from] MissionLevelBuildError),
+}
+
+/// Validation failures raised by the staged mission-level builder.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+pub enum MissionLevelBuildError {
+    #[error("mission '{mission}' requires script bindings, but its script was not loaded")]
+    MissingMissionScript { mission: String },
+
+    #[error(
+        "standalone door {door_index} in building entry {entry_index} has illegal type {door_type} at ({x}, {y})"
+    )]
+    InvalidStandaloneDoorType {
+        entry_index: usize,
+        door_index: usize,
+        door_type: u8,
+        x: i16,
+        y: i16,
+    },
+
+    #[error("proto level has {building_count} buildings but no motion data to allocate sectors")]
+    MissingBuildingMotionData { building_count: usize },
+
+    #[error("building {building_index} has no door; tenant attachment requires its first door")]
+    BuildingWithoutDoor { building_index: usize },
+
+    #[error(
+        "mission tenant table has {tenant_count} entries but the proto level has {building_count} buildings"
+    )]
+    BuildingTenantCountMismatch {
+        tenant_count: usize,
+        building_count: usize,
+    },
+
+    #[error(
+        "building {building_index} tenant references missing legacy element slot {element_index}"
+    )]
+    MissingBuildingTenant {
+        building_index: usize,
+        element_index: u16,
+    },
+
+    #[error("building {building_index} tenant at legacy element slot {element_index} is not human")]
+    NonHumanBuildingTenant {
+        building_index: usize,
+        element_index: u16,
+    },
+
+    #[error(
+        "patch {patch_index} references door {door_index}, but only {door_count} non-lift doors were authored"
+    )]
+    PatchDoorOutOfRange {
+        patch_index: usize,
+        door_index: u16,
+        door_count: usize,
+    },
+
+    #[error("patch {patch_index} references missing {state} mask ({layer}, {mask_index})")]
+    MissingPatchMask {
+        patch_index: usize,
+        state: String,
+        layer: u16,
+        mask_index: u16,
+    },
+
+    #[error(
+        "patch attachment table has {attachment_count} entries but {patch_count} patches were authored"
+    )]
+    PatchAttachmentCountMismatch {
+        attachment_count: usize,
+        patch_count: usize,
+    },
+
+    #[error(
+        "{lift_type} lift sector {sector_number} is missing a {endpoint} authored door endpoint"
+    )]
+    MissingLiftEndpoint {
+        lift_type: String,
+        sector_number: i16,
+        endpoint: String,
+    },
+
+    #[error("jump-gate attachment requires a loaded mission script")]
+    JumpGateWithoutMissionScript,
 }

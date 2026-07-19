@@ -218,7 +218,7 @@ impl EngineInner {
 
     /// Whether a scroll is revealable — active and currently invisible.
     pub fn is_scroll_revealable(&self, assets: &LevelAssets, scroll_id: u16) -> bool {
-        let Some(&eid) = assets.scroll_entity_ids.get(scroll_id as usize) else {
+        let Some(&eid) = assets.entities.scroll_entity_ids.get(scroll_id as usize) else {
             return false;
         };
         let Some(entity) = self.get_entity(eid) else {
@@ -280,7 +280,7 @@ impl EngineInner {
         if !self.is_scroll_revealable(assets, scroll_id) {
             return None;
         }
-        let eid = *assets.scroll_entity_ids.get(scroll_id as usize)?;
+        let eid = *assets.entities.scroll_entity_ids.get(scroll_id as usize)?;
 
         if self.is_scroll_to_be_replaced_by_amulet(eid) {
             let (pos, layer, sector, direction, obstacle_index, material) = {

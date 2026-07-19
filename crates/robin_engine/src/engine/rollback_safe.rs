@@ -21,7 +21,7 @@
 use std::ops::Deref;
 
 use super::{
-    ConsoleResponse, DevState, EngineError, EngineInner, InputState, LevelAssets, PendingLevelData,
+    ConsoleResponse, DevState, EngineError, EngineInner, InputState, LevelAssets, LevelLoadStaging,
     SideEffects,
 };
 use crate::campaign::Campaign;
@@ -200,7 +200,7 @@ impl Engine {
     /// With those in hand, this constructor runs every step the old
     /// split `Engine::new` + `apply_level_bitmaps_loaded` pair used to
     /// do — `initialize_from_campaign` (entity spawn, mission script),
-    /// `set_level_size`, `consume_pending_motion_data` (pathfinder
+    /// `set_level_size`, the motion stage (pathfinder
     /// graph + grid sector registration), `initialize` (AI init, which
     /// now sees a real `map_bbox` + half-diagonals table), mission
     /// script `StartUp::Initialize`, and — for Sherwood —
@@ -247,21 +247,21 @@ impl Engine {
             loaded,
             bg_pixel_dims,
         } = args.level;
-        assets.mobile_element_count = 0;
-        assets.mission_script_name = None;
+        assets.entities.mobile_element_count = 0;
+        assets.scripts.mission_name = None;
         // The proto-level (motion sectors) loads before the mission
         // file (beam-mes / soldiers / civilians).  We thread
         // `bg_pixel_dims` into `initialize_from_campaign`, which calls
-        // `set_level_size` + `consume_pending_motion_data` mid-load
+        // `set_level_size` + the motion stage mid-load
         // (right after the proto data is stashed in constructor-local
         // pending data, but before any entity that references a sector
         // spawns) so that beam-me sector validation and downstream
         // sector-handle resolution see the populated grid.
-        let mut pending = PendingLevelData::default();
+        let mut staging = LevelLoadStaging::default();
         if let Err(error) = inner.with_sim_rng(|inner| {
             inner.initialize_from_campaign(
                 assets,
-                &mut pending,
+                &mut staging,
                 loaded,
                 level_directory,
                 bg_pixel_dims,
@@ -272,15 +272,14 @@ impl Engine {
             return Err((error, campaign));
         }
         inner.populate_sector_gates_from_doors();
-        inner.resolve_patch_mask_refs(&mut pending);
         // AI init runs HERE — after pathfinder + grid are fully
         // populated, so `TestIfPathIsFine` / `is_position_authorized`
         // see real `map_bbox` + motion lines and patrol paths validate
         // correctly.
         inner.initialize(assets);
         assets.level_grid = inner.world.fast_grid.level.clone();
-        assets.mobile_element_count = inner.world.mobile_elements.len();
-        assets.mission_script_name = inner
+        assets.entities.mobile_element_count = inner.world.mobile_elements.len();
+        assets.scripts.mission_name = inner
             .scripts
             .mission
             .as_ref()
@@ -955,8 +954,8 @@ mod tests {
                 .expect("minimal StartUp script");
 
         let mut assets = LevelAssets::new();
-        assets.mission_script_name = Some(script_name.clone());
-        std::sync::Arc::make_mut(&mut assets.mission_script_programs)
+        assets.scripts.mission_name = Some(script_name.clone());
+        std::sync::Arc::make_mut(&mut assets.scripts.mission_programs)
             .insert(script_name, program.clone());
 
         let mut inner = EngineInner::new();
@@ -1261,7 +1260,7 @@ mod tests {
     fn failed_attachment_preflight_does_not_mutate_live_engine() {
         let (source, mut assets, _, _) = scripted_snapshot_fixture();
         let snapshot = decoded_engine(&source);
-        assets.mission_script_programs = std::sync::Arc::new(std::collections::BTreeMap::new());
+        assets.scripts.mission_programs = std::sync::Arc::new(std::collections::BTreeMap::new());
 
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 77;
@@ -1282,7 +1281,7 @@ mod tests {
     fn adoption_rejects_wrong_loaded_mission_identity() {
         let (source, mut assets, _, _) = scripted_snapshot_fixture();
         let snapshot = decoded_engine(&source);
-        assets.mission_script_name = Some("different_mission".to_owned());
+        assets.scripts.mission_name = Some("different_mission".to_owned());
         let mut live = Engine {
             inner: EngineInner::new(),
         };
@@ -1299,7 +1298,7 @@ mod tests {
     #[test]
     fn adoption_rejects_mobile_count_from_level_assets_atomically() {
         let mut assets = LevelAssets::new();
-        assets.mobile_element_count = 1;
+        assets.entities.mobile_element_count = 1;
         let snapshot = Engine {
             inner: EngineInner::new(),
         };

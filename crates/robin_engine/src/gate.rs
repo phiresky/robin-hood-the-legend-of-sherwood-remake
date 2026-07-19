@@ -306,7 +306,7 @@ pub struct Door {
     /// Pathfinding penalty for crossing this door.
     pub penalty: f32,
 
-    /// Index into the GameHost patches array.  Mirrors the C++
+    /// Index into the canonical mission patch table. Mirrors the C++
     /// `pDoor->mpPatch` link: populated only for `door_triggered`
     /// patches, where opening/passing this door fires the patch
     /// (consumed by `apply_door_patch` and `gate_state.finish_transition`).
@@ -619,7 +619,7 @@ impl Door {
     /// * `DoorType::LiftHighCrenel` + `lift_wall`: 65-unit offset.
     /// * All other door types: no-op.
     ///
-    /// Called from the door populators (`populate_game_host_from_level`)
+    /// Called from the MissionLevelBuilder door and lift stages.
     /// after `point_in`/`point_mid` are read from the proto stream and
     /// before `penalty` is computed — the new `point_in` feeds into
     /// `penalty = |point_in - point_out|`, A* gate-graph distances, and

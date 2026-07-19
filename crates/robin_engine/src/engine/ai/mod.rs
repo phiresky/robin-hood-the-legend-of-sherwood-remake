@@ -1908,7 +1908,8 @@ impl EngineInner {
         // AiContext can resolve script-baked friend IDs.
         self.ai.global.all_soldier_handles = std::sync::Arc::new(
             assets
-                .all_soldier_entity_ids
+                .entities
+                .soldier_entity_ids
                 .iter()
                 .map(|eid| eid.index())
                 .collect(),
@@ -1925,8 +1926,8 @@ impl EngineInner {
         let potential_detectables = build_potential_detectables(self);
         let ambush_points_count = self.ai.global.ambush_points.len();
 
-        let all_soldier_entity_ids = assets.all_soldier_entity_ids.clone();
-        let soldier_subordinate_ids = assets.soldier_subordinate_ids.clone();
+        let all_soldier_entity_ids = assets.entities.soldier_entity_ids.clone();
+        let soldier_subordinate_ids = assets.entities.soldier_subordinate_ids.clone();
         let fast_grid = self.world.fast_grid.clone();
         for &npc_id in &npc_ids {
             self.init_one_ai(

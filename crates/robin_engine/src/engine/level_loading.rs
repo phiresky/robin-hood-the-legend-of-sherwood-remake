@@ -5,6 +5,278 @@ use super::*;
 use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{BonusItemTypeExt, Entity, EntityId};
 
+/// Validated, staged construction of the mission-authored runtime domains.
+///
+/// The builder owns only the mission identity; stage inputs and outputs are
+/// explicit values so transient proto data cannot leak into gameplay state.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct MissionLevelBuilder {
+    mission_name: String,
+    requires_script: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct ScriptBindingStageOutput;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct DoorStageOutput {
+    authored_door_count: usize,
+    building_gates: Vec<Vec<i32>>,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct LiftStageOutput {
+    authored_door_count: usize,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct PatchStageOutput {
+    patch_count: usize,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct BuildingTenantAttachment {
+    building_index: usize,
+    first_door_point_in: MapPoint,
+    sector_in: u16,
+    tenant_element_indices: Vec<u16>,
+    arrow_reserve: bool,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct BuildingStageOutput {
+    attachments: Vec<BuildingTenantAttachment>,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct MissionLevelAttachmentStageInput {
+    buildings: BuildingStageOutput,
+    building_gates: Vec<Vec<i32>>,
+    patch_count: usize,
+}
+
+impl MissionLevelBuilder {
+    fn new(mission_name: &str, loaded: &crate::level_data::LoadedLevel) -> Self {
+        let requires_script = loaded.proto.motion_data.is_some()
+            || !loaded.proto.buildings.is_empty()
+            || !loaded.proto.lifts.is_empty()
+            || !loaded.proto.patches.is_empty()
+            || !loaded.mission.mission_patches.is_empty()
+            || !loaded.mission.building_tenants.is_empty()
+            || loaded.mission.script_objects.is_some()
+            || !loaded.mission.soldiers.is_empty()
+            || !loaded.mission.civilians.is_empty()
+            || !loaded.mission.targets.is_empty()
+            || !loaded.mission.bonuses.is_empty()
+            || !loaded.mission.scrolls.is_empty();
+        Self {
+            mission_name: mission_name.to_owned(),
+            requires_script,
+        }
+    }
+
+    fn script_binding_stage(
+        &self,
+        engine: &EngineInner,
+    ) -> Result<ScriptBindingStageOutput, MissionLevelBuildError> {
+        if self.requires_script && engine.scripts.mission.is_none() {
+            return Err(MissionLevelBuildError::MissingMissionScript {
+                mission: self.mission_name.clone(),
+            });
+        }
+        Ok(ScriptBindingStageOutput)
+    }
+
+    fn door_stage(
+        &self,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<DoorStageOutput, MissionLevelBuildError> {
+        let mut authored_door_count = 0usize;
+        let mut building_gates = Vec::new();
+        for (entry_index, entry) in loaded.proto.buildings.iter().enumerate() {
+            let (doors, is_building) = match entry {
+                crate::level_data::RawBuildingEntry::Building { doors } => (doors, true),
+                crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => (doors, false),
+            };
+            let first_door_index = authored_door_count;
+            for (door_index, door) in doors.iter().enumerate() {
+                if !is_building && !matches!(door.door_type, 0 | 3 | 7) {
+                    return Err(MissionLevelBuildError::InvalidStandaloneDoorType {
+                        entry_index,
+                        door_index,
+                        door_type: door.door_type,
+                        x: door.point_mid.0,
+                        y: door.point_mid.1,
+                    });
+                }
+                authored_door_count += 1;
+            }
+            if is_building {
+                building_gates.push(
+                    (first_door_index..authored_door_count)
+                        .map(crate::natives::ScriptHandleCodec::door_handle_from_index)
+                        .collect(),
+                );
+            }
+        }
+        Ok(DoorStageOutput {
+            authored_door_count,
+            building_gates,
+        })
+    }
+
+    fn lift_stage(&self, loaded: &crate::level_data::LoadedLevel) -> LiftStageOutput {
+        LiftStageOutput {
+            authored_door_count: loaded.proto.lifts.iter().map(|lift| lift.doors.len()).sum(),
+        }
+    }
+
+    fn patch_stage(
+        &self,
+        engine: &EngineInner,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+        doors: &DoorStageOutput,
+    ) -> Result<PatchStageOutput, MissionLevelBuildError> {
+        let patches = loaded
+            .proto
+            .patches
+            .iter()
+            .chain(&loaded.mission.mission_patches);
+        let patch_count = loaded.proto.patches.len() + loaded.mission.mission_patches.len();
+        if assets.entities.patch_animation_entities.len() != patch_count {
+            return Err(MissionLevelBuildError::PatchAttachmentCountMismatch {
+                attachment_count: assets.entities.patch_animation_entities.len(),
+                patch_count,
+            });
+        }
+        for (patch_index, patch) in patches.enumerate() {
+            for &door_index in &patch.door_indices {
+                if usize::from(door_index) >= doors.authored_door_count {
+                    return Err(MissionLevelBuildError::PatchDoorOutOfRange {
+                        patch_index,
+                        door_index,
+                        door_count: doors.authored_door_count,
+                    });
+                }
+            }
+            for (state, refs) in [("old", &patch.old_masks), ("new", &patch.new_masks)] {
+                for mask_ref in refs {
+                    let exists = engine
+                        .world
+                        .fast_grid
+                        .level
+                        .layers
+                        .get(mask_ref.layer as usize)
+                        .and_then(|layer| layer.mask_indices.get(mask_ref.index as usize))
+                        .is_some();
+                    if !exists {
+                        return Err(MissionLevelBuildError::MissingPatchMask {
+                            patch_index,
+                            state: state.to_owned(),
+                            layer: mask_ref.layer,
+                            mask_index: mask_ref.index,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(PatchStageOutput { patch_count })
+    }
+
+    fn building_stage(
+        &self,
+        engine: &EngineInner,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<BuildingStageOutput, MissionLevelBuildError> {
+        let buildings: Vec<_> = loaded
+            .proto
+            .buildings
+            .iter()
+            .filter_map(|entry| match entry {
+                crate::level_data::RawBuildingEntry::Building { doors } => Some(doors),
+                crate::level_data::RawBuildingEntry::StandaloneDoors { .. } => None,
+            })
+            .collect();
+        if loaded.mission.building_tenants.len() != buildings.len() {
+            return Err(MissionLevelBuildError::BuildingTenantCountMismatch {
+                tenant_count: loaded.mission.building_tenants.len(),
+                building_count: buildings.len(),
+            });
+        }
+        let mut attachments = Vec::with_capacity(buildings.len());
+        for (building_index, (doors, tenants)) in buildings
+            .into_iter()
+            .zip(&loaded.mission.building_tenants)
+            .enumerate()
+        {
+            let first_door = doors
+                .first()
+                .ok_or(MissionLevelBuildError::BuildingWithoutDoor { building_index })?;
+            for &element_index in &tenants.tenant_element_indices {
+                let Some(entity_id) = engine
+                    .world
+                    .entities
+                    .id_at_legacy_slot(u32::from(element_index))
+                else {
+                    return Err(MissionLevelBuildError::MissingBuildingTenant {
+                        building_index,
+                        element_index,
+                    });
+                };
+                if !engine
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .is_some_and(Entity::is_human)
+                {
+                    return Err(MissionLevelBuildError::NonHumanBuildingTenant {
+                        building_index,
+                        element_index,
+                    });
+                }
+            }
+            attachments.push(BuildingTenantAttachment {
+                building_index,
+                first_door_point_in: MapPoint::new(
+                    first_door.point_in.0 as f32,
+                    first_door.point_in.1 as f32,
+                ),
+                sector_in: first_door.sector_in,
+                tenant_element_indices: tenants.tenant_element_indices.clone(),
+                arrow_reserve: tenants.arrow_reserve,
+            });
+        }
+        Ok(BuildingStageOutput { attachments })
+    }
+
+    fn validate(
+        &self,
+        engine: &EngineInner,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<MissionLevelAttachmentStageInput, MissionLevelBuildError> {
+        let _script_bindings = self.script_binding_stage(engine)?;
+        let doors = self.door_stage(loaded)?;
+        let lifts = self.lift_stage(loaded);
+        let patches = self.patch_stage(engine, assets, loaded, &doors)?;
+        let buildings = self.building_stage(engine, loaded)?;
+        tracing::debug!(
+            mission = %self.mission_name,
+            non_lift_doors = doors.authored_door_count,
+            lift_doors = lifts.authored_door_count,
+            patches = patches.patch_count,
+            buildings = buildings.attachments.len(),
+            "validated MissionLevelBuilder stages"
+        );
+        Ok(MissionLevelAttachmentStageInput {
+            buildings,
+            building_gates: doors.building_gates,
+            patch_count: patches.patch_count,
+        })
+    }
+}
+
 /// Convert the serialized position of an animation-kind sprite to the map
 /// anchor used by `RHPositionInterface`.
 ///
@@ -118,6 +390,131 @@ mod animation_placement_tests {
         assert_eq!(
             sprite.position_iface.map_position().y - sprite.center.y,
             raw.position_y as f32
+        );
+    }
+}
+
+#[cfg(test)]
+mod mission_level_builder_tests {
+    use super::MissionLevelBuilder;
+    use crate::engine::{EngineInner, MissionLevelBuildError};
+    use crate::level_data::{RawBuildingEntry, RawBuildingTenants, RawDoor, SectorPolygon};
+
+    fn door(door_type: u8) -> RawDoor {
+        RawDoor {
+            door_type,
+            active: true,
+            locked_pc: false,
+            unlockable: false,
+            locked_npc_villain: false,
+            locked_npc_civilian: false,
+            locked_pc_after_patch: false,
+            unlockable_after_patch: false,
+            locked_npc_villain_after_patch: false,
+            locked_npc_civilian_after_patch: false,
+            door_sector: SectorPolygon { points: Vec::new() },
+            point_out: (0, 0),
+            sector_out: 0,
+            layer_out: 0,
+            point_mid: (10, 20),
+            point_in: (30, 40),
+            sector_in: 1,
+            layer_in: 0,
+        }
+    }
+
+    #[test]
+    fn door_stage_keeps_building_and_standalone_authored_order() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![
+            RawBuildingEntry::Building {
+                doors: vec![door(1), door(2)],
+            },
+            RawBuildingEntry::StandaloneDoors {
+                doors: vec![door(3)],
+            },
+            RawBuildingEntry::Building {
+                doors: vec![door(1)],
+            },
+        ];
+        let builder = MissionLevelBuilder::new("ordering", &loaded);
+
+        let stage = builder.door_stage(&loaded).expect("valid authored doors");
+
+        assert_eq!(stage.authored_door_count, 4);
+        assert_eq!(
+            stage.building_gates,
+            vec![
+                vec![
+                    crate::natives::ScriptHandleCodec::door_handle_from_index(0),
+                    crate::natives::ScriptHandleCodec::door_handle_from_index(1),
+                ],
+                vec![crate::natives::ScriptHandleCodec::door_handle_from_index(3,)],
+            ]
+        );
+    }
+
+    #[test]
+    fn door_stage_rejects_illegal_standalone_type_with_context() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
+            doors: vec![door(4)],
+        }];
+        let builder = MissionLevelBuilder::new("bad-door", &loaded);
+
+        assert_eq!(
+            builder.door_stage(&loaded),
+            Err(MissionLevelBuildError::InvalidStandaloneDoorType {
+                entry_index: 0,
+                door_index: 0,
+                door_type: 4,
+                x: 10,
+                y: 20,
+            })
+        );
+    }
+
+    #[test]
+    fn script_binding_stage_rejects_authored_level_without_script() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors { doors: Vec::new() }];
+        let builder = MissionLevelBuilder::new("missing-script", &loaded);
+
+        assert_eq!(
+            builder.script_binding_stage(&EngineInner::new()),
+            Err(MissionLevelBuildError::MissingMissionScript {
+                mission: "missing-script".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn building_stage_requires_one_tenant_record_per_building() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![RawBuildingEntry::Building {
+            doors: vec![door(1)],
+        }];
+        loaded.mission.building_tenants = vec![
+            RawBuildingTenants {
+                tenant_element_indices: Vec::new(),
+                arrow_reserve: false,
+            },
+            RawBuildingTenants {
+                tenant_element_indices: Vec::new(),
+                arrow_reserve: true,
+            },
+        ];
+        let builder = MissionLevelBuilder::new("bad-tenants", &loaded);
+
+        let error = builder
+            .building_stage(&EngineInner::new(), &loaded)
+            .expect_err("mismatched tenant table must fail");
+        assert_eq!(
+            error,
+            MissionLevelBuildError::BuildingTenantCountMismatch {
+                tenant_count: 2,
+                building_count: 1,
+            }
         );
     }
 }
@@ -868,7 +1265,7 @@ impl EngineInner {
     pub(crate) fn initialize_from_mission(
         &mut self,
         assets: &mut LevelAssets,
-        pending: &mut PendingLevelData,
+        staging: &mut LevelLoadStaging,
         mission_name: &str,
         proto_level_name: &str,
         mut loaded: crate::level_data::LoadedLevel,
@@ -876,6 +1273,7 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
+        let level_builder = MissionLevelBuilder::new(mission_name, &loaded);
         self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
         self.mission_domain.short_briefings.clear();
@@ -1007,11 +1405,11 @@ impl EngineInner {
         self.ai.standard_view_polygon_radius =
             self.world.weather.ambiance.default_view_polygon_radius();
         self.mission_domain.state.map_name = loaded.mission.header.map_filename.clone();
-        assets.script_hiking_path_count = loaded.mission.hiking_paths.len();
+        assets.scripts.hiking_path_count = loaded.mission.hiking_paths.len();
 
         // Set building count for script handle validation.
         // Only count actual Building entries, not StandaloneDoors.
-        assets.script_building_count = loaded
+        assets.scripts.building_count = loaded
             .proto
             .buildings
             .iter()
@@ -1029,17 +1427,17 @@ impl EngineInner {
         // re-introduces lines, the index will shift correctly without a code
         // change here.
         if let Some(ref so) = loaded.mission.script_objects {
-            assets.script_location_count = so.points.len() + so.lines.len() + so.sectors.len();
-            assets.script_point_count = so.points.len();
-            std::sync::Arc::make_mut(&mut assets.script_location_positions).clear();
-            std::sync::Arc::make_mut(&mut assets.script_location_layers).clear();
-            std::sync::Arc::make_mut(&mut assets.script_location_sectors).clear();
+            assets.scripts.location_count = so.points.len() + so.lines.len() + so.sectors.len();
+            assets.scripts.point_count = so.points.len();
+            std::sync::Arc::make_mut(&mut assets.scripts.location_positions).clear();
+            std::sync::Arc::make_mut(&mut assets.scripts.location_layers).clear();
+            std::sync::Arc::make_mut(&mut assets.scripts.location_sectors).clear();
             // Points come first in the combined index.
             for pt in &so.points {
-                std::sync::Arc::make_mut(&mut assets.script_location_positions)
+                std::sync::Arc::make_mut(&mut assets.scripts.location_positions)
                     .push((pt.x as f32, pt.y as f32));
-                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(pt.layer);
-                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(pt.sector);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_layers).push(pt.layer);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_sectors).push(pt.sector);
             }
             // Lines slot into the middle of the index space; midpoint is the
             // natural representative position.  Empty in shipped data — see
@@ -1047,9 +1445,9 @@ impl EngineInner {
             for line in &so.lines {
                 let mx = (line.x1 as f32 + line.x2 as f32) * 0.5;
                 let my = (line.y1 as f32 + line.y2 as f32) * 0.5;
-                std::sync::Arc::make_mut(&mut assets.script_location_positions).push((mx, my));
-                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(line.layer);
-                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(line.sector);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_positions).push((mx, my));
+                std::sync::Arc::make_mut(&mut assets.scripts.location_layers).push(line.layer);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_sectors).push(line.sector);
             }
             // Sectors follow; use polygon centroid as their position.
             for sec in &so.sectors {
@@ -1061,14 +1459,14 @@ impl EngineInner {
                     let sum_y: f32 = sec.polygon.points.iter().map(|p| p.1 as f32).sum();
                     (sum_x / n, sum_y / n)
                 };
-                std::sync::Arc::make_mut(&mut assets.script_location_positions).push((cx, cy));
-                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(sec.layer);
-                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(sec.sector_ref);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_positions).push((cx, cy));
+                std::sync::Arc::make_mut(&mut assets.scripts.location_layers).push(sec.layer);
+                std::sync::Arc::make_mut(&mut assets.scripts.location_sectors).push(sec.sector_ref);
             }
 
             // Register script zone sectors on the fast-find grid so we can
             // do point-in-polygon occupant checks during gameplay.
-            std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).clear();
+            std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).clear();
             self.script_domains.zones.scripts.clear();
             for sec in &so.sectors {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
@@ -1141,7 +1539,7 @@ impl EngineInner {
                     },
                     sec.layer,
                 );
-                std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).push(grid_idx);
+                std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(grid_idx);
                 let zone_idx = self.script_domains.zones.scripts.len();
                 self.script_domains.zones.scripts.push(script_data);
 
@@ -1163,22 +1561,22 @@ impl EngineInner {
                     );
                 }
             }
-            if !assets.script_zone_grid_indices.is_empty() {
+            if !assets.scripts.zone_grid_indices.is_empty() {
                 tracing::info!(
                     "Registered {} script zone sectors on grid",
-                    assets.script_zone_grid_indices.len()
+                    assets.scripts.zone_grid_indices.len()
                 );
             }
         }
 
         // Store hiking paths for patrol route lookups by AI.
-        assets.script_hiking_path_count = loaded.mission.hiking_paths.len();
+        assets.scripts.hiking_path_count = loaded.mission.hiking_paths.len();
         assets.hiking_paths = std::sync::Arc::new(std::mem::take(&mut loaded.mission.hiking_paths));
 
         // Build the global SeekPoint / AmbushPoint / Archery arrays from
         // raw tactic data: reset the existing lists, then fan out to the
         // per-sub-chunk installers.  Reinforcement doors are handled
-        // further below, after `populate_game_host_from_level` has created
+        // further below, after the MissionLevelBuilder has created
         // the proto-level doors those entries share a table with.
         self.ai.global.reset_seek_points();
         self.ai.global.reset_ambush_points();
@@ -1605,19 +2003,19 @@ impl EngineInner {
 
         // Rewire building-door sector_in/layer_in to point at the empty
         // BUILDING grid sectors that `initialize_motion_from_level_data` will
-        // create later.  This has to run *before* `populate_game_host_from_level`
+        // create later. This has to run before the MissionLevelBuilder
         // so the `self.script_domains.interactables.doors` list stores the rewritten values.  The matching
         // grid sectors are registered later, in the motion-init pass, using
         // the sector numbers we stash on constructor-local pending data.
         self.rewire_building_doors(
-            pending,
+            staging,
             &mut loaded.proto.buildings,
             loaded.proto.motion_data.as_ref(),
-        );
+        )?;
 
         // Store motion data for processing when the background bitmap
         // is applied (grid sector registration needs map dimensions).
-        pending.motion_data = loaded.proto.motion_data.take();
+        staging.motion.motion_data = loaded.proto.motion_data.take();
 
         // Pre-load *only* the move-box half-diagonal table from the
         // motion-data proto stream, so the soldier / civilian / PC
@@ -1630,7 +2028,7 @@ impl EngineInner {
         // background bitmap has been decoded.
         // `load_from_proto_stream` detects the already-populated table
         // and skips re-pushing.
-        if let Some(ref motion_data) = pending.motion_data
+        if let Some(ref motion_data) = staging.motion.motion_data
             && !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
                 .preload_half_diagonals_from_proto(
@@ -1645,22 +2043,22 @@ impl EngineInner {
         // Stash raw masks; converted into RuntimeMask and pushed into the
         // fast grid once layers are allocated in
         // `initialize_motion_from_level_data`.
-        pending.masks = std::mem::take(&mut loaded.proto.masks);
+        staging.motion.masks = std::mem::take(&mut loaded.proto.masks);
         // Stash lift proto data alongside motion data for sector fixup.
-        // Clone rather than take — populate_game_host_from_level still needs them.
-        pending.lifts = loaded.proto.lifts.clone();
+        // Clone rather than take — the lift stage still needs them.
+        staging.motion.lifts = loaded.proto.lifts.clone();
         // Stash elevation (bond) lines so `initialize_motion_from_level_data`
         // can register them into the fast grid once layers are allocated.
-        pending.elevation_lines = std::mem::take(&mut loaded.proto.elevation_lines);
+        staging.motion.elevation_lines = std::mem::take(&mut loaded.proto.elevation_lines);
         // Stash jump-zone + jump-line-pair data for post-sector processing
         // in `load_jump_lines_from_proto`.
-        pending.jump_zones = std::mem::take(&mut loaded.proto.jump_zones);
-        pending.jump_line_pairs = std::mem::take(&mut loaded.proto.jump_line_pairs);
+        staging.motion.jump_zones = std::mem::take(&mut loaded.proto.jump_zones);
+        staging.motion.jump_line_pairs = std::mem::take(&mut loaded.proto.jump_line_pairs);
         // Stash light/shadow sectors so `initialize_motion_from_level_data`
         // can register them into the grid once layers are allocated and
         // sector numbers have been assigned to the motion / lift / building
         // sectors.
-        pending.light_sectors = std::mem::take(&mut loaded.proto.light_sectors);
+        staging.motion.light_sectors = std::mem::take(&mut loaded.proto.light_sectors);
 
         // Load order (ProtoStream → MissionStream): size the grid and
         // register every motion sector / lift / mask / elevation-line
@@ -1670,7 +2068,7 @@ impl EngineInner {
         // registration to after PC spawn would make every beam-me
         // sector check return "no sector".
         self.set_level_size(bg_pixel_dims.0, bg_pixel_dims.1);
-        self.consume_pending_motion_data(assets, pending);
+        self.build_motion_stage(assets, staging);
 
         // Set forest_level from proto misc — must happen before entity
         // spawning uses it to decide CHARACTER vs CHARACTER_BLIPPED.
@@ -1757,7 +2155,7 @@ impl EngineInner {
             ));
         }
 
-        assets.patch_entity_handles = std::sync::Arc::new(
+        assets.entities.patch_animation_entities = std::sync::Arc::new(
             proto_patch_handles.unwrap_or_else(|| vec![None; loaded.proto.patches.len()]),
         );
         tracing::info!(
@@ -1777,7 +2175,8 @@ impl EngineInner {
             &loaded.mission.mission_patches,
             loaded.proto.patches.len(),
         );
-        std::sync::Arc::make_mut(&mut assets.patch_entity_handles).extend(mission_patch_handles);
+        std::sync::Arc::make_mut(&mut assets.entities.patch_animation_entities)
+            .extend(mission_patch_handles);
         tracing::info!(
             "Spawned {} mission patch FX entities",
             loaded.mission.mission_patches.len(),
@@ -2342,8 +2741,9 @@ impl EngineInner {
                 "spawn soldier"
             );
             // Track soldier load-order → EntityId for patrol ID resolution.
-            assets.all_soldier_entity_ids.push(eid);
+            assets.entities.soldier_entity_ids.push(eid);
             assets
+                .entities
                 .soldier_subordinate_ids
                 .push(raw.subordinate_ids.clone());
             // Every soldier contributes its money to the level pool, and
@@ -2691,8 +3091,9 @@ impl EngineInner {
         let mut force_visible_scroll_ids: Vec<crate::element::EntityId> = Vec::new();
         // Reset the scroll-id → EntityId map (repopulated per-level).
         // Reserved capacity matches the PARC chunk count exactly.
-        assets.scroll_entity_ids.clear();
+        assets.entities.scroll_entity_ids.clear();
         assets
+            .entities
             .scroll_entity_ids
             .reserve(loaded.mission.scrolls.len());
         for raw in &loaded.mission.scrolls {
@@ -2776,7 +3177,7 @@ impl EngineInner {
                 script_hourglass_timeout: 0,
             });
             let scroll_eid = self.add_entity(entity);
-            assets.scroll_entity_ids.push(scroll_eid);
+            assets.entities.scroll_entity_ids.push(scroll_eid);
 
             // `force_visible` flips the canonical scroll-domain status to
             // Visible. Capture ids here and flush them once the mission script
@@ -2789,7 +3190,7 @@ impl EngineInner {
         // NOTE: GUYS (tenants) chunk does NOT add entities to the script
         // elements array.  Tenants just register existing entities as
         // building occupants; `InitOccupant` runs after
-        // `populate_game_host_from_level` so it can operate on fully-
+        // the MissionLevelBuilder so it can operate on fully-
         // initialised entities.
 
         progress(1.0);
@@ -3702,17 +4103,17 @@ impl EngineInner {
             tracing::info!("Applied force_visible to {count} scroll(s)");
         }
 
-        // Populate the script host with level data (doors, patches, entity
-        // state, PC auth bits) so that native functions can operate on real
-        // game objects.
-        self.populate_game_host_from_level(assets, pending, &loaded);
+        // Validate every authored cross-reference before mutating canonical
+        // script domains, then execute the door/lift/patch/building stages.
+        let attachment_stage = level_builder.validate(self, assets, &loaded)?;
+        self.build_mission_level_stages(assets, &loaded, &attachment_stage)?;
 
         // Install mission-defined reinforcement doors: construct one
         // `Door(Reinforcement)` per REIN entry and insert it into the
         // gate-graph table.  The Rust port keeps a single
         // `self.script_domains.interactables.doors` list plus a filtered
         // `ai_global.reinforcement_doors` cache built below.  This has
-        // to run after `populate_game_host_from_level` so that
+        // to run after the authored door/lift stages so that
         // `self.script_domains.interactables.doors` exists, and before the cache filter so
         // `ai_global.reinforcement_doors` picks up these entries
         // alongside any proto-level doors with
@@ -3815,97 +4216,15 @@ impl EngineInner {
         }
 
         // Drain proto-stream jump-gate Door specs into `self.script_domains.interactables.doors`.
-        // The `consume_pending_motion_data` pass that produced these specs
-        // ran before `populate_game_host_from_level` (so beam-me sector
+        // The motion stage that produced these specs ran before the authored
+        // door stages (so beam-me sector
         // checks see a populated grid), so the Door push has to happen
         // here once the mission script is installed. Rebuilds gate-link connectivity
         // last so the new jump gates (and any prior REIN doors above) are
         // routed through by `find_path_gates`.
-        self.register_pending_jump_gates(pending);
+        self.attach_jump_gates(staging)?;
 
-        // ── InitOccupant ──
-        // Each tenant is (1) validated as a human (warn otherwise),
-        // (2) moved to the grid's lift-layer and the building's sector,
-        // (3) repositioned onto the building's first door's `point_in`,
-        // and (4) set inactive so it starts "inside" the building.
-        //
-        // `mission.building_tenants[i]` corresponds to the `i`-th
-        // `RawBuildingEntry::Building` (StandaloneDoors entries are not
-        // buildings).
-        // Pre-pass: collect the first door's point_in + the sector handle
-        // per building index, then apply to each tenant.  Sector numbers
-        // were allocated by `rewire_building_doors` into
-        // constructor-local pending data.
-        //
-        // `lift_layer()` is `special_layer - 1`; skip the whole pass when
-        // the grid hasn't been sized yet (empty fixtures, tests).
-        let lift_layer = if self.world.fast_grid.level.special_layer > 0 {
-            self.world.fast_grid.lift_layer()
-        } else {
-            0
-        };
-        let building_first_door_info: Vec<(MapPoint, u16)> = loaded
-            .proto
-            .buildings
-            .iter()
-            .filter_map(|entry| match entry {
-                crate::level_data::RawBuildingEntry::Building { doors } => doors.first(),
-                _ => None,
-            })
-            .map(|door| {
-                (
-                    MapPoint::new(door.point_in.0 as f32, door.point_in.1 as f32),
-                    door.sector_in,
-                )
-            })
-            .collect();
-        if loaded.mission.building_tenants.len() != building_first_door_info.len() {
-            tracing::warn!(
-                "Building tenant count {} does not match building count {} — \
-                 mission file and proto-level may be mismatched",
-                loaded.mission.building_tenants.len(),
-                building_first_door_info.len(),
-            );
-        }
-        for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
-            let first_door = building_first_door_info.get(bld_idx).copied();
-            for &elem_idx in &tenants.tenant_element_indices {
-                let Some(entity_id) = self.world.entities.id_at_legacy_slot(u32::from(elem_idx))
-                else {
-                    continue;
-                };
-                let Some(entity) = self.world.entities.get_mut(entity_id) else {
-                    continue;
-                };
-                // Only humans participate in InitOccupant; warn and skip
-                // otherwise.  Keep the entity untouched in the non-human
-                // case so we don't corrupt whatever sits at that slot.
-                if !entity.is_human() {
-                    tracing::warn!(
-                        "Building {} tenant element #{} is not a human — \
-                         skipping InitOccupant",
-                        bld_idx,
-                        elem_idx,
-                    );
-                    continue;
-                }
-                let elem = entity.element_data_mut();
-                elem.active = false;
-                if let Some((point_in, sector_in)) = first_door {
-                    // Change layer to lift_layer + sector to the
-                    // building's first sector, then snap the position to
-                    // PointIn.  Write through the sprite's
-                    // `PositionInterface` so the move-box and pathfinder
-                    // caches see the teleport.
-                    let pi = &mut elem.sprite.position_iface;
-                    pi.set_map_position(point_in);
-                    if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
-                        pi.set_layer(layer);
-                    }
-                    pi.set_sector(crate::position_interface::SectorHandle::new(sector_in));
-                }
-            }
-        }
+        self.attach_mission_level_stage(&attachment_stage)?;
 
         // Cache door geometry for `FindDoorEnemyCouldBeBehind`, which
         // walks the door list owned by the building/sector graph.
@@ -4109,9 +4428,8 @@ impl EngineInner {
     /// door's stream-read sector is discarded in favour of the
     /// building's.
     ///
-    /// We can't defer the rewrite until `initialize_motion_from_level_data`
-    /// runs, because the load pipeline calls `populate_game_host_from_level`
-    /// first (to build `self.script_domains.interactables.doors` + `ai_global.door_seek_infos`).  So this
+    /// We can't defer the rewrite until after motion construction because the
+    /// MissionLevelBuilder must consume the rewritten authored doors. This
     /// pre-pass runs during the initial load, right after the level file is
     /// parsed, computes the same sector number each building would get in
     /// the motion-init pass, and patches the raw doors in place.  The motion
@@ -4120,20 +4438,25 @@ impl EngineInner {
     /// allocators).
     fn rewire_building_doors(
         &mut self,
-        pending: &mut PendingLevelData,
+        staging: &mut LevelLoadStaging,
         buildings: &mut [crate::level_data::RawBuildingEntry],
         motion_data: Option<&crate::level_data::RawMotionData>,
-    ) {
-        pending.building_sector_numbers.clear();
+    ) -> Result<(), MissionLevelBuildError> {
+        staging.motion.building_sector_numbers.clear();
 
         // Count motion areas + obstacles in proto order — must match the
         // allocation loop in `initialize_motion_from_level_data`.
         let Some(md) = motion_data else {
-            // No motion data ⇒ no grid sectors ⇒ nothing sensible to rewire.
-            // Leave building doors alone; they'll keep their raw (wrong) values,
-            // but without motion data nothing else in the engine can use them
-            // anyway.
-            return;
+            let building_count = buildings
+                .iter()
+                .filter(|entry| {
+                    matches!(entry, crate::level_data::RawBuildingEntry::Building { .. })
+                })
+                .count();
+            if building_count == 0 {
+                return Ok(());
+            }
+            return Err(MissionLevelBuildError::MissingBuildingMotionData { building_count });
         };
         let mut next_sector: i16 = 0;
         for layer_areas in &md.layers {
@@ -4157,12 +4480,13 @@ impl EngineInner {
             };
             let sn = next_sector;
             next_sector += 1;
-            pending.building_sector_numbers.push(sn);
+            staging.motion.building_sector_numbers.push(sn);
             for door in doors.iter_mut() {
                 door.sector_in = sn as u16;
                 door.layer_in = building_lift_layer;
             }
         }
+        Ok(())
     }
 
     /// Initialize the fast find grid and pathfinder from motion data loaded from the proto level.
@@ -4171,7 +4495,7 @@ impl EngineInner {
     pub(crate) fn initialize_motion_from_level_data(
         &mut self,
         assets: &mut LevelAssets,
-        pending: &mut PendingLevelData,
+        staging: &mut LevelLoadStaging,
         motion_data: &crate::level_data::RawMotionData,
         lifts: &[crate::level_data::RawLift],
     ) {
@@ -4208,7 +4532,7 @@ impl EngineInner {
         // Drain raw masks stashed by `initialize_from_mission` and push the
         // decoded `RuntimeMask`s into the grid.  Masks are pushed just
         // after the grid is sized.
-        let raw_masks = std::mem::take(&mut pending.masks);
+        let raw_masks = std::mem::take(&mut staging.motion.masks);
         let raw_count = raw_masks.len();
         let mut added = 0usize;
         for raw in raw_masks {
@@ -4234,7 +4558,7 @@ impl EngineInner {
         // one and dispatch `cross_elevation_line`.
         //
         // The proto stores `right_obstacle_index` before `left`.
-        let elev_raw = std::mem::take(&mut pending.elevation_lines);
+        let elev_raw = std::mem::take(&mut staging.motion.elevation_lines);
         let num_obstacles = self.sight_obstacles(assets).len();
         let mut elev_added = 0usize;
         let mut elev_skipped_layer = 0usize;
@@ -4625,12 +4949,12 @@ impl EngineInner {
             //
             // Sector number allocation and door `sector_in` rewrites both
             // already happened in `rewire_building_doors` during the initial
-            // level load, so that the earlier `populate_game_host_from_level`
+            // level load, so that the later MissionLevelBuilder
             // call sees the correct values.  Here we just walk the stashed
             // list and register the matching empty grid sectors — the
             // `debug_assert_eq!` catches any drift between the two passes.
             let building_lift_layer = self.world.fast_grid.lift_layer();
-            let allocated = std::mem::take(&mut pending.building_sector_numbers);
+            let allocated = std::mem::take(&mut staging.motion.building_sector_numbers);
             for (bld_idx, sn) in allocated.iter().copied().enumerate() {
                 let sn_wrapped = crate::sector::SectorNumber::new(sn);
                 debug_assert_eq!(
@@ -4673,7 +4997,7 @@ impl EngineInner {
             // suppress the fog/night sprite variant when an actor stands
             // inside a torch-lit polygon.
             let ambiance_mask = self.world.weather.ambiance.to_bitmask();
-            let raw_light_sectors = std::mem::take(&mut pending.light_sectors);
+            let raw_light_sectors = std::mem::take(&mut staging.motion.light_sectors);
             let mut light_added = 0usize;
             let mut light_skipped_ambience = 0usize;
             let mut light_skipped_layer = 0usize;
@@ -4829,7 +5153,7 @@ impl EngineInner {
         // Must run after all motion-area sectors are registered so
         // `sector_number_map` lookups succeed for each jump zone's
         // sector number.
-        self.load_jump_lines_from_proto(pending);
+        self.load_jump_lines_from_proto(staging);
     }
 
     /// Minimum fall (negative jump height) before a jump line requires a
@@ -4857,9 +5181,9 @@ impl EngineInner {
     /// We skip jump-sector registration (polygon sectors for
     /// landing-spot lookup) because the table-swordfight path only
     /// needs the line endpoints and the sector linkage.
-    pub(crate) fn load_jump_lines_from_proto(&mut self, pending: &mut PendingLevelData) {
-        let jump_zones = std::mem::take(&mut pending.jump_zones);
-        let line_pairs = std::mem::take(&mut pending.jump_line_pairs);
+    pub(crate) fn load_jump_lines_from_proto(&mut self, staging: &mut LevelLoadStaging) {
+        let jump_zones = std::mem::take(&mut staging.motion.jump_zones);
+        let line_pairs = std::mem::take(&mut staging.motion.jump_line_pairs);
         if line_pairs.is_empty() {
             return;
         }
@@ -5027,12 +5351,12 @@ impl EngineInner {
             // in/out sector.
             //
             // We can't push directly here: the proto-stream phase
-            // (`consume_pending_motion_data`) now runs before
-            // `load_mission_script` / `populate_game_host_from_level`
+            // motion stage now runs before script loading and the
+            // MissionLevelBuilder
             // so that beam-me / soldier sector-motion-area validations
             // see a populated grid (PROTO → MISSION load order).
-            // `register_pending_jump_gates` drains this stash + rebuilds
-            // gate links once `game_host` exists.
+            // `attach_jump_gates` drains this stash + rebuilds
+            // gate links once the canonical mission domains exist.
             if let (Some(num_out), Some(num_in)) = (sector_num_out, sector_num_in)
                 && num_out.is_valid()
                 && num_in.is_valid()
@@ -5042,25 +5366,23 @@ impl EngineInner {
                 let pdy = jl1_mid.y - jl2_mid.y;
                 let penalty = (pdx * pdx + pdy * pdy).sqrt() + crate::gate::PENALTY_JUMP;
 
-                pending
-                    .jump_gate_specs
-                    .push(crate::engine::types::PendingJumpGate {
-                        point_out: jl2_mid,
-                        point_in: jl1_mid,
-                        layer_out: jl2_layer,
-                        layer_in: jl1_layer,
-                        sector_out: num_out,
-                        sector_in: num_in,
-                        jump_line_out: idx2,
-                        jump_line_in: idx1,
-                        // Cache each destination line's `helper_needed`
-                        // flag so `Door::is_actor_authorized` can answer
-                        // its destination-line branch without reading
-                        // back into `fast_grid`.
-                        jump_line_in_helper_needed: jl1_helper_needed,
-                        jump_line_out_helper_needed: jl2_helper_needed,
-                        penalty,
-                    });
+                staging.attachments.jump_gates.push(JumpGateAttachment {
+                    point_out: jl2_mid,
+                    point_in: jl1_mid,
+                    layer_out: jl2_layer,
+                    layer_in: jl1_layer,
+                    sector_out: num_out,
+                    sector_in: num_in,
+                    jump_line_out: idx2,
+                    jump_line_in: idx1,
+                    // Cache each destination line's `helper_needed`
+                    // flag so `Door::is_actor_authorized` can answer
+                    // its destination-line branch without reading
+                    // back into `fast_grid`.
+                    jump_line_in_helper_needed: jl1_helper_needed,
+                    jump_line_out_helper_needed: jl2_helper_needed,
+                    penalty,
+                });
             } else {
                 tracing::warn!(
                     "Jump line pair ({z1}/{z2}) failed to resolve sector numbers; \
@@ -5138,23 +5460,22 @@ impl EngineInner {
         }
     }
 
-    /// Drain constructor-local pending jump-gate specs and push each entry as a
+    /// Attach staged jump-gate specs as
     /// `Door` (gate_type=Jump) into `self.script_domains.interactables.doors`, then rebuild
     /// gate-link connectivity.  Must run after
-    /// `populate_game_host_from_level` so the canonical door table exists, and after
+    /// the authored door/lift stages so the canonical door table exists, and after
     /// every other proto/mission door has been registered so the
     /// gate-link rebuild sees the complete door table in one pass.
-    pub(crate) fn register_pending_jump_gates(&mut self, pending: &mut PendingLevelData) {
-        let specs = std::mem::take(&mut pending.jump_gate_specs);
+    pub(crate) fn attach_jump_gates(
+        &mut self,
+        staging: &mut LevelLoadStaging,
+    ) -> Result<(), MissionLevelBuildError> {
+        let specs = std::mem::take(&mut staging.attachments.jump_gates);
         if specs.is_empty() {
-            return;
+            return Ok(());
         }
         if self.scripts.mission.is_none() {
-            tracing::warn!(
-                "register_pending_jump_gates: no mission script — {} jump-gate Door(s) dropped",
-                specs.len(),
-            );
-            return;
+            return Err(MissionLevelBuildError::JumpGateWithoutMissionScript);
         }
         let count = specs.len();
         for spec in specs {
@@ -5186,81 +5507,7 @@ impl EngineInner {
         tracing::debug!(
             "Registered {count} jump-gate Door(s) into self.script_domains.interactables.doors"
         );
-    }
-
-    /// Resolve each patch's old/new mask refs (layer + per-layer index)
-    /// to flat `fast_grid.level.masks` indices, and flip each patch's new masks
-    /// dormant so the patch starts in its "old" state.
-    ///
-    /// Must run after `initialize_motion_from_level_data` registers every
-    /// mask in the grid.  Patches themselves are constructed earlier in
-    /// `populate_game_host_from_level`, and their raw mask refs are stashed
-    /// in constructor-local pending data keyed by patch index.
-    pub(crate) fn resolve_patch_mask_refs(&mut self, pending: &mut PendingLevelData) {
-        let refs = std::mem::take(&mut pending.patch_mask_refs);
-        if refs.is_empty() {
-            return;
-        }
-        if self.scripts.mission.is_none() {
-            tracing::warn!(
-                "resolve_patch_mask_refs: {} patch mask record(s) dropped because the mission script failed to load",
-                refs.len()
-            );
-            return;
-        }
-        let mut missing_old = 0u32;
-        let mut missing_new = 0u32;
-        let mut missing_values: std::collections::BTreeSet<(u16, u16)> =
-            std::collections::BTreeSet::new();
-        for (patch_idx, (old_refs, new_refs)) in refs.iter().enumerate() {
-            let Some(patch) = self.script_domains.interactables.patches.get_mut(patch_idx) else {
-                continue;
-            };
-            for mref in old_refs {
-                let resolved = self
-                    .world
-                    .fast_grid
-                    .level
-                    .layers
-                    .get(mref.layer as usize)
-                    .and_then(|l| l.mask_indices.get(mref.index as usize).copied());
-                match resolved {
-                    Some(idx) => patch.old_mask_indices.push(idx),
-                    None => {
-                        missing_old += 1;
-                        missing_values.insert((mref.layer, mref.index));
-                    }
-                }
-            }
-            for mref in new_refs {
-                let resolved = self
-                    .world
-                    .fast_grid
-                    .level
-                    .layers
-                    .get(mref.layer as usize)
-                    .and_then(|l| l.mask_indices.get(mref.index as usize).copied());
-                match resolved {
-                    Some(idx) => patch.new_mask_indices.push(idx),
-                    None => {
-                        missing_new += 1;
-                        missing_values.insert((mref.layer, mref.index));
-                    }
-                }
-            }
-            // Patch starts in its "old" state: old masks active, new masks
-            // dormant.  `initially_active` in the proto doesn't affect
-            // masks — the flip happens via `PatchEffect::SwapObjects`.
-            for &idx in &patch.new_mask_indices {
-                self.world.fast_grid.set_mask_active(idx, false);
-            }
-        }
-        if missing_old > 0 || missing_new > 0 {
-            tracing::warn!(
-                "resolve_patch_mask_refs: {missing_old} old + {missing_new} new mask refs out of range (missing (layer,index)={:?})",
-                missing_values,
-            );
-        }
+        Ok(())
     }
 
     /// Resolve each door's two endpoint sector numbers to their grid
@@ -5269,7 +5516,7 @@ impl EngineInner {
     ///
     /// Must run after `initialize_motion_from_level_data`, which is what
     /// populates `sector_number_map`.  Doors themselves are loaded earlier
-    /// by `populate_game_host_from_level`.
+    /// by the MissionLevelBuilder door and lift stages.
     pub(crate) fn populate_sector_gates_from_doors(&mut self) {
         if self.scripts.mission.is_none() {
             tracing::warn!(
@@ -5326,24 +5573,33 @@ impl EngineInner {
 
     // ─── Loaded level → canonical script domains ────────────────────────
 
-    /// Populate canonical doors, patches, building state and PC authorization
-    /// bits from the loaded level data. Called once, right after the mission
-    /// script is loaded.
-    // TODO(engine-cleanup): rename this legacy helper after references in the
-    // level-data types and gate documentation can move in one slice.
-    fn populate_game_host_from_level(
+    /// Apply the validated door, lift, patch, and building stage outputs in
+    /// original authored order.
+    fn build_mission_level_stages(
         &mut self,
         assets: &LevelAssets,
-        pending: &mut PendingLevelData,
         loaded: &crate::level_data::LoadedLevel,
-    ) {
+        stages: &MissionLevelAttachmentStageInput,
+    ) -> Result<(), MissionLevelBuildError> {
         if self.scripts.mission.is_none() {
-            tracing::warn!(
-                "populate_game_host_from_level: canonical script domains were not populated because the mission script failed to load"
-            );
-            return;
+            // Empty test fixtures have no script-facing authored data and are
+            // allowed through the validation stage.
+            return Ok(());
         }
 
+        self.build_door_stage(loaded, stages);
+        self.build_lift_stage(loaded);
+        self.build_door_lift_attachment_stage()?;
+        self.build_patch_stage(assets, loaded);
+        self.build_building_stage(stages);
+        Ok(())
+    }
+
+    fn build_door_stage(
+        &mut self,
+        loaded: &crate::level_data::LoadedLevel,
+        stages: &MissionLevelAttachmentStageInput,
+    ) {
         // ── Doors ──
         // Collect every RawDoor from buildings / standalone-door entries.
         //
@@ -5352,24 +5608,12 @@ impl EngineInner {
         // SetBuildingActive) can find the first gate of a given building.
         // The building's gates are exactly the doors declared inside its
         // proto entry.
-        let mut bld_idx: usize = 0;
         for entry in &loaded.proto.buildings {
-            let (raw_doors, is_building) = match entry {
-                crate::level_data::RawBuildingEntry::Building { doors } => (doors, true),
-                crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => (doors, false),
+            let raw_doors = match entry {
+                crate::level_data::RawBuildingEntry::Building { doors }
+                | crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => doors,
             };
-            let first_handle = crate::natives::ScriptHandleCodec::door_handle_from_index(
-                self.script_domains.interactables.doors.len(),
-            );
             for raw in raw_doors {
-                // Standalone (non-building) doors must be Default (0),
-                // Gate (3), or Trap (7).
-                if !is_building && !matches!(raw.door_type, 0 | 3 | 7) {
-                    panic!(
-                        "Illegal standalone door type {} at ({}, {}): must be DEFAULT, GATE, or TRAP",
-                        raw.door_type, raw.point_mid.0, raw.point_mid.1
-                    );
-                }
                 let door_type = match raw.door_type {
                     1 => crate::gate::DoorType::Building,
                     2 => crate::gate::DoorType::BuildingTrap,
@@ -5441,20 +5685,11 @@ impl EngineInner {
                     door.rebuild_click_bbox();
                 }
             }
-            if is_building {
-                let last_handle = self.script_domains.interactables.doors.len() as i32;
-                let gates: Vec<i32> = (first_handle..=last_handle).collect();
-                if bld_idx >= self.script_domains.buildings.gates.len() {
-                    self.script_domains
-                        .buildings
-                        .gates
-                        .resize(bld_idx + 1, Vec::new());
-                }
-                self.script_domains.buildings.gates[bld_idx] = gates;
-                bld_idx += 1;
-            }
         }
+        self.script_domains.buildings.gates = stages.building_gates.clone();
+    }
 
+    fn build_lift_stage(&mut self, loaded: &crate::level_data::LoadedLevel) {
         // Also collect doors from lifts.
         for lift in &loaded.proto.lifts {
             // `adapt_points` guards its LiftHigh / LiftHighCrenel arms
@@ -5520,7 +5755,9 @@ impl EngineInner {
                 }
             }
         }
+    }
 
+    fn build_door_lift_attachment_stage(&mut self) -> Result<(), MissionLevelBuildError> {
         // Build gate links: connect doors that share a sector.
         // Jump gates are appended later by `load_jump_lines_from_proto`,
         // which re-invokes `build_gate_links` to cover them too.
@@ -5660,16 +5897,17 @@ impl EngineInner {
             }
             match (gs.low_exit_point, gs.high_exit_point) {
                 (Some(_), Some(_)) => lift_endpoints_cached += 1,
-                (Some(_), None) | (None, Some(_)) => {
+                (low, high) if low.is_some() ^ high.is_some() => {
                     lift_endpoints_partial += 1;
                     if matches!(
                         gs.lift_type,
                         Some(crate::sector::LiftType::Wall | crate::sector::LiftType::Ladder)
                     ) {
-                        panic!(
-                            "Lift sector {} ({:?}) missing high/low exit points after door load",
-                            gs.sector_number, gs.lift_type
-                        );
+                        return Err(MissionLevelBuildError::MissingLiftEndpoint {
+                            lift_type: format!("{:?}", gs.lift_type.expect("matched Some lift")),
+                            sector_number: i16::from(gs.sector_number),
+                            endpoint: if low.is_none() { "low" } else { "high" }.to_owned(),
+                        });
                     }
                 }
                 (None, None) => {
@@ -5677,12 +5915,14 @@ impl EngineInner {
                         gs.lift_type,
                         Some(crate::sector::LiftType::Wall | crate::sector::LiftType::Ladder)
                     ) {
-                        panic!(
-                            "Lift sector {} ({:?}) missing high/low exit points after door load",
-                            gs.sector_number, gs.lift_type
-                        );
+                        return Err(MissionLevelBuildError::MissingLiftEndpoint {
+                            lift_type: format!("{:?}", gs.lift_type.expect("matched Some lift")),
+                            sector_number: i16::from(gs.sector_number),
+                            endpoint: "both high and low".to_owned(),
+                        });
                     }
                 }
+                _ => unreachable!("lift endpoint match is exhaustive"),
             }
         }
         tracing::debug!(
@@ -5690,7 +5930,10 @@ impl EngineInner {
             lift_endpoints_cached,
             lift_endpoints_partial,
         );
+        Ok(())
+    }
 
+    fn build_patch_stage(&mut self, assets: &LevelAssets, loaded: &crate::level_data::LoadedLevel) {
         // ── Patches ──
         for (patch_idx, raw) in loaded
             .proto
@@ -5862,16 +6105,20 @@ impl EngineInner {
             let old_line_indices: Vec<crate::fast_find_grid::LineIndex> = Vec::new();
             let new_line_indices: Vec<crate::fast_find_grid::LineIndex> = Vec::new();
 
-            // Mask index resolution is deferred: at this point
-            // `initialize_motion_from_level_data` hasn't run yet, so
-            // `fast_grid.level.layers[L].mask_indices` is still empty.  Stash the
-            // raw refs keyed by patch index and resolve them in
-            // `resolve_patch_mask_refs`, which also flips `new_masks` dormant.
-            pending
-                .patch_mask_refs
-                .push((raw.old_masks.clone(), raw.new_masks.clone()));
-            let old_mask_indices: Vec<crate::mask::MaskIndex> = Vec::new();
-            let new_mask_indices: Vec<crate::mask::MaskIndex> = Vec::new();
+            // Motion construction precedes the mission-domain builder, so mask
+            // references can be attached now instead of leaking through a
+            // loose pending-data bag.
+            let resolve_mask = |mask_ref: &crate::level_data::MaskRef| {
+                self.world.fast_grid.level.layers[mask_ref.layer as usize].mask_indices
+                    [mask_ref.index as usize]
+            };
+            let old_mask_indices: Vec<crate::mask::MaskIndex> =
+                raw.old_masks.iter().map(resolve_mask).collect();
+            let new_mask_indices: Vec<crate::mask::MaskIndex> =
+                raw.new_masks.iter().map(resolve_mask).collect();
+            for &mask_index in &new_mask_indices {
+                self.world.fast_grid.set_mask_active(mask_index, false);
+            }
 
             self.script_domains
                 .interactables
@@ -5936,20 +6183,7 @@ impl EngineInner {
             let patch_door_indices: Vec<u32> = raw
                 .door_indices
                 .iter()
-                .filter_map(|&raw_idx| {
-                    let idx = raw_idx as u32;
-                    if (idx as usize) < self.script_domains.interactables.doors.len() {
-                        Some(idx)
-                    } else {
-                        tracing::warn!(
-                            "Patch {}: door_index {} out of range (have {} doors)",
-                            patch_idx,
-                            idx,
-                            self.script_domains.interactables.doors.len()
-                        );
-                        None
-                    }
-                })
+                .map(|&raw_idx| u32::from(raw_idx))
                 .collect();
             if !patch_door_indices.is_empty() && !raw.door_triggered && !raw.triggers_door {
                 tracing::warn!(
@@ -5990,14 +6224,18 @@ impl EngineInner {
             "Populated {} canonical patches from level data ({} with FX entities)",
             self.script_domains.interactables.patches.len(),
             assets
-                .patch_entity_handles
+                .entities
+                .patch_animation_entities
                 .iter()
                 .filter(|h| h.is_some())
                 .count(),
         );
+    }
 
+    fn build_building_stage(&mut self, stages: &MissionLevelAttachmentStageInput) {
         // ── Building occupants from tenant data ──
-        for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
+        for building in &stages.buildings.attachments {
+            let bld_idx = building.building_index;
             if bld_idx >= self.script_domains.buildings.occupants.len() {
                 self.script_domains
                     .buildings
@@ -6014,8 +6252,8 @@ impl EngineInner {
                     .arrow_reserves
                     .resize(bld_idx + 1, false);
             }
-            self.script_domains.buildings.arrow_reserves[bld_idx] = tenants.arrow_reserve;
-            for &elem_idx in &tenants.tenant_element_indices {
+            self.script_domains.buildings.arrow_reserves[bld_idx] = building.arrow_reserve;
+            for &elem_idx in &building.tenant_element_indices {
                 let actor_h = crate::natives::ScriptHandleCodec::actor_handle_from_index(
                     usize::from(elem_idx),
                 );
@@ -6027,6 +6265,59 @@ impl EngineInner {
                     .insert(actor_h, bld_h);
             }
         }
+    }
+
+    /// Attach validated tenant entities in GUYS/CAVE authored order to each
+    /// building's first gate, matching `RHSectorBuilding::InitOccupant`.
+    fn attach_mission_level_stage(
+        &mut self,
+        stages: &MissionLevelAttachmentStageInput,
+    ) -> Result<(), MissionLevelBuildError> {
+        debug_assert_eq!(
+            stages.patch_count,
+            self.script_domains.interactables.patches.len(),
+            "validated patch stage drifted before attachment"
+        );
+        let lift_layer = if self.world.fast_grid.level.special_layer > 0 {
+            self.world.fast_grid.lift_layer()
+        } else {
+            0
+        };
+        for building in &stages.buildings.attachments {
+            for &element_index in &building.tenant_element_indices {
+                let entity_id = self
+                    .world
+                    .entities
+                    .id_at_legacy_slot(u32::from(element_index))
+                    .ok_or(MissionLevelBuildError::MissingBuildingTenant {
+                        building_index: building.building_index,
+                        element_index,
+                    })?;
+                let entity = self.world.entities.get_mut(entity_id).ok_or(
+                    MissionLevelBuildError::MissingBuildingTenant {
+                        building_index: building.building_index,
+                        element_index,
+                    },
+                )?;
+                if !entity.is_human() {
+                    return Err(MissionLevelBuildError::NonHumanBuildingTenant {
+                        building_index: building.building_index,
+                        element_index,
+                    });
+                }
+                let elem = entity.element_data_mut();
+                elem.active = false;
+                let pi = &mut elem.sprite.position_iface;
+                pi.set_map_position(building.first_door_point_in);
+                if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
+                    pi.set_layer(layer);
+                }
+                pi.set_sector(crate::position_interface::SectorHandle::new(
+                    building.sector_in,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Harvest the Sherwood engine state into the campaign's production
@@ -6183,7 +6474,8 @@ impl EngineInner {
         // add XP, heal), along with the script-zone layer/sector needed to
         // position restored occupants.
         let points_count = assets
-            .script_location_positions
+            .scripts
+            .location_positions
             .len()
             .saturating_sub(self.script_domains.zones.scripts.len());
 
@@ -6211,8 +6503,8 @@ impl EngineInner {
             }
             let loc_handle_idx = points_count + zone_idx; // 0-based index into script_location_*
             if let (Some(&layer), Some(&sector)) = (
-                assets.script_location_layers.get(loc_handle_idx),
-                assets.script_location_sectors.get(loc_handle_idx),
+                assets.scripts.location_layers.get(loc_handle_idx),
+                assets.scripts.location_sectors.get(loc_handle_idx),
             ) {
                 zone_location.entry(pt).or_insert((layer, sector));
             }

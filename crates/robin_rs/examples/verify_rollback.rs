@@ -74,7 +74,7 @@ fn main() {
                 name,
                 std::sync::Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(scb)),
             );
-            assets.mission_script_programs = std::sync::Arc::new(m);
+            assets.scripts.mission_programs = std::sync::Arc::new(m);
         }
     }
 

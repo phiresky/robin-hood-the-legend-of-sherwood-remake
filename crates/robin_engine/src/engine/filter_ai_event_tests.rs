@@ -1236,11 +1236,11 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(script);
     let mut assets = LevelAssets::new();
-    assets.script_location_count = 1;
-    assets.script_point_count = 1;
-    assets.script_location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
-    assets.script_location_layers = std::sync::Arc::new(vec![2]);
-    assets.script_location_sectors = std::sync::Arc::new(vec![44]);
+    assets.scripts.location_count = 1;
+    assets.scripts.point_count = 1;
+    assets.scripts.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+    assets.scripts.location_layers = std::sync::Arc::new(vec![2]);
+    assets.scripts.location_sectors = std::sync::Arc::new(vec![44]);
     engine.attach_script_bindings(&assets);
 
     let result = engine

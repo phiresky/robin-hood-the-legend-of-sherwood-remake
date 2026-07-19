@@ -73,14 +73,14 @@ impl WorldState {
     ) -> Result<(), String> {
         self.validate_pc_index_inner()?;
 
-        if script_zone_count != assets.script_zone_grid_indices.len() {
+        if script_zone_count != assets.scripts.zone_grid_indices.len() {
             return Err(format!(
                 "script-zone runtime length {} does not match level zone-index length {}",
                 script_zone_count,
-                assets.script_zone_grid_indices.len(),
+                assets.scripts.zone_grid_indices.len(),
             ));
         }
-        for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
+        for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
             if (grid_idx as usize) >= assets.level_grid.sectors.len() {
                 return Err(format!(
                     "script zone {zone_idx} references grid sector {grid_idx}, but the level has {} sectors",
@@ -96,11 +96,11 @@ impl WorldState {
                 assets.static_sight_obstacles.len(),
             ));
         }
-        if self.mobile_elements.len() != assets.mobile_element_count {
+        if self.mobile_elements.len() != assets.entities.mobile_element_count {
             return Err(format!(
                 "snapshot mobile-element count {} does not match loaded level count {}",
                 self.mobile_elements.len(),
-                assets.mobile_element_count,
+                assets.entities.mobile_element_count,
             ));
         }
 
@@ -275,7 +275,7 @@ mod tests {
     fn out_of_bounds_script_zone_index_fails_loudly() {
         let world = WorldState::new();
         let mut assets = LevelAssets::new();
-        assets.script_zone_grid_indices = std::sync::Arc::new(vec![0]);
+        assets.scripts.zone_grid_indices = std::sync::Arc::new(vec![0]);
         world.validate_level_attachments(&assets, 1);
     }
 }
