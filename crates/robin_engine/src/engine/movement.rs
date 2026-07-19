@@ -4312,26 +4312,13 @@ impl EngineInner {
                 next_destination_same_action,
             });
 
-            if motion_method != MotionMethod::TillLastFrame
-                && let Some(motion_order) = motion_order
-                && let Some(cached_goal) = elem.sprite.stale_motion_goal(motion_order)
+            if let Some(motion_order) = motion_order
+                && let Some(mismatch) = elem.sprite.motion_order_state_mismatch(motion_order)
             {
-                tracing::warn!(
-                    entity = ?entity_id,
-                    order = ?order_action,
-                    order_id = motion_order.order_id.get(),
-                    cached_goal_x = cached_goal.x,
-                    cached_goal_y = cached_goal.y,
-                    goal_x = goal.x,
-                    goal_y = goal.y,
-                    "movement order had stale PositionInterface goal; reseeding"
+                panic!(
+                    "movement order state invariant failed for entity {entity_id:?}, order {order_action:?}, id {}: {mismatch:?}",
+                    motion_order.order_id
                 );
-                // TODO: find which order-pop or restore path can leave
-                // `last_processed_order_id` on the current order while
-                // `PositionInterface::goal_map` still points at the prior
-                // waypoint. C++ sets the sprite goal when the order starts;
-                // this repairs that invariant before `IsGoalReached`.
-                elem.sprite.reseed_motion_order(motion_order);
             }
 
             // Run a one-step rotation of facing toward the goal
@@ -4472,35 +4459,10 @@ impl EngineInner {
                 }
                 if transition_has_map_target && speed > 0.0 && dist > 0.01 {
                     let elem = entity.element_data_mut();
-                    let pos = elem.position_map();
                     let pi = &mut elem.sprite.position_iface;
-                    if !pi.is_increment_map_computed() {
-                        tracing::warn!(
-                            entity = ?entity_id,
-                            order = ?order_action,
-                            pos_x = pos.x,
-                            pos_y = pos.y,
-                            goal_x = goal.x,
-                            goal_y = goal.y,
-                            "movement transition lost cached map increment; recomputing from order target"
-                        );
-                        // TODO: identify which mid-order state mutation clears
-                        // PositionInterface::computed_increment here. The order
-                        // target is authoritative, so reseeding mirrors the
-                        // new-order setup instead of advancing with stale data.
-                        pi.set_map_goal(crate::coordinates::MapPoint {
-                            x: goal.x,
-                            y: goal.y,
-                        });
-                        pi.set_reversed_movement(order_reverse);
-                        pi.set_tolerance(
-                            order_tolerance,
-                            active_move_flags
-                                .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
-                        );
-                        pi.set_goal_next_valid(false);
-                        pi.compute_increment_all(order_compute_direction);
-                    }
+                    // `motion_order_state_mismatch` above guarantees the
+                    // same-id cache established by `PerformMotion` is still
+                    // intact. C++ never reconstructs this state mid-order.
                     pi.update_position_map_scaled(speed);
                     elem.update_grid_cell();
                 }
@@ -7098,40 +7060,18 @@ impl EngineInner {
 
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
-        let orders_before = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.orders.len())
-            .unwrap_or(0);
-        let first_order_before = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|e| e.orders.front())
-            .map(|o| o.order_type);
         let had_launch_transition = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.num_transition_orders > 0 && e.orders.front().is_some());
-        self.post_process_path(seq_id, elem_idx);
-        let (orders_after, first_order_after) = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| (e.orders.len(), e.orders.front().map(|o| o.order_type)))
-            .unwrap_or((orders_before, first_order_before));
-        let have_start_transition = had_launch_transition
-            // `post_process_path` can prepend walk/run startup transitions.
-            // `generate_transition` can also have queued posture transitions
-            // already, e.g. PC Spy/Tree uncloaking before a move.
-            //
-            // TODO: Consider tracking start-vs-end transition order spans
-            // explicitly on SequenceElement instead of inferring from the
-            // front order and insertion deltas.
-            ||
-            orders_after > orders_before && first_order_after != first_order_before;
+        let inserted_path_start_transition = self.post_process_path(seq_id, elem_idx);
+        // `generate_transition` owns the serialized leading-transition span;
+        // `post_process_path` reports its own startup insertion directly.
+        // This also covers a short path whose walking order is relabelled in
+        // place (no queue-length delta), exactly as C++
+        // `InsertTransitionStart` does.
+        let have_start_transition = had_launch_transition || inserted_path_start_transition;
 
         // For seek elements with an entity target, snapshot the
         // target's current map position onto the actor so the

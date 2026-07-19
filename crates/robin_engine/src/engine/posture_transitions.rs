@@ -323,14 +323,14 @@ impl EngineInner {
     ///
     /// Dispatches to [`Self::post_process_path_to_line`] at the top
     /// when the movement element carries [`MoveFlags::LINE`].
-    pub(crate) fn post_process_path(&mut self, seq_id: SequenceId, elem_idx: usize) {
+    pub(crate) fn post_process_path(&mut self, seq_id: SequenceId, elem_idx: usize) -> bool {
         // Snapshot everything we need from entity/element into locals
         // so we can release the immutable borrow before mutating the
         // sequence element. The element's posture/actionstate-after-
         // transition are read from its stored fields when the element
         // is not currently in progress.
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            return;
+            return false;
         };
         let command = elem.command;
         // Accept `Move`, `MoveOk`, and `PassDoor`. The semantic gate
@@ -343,7 +343,7 @@ impl EngineInner {
         // `Command::Move`), but accepting both makes the gate robust
         // to either lifecycle.
         if command != Command::Move && command != Command::MoveOk && command != Command::PassDoor {
-            return;
+            return false;
         }
         let (mut animation_movement, flags, tolerance, owner) = match &elem.data {
             SequenceElementData::Movement {
@@ -352,10 +352,10 @@ impl EngineInner {
                 tolerance,
                 ..
             } => (*action, *flags, *tolerance, elem.owner),
-            _ => return,
+            _ => return false,
         };
         let Some(owner) = owner else {
-            return;
+            return false;
         };
 
         // Line-goal fork: collapse the path onto its goal line before
@@ -369,7 +369,7 @@ impl EngineInner {
         // Re-read the element after `post_process_path_to_line`
         // potentially mutated its order list.
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            return;
+            return false;
         };
         let state = elem.state;
         let elem_posture_after = elem.posture_after_transition;
@@ -379,7 +379,7 @@ impl EngineInner {
 
         let (current_posture, current_action_state, position, current_sector) = {
             let Some(entity) = self.get_entity(owner) else {
-                return;
+                return false;
             };
             let ed = entity.element_data();
             // Always read live actor state here.
@@ -460,7 +460,7 @@ impl EngineInner {
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
         else {
-            return;
+            return false;
         };
         if matches!(
             animation_movement,
@@ -502,8 +502,9 @@ impl EngineInner {
                 "post_process_path: pre-insertion state"
             );
         }
+        let mut inserted_start_transition = false;
         if let (Some(anim), Some(dist)) = (animation_start_posture, start_posture_distance) {
-            elem.insert_transition_start(
+            inserted_start_transition |= elem.insert_transition_start(
                 anim,
                 animation_movement,
                 dist as f32,
@@ -514,7 +515,7 @@ impl EngineInner {
         if let (Some(anim), Some(dist)) =
             (animation_start_action_state, start_action_state_distance)
         {
-            elem.insert_transition_start(
+            inserted_start_transition |= elem.insert_transition_start(
                 anim,
                 animation_movement,
                 dist as f32,
@@ -559,6 +560,7 @@ impl EngineInner {
                 );
             }
         }
+        inserted_start_transition
     }
 
     /// Line-goal path collapse. Rewrites the last order's destination
