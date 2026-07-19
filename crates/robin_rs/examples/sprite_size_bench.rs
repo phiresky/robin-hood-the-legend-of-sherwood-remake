@@ -27,13 +27,11 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 
+use robin_assets::frame_holder::{FrameHolder, TRANSPARENT_COLOR_16};
+use robin_assets::picture::Picture;
+use robin_engine::sbfile::{self, SbFile};
+use robin_engine::sprite_script::SpriteScriptor;
 use robin_engine::sprite_variant::SpriteVariant;
-use robin_rs::{
-    frame_holder::{FrameHolder, TRANSPARENT_COLOR_16},
-    picture::Picture,
-    sbfile::{self, SbFile},
-    sprite_scriptor::SpriteScriptor,
-};
 
 // ---------------------------------------------------------------------------
 // CLI

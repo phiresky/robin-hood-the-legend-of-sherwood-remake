@@ -39,9 +39,9 @@ fn main() {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
-    use robin_rs::level_loader::{ChunkReader, LevelFormat, load_proto_level};
-    use robin_rs::profiles::{CivilianType, ProfileManager};
-    use robin_rs::sbfile::{SB_FILE_READ, SbFile};
+    use robin_engine::level_data::{ChunkReader, LevelFormat, load_proto_level};
+    use robin_engine::profiles::{CivilianType, ProfileManager};
+    use robin_engine::sbfile::{SB_FILE_READ, SbFile};
     use std::collections::BTreeSet;
 
     // Load the proto file (geometry, motion areas, buildings, etc.)
@@ -103,7 +103,7 @@ fn main() {
             std::process::exit(1);
         });
         let mut mission_reader = ChunkReader::new(mission_file);
-        match robin_rs::level_loader::load_mission(&mut mission_reader, format, &is_beggar) {
+        match robin_engine::level_data::load_mission(&mut mission_reader, format, &is_beggar) {
             Ok(m) => Some(m),
             Err(e) => {
                 eprintln!("Warning: mission load failed ({e:?}), dumping proto only");
@@ -150,8 +150,8 @@ fn main() {
 
     #[derive(serde::Serialize)]
     struct Dump {
-        proto: robin_rs::level_loader::LoadedProtoLevel,
-        mission: Option<robin_rs::level_loader::LoadedMission>,
+        proto: robin_engine::level_data::LoadedProtoLevel,
+        mission: Option<robin_engine::level_data::LoadedMission>,
     }
     let dump = Dump { proto, mission };
     let json = serde_json::to_string_pretty(&dump).unwrap();

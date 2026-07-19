@@ -2,7 +2,7 @@
 //!
 //! On every frame, rewinds the engine by 5 frames and re-simulates
 //! them, comparing the result to the live engine state via
-//! [`crate::replay::state_hash`].  Any divergence reveals a source of
+//! [`robin_engine::replay::state_hash`].  Any divergence reveals a source of
 //! non-determinism in the simulation.
 //!
 //! Enabled by default (`--rollback-check`, disable with
@@ -15,7 +15,7 @@
 //! in the current directory, including the replay file path when one
 //! is available.
 
-use crate::Host;
+use crate::host::Host;
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
@@ -24,9 +24,9 @@ use std::sync::{
 use std::thread::JoinHandle;
 use web_time::Instant;
 
-use crate::engine::{Engine, LevelAssets};
-use crate::player_command::PlayerInput;
 use crate::sim_timeline::{SimSnapshot as Snapshot, replay_to_frame};
+use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::player_command::PlayerInput;
 
 /// Number of frames to rewind and replay each check.  5 ticks = 0.2s
 /// at the game's fixed 25 fps simulation rate.
@@ -268,8 +268,8 @@ impl RollbackCheckJob {
         let replay_us = replay_start.elapsed().as_micros();
 
         let hash_start = Instant::now();
-        let expected = crate::replay::state_hash(&self.current_engine);
-        let actual = crate::replay::state_hash(&sim_snapshot.engine);
+        let expected = robin_engine::replay::state_hash(&self.current_engine);
+        let actual = robin_engine::replay::state_hash(&sim_snapshot.engine);
         let hash_us = hash_start.elapsed().as_micros();
 
         if expected != actual {

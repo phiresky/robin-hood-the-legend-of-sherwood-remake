@@ -60,7 +60,7 @@ pub use resources::{IngameMenuResources, MenuSurface};
 pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
 
-use crate::game_operation::GameCode;
+use robin_engine::game_operation::GameCode;
 
 /// Translate a `GameCode` reported by the mission into a human-readable
 /// title / body pair.  Placeholder text used until the real level

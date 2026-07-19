@@ -218,7 +218,7 @@ fn mission_description_picture_default_when_no_descriptor() {
     let picture = MissionDescriptionScreen::get_mission_picture(None);
     assert_eq!(
         picture,
-        crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE
+        robin_engine::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE
     );
 }
 

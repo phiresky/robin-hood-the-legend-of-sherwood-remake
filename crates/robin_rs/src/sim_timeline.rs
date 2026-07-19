@@ -17,10 +17,10 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use web_time::Instant;
 
-use crate::Host;
-use crate::engine::{DevState, Engine, HostDisplayState, LevelAssets};
-use crate::game_operation::GameCode;
-use crate::player_command::PlayerInput;
+use crate::host::Host;
+use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::game_operation::GameCode;
+use robin_engine::player_command::PlayerInput;
 
 /// Dense recent rollback snapshots retained for multiplayer correction.
 /// Two seconds at the fixed 25 Hz sim rate.
@@ -460,7 +460,7 @@ fn apply_engine_side_effects(
     host: &mut Host,
     display: &mut HostDisplayState,
     dev: &mut DevState,
-    mut side_effects: crate::engine::SideEffects,
+    mut side_effects: robin_engine::engine::SideEffects,
 ) -> GameCode {
     if side_effects.ui_has_focus {
         host.input.has_focus = false;

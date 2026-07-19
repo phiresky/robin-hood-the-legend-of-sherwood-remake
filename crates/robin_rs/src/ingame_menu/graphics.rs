@@ -9,9 +9,9 @@ use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
-use crate::graphic_config::GraphicConfig;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
+use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_fallback_rect,

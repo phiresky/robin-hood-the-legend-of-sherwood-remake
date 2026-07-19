@@ -12,8 +12,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::font::TrueTypeFont;
-use crate::sbfile::SbFile;
 use robin_assets::picture::{Picture, read_i32, read_u16, read_u32};
+use robin_engine::sbfile::SbFile;
 
 const TAG_LEN: usize = 6;
 const SBFONT_TAG: &[u8; TAG_LEN] = b"SBFONT";

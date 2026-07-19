@@ -6,10 +6,10 @@
 //!   cargo run --example run_script -- datadirs/demo/.../Dem_Lei_MP.scb StartUp Initialize
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
-use robin_rs::interp::Vm;
-use robin_rs::natives::{GameHost, NativeContext, ScriptState};
-use robin_rs::scb;
-use robin_rs::vm::{self, Instruction};
+use robin_assets::scb;
+use robin_engine::interp::Vm;
+use robin_engine::natives::{GameHost, NativeContext, ScriptState};
+use robin_engine::vm::{self, Instruction};
 
 fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt::init();
@@ -74,7 +74,7 @@ fn main() -> std::process::ExitCode {
         &mut fast_grid,
     );
     let mut script_state = ScriptState::default();
-    let mut script_domains = robin_rs::engine::ScriptDomains::default();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let context = NativeContext::new(
         &mut game_host,
         &mut script_state,
@@ -96,7 +96,7 @@ fn main() -> std::process::ExitCode {
             .outgoing_params
             .extend_from_slice(&0i32.to_le_bytes());
     }
-    let caller_frame = robin_rs::interp::Frame {
+    let caller_frame = robin_engine::interp::Frame {
         parameters: std::mem::take(&mut vm_state.vm.outgoing_params),
         return_address: instructions.len() as u32,
         ..Default::default()

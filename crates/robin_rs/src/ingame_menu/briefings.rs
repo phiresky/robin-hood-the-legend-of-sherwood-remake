@@ -2,10 +2,10 @@
 //!
 //! Shows primary and secondary mission objectives on the left half of
 //! the pause menu. The data model already lives in
-//! [`crate::short_briefings`]; this file owns the visual layout.
+//! [`robin_engine::short_briefings`]; this file owns the visual layout.
 
 use crate::renderer::Renderer;
-use crate::short_briefings::ShortBriefings;
+use robin_engine::short_briefings::ShortBriefings;
 
 use super::layout::{
     MenuRect, MenuTransform, TextAlign, draw_background, measure_text_height_in_box,

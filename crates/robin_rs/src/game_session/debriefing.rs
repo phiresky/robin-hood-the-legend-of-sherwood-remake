@@ -1,15 +1,15 @@
 //! Mission debriefing policy and blocking pre-loop debriefing flows.
 
 use super::interactive::InteractiveFrontendAssembly;
-use crate::Host;
-use crate::game_operation::GameCode;
+use crate::host::Host;
 use crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_LOST;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
-use crate::player_command::DialogResult;
 use crate::window::GameWindow;
 use robin_assets::res_descr as assets_res_descr;
 use robin_engine::engine::Engine;
+use robin_engine::game_operation::GameCode;
 use robin_engine::mission::MissionStatus;
+use robin_engine::player_command::DialogResult;
 
 /// Resolved outcome of the post-mission debriefing flow after the caller has
 /// driven any Load-picker re-entry loop.

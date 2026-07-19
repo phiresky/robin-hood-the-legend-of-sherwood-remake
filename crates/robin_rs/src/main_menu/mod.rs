@@ -14,8 +14,8 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
 
-use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
+use robin_engine::campaign::Campaign;
 
 use crate::audio_backend::{self, KiraAudioBackend};
 use crate::gfx_types::GameEvent;
@@ -34,14 +34,14 @@ use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
 use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 use crate::renderer::Renderer;
-use crate::resource_ids;
 use crate::savegame::SaveGameManager;
 use crate::sound::SoundManager;
-use crate::sound_config::SoundConfig;
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use crate::window::GameWindow;
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfile};
+use robin_engine::resource_ids;
+use robin_engine::sound_config::SoundConfig;
 
 pub(crate) mod credits;
 pub(crate) mod custom_missions;
@@ -145,12 +145,12 @@ impl MainMenuAudio {
         }
         sound.apply_volumes(&sound_cfg);
 
-        let menu_bank_path = crate::sbfile::resolve_case_insensitive(std::path::Path::new(
+        let menu_bank_path = robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(
             "Data/Sounds/Menu/menu.fxg",
         ))
         .unwrap_or_else(|| std::path::PathBuf::from("Data/Sounds/Menu/menu.fxg"));
         match std::fs::read(&menu_bank_path) {
-            Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
+            Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => sound.sound_cache.initialize_menu_cache(&entries),
                 Err(e) => tracing::warn!("Main menu: menu bank parse failed: {e}"),
             },

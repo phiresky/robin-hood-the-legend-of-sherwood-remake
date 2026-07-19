@@ -13,8 +13,6 @@ use crate::gfx_types::GameEvent;
 use crate::input::KeyboardState;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::resource_widget_id::{
     RADIO_FOCUS, RADIO_FOCUS_SELECTED, RADIO_SELECTED, RADIO_UNSELECTED,
@@ -24,9 +22,11 @@ use crate::widget::{
     CaptureSlot, FrameWnd, Widget, WidgetButton, WidgetId, WidgetInput, WidgetLabel,
     WidgetMultiPicture, WidgetPicture, WidgetRenderer,
 };
+use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::engine as engine_api;
+use robin_engine::resource_ids;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite as engine_sprite;
 use robin_engine::sprite::BBox;

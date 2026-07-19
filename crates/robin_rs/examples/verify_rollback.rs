@@ -15,9 +15,9 @@
 
 use std::collections::VecDeque;
 
+use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
+use robin_engine::replay::state_hash;
 use robin_rs::Host;
-use robin_rs::engine::{DevState, Engine, HostDisplayState, LevelAssets};
-use robin_rs::replay::state_hash;
 
 const WARMUP_FRAMES: u32 = 30;
 const TOTAL_FRAMES: u32 = 100;
@@ -31,7 +31,7 @@ fn main() {
     }
 
     // Load the real profile pool from the legacy CPF (mirrors main_entry).
-    let mut pm = robin_rs::profiles::ProfileManager::new();
+    let mut pm = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open(
         "Data/Configuration/profile.cpf",
         robin_engine::sbfile::SB_FILE_READ,
@@ -40,7 +40,7 @@ fn main() {
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
     let profiles = std::sync::Arc::new(pm);
 
-    let mut campaign = robin_rs::campaign::Campaign::new();
+    let mut campaign = robin_engine::campaign::Campaign::new();
     campaign.reset(&profiles);
     campaign.create_gang_from_pcs("RJMT", &profiles);
     campaign.add_all_to_mission_team();
@@ -78,7 +78,7 @@ fn main() {
         }
     }
 
-    let loaded = robin_rs::engine::level_loading::load_mission_for_campaign(
+    let loaded = robin_engine::engine::level_loading::load_mission_for_campaign(
         &campaign,
         &profiles,
         "Data/Levels",
@@ -86,9 +86,9 @@ fn main() {
     )
     .expect("load mission");
 
-    let mut engine = Engine::new(robin_rs::engine::EngineArgs {
+    let mut engine = Engine::new(robin_engine::engine::EngineArgs {
         campaign,
-        level: robin_rs::engine::LevelLoadArgs {
+        level: robin_engine::engine::LevelLoadArgs {
             assets: &mut assets,
             level_directory: "Data/Levels",
             progress: &mut |_| {},

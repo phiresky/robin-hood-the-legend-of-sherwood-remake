@@ -5,28 +5,28 @@
 //! menu rendering lives in [`crate::ingame_menu`] and is driven by
 //! [`crate::game_session`].
 
-use crate::Host;
-use crate::campaign::CampaignValue;
-use crate::element::{
-    ElementKind, Entity, GameMaterial, ListenPhase, OutlineColorName, Posture, RenderingProperties,
-};
 use crate::gfx_types::Rect;
+use crate::host::Host;
 use crate::hud_text::{self, HudFonts};
 use crate::ingame_menu::layout;
 use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
-use crate::minimap::UIState;
-use crate::player_command::PlayerCommand;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
+use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
+use robin_engine::element::{
+    ElementKind, Entity, GameMaterial, ListenPhase, OutlineColorName, Posture, RenderingProperties,
+};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
 use robin_engine::markers::GroundMark;
 use robin_engine::mask as engine_mask;
 use robin_engine::minimap as engine_minimap;
+use robin_engine::minimap::UIState;
 use robin_engine::pathfinder as engine_pathfinder;
+use robin_engine::player_command::PlayerCommand;
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::sector as engine_sector;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
@@ -68,10 +68,10 @@ pub(crate) fn render_door_overlays(
     renderer: &mut Renderer,
     shift_held: bool,
 ) {
-    use crate::element::Posture;
-    use crate::gate::DoorType;
-    use crate::profiles::Action;
-    use crate::sector::SectorType;
+    use robin_engine::element::Posture;
+    use robin_engine::gate::DoorType;
+    use robin_engine::profiles::Action;
+    use robin_engine::sector::SectorType;
 
     if engine.mission_script().is_none() {
         return;
@@ -94,7 +94,7 @@ pub(crate) fn render_door_overlays(
                 .draw_alpha_polygon(renderer, pts, color, alpha);
         };
 
-    let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
+    let draw_door = |renderer: &mut Renderer, door: &robin_engine::gate::Door| {
         if door.click_polygon.len() < 3 {
             return;
         }
@@ -110,7 +110,7 @@ pub(crate) fn render_door_overlays(
     // Building sectors paint unconditionally; motion-area sectors require
     // the door to be `active`.
     let draw_sector_doors = |renderer: &mut Renderer,
-                             sector: &crate::fast_find_grid::GridSector,
+                             sector: &robin_engine::fast_find_grid::GridSector,
                              require_active: bool| {
         for &gate_idx in &sector.gate_indices {
             let Some(door) = engine.doors().get(usize::from(gate_idx)) else {
@@ -126,7 +126,7 @@ pub(crate) fn render_door_overlays(
         }
     };
 
-    let sector_by_number = |sector_num: i16| -> Option<&crate::fast_find_grid::GridSector> {
+    let sector_by_number = |sector_num: i16| -> Option<&robin_engine::fast_find_grid::GridSector> {
         let &idx = engine
             .fast_grid()
             .level
@@ -538,15 +538,16 @@ fn view_cone_polys_for_render(
         }
     }
 
-    let active_obstacles: Vec<(usize, &crate::sight_obstacle::SightObstacle)> = obstacles_view
-        .iter_indexed()
-        .filter_map(|(idx, o)| {
-            let idx = idx as usize;
-            obstacles_view.is_active(idx).then_some((idx, o))
-        })
-        .collect();
+    let active_obstacles: Vec<(usize, &robin_engine::sight_obstacle::SightObstacle)> =
+        obstacles_view
+            .iter_indexed()
+            .filter_map(|(idx, o)| {
+                let idx = idx as usize;
+                obstacles_view.is_active(idx).then_some((idx, o))
+            })
+            .collect();
 
-    let all_obstacles: Vec<&crate::sight_obstacle::SightObstacle> =
+    let all_obstacles: Vec<&robin_engine::sight_obstacle::SightObstacle> =
         active_obstacles.iter().map(|(_, o)| *o).collect();
     let mut slices = Vec::new();
     if let Some(radius) = shadow_polygon_slice_radius(params, None, viewer) {
@@ -579,7 +580,7 @@ fn view_cone_polys_for_render(
             && o.is_showing_shadow_polygon()
             && o.box_ground.intersects_bbox(&cone_bbox)
     }) {
-        let obstacles: Vec<&crate::sight_obstacle::SightObstacle> = active_obstacles
+        let obstacles: Vec<&robin_engine::sight_obstacle::SightObstacle> = active_obstacles
             .iter()
             .filter(|(idx, _)| *idx != projection_idx)
             .map(|(_, o)| *o)
@@ -593,7 +594,7 @@ fn view_cone_polys_for_render(
         };
         let mut slice_params = params.clone();
         slice_params.radius = radius;
-        let occluding_projection_areas: Vec<&crate::sight_obstacle::SightObstacle> =
+        let occluding_projection_areas: Vec<&robin_engine::sight_obstacle::SightObstacle> =
             active_obstacles
                 .iter()
                 .filter_map(|(idx, o)| {
@@ -1208,9 +1209,9 @@ pub(crate) fn render_entities_gpu(
                 // targeting/parrying outline just like the original path.
                 let color_565 = if matches!(
                     kind,
-                    crate::element::ElementKind::ObjectBonus
-                        | crate::element::ElementKind::ObjectOther
-                        | crate::element::ElementKind::ObjectScroll
+                    robin_engine::element::ElementKind::ObjectBonus
+                        | robin_engine::element::ElementKind::ObjectOther
+                        | robin_engine::element::ElementKind::ObjectScroll
                 ) {
                     elem.outline_colors[OutlineColorName::Hidden as usize]
                 } else {
@@ -1439,11 +1440,11 @@ pub(crate) fn render_entities_gpu(
 }
 
 fn transition_crenel_climb_up_mask_position(
-    entity: &crate::element::Entity,
+    entity: &robin_engine::element::Entity,
     engine: &Engine,
     assets: &LevelAssets,
 ) -> Option<engine_coordinates::WorldPoint3D> {
-    use crate::order::OrderType;
+    use robin_engine::order::OrderType;
 
     let elem = entity.element_data();
     if elem.sprite.last_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
@@ -1740,7 +1741,7 @@ pub(crate) fn render_selection_outlines_gpu(
 /// hover path, currently un-ported) is also honoured so the feature is
 /// ready once that call site lands.
 pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
-    use crate::element::{Entity, EntityId, Human};
+    use robin_engine::element::{Entity, EntityId, Human};
     use std::collections::HashSet;
 
     let mut targets: HashSet<EntityId> = HashSet::new();
@@ -1900,13 +1901,13 @@ pub(crate) fn clear_status_bar_flags(
 /// Fallback: draw a colored rectangle for entities without sprites.
 fn render_entity_fallback(
     renderer: &mut Renderer,
-    kind: crate::element::ElementKind,
+    kind: robin_engine::element::ElementKind,
     screen_x: i32,
     screen_y: i32,
     screen_w: i32,
     screen_h: i32,
 ) {
-    use crate::element::ElementKind;
+    use robin_engine::element::ElementKind;
 
     let (r, g, b): (u8, u8, u8) = match kind {
         ElementKind::ActorPc => (0, 255, 0),
@@ -2333,7 +2334,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
     #[allow(clippy::too_many_arguments)]
     fn render_arc(
         start: engine_coordinates::WorldPoint3D,
-        points: &[crate::element::TrajectoryPoint],
+        points: &[robin_engine::element::TrajectoryPoint],
         view: engine_coordinates::MapPoint,
         zoom: f32,
         screen_w: i32,
@@ -2432,7 +2433,7 @@ pub(crate) fn render_listen_ping(host: &mut Host, engine: &Engine, renderer: &mu
                     && pc.actor.listen_wait_time < TIME_LISTEN;
                 let whistle_active = matches!(
                     pc.actor.active_ability.kind,
-                    Some(crate::movement::AbilityKind::Whistle)
+                    Some(robin_engine::movement::AbilityKind::Whistle)
                 ) && pc.actor.whistle_wait_time != 0
                     && pc.actor.whistle_wait_time < TIME_LISTEN;
 
@@ -2479,7 +2480,7 @@ pub(crate) fn render_debug_doors(
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
-    use crate::gate::DoorType;
+    use robin_engine::gate::DoorType;
 
     if !dev.debug.door_display {
         return;

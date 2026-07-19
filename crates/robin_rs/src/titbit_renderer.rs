@@ -9,11 +9,11 @@
 //! id; this module owns only the game-facing row/frame metadata.
 //!
 //! The data side (`TitbitManager`, `TitbitInfo`, lifecycle) lives in
-//! `crate::titbit`.
+//! `robin_engine::titbit`.
 
-use crate::Host;
 use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
+use crate::host::Host;
 use crate::host::HostTitbitPreview;
 use robin_assets::picture::Picture;
 use robin_engine::coordinates as engine_coordinates;
@@ -21,11 +21,11 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::graphic_config::TextureScaleMode;
 
-use crate::profiles::Action;
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
-use crate::resource_ids::*;
-use crate::resource_manager::ResourceManager;
-use crate::titbit::SpriteRow;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::profiles::Action;
+use robin_engine::resource_ids::*;
+use robin_engine::titbit::SpriteRow;
 
 const NUM_ROWS: usize = SpriteRow::NumberOfRows as usize;
 
@@ -242,7 +242,7 @@ impl TitbitRenderer {
     pub fn blit_ui_frame(
         &mut self,
         renderer: &mut crate::renderer::Renderer,
-        row: crate::titbit::SpriteRow,
+        row: robin_engine::titbit::SpriteRow,
         frame: u16,
         cell: Rect,
         run: bool,
@@ -349,7 +349,7 @@ impl TitbitRenderer {
                 sector_dir,
                 display_order: _display_order,
             } => {
-                if (engine.frame_counter() / crate::titbit::GHOST_BLINK) & 0x1 == 0 {
+                if (engine.frame_counter() / robin_engine::titbit::GHOST_BLINK) & 0x1 == 0 {
                     return;
                 }
                 let Some((view, w, h, _ox, _oy)) =
@@ -407,9 +407,10 @@ impl TitbitRenderer {
         renderer: &mut crate::renderer::Renderer,
         display_order_max: f32,
     ) {
-        use crate::titbit::TitbitKind;
+        use robin_engine::titbit::TitbitKind;
 
-        let blink_off = engine.titbit_manager().blink_counter() < crate::titbit::TIME_BLINK_OFF_RAW;
+        let blink_off =
+            engine.titbit_manager().blink_counter() < robin_engine::titbit::TIME_BLINK_OFF_RAW;
 
         let all = engine.titbit_manager().titbits();
         while self.render_cursor < all.len()
@@ -549,7 +550,7 @@ impl TitbitRenderer {
             // alternating phase `(frame_counter / GHOST_BLINK) & 0x1`
             // is set.
             if titbit.kind == TitbitKind::Ghost
-                && (engine.frame_counter() / crate::titbit::GHOST_BLINK) & 0x1 == 0
+                && (engine.frame_counter() / robin_engine::titbit::GHOST_BLINK) & 0x1 == 0
             {
                 continue;
             }

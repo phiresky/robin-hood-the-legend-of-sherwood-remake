@@ -4,9 +4,7 @@
 
 use super::selected_pc_profile_indices;
 use super::tick::drain_pending_console_output;
-use crate::Host;
 use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerTooltipTracker};
-use crate::element::Posture;
 use crate::game::Game;
 use crate::game_render::{
     render_bg_animations_gpu, render_combat_status_bars, render_debug_animation_lines,
@@ -16,6 +14,7 @@ use crate::game_render::{
     render_noise_display, render_ransom_amulet_overlay, render_selection_outlines_gpu,
     render_shadow_polygon_sphere_debug, render_trajectory_preview, render_view_cone_overlay,
 };
+use crate::host::Host;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
@@ -30,6 +29,7 @@ use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
+use robin_engine::element::Posture;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
@@ -584,7 +584,7 @@ pub(super) fn update_mouse_and_cursor(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
+    cursor_res: &mut robin_assets::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     threaded_input: &crate::input::ThreadedInput,
     portrait_cache: &crate::ui_panel::PortraitCache,

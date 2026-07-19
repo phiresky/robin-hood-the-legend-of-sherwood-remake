@@ -26,15 +26,15 @@ use clap::Parser;
 use serde::Deserialize;
 
 use crate::app_effect::{AppEffect, AppEffectExecutionError, AppEffectQueue};
-use crate::campaign::Campaign;
 use crate::host::ApplicationContext;
 use crate::key_config_store::KeyConfigStore;
-use crate::player_profile::{DifficultyLevel, PlayerProfileManager};
 use crate::replay_format::COMPACT_PREFIX;
 use crate::save_file::special_slots;
 use crate::savegame::{SaveGameManager, SpecialSlot};
-use crate::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR, SbFile};
 use crate::sound::{Jingle as SoundJingle, SoundMode as AudioSoundMode};
+use robin_engine::campaign::Campaign;
+use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR, SbFile};
 
 /// Extension required for replay files — keeps the format searchable
 /// and future-proofs us if we ever want to associate `.rhrec.jsonl` with
@@ -450,7 +450,7 @@ mod tests {
     use robin_engine::profiles::ProfileManager;
 
     use super::{current_mission_id, required_mission_id, try_parse_cli_from};
-    use crate::campaign::Campaign;
+    use robin_engine::campaign::Campaign;
 
     #[test]
     fn clap_launcher_flags_populate_global_options() {
@@ -512,13 +512,13 @@ mod tests {
         current_mission_id(&Campaign::default(), &ProfileManager::new());
     }
 }
-use crate::game_operation::GameCode;
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
 use crate::main_menu::multiplayer_lobby::MultiplayerRole;
 use crate::main_menu::{MainMenuChoice, show_main_menu};
-use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
 use crate::window::GameWindow;
+use robin_engine::game_operation::GameCode;
+use robin_engine::profiles::MissionLocation;
 
 // ─── Data directory setup ───────────────────────────────────────────
 
@@ -664,7 +664,7 @@ fn setup_data_dir() -> Result<(), String> {
             .map_err(|e| format!("Unable to chdir to {}: {}", data_dir, e))?;
     }
 
-    if crate::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
+    if robin_engine::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
         && assets_shipping_datadir::global().is_none()
     {
         let cwd = std::env::current_dir()
@@ -681,7 +681,7 @@ fn setup_data_dir() -> Result<(), String> {
 
 /// Wasm version: there is no cwd or directory enumeration.  The Data/
 /// prefix is anchored at `ROBINHOOD_DATA_URL` (default `./data`), which
-/// `crate::asset_fs` consults for every read.  All we do here is
+/// `robin_util::asset_fs` consults for every read.  All we do here is
 /// bootstrap language-folder detection.
 #[cfg(target_arch = "wasm32")]
 fn setup_data_dir() -> Result<(), String> {
@@ -1214,7 +1214,7 @@ pub(crate) fn execute_app_effects(
 /// target state.  If the capture failed or the caller has no renderer
 /// handy, pass `None` and the save is written without a thumbnail.
 pub(crate) fn perform_pending_save_load(
-    host: &mut crate::Host,
+    host: &mut crate::host::Host,
     game: &mut crate::game::Game,
     callbacks: &mut RustCallbacks,
     engine: &mut engine_api::Engine,
@@ -1600,7 +1600,7 @@ pub(crate) fn resolve_loading_pak(
         .shipping()
         .expect("loading pak resolution requires an initialized ApplicationContext");
     let data_asset_exists = |path: &str| {
-        if crate::sbfile::resolve_data_path(path).is_some() {
+        if robin_engine::sbfile::resolve_data_path(path).is_some() {
             return true;
         }
         let normalized = path.replace('\\', "/").to_ascii_lowercase();

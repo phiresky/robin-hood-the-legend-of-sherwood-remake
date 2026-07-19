@@ -10,10 +10,10 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use robin_rs::picture::Picture;
-use robin_rs::resource_manager::ResourceManager;
-use robin_rs::sbfile::{SB_FILE_READ, SbFile};
-use robin_rs::shipping_datadir::ShippingDatadir;
+use robin_assets::picture::Picture;
+use robin_assets::resource_manager::ResourceManager;
+use robin_assets::shipping_datadir::ShippingDatadir;
+use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 
 fn main() -> Result<()> {
     let path = std::env::args()

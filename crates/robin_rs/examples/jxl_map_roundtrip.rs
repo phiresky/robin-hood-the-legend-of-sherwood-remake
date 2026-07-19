@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
-use robin_rs::picture::Picture;
-use robin_rs::shipping_datadir::ShippingDatadir;
+use robin_assets::picture::Picture;
+use robin_assets::shipping_datadir::ShippingDatadir;
 
 fn main() -> Result<()> {
     let path = std::env::args()

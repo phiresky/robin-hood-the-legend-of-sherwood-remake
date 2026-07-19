@@ -28,9 +28,9 @@ use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
 };
 use crate::native_font::NativeFont;
-use crate::player_command::PlayerCommand;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::player_command::PlayerCommand;
 
 fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(

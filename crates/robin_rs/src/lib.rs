@@ -11,7 +11,6 @@
 // carry an `#[allow(clippy::disallowed_methods)]` with a comment.
 #![warn(clippy::disallowed_methods)]
 
-use robin_engine::engine as engine_api;
 use std::sync::{Mutex, Once, OnceLock};
 
 static TRACING_INIT: Once = Once::new();
@@ -158,8 +157,6 @@ fn compose_env_filter(s: &str) -> String {
 // ──────────────────────────────────────────────────────────────────
 // Host-local modules (files in robin_rs/src/)
 // ──────────────────────────────────────────────────────────────────
-pub use robin_engine::alert_colors;
-pub use robin_util::asset_fs;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod app_effect;
@@ -187,13 +184,13 @@ pub mod http_server;
 pub mod hud_text;
 pub mod level_loading_host;
 pub mod shader_preset;
-pub use bg_cache::BackgroundDecal;
+/// Host-side runtime state used by the game loop and developer tooling.
+///
+/// Engine and asset types are intentionally not re-exported from this crate;
+/// consumers should import them from `robin_engine` and `robin_assets`.
 pub use host::Host;
-// Convenience re-exports so host-side submodules can use
-// `crate::Engine` / `crate::LevelAssets` etc. without fully qualifying
-// every call. These are stable entry points, not migration shims.
-pub use engine_api::level_loading;
-pub use robin_engine::engine::{Engine, LevelAssets, PendingBgBlit};
+pub mod audio_backend;
+pub mod gfx_types;
 pub mod ingame_menu;
 pub mod input;
 pub mod input_translator;
@@ -217,9 +214,7 @@ pub mod presentation;
 pub mod profiler;
 pub mod recon_report;
 pub mod renderer;
-pub use robin_assets::resource_manager;
-pub mod audio_backend;
-pub mod gfx_types;
+pub mod replay_format;
 pub mod rewind;
 pub mod rollback_checker;
 pub mod save_file;
@@ -239,91 +234,6 @@ pub mod video_player;
 pub mod widget;
 pub mod window;
 pub mod zoom_hud;
-
-// ──────────────────────────────────────────────────────────────────
-// Convenience re-exports — host-side submodules address engine/asset
-// modules via `crate::<name>` without having to fully qualify every
-// call.
-// ──────────────────────────────────────────────────────────────────
-pub use robin_engine::abilities;
-pub use robin_engine::ai;
-pub use robin_engine::ai_enemy;
-pub use robin_engine::ai_entity_view;
-pub use robin_engine::ai_friendly;
-pub use robin_engine::ai_vision;
-pub use robin_engine::bow_shot;
-pub use robin_engine::campaign;
-pub use robin_engine::change;
-pub use robin_engine::combat;
-pub use robin_engine::console;
-pub use robin_engine::element;
-pub use robin_engine::engine;
-pub use robin_engine::entity_id;
-pub use robin_engine::event;
-pub use robin_engine::fast_find_grid;
-pub use robin_engine::game_operation;
-pub use robin_engine::gate;
-pub use robin_engine::graphic_config;
-pub use robin_engine::interp;
-pub use robin_engine::inventory;
-pub use robin_engine::jump_line;
-pub use robin_engine::level_data as level_loader;
-pub use robin_engine::macro_store;
-pub use robin_engine::mask;
-pub use robin_engine::md5;
-pub use robin_engine::messenger;
-pub use robin_engine::minimap;
-pub use robin_engine::mission;
-pub use robin_engine::mission_stat;
-pub use robin_engine::movement;
-pub use robin_engine::natives;
-pub use robin_engine::order;
-pub use robin_engine::parameters_ai;
-pub use robin_engine::patch;
-pub use robin_engine::path;
-pub use robin_engine::pathfinder;
-pub use robin_engine::pc_status;
-pub use robin_engine::player_command;
-pub use robin_engine::player_profile;
-pub use robin_engine::position_interface;
-pub use robin_engine::profiles;
-pub use robin_engine::replay;
-pub mod replay_format;
-pub use robin_engine::resource_ids;
-pub use robin_engine::rhline;
-pub use robin_engine::sbfile;
-pub use robin_engine::script_manager;
-pub use robin_engine::sector;
-pub use robin_engine::sector_production;
-pub use robin_engine::sequence;
-pub use robin_engine::sherwood_stat;
-pub use robin_engine::short_briefings;
-pub use robin_engine::sight_obstacle;
-pub use robin_engine::sim_rng;
-pub use robin_engine::sound_cache;
-pub use robin_engine::sound_config;
-pub use robin_engine::sound_geometry;
-pub use robin_engine::sound_source;
-pub use robin_engine::sprite;
-pub use robin_engine::sprite_script as sprite_scriptor;
-pub use robin_engine::stealth;
-pub use robin_engine::titbit;
-pub use robin_engine::water_zones;
-pub use robin_engine::weapons;
-
-pub use robin_assets::actor_names;
-pub use robin_assets::adpcm_check;
-pub use robin_assets::decompile;
-pub use robin_assets::disasm;
-pub use robin_assets::frame_holder;
-pub use robin_assets::keyconfig;
-pub use robin_assets::picture;
-pub use robin_assets::res_descr;
-pub use robin_assets::sb3d;
-pub use robin_assets::scb;
-pub use robin_assets::serialize;
-pub use robin_assets::shipping_datadir;
-pub use robin_engine::vm;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {

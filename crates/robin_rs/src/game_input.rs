@@ -7,22 +7,24 @@
 //! `Engine::apply_commands`.  This clean separation is the foundation
 //! for deterministic replay and rollback networking.
 
-use crate::Host;
-use crate::element::{ActionState, Camp, Command, Entity, EntityId, Focus, ListenPhase, Posture};
+use crate::host::Host;
 use crate::mouse_way::MouseWayPattern;
-use crate::player_command::{PlayerCommand, PlayerId};
-use crate::profiles::Action;
-use crate::sector::SectorNumber;
-use crate::sequence::Field;
 use crate::shadow_polygon::ASPECT_RATIO;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
+use robin_engine::element::{
+    ActionState, Camp, Command, Entity, EntityId, Focus, ListenPhase, Posture,
+};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::player_command::{PlayerCommand, PlayerId};
 use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::Action;
 use robin_engine::sector as engine_sector;
+use robin_engine::sector::SectorNumber;
+use robin_engine::sequence::Field;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
 
 // ─── Left-click resolution ──────────────────────────────────────────
@@ -1079,7 +1081,7 @@ fn resolve_double_click_repeat(
     cached_target: EntityId,
     local_seat: PlayerId,
 ) -> Vec<PlayerCommand> {
-    use crate::element::Entity;
+    use robin_engine::element::Entity;
 
     #[derive(PartialEq)]
     enum Kind {
@@ -1581,7 +1583,7 @@ fn determine_use_command(
         && !is_unconscious
         && posture != Posture::Carried
         && matches!(entity, Entity::Civilian(c)
-            if c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
+            if c.civilian.cached_civilian_type == robin_engine::profiles::CivilianType::Beggar
                 && !c.npc.scroll_attached)
     {
         let ransom = engine

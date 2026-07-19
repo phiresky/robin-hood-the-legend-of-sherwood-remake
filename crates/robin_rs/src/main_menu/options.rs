@@ -7,7 +7,6 @@
 //! back to the active player profile.
 
 use crate::audio_backend::{self, KiraAudioBackend};
-use crate::graphic_config::GraphicConfig;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, show_options};
@@ -15,6 +14,7 @@ use crate::key_config_store::ProfileKeyConfig;
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
+use robin_engine::graphic_config::GraphicConfig;
 
 /// Show the options dialog over the main-menu background.
 ///
@@ -64,12 +64,12 @@ pub(crate) async fn show_main_menu_options(
     // event_id` lookup actually finds entries.  Same path + parse as
     // `game_session::run_session`.
     {
-        let menu_bank_path = crate::sbfile::resolve_case_insensitive(std::path::Path::new(
+        let menu_bank_path = robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(
             "Data/Sounds/Menu/menu.fxg",
         ))
         .unwrap_or_else(|| std::path::PathBuf::from("Data/Sounds/Menu/menu.fxg"));
         match std::fs::read(&menu_bank_path) {
-            Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
+            Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => {
                     sound_mgr.sound_cache.initialize_menu_cache(&entries);
                 }

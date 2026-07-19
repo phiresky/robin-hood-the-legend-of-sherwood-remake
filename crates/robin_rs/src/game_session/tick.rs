@@ -3,21 +3,21 @@
 //! for pending modals.
 
 use super::modal_state::ActiveModal;
-use crate::Host;
-use crate::ai::AlertLevel;
 use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
 use crate::game_render::clear_status_bar_flags;
+use crate::host::Host;
 use crate::host::{DeferredAudioRequest, HostSignal};
-use crate::player_command::{PlayerCommand, PlayerInput};
-use crate::replay::ReplayPlayer;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::sound::AlertStatus;
-use crate::sound_cache::SampleLoader;
+use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::player_command::{PlayerCommand, PlayerInput};
+use robin_engine::replay::ReplayPlayer;
+use robin_engine::sound_cache::SampleLoader;
 
 /// Per-frame audio tick.
 ///
@@ -528,8 +528,8 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::campaign::Campaign;
-    use crate::player_command::PlayerId;
+    use robin_engine::campaign::Campaign;
+    use robin_engine::player_command::PlayerId;
 
     #[test]
     fn forward_scrub_reuses_recorded_span_without_appending_an_old_checkpoint() {

@@ -617,7 +617,7 @@ async fn pace_interactive_frame(
 #[cfg(test)]
 mod tests {
     use super::{FrameControl, MissionExit};
-    use crate::game_operation::GameCode;
+    use robin_engine::game_operation::GameCode;
 
     #[test]
     fn frame_control_keeps_restart_and_exit_distinct() {

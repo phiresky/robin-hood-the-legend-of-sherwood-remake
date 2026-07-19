@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use bitcode::serialize;
 
-use robin_rs::shipping_datadir::{ShippingDatadir, zstd_max_compress};
+use robin_assets::shipping_datadir::{ShippingDatadir, zstd_max_compress};
 
 fn main() -> Result<()> {
     let path = std::env::args()
@@ -172,7 +172,7 @@ fn main() -> Result<()> {
             // unified terrain loader to verify the JXL path works.
             let decode = if k.ends_with(".map") || k.ends_with(".min") {
                 let bytes = dd.raw.get(k).unwrap();
-                match robin_rs::picture::Picture::load_terrain_from_bytes(bytes) {
+                match robin_assets::picture::Picture::load_terrain_from_bytes(bytes) {
                     Ok(p) => format!("{}×{} ok", p.width, p.height),
                     Err(e) => format!("err: {e}"),
                 }

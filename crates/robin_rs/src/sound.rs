@@ -2,20 +2,20 @@
 //!
 //! Orchestrates all sound playback: background music, ambient sound sources,
 //! sound effects, combat sounds, exclamations, jingles, and dialogue.
-//! Uses [`SoundCache`](crate::sound_cache::SoundCache) for sample management,
-//! [`SoundGeometry`](crate::sound_geometry::SoundGeometry) for spatial audio,
-//! and [`SoundSourceManager`](crate::sound_source::SoundSourceManager) for
+//! Uses [`SoundCache`](robin_engine::sound_cache::SoundCache) for sample management,
+//! [`SoundGeometry`](robin_engine::sound_geometry::SoundGeometry) for spatial audio,
+//! and [`SoundSourceManager`](robin_engine::sound_source::SoundSourceManager) for
 //! ambient emitters.
 
 use robin_engine::coordinates::MapPoint;
 use robin_engine::sound_kinds as engine_sound_kinds;
 use serde::{Deserialize, Serialize};
 
-use crate::profiles::{ArmorMaterial, WeaponMaterial};
-use crate::sound_cache::{Material, SampleLoader, SoundCache};
-use crate::sound_config::SoundConfig;
-use crate::sound_geometry::*;
-use crate::sound_source::*;
+use robin_engine::profiles::{ArmorMaterial, WeaponMaterial};
+use robin_engine::sound_cache::{Material, SampleLoader, SoundCache};
+use robin_engine::sound_config::SoundConfig;
+use robin_engine::sound_geometry::*;
+use robin_engine::sound_source::*;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -1804,7 +1804,7 @@ impl SoundManager {
 
     /// Increment or decrement the playing count on a cache entry.
     fn adjust_cache_playing(&mut self, key: &CacheKey, increment: bool) {
-        let delta = |entry: &mut crate::sound_cache::SoundCacheEntry| {
+        let delta = |entry: &mut robin_engine::sound_cache::SoundCacheEntry| {
             if increment {
                 entry.playing += 1;
             } else {

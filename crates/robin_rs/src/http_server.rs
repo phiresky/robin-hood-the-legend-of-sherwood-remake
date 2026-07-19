@@ -715,7 +715,7 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
 
 pub fn drain_global(
     manager: &mut engine_manager_api::EngineManager,
-    host: &mut crate::Host,
+    host: &mut crate::host::Host,
     assets: &LevelAssets,
     net: Option<&crate::multiplayer::NetChannels>,
 ) {
@@ -896,7 +896,7 @@ fn snapshot_state(engine: &Engine) -> serde_json::Value {
 
 fn snapshot_host_debug(
     engine: &Engine,
-    host: &crate::Host,
+    host: &crate::host::Host,
     assets: &LevelAssets,
 ) -> serde_json::Value {
     let selected_action = engine.selected_action_for_seat(host.transport.local_seat);

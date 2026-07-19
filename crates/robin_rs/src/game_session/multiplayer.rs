@@ -2,13 +2,13 @@
 //! transport setup, per-frame net input drain, and rollback on
 //! late inputs.
 
-use crate::Host;
-use crate::player_command::PlayerInput;
+use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use crate::sim_timeline::{RestorePolicy, SnapshotHistory, replay_one_frame_profiled};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::player_command::PlayerInput;
 
 fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
     if inputs.len() <= 1 {
@@ -177,13 +177,13 @@ pub(crate) fn drain_net_inputs(
                 // cleanly, so this is the same path as mid-mission
                 // rejoin without advancing the frame cursor.
                 if frame == 0 && manager.sim_frame == 0 {
-                    let local_hash = crate::replay::state_hash(&manager.engine);
+                    let local_hash = robin_engine::replay::state_hash(&manager.engine);
                     match bincode::serde::decode_from_slice::<Engine, _>(
                         &engine_bytes,
                         bincode::config::standard(),
                     ) {
                         Ok((snapshot, _)) => {
-                            let snap_hash = crate::replay::state_hash(&snapshot);
+                            let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
                                 received_initial_snapshot = true;
                                 tracing::info!(
@@ -199,7 +199,7 @@ pub(crate) fn drain_net_inputs(
                                     Ok(()) => {
                                         received_initial_snapshot = true;
                                         let adopted_hash =
-                                            crate::replay::state_hash(&manager.engine);
+                                            robin_engine::replay::state_hash(&manager.engine);
                                         tracing::info!(
                                             local = format!("{local_hash:016x}"),
                                             snap = format!("{snap_hash:016x}"),
@@ -245,7 +245,8 @@ pub(crate) fn drain_net_inputs(
                         match manager.engine.try_adopt_snapshot(snapshot, assets) {
                             Ok(()) => {
                                 received_initial_snapshot = true;
-                                let adopted_hash = crate::replay::state_hash(&manager.engine);
+                                let adopted_hash =
+                                    robin_engine::replay::state_hash(&manager.engine);
                                 tracing::info!(
                                     frame,
                                     local_sim_frame = manager.sim_frame,

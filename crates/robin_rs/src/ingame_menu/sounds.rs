@@ -16,9 +16,9 @@ use robin_engine::sound_cache::SampleLoader;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
-use crate::sound_config::SoundConfig;
 use crate::ui::{UiEvent, UiMsg, UiState};
 use crate::widget::{FrameWnd, Widget, WidgetSlider};
+use robin_engine::sound_config::SoundConfig;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, align_on_first_widget, dim_screen,

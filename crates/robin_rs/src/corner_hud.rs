@@ -30,8 +30,8 @@ use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
 };
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
-use crate::resource_manager::ResourceManager;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
 
 fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
     engine_sprite::BBox::from_coords(
@@ -97,7 +97,7 @@ impl CornerButtonEnable {
         //     QA slot (nested `slot × PC` loop, enabled when *any* PC
         //     has a macro in *any* slot).
         let any_pc_selected = !engine.selected_pc_ids().is_empty();
-        let any_qa = (0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8).any(|slot| {
+        let any_qa = (0..robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u8).any(|slot| {
             engine
                 .pc_ids()
                 .iter()

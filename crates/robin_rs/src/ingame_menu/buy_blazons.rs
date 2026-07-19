@@ -21,9 +21,9 @@ use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::resource_ids;
 use crate::ui_screens::BuyBlazonsScreen;
 use crate::widget::FrameWnd;
+use robin_engine::resource_ids;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,

@@ -29,21 +29,21 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
 use serde::{Deserialize, Serialize};
 
-use crate::campaign::Campaign;
-use crate::game_operation::GameCode;
-use crate::graphic_config::GraphicConfig;
 use crate::ingame_menu::resources::{
     MT_INFOBULLE_BUTTON_CANCEL, MT_INFOBULLE_BUTTON_FARMERS_TO_BLAZON,
     MT_INFOBULLE_BUTTON_MISSION_TO_BLAZON, MT_INFOBULLE_BUTTON_MONEY_TO_BLAZON,
     MT_INFOBULLE_BUTTON_PLAY_MISSION,
 };
-use crate::mission::Mission;
-use crate::profiles::MissionType;
-use crate::res_descr::LevelDescriptors;
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
-use crate::sherwood_stat::MenuTextLookup;
-use crate::sound_config::SoundConfig;
+use robin_assets::res_descr::LevelDescriptors;
+use robin_assets::resource_manager::ResourceManager;
+use robin_engine::campaign::Campaign;
+use robin_engine::game_operation::GameCode;
+use robin_engine::graphic_config::GraphicConfig;
+use robin_engine::mission::Mission;
+use robin_engine::profiles::MissionType;
+use robin_engine::resource_ids;
+use robin_engine::sherwood_stat::MenuTextLookup;
+use robin_engine::sound_config::SoundConfig;
 
 // ---------------------------------------------------------------------------
 // InfoPopup

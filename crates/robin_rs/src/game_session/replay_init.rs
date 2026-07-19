@@ -3,10 +3,10 @@
 //! Houses the `TeeWriter` adapter, the default replay path picker, the
 //! `ReplayAndRollback` bundle, and `init_replay_and_rollback` itself.
 
-use crate::replay::{ReplayPlayer, ReplayRecorder};
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use std::sync::Arc;
 
 /// `Write` adapter that forwards bytes to a primary sink (the

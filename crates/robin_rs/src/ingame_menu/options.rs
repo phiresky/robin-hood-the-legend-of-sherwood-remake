@@ -13,12 +13,12 @@ use robin_assets::keyconfig::KeyConfig;
 use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
-use crate::graphic_config::GraphicConfig;
 use crate::hardware::Hardware;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
-use crate::sound_config::SoundConfig;
 use crate::widget::FrameWnd;
+use robin_engine::graphic_config::GraphicConfig;
+use robin_engine::sound_config::SoundConfig;
 
 use super::graphics::show_graphics;
 use super::layout::{

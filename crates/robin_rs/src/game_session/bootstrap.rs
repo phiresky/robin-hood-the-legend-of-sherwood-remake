@@ -17,17 +17,17 @@ use super::setup::{
     setup_mission_audio,
 };
 use super::{MissionOutcome, install_pending_lua_session, setup_multiplayer_session};
-use crate::Host;
-use crate::campaign::Campaign;
 use crate::game::Game;
 use crate::game::GameCallbacks;
-use crate::game_operation::GameCode;
 use crate::host::ApplicationContext;
+use crate::host::Host;
 use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
 use crate::main_entry::{
     RustCallbacks, current_mission_id, detect_demo_mode_with_context, resolve_loading_pak,
 };
 use crate::window::GameWindow;
+use robin_engine::campaign::Campaign;
+use robin_engine::game_operation::GameCode;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -910,7 +910,7 @@ mod tests {
     use super::{
         MissionBootstrapLifecycle, MissionBootstrapPhase, MissionFrontendKind, MissionSpec,
     };
-    use crate::campaign::{Campaign, CampaignValue};
+    use robin_engine::campaign::{Campaign, CampaignValue};
     use robin_engine::profiles::MissionLocation;
     use std::cell::Cell;
     use std::future::Future;

@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::sound::AudioBackend;
-use crate::sound_cache::SampleLoader;
+use robin_engine::sound_cache::SampleLoader;
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
@@ -115,13 +115,13 @@ impl KiraAudioBackend {
         if path.exists() {
             return path;
         }
-        if let Some(p) = crate::sbfile::resolve_case_insensitive(&path)
+        if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&path)
             && p.exists()
         {
             return p;
         }
         if let Some(full) = path.to_str()
-            && let Some(p) = crate::sbfile::resolve_data_path(full)
+            && let Some(p) = robin_engine::sbfile::resolve_data_path(full)
         {
             return p;
         }
@@ -195,12 +195,12 @@ impl KiraAudioBackend {
             if raw.exists() {
                 return Some(raw);
             }
-            if let Some(p) = crate::sbfile::resolve_case_insensitive(&raw)
+            if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&raw)
                 && p.is_file()
             {
                 return Some(p);
             }
-            crate::sbfile::resolve_data_path(path)
+            robin_engine::sbfile::resolve_data_path(path)
         }
 
         if let Some(resolved) = resolve_one(path) {
@@ -670,12 +670,13 @@ pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
         let data = match robin_util::asset_fs::read(&path) {
             Ok(data) => data,
             Err(_) => {
-                let resolved = if let Some(p) = crate::sbfile::resolve_case_insensitive(&path) {
-                    Some(p)
-                } else {
-                    let full = path.to_str().map(|s| s.to_string())?;
-                    crate::sbfile::resolve_data_path(&full)
-                };
+                let resolved =
+                    if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&path) {
+                        Some(p)
+                    } else {
+                        let full = path.to_str().map(|s| s.to_string())?;
+                        robin_engine::sbfile::resolve_data_path(&full)
+                    };
                 robin_util::asset_fs::read(resolved?).ok()?
             }
         };

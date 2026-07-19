@@ -3,44 +3,44 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
-use crate::Host;
 use crate::audio_backend::KiraAudioBackend;
-use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
+use crate::host::Host;
 use crate::hud_text::HudFonts;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
 use crate::main_entry::{current_mission_id, picture_to_surface};
 use crate::markers::SelectionMarkRenderer;
-use crate::minimap::HitMask;
 use crate::mouse_trail::MouseTrailRenderer;
-use crate::player_command::PlayerCommand;
-use crate::profiles::MissionLocation;
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
-use crate::resource_ids;
-use crate::resource_manager::ResourceManager;
-use crate::sbfile::SbFile;
 use crate::sound::{NUM_CHANNELS, SoundMode};
-use crate::titbit::SpriteRow;
 use crate::titbit_renderer::TitbitRenderer;
 use crate::ui_panel::{PortraitCache, load_localized_character_names};
 use robin_assets::frame_holder as assets_frame_holder;
 use robin_assets::res_descr as assets_res_descr;
+use robin_assets::resource_manager::ResourceManager;
 use robin_assets::scb as assets_scb;
+use robin_engine::campaign::Campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{
     ScreenSize, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize,
 };
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::minimap::HitMask;
+use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::MissionLocation;
+use robin_engine::resource_ids;
 use robin_engine::sbfile as engine_sbfile;
+use robin_engine::sbfile::SbFile;
 use robin_engine::scb as engine_scb;
 use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sound::ExclamationGroup;
 use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
+use robin_engine::titbit::SpriteRow;
 
 #[derive(Debug, serde::Deserialize)]
 struct HackableRhsManifest {
@@ -242,7 +242,7 @@ pub(super) fn setup_mission_audio(
     {
         let fx_bank_path = "Data/Sounds/robin hood.fxg";
         match SbFile::read_all(fx_bank_path) {
-            Ok(data) => match crate::sound_cache::parse_fx_bank(&data) {
+            Ok(data) => match robin_engine::sound_cache::parse_fx_bank(&data) {
                 Ok(elements) => {
                     host.audio.sound.sound_cache.initialize_fx_cache(&elements);
                     tracing::info!("Loaded FX bank: {} elements", elements.len());
@@ -257,7 +257,7 @@ pub(super) fn setup_mission_audio(
     {
         let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
         match SbFile::read_all(menu_bank_path) {
-            Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
+            Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => {
                     host.audio.sound.sound_cache.initialize_menu_cache(&entries);
                     tracing::info!("Loaded menu sound bank: {} entries", entries.len());
@@ -337,7 +337,7 @@ pub(super) fn setup_mission_audio(
 
                 let prefix_id = excl_id & 0xFFFF_0000;
                 let (table_id, exclamations) =
-                    match crate::sound_cache::parse_exclamation_file(&data, prefix_id) {
+                    match robin_engine::sound_cache::parse_exclamation_file(&data, prefix_id) {
                         Ok(r) => r,
                         Err(e) => {
                             tracing::warn!(

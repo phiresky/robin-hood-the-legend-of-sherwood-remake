@@ -406,7 +406,7 @@ pub(super) async fn drive_live_gameplay_input(
 #[cfg(test)]
 mod tests {
     use super::portrait_selection_command;
-    use crate::player_command::PlayerCommand;
+    use robin_engine::player_command::PlayerCommand;
 
     #[test]
     fn portrait_dispatch_prioritizes_assignment_then_recall_then_portrait() {

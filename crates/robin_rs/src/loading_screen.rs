@@ -26,7 +26,7 @@ use crate::gfx_types::GameEvent;
 use crate::loading_dissolve_gpu::LoadingDissolveTextures;
 use crate::native_font::Font;
 use crate::renderer::Renderer;
-use crate::sbfile::SbFile;
+use robin_engine::sbfile::SbFile;
 
 fn shipping_loading_pak_pictures(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,

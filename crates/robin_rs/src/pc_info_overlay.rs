@@ -15,7 +15,7 @@
 use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::element::EntityId;
+use robin_engine::element::EntityId;
 
 /// Offset from the mouse cursor to the top-left of the popup.
 pub const POSITION_OFFSET: (f32, f32) = (25.0, 10.0);

@@ -13,7 +13,7 @@
 //! The `PANNEL_HEIGHT` used by the engine camera (130px in engine.rs) represents
 //! the full UI chrome height including the panel and its transition zone.
 
-use crate::Host;
+use crate::host::Host;
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
@@ -27,15 +27,15 @@ use robin_engine::sim_rng::{self, AuxiliaryRngSite};
 use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
-use crate::element::Entity;
 use crate::gfx_types::Rect;
 use crate::ingame_menu::{layout, widget_bridge};
-use crate::minimap::HitMask;
-use crate::profiles::Action;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use crate::resource_manager::{ResourceId, ResourceManager};
-use crate::titbit::SpriteRow;
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
+use robin_assets::resource_manager::{ResourceId, ResourceManager};
+use robin_engine::element::Entity;
+use robin_engine::minimap::HitMask;
+use robin_engine::profiles::Action;
+use robin_engine::titbit::SpriteRow;
 
 // ─── Layout constants ─────────────────────────────────────────────
 
@@ -87,8 +87,8 @@ const ACTIONB_WIDTH: u16 = 56;
 const QA_ICON_WIDTH: u16 = 33;
 /// Height of the QA icon strip above the upper scroll.
 const QA_ICON_HEIGHT: u16 = 20;
-/// Cast of [`crate::macro_store::NUMBER_OF_QA_MEMORY`] for the draw loop.
-const NUMBER_OF_QA_MEMORY_U16: u16 = crate::macro_store::NUMBER_OF_QA_MEMORY as u16;
+/// Cast of [`robin_engine::macro_store::NUMBER_OF_QA_MEMORY`] for the draw loop.
+const NUMBER_OF_QA_MEMORY_U16: u16 = robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u16;
 
 // ─── Colors (RGB565) ───────────────────────────────────────────────
 
@@ -135,7 +135,7 @@ fn action_button_visual(
     }
 }
 
-use crate::resource_ids;
+use robin_engine::resource_ids;
 
 // ─── Scroll decoration resource IDs ───────────────────────────────
 // These are generic parchment frame bitmaps shared by all portrait widgets.
@@ -222,7 +222,7 @@ pub struct PortraitCache {
     amulet_surface: Option<u32>,
     /// Pixel-level hit mask for the top scroll surface.
     /// Used to reject clicks on transparent curved parchment edges.
-    top_scroll_hit_mask: Option<crate::minimap::HitMask>,
+    top_scroll_hit_mask: Option<robin_engine::minimap::HitMask>,
     /// Quick-action slot icon (RHID_QUICKACTION, shared by all QA slots).
     qa_icon_surface: Option<u32>,
     /// Quick-action slot icon while recording (RHID_QUICKACTION_IN_PROGRESS).
@@ -941,10 +941,10 @@ impl PortraitCache {
 ///
 /// Returns the `UnknownAction=0` fallback for actions the widget does
 /// not visualise.
-pub(crate) fn required_action_sub_id(action: crate::profiles::Action) -> usize {
+pub(crate) fn required_action_sub_id(action: robin_engine::profiles::Action) -> usize {
     // Sub-id mapping: UnknownAction=0, Bow=1, Carry=2, Climb=3, Jump=4,
     //                 Lever=5, Lockpick=6, Stun=7, Tie=8, Eat=9, Search=10.
-    use crate::profiles::Action;
+    use robin_engine::profiles::Action;
     match action {
         Action::Bow => 1,
         Action::LittleJohnCarry | Action::FarmerCarry => 2,
@@ -1068,7 +1068,7 @@ fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
 /// Compares the PC's `current_action` against the profile's `actions[]` array.
 /// Returns `None` if `current_action == NoAction` or doesn't match any slot.
 fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Entity) -> Option<u8> {
-    use crate::profiles::Action;
+    use robin_engine::profiles::Action;
     let pc = entity.pc_data()?;
     if pc.current_action == Action::NoAction {
         return None;
@@ -1609,7 +1609,9 @@ pub fn draw_panel(
                         .get(pc_id)
                         .and_then(|m| m.slot(slot_idx as usize))
                         .and_then(|s| s.steps.last())
-                        .and_then(|step| crate::macro_store::action_to_qa_frame(step.action));
+                        .and_then(|step| {
+                            robin_engine::macro_store::action_to_qa_frame(step.action)
+                        });
                     let phase_from_slot_titbit = || {
                         engine
                             .macro_store()
@@ -1870,7 +1872,7 @@ pub fn hit_test_requirements_bar(
 pub fn draw_requirements_bar(
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    campaign: &crate::campaign::Campaign,
+    campaign: &robin_engine::campaign::Campaign,
     profiles: &engine_profiles::ProfileManager,
     state: &crate::widget::requirements::RequirementsState,
 ) {
@@ -2015,9 +2017,9 @@ pub type BlazonTooltipTracker = RequirementsTooltipTracker;
 /// Menu-text id for the tooltip attached to a PC action button.
 /// Actions that are not in the switch (e.g. contextual-only actions
 /// or `NoAction`) get `None`, which renders as no tooltip.
-pub fn action_button_tooltip_mt_id(action: crate::profiles::Action) -> Option<usize> {
+pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Option<usize> {
     use crate::ingame_menu::resources::*;
-    use crate::profiles::Action;
+    use robin_engine::profiles::Action;
     Some(match action {
         Action::Bow => MT_INFOBULLE_ACTION_BOW,
         Action::Hit | Action::HitHard => MT_INFOBULLE_ACTION_FIST,
@@ -2323,13 +2325,15 @@ pub fn draw_pc_info_overlay(
 /// segment starting at the PC's map position.  The dot phase is a
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
 pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
-    use crate::macro_store::DISTANCE_DOT;
+    use robin_engine::macro_store::DISTANCE_DOT;
 
     // Snapshot the PC positions first — the draw call borrows engine.host
     // mutably for the draw_manager and its phase store, so we can't
     // still be iterating `engine.pc_ids()` while calling it.
-    let mut per_pc: Vec<(crate::element::EntityId, engine_coordinates::MapPoint)> =
-        Vec::with_capacity(engine.pc_ids().len());
+    let mut per_pc: Vec<(
+        robin_engine::element::EntityId,
+        engine_coordinates::MapPoint,
+    )> = Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
         if let Some(ent) = engine.get_entity(pc_id) {
             let pos = ent.element_data().position_map();
@@ -2410,7 +2414,7 @@ pub struct PortraitHit {
     pub slot: u8,
     /// Resolved PC entity id at this slot — saves the caller from
     /// re-walking `displayed_pc_ids()`.
-    pub pc_id: crate::element::EntityId,
+    pub pc_id: robin_engine::element::EntityId,
     /// Which sub-area was clicked.
     pub area: PortraitHitArea,
     /// Whether this portrait's PC is burned (coma/dead).
@@ -2498,7 +2502,7 @@ pub fn hit_test_portrait_detailed(
                 let rel_x = click_x - x;
                 if rel_x >= 0.0 {
                     let slot_idx = (rel_x / QA_ICON_WIDTH as f32).floor() as u8;
-                    if usize::from(slot_idx) < crate::macro_store::NUMBER_OF_QA_MEMORY {
+                    if usize::from(slot_idx) < robin_engine::macro_store::NUMBER_OF_QA_MEMORY {
                         return Some(PortraitHit {
                             slot: slot as u8,
                             pc_id,
@@ -2753,8 +2757,8 @@ mod tests {
 
     #[test]
     fn hit_test_requirements_bar_maps_screen_coords_to_slots() {
-        use crate::profiles::Action;
         use crate::widget::requirements::{RequirementSlot, RequirementStatus, RequirementsState};
+        use robin_engine::profiles::Action;
         let state = RequirementsState {
             slots: vec![
                 RequirementSlot::RequiredCharacter {
@@ -2817,8 +2821,8 @@ mod tests {
         use crate::ingame_menu::resources::{
             MT_INFOBULLE_QG_NEEDED_ACTION, MT_INFOBULLE_QG_NEEDED_PC, MT_INFOBULLE_QG_OTHER_PC,
         };
-        use crate::profiles::Action;
         use crate::widget::requirements::{RequirementSlot, RequirementStatus};
+        use robin_engine::profiles::Action;
         assert_eq!(
             requirements_slot_tooltip_mt_id(&RequirementSlot::RequiredCharacter {
                 character_profile_idx: engine_profiles::CharacterProfileIdx(1),
@@ -2895,7 +2899,7 @@ mod tests {
 
     #[test]
     fn required_action_sub_ids_match_table() {
-        use crate::profiles::Action;
+        use robin_engine::profiles::Action;
         // Sub-id table:
         // UnknownAction=0, Bow=1, Carry=2, Climb=3, Jump=4, Lever=5,
         // Lockpick=6, Stun=7, Tie=8, Eat=9, Search=10.
