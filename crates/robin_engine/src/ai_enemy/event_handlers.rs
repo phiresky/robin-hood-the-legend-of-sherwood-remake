@@ -1173,7 +1173,7 @@ impl EnemyAi {
                             }
                         }
                         AiState::Menacing => {
-                            if enemy != self.guarded_pc {
+                            if Some(crate::entity_id::PcId(enemy)) != self.guarded_pc {
                                 self.event_view_standard_procedure(enemy, global, ctx, tick, grid);
                             }
                         }

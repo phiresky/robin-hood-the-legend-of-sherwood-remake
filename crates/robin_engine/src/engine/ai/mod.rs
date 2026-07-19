@@ -4323,12 +4323,11 @@ impl EngineInner {
         } else {
             None
         };
-        if let Some((old_pc, new_pc)) = guard_delta {
+        if let Some(guard_delta) = guard_delta {
             // Clear `pc.guard` on the old target
             // (`guarded_pc.set_guard(NULL)`).
-            if old_pc != 0
-                && let Some(Entity::Pc(pc)) =
-                    self.world.entities.get_mut(EntityId::Pc(PcId(old_pc)))
+            if let Some(old_pc) = guard_delta.old
+                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(EntityId::Pc(old_pc))
             {
                 pc.pc.guard = None;
             }
@@ -4337,9 +4336,8 @@ impl EngineInner {
             // on the PC; the only caller already gates on the coma
             // check in the `AttackingApproachingSleepingEnemy`
             // handler, so skip the redundant debug_assert here.
-            if new_pc != 0
-                && let Some(Entity::Pc(pc)) =
-                    self.world.entities.get_mut(EntityId::Pc(PcId(new_pc)))
+            if let Some(new_pc) = guard_delta.new
+                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(EntityId::Pc(new_pc))
             {
                 pc.pc.guard = Some(npc_id);
             }
@@ -4396,12 +4394,12 @@ impl EngineInner {
             }
         }
 
-        // Process pending archery-sector release — the
+        // Process the ordered archery-reservation release — the
         // `set_my_archery_sector(NULL)` call queued from
         // `EnemyAi::set_state` when the soldier leaves an archer-wait
         // substate.  Decrement the owner counter on the current
         // archery sector and clear the index.  The companion
-        // `pending_release_shooting_point` carries the prior shooting
+        // typed effect carries the prior shooting
         // point's `(sector, point)` so we can also run the
         // `set_my_shooting_point(NULL)` `set_owner(NULL)` write here —
         // the AI layer already cleared its own `my_shooting_point`
@@ -4410,19 +4408,23 @@ impl EngineInner {
             let release = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(enemy) = s.npc.ai_brain.enemy_mut()
             {
-                let sector = if std::mem::take(&mut enemy.pending_release_archery_sector) {
+                let effect = enemy.base.outbox.actor.take_archery_reservation_release();
+                let sector = if effect.release_sector {
                     enemy.my_archery_sector.take()
                 } else {
                     None
                 };
-                let point = enemy.pending_release_shooting_point.take();
-                (sector, point)
+                (sector, effect.shooting_point)
             } else {
                 (None, None)
             };
-            if let (_, Some((sec_idx, pt_idx))) = release
-                && let Some(sector) = self.ai.global.archery_sectors.get_mut(sec_idx as usize)
-                && let Some(pt) = sector.points.get_mut(pt_idx as usize)
+            if let (_, Some(point)) = release
+                && let Some(sector) = self
+                    .ai
+                    .global
+                    .archery_sectors
+                    .get_mut(point.sector_index as usize)
+                && let Some(pt) = sector.points.get_mut(usize::from(point.point_index))
             {
                 pt.owner = None;
             }

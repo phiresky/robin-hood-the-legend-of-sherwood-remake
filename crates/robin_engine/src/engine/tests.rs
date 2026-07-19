@@ -3646,7 +3646,12 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("test officer has enemy AI");
-        officer.set_state(officer_state, Substate::DefaultOnPost);
+        let officer_substate = match officer_state {
+            AiState::Default => Substate::DefaultOnPost,
+            AiState::Attacking => Substate::AttackingSwordfight,
+            other => panic!("unsupported Charly-report officer state: {other:?}"),
+        };
+        officer.set_state(officer_state, officer_substate);
     }
 
     let scratch = engine.build_sim_scratch(&assets);
