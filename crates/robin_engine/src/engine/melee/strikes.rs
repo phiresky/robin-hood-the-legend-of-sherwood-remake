@@ -24,6 +24,35 @@ fn true_sweep_still_rotating(sweep: &crate::movement::SweepState) -> bool {
     ) && !sweep_rotation_complete(sweep)
 }
 
+fn advance_circle_angle(sweep: &mut crate::movement::SweepState) {
+    let candidate = sweep.current_angle + sweep.rotation_per_frame;
+    let past_final = match sweep.direction {
+        crate::profiles::WeaponThrustDirection::LeftToRight => candidate >= sweep.final_angle,
+        _ => candidate <= sweep.final_angle,
+    };
+    if !past_final || angle_to_sector(candidate) == angle_to_sector(sweep.final_angle) {
+        sweep.current_angle = candidate;
+    } else {
+        sweep.current_angle = sweep.final_angle;
+    }
+}
+
+fn advance_lateral_angle(sweep: &mut crate::movement::SweepState) {
+    // ExecuteLateralSwordStrike applies the signed rotation directly. It has
+    // no circle-style final-angle clamp or same-sector overshoot branch.
+    sweep.current_angle += sweep.rotation_per_frame;
+}
+
+fn is_circle_sweep(kind: WeaponThrustKind) -> bool {
+    matches!(
+        kind,
+        WeaponThrustKind::TrueHalfCircle
+            | WeaponThrustKind::FalseHalfCircle
+            | WeaponThrustKind::TrueCircle
+            | WeaponThrustKind::FalseCircle
+    )
+}
+
 fn is_falling_flight_order(order_type: crate::order::OrderType) -> bool {
     use crate::order::OrderType;
 
@@ -120,8 +149,6 @@ impl EngineInner {
             }
         }
 
-        self.tick_nonstraight_melee_strikes(sim, assets);
-        self.tick_sweep_strikes(sim, assets);
         self.tick_parry_counters();
         self.tick_push_flights(sim, assets);
         self.tick_rider_charges(sim, assets);
@@ -931,9 +958,8 @@ impl EngineInner {
     /// Advance every sequence-driven melee strike.
     ///
     /// Kept as the complete low-level driver for focused tests.
-    /// The real Hourglass orchestration runs straight/assault strikes in its
-    /// creation-ordered entity pass and calls [`Self::tick_nonstraight_melee_strikes`]
-    /// afterward for the remaining strike kinds.
+    /// The real Hourglass orchestration runs every strike kind in its
+    /// creation-ordered entity pass.
     #[cfg(test)]
     pub(super) fn tick_melee_strikes(
         &mut self,
@@ -948,16 +974,23 @@ impl EngineInner {
             .collect();
         for actor_id in actor_ids {
             self.tick_straight_melee_for(sim, assets, actor_id);
+            let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, actor_id);
+            self.tick_sweep_for(sim, assets, actor_id, initialized_sweep);
         }
-        self.tick_nonstraight_melee_strikes(sim, assets);
     }
 
-    /// Advance batched non-straight sequence-driven melee strikes.
-    fn tick_nonstraight_melee_strikes(
+    /// Advance one non-straight sequence-driven melee strike at its actor's
+    /// creation-order slot.
+    pub(crate) fn tick_nonstraight_melee_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) {
+        attacker_id: EntityId,
+    ) -> bool {
+        if self.actors_frozen() {
+            return false;
+        }
+
         // Collect strike results to avoid borrow conflicts
         struct StrikeHit {
             attacker_id: EntityId,
@@ -975,9 +1008,14 @@ impl EngineInner {
 
         let mut hits: Vec<StrikeHit> = Vec::new();
         let mut completed: Vec<CompletedStrike> = Vec::new();
+        let mut initialized_sweep = false;
 
-        // Phase 1: advance timers and collect hits
-        for (entity_id, entity) in self.world.entities.actors_mut() {
+        // Phase 1: advance this attacker's timer and collect its hit.
+        {
+            let entity_id = attacker_id;
+            let Some(entity) = self.world.entities.get_mut(attacker_id) else {
+                return false;
+            };
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
             let Some(active_melee) = entity
@@ -985,7 +1023,7 @@ impl EngineInner {
                 .map(|actor| actor.active_melee)
                 .filter(|melee| melee.is_active())
             else {
-                continue;
+                return false;
             };
             let strike_kind = profile_idx
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -995,7 +1033,7 @@ impl EngineInner {
                 strike_kind,
                 WeaponThrustKind::Straight | WeaponThrustKind::Assault
             ) {
-                continue;
+                return false;
             }
 
             // Drive the strike animation through the sprite (like bow_shot).
@@ -1004,10 +1042,10 @@ impl EngineInner {
             {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
-                    None => continue,
+                    None => return false,
                 };
                 if !actor.active_melee.is_active() {
-                    continue;
+                    return false;
                 }
                 let order_id = actor.active_melee.order_id;
                 let strike = actor.active_melee.strike;
@@ -1090,7 +1128,7 @@ impl EngineInner {
 
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
-                None => continue,
+                None => return false,
             };
 
             // Read melee state before mutating
@@ -1106,7 +1144,9 @@ impl EngineInner {
 
             if melee.is_hit_frame() && !melee.hit_applied {
                 actor.active_melee.hit_applied = true;
-                let target = melee.target.unwrap();
+                let target = melee
+                    .target
+                    .expect("an active non-straight melee strike must retain its target");
 
                 hits.push(StrikeHit {
                     attacker_id: attacker_id.into(),
@@ -1124,7 +1164,7 @@ impl EngineInner {
                     .as_ref()
                     .is_some_and(true_sweep_still_rotating);
                 if sweep_still_active {
-                    // Extend by 1 frame — tick_sweep_strikes will advance
+                    // Extend by 1 frame — tick_sweep_for will advance
                     // the angle and eventually reach final_angle.
                     actor.active_melee.frames_remaining = 1;
                 } else {
@@ -1142,7 +1182,8 @@ impl EngineInner {
             }
         }
 
-        // Phase 2: apply hits — check strike kind for multi-target
+        // Phase 2: apply this attacker's hit synchronously. Multi-target
+        // victim vectors retain the original actor-list FIFO.
         for hit in hits {
             // Determine the strike kind
             let strike_kind = hit
@@ -1207,6 +1248,10 @@ impl EngineInner {
                     strike_kind,
                     all_victims,
                 );
+                initialized_sweep = self
+                    .get_entity(hit.attacker_id)
+                    .and_then(|entity| entity.actor_data())
+                    .is_some_and(|actor| actor.sweep_state.is_some());
             } else if is_push {
                 // Push strike: apply damage to all victims at the
                 // hit frame (no AI warn tolerance), but defer the
@@ -1275,7 +1320,7 @@ impl EngineInner {
             }
         }
 
-        // Phase 3: notify sequence manager for completed strikes and clear sweep state
+        // Phase 3: notify the sequence manager before the next creation slot.
         for completed_strike in completed {
             self.complete_melee_strike(
                 sim,
@@ -1287,12 +1332,13 @@ impl EngineInner {
                 completed_strike.profile_idx,
             );
         }
+        initialized_sweep
     }
 
     /// Initialize a per-frame sweep for a lateral/circle sword strike.
     ///
     /// Collects potential victims and computes the sweep angles so that
-    /// `tick_sweep_strikes` can advance the arc each frame and hit victims
+    /// `tick_sweep_for` can advance the arc each frame and hit victims
     /// as the sweep passes their position.
     ///
     pub(super) fn initialize_sweep(
@@ -1393,17 +1439,23 @@ impl EngineInner {
         );
     }
 
-    /// Per-frame tick for active sweep strikes.
+    /// Per-frame tick for one active sweep strike at its attacker's
+    /// creation-order slot.
     ///
-    /// For each entity with an active sweep, advances the current angle and
-    /// applies damage to any pending victims whose direction from the attacker
-    /// now falls within the swept arc.
+    /// Applies the kind-specific lateral/circle phase order and synchronously
+    /// damages pending victims whose direction falls within the swept arc.
     ///
-    pub(super) fn tick_sweep_strikes(
+    pub(crate) fn tick_sweep_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        attacker_id: EntityId,
+        initialized_this_hourglass: bool,
     ) {
+        if self.actors_frozen() {
+            return;
+        }
+
         use crate::profiles::WeaponThrustDirection;
 
         // Phase 1: collect active sweeps (clone to avoid borrow conflicts)
@@ -1414,10 +1466,14 @@ impl EngineInner {
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
-        for (entity_id, entity) in self.world.entities.actors() {
+        {
+            let entity_id = attacker_id;
+            let Some(entity) = self.world.entities.get(attacker_id) else {
+                return;
+            };
             let actor = match entity.actor_data() {
                 Some(a) => a,
-                None => continue,
+                None => return,
             };
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
@@ -1429,29 +1485,28 @@ impl EngineInner {
             }
         }
 
-        // Phase 2: advance angles, rotate attacker, and check victims
+        // Phase 2: preserve the two Original effect orders:
+        // - lateral IN_PROGRESS advances, then tests victims;
+        // - circle IN_PROGRESS tests the existing angle, then advances at
+        //   ExecuteCircleSwordStrike's tail.
+        // A circle DONE call still reaches that tail and advances once, but
+        // neither family tests victims (or rotates a true-circle sprite) on
+        // its initialization call.
         for active in &mut sweeps {
-            // Advance the sweep angle — clamp to final.
-            // Three-way: use candidate if not-past, else if the
-            // candidate and final angles land in the same sector let
-            // the overshoot stand (keeps the sector stable at the
-            // tail of the sweep), else clamp.
-            let candidate = active.sweep.current_angle + active.sweep.rotation_per_frame;
-            let past_final = match active.sweep.direction {
-                WeaponThrustDirection::LeftToRight => candidate >= active.sweep.final_angle,
-                _ => candidate <= active.sweep.final_angle,
-            };
-            if !past_final
-                || angle_to_sector(candidate) == angle_to_sector(active.sweep.final_angle)
-            {
-                active.sweep.current_angle = candidate;
-            } else {
-                active.sweep.current_angle = active.sweep.final_angle;
+            let circle = is_circle_sweep(active.sweep.strike_kind);
+            if initialized_this_hourglass {
+                if circle {
+                    advance_circle_angle(&mut active.sweep);
+                }
+                continue;
+            }
+            if matches!(active.sweep.strike_kind, WeaponThrustKind::Lateral) {
+                advance_lateral_angle(&mut active.sweep);
             }
 
             // Rotate the attacker's sprite direction to follow the
-            // sweep each frame.  Only the TRUE variants (TrueHalfCircle,
-            // TrueCircle) rotate the sprite; FALSE variants do not.
+            // circle using the angle that existed on entry. Only the TRUE
+            // variants rotate; FALSE variants do not.
             if matches!(
                 active.sweep.strike_kind,
                 crate::profiles::WeaponThrustKind::TrueCircle
@@ -1558,6 +1613,10 @@ impl EngineInner {
             for &i in hit_indices.iter().rev() {
                 active.sweep.pending_victims.remove(i);
             }
+
+            if circle {
+                advance_circle_angle(&mut active.sweep);
+            }
         }
 
         // Phase 3: write back updated sweep states
@@ -1565,11 +1624,12 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(active.attacker_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
-                let rotation_complete = sweep_rotation_complete(&active.sweep);
                 let keep_for_rotation = true_sweep_still_rotating(&active.sweep);
-                if rotation_complete
-                    || (active.sweep.pending_victims.is_empty() && !keep_for_rotation)
-                {
+                // Circle effects test victims before their tail advance. If
+                // that advance reaches the final angle, retain pending
+                // victims for the next Hourglass so the final sector is
+                // observable before the state is cleared.
+                if active.sweep.pending_victims.is_empty() && !keep_for_rotation {
                     actor.sweep_state = None;
                 } else {
                     actor.sweep_state = Some(active.sweep);
