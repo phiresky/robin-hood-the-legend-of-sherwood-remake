@@ -2022,6 +2022,8 @@ impl EngineInner {
                     self.tick_bow_shot_for(sim, assets, entity_id);
                     self.tick_straight_melee_for(sim, assets, entity_id);
                     self.tick_melee_completion_for(sim, assets, entity_id);
+                    let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
+                    self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
                     self.tick_ability_for(sim, display, assets, entity_id);
                     if matches!(entity_id, EntityId::Pc(_)) {
                         self.tick_pc_auto_heal_for(sim, entity_id);

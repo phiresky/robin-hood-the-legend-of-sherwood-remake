@@ -2432,6 +2432,52 @@ mod tests {
         }
     }
 
+    fn assets_with_nonstraight_profile(
+        strike: SwordStrike,
+        kind: crate::profiles::WeaponThrustKind,
+    ) -> LevelAssets {
+        let mut profile_manager = crate::profiles::ProfileManager::new();
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        let thrust = &mut weapon.thrusts[strike as usize];
+        thrust.kind = kind;
+        thrust.direction = crate::profiles::WeaponThrustDirection::LeftToRight;
+        thrust.minimal_distance = 0;
+        thrust.maximal_distance = 100;
+        thrust.initial_angle = 0;
+        thrust.final_angle = 180;
+        thrust.rotation_angle = 90;
+        thrust.repulsion = 100;
+        thrust.cutting = 100;
+        profile_manager.hth_weapons.push(weapon);
+        profile_manager
+            .characters
+            .push(crate::profiles::CharacterProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
+            });
+
+        LevelAssets {
+            profile_manager: std::sync::Arc::new(profile_manager),
+            ..LevelAssets::default()
+        }
+    }
+
+    fn soldier_life(engine: &EngineInner, soldier_id: EntityId) -> i16 {
+        match engine
+            .get_entity(soldier_id)
+            .expect("test soldier must remain present")
+        {
+            Entity::Soldier(soldier) => soldier.npc.life_points,
+            _ => panic!("test victim must be a soldier"),
+        }
+    }
+
     #[test]
     fn completed_missed_sword_strike_adds_tiredness_once() {
         let sim_context = crate::sim_rng::test_context();
@@ -2501,7 +2547,7 @@ mod tests {
             });
         }
 
-        engine.tick_sweep_strikes(sim, &LevelAssets::default());
+        engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
         assert!(
             engine
                 .get_entity(attacker)
@@ -2513,7 +2559,7 @@ mod tests {
             "true-circle sweep with no victims must still rotate instead of clearing immediately"
         );
 
-        engine.tick_sweep_strikes(sim, &LevelAssets::default());
+        engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
         assert!(
             engine
                 .get_entity(attacker)
@@ -2523,6 +2569,406 @@ mod tests {
                 .sweep_state
                 .is_none(),
             "empty true-circle sweep should clear once the rotation reaches the final angle"
+        );
+    }
+
+    #[test]
+    fn circle_done_initialization_advances_without_rotating_or_hitting() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 90.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::F,
+            crate::profiles::WeaponThrustKind::TrueHalfCircle,
+        );
+
+        engine.initialize_sweep(
+            &assets,
+            attacker,
+            SwordStrike::F,
+            Some(1),
+            crate::profiles::WeaponThrustKind::TrueHalfCircle,
+            vec![victim],
+        );
+        let initial_angle = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .unwrap()
+            .current_angle;
+
+        engine.tick_sweep_for(sim, &assets, attacker, true);
+
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        let sweep = attacker_entity
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("true half-circle must retain its initialized sweep");
+        assert!(
+            (sweep.current_angle - (initial_angle + std::f32::consts::FRAC_PI_2)).abs()
+                < f32::EPSILON,
+            "ExecuteCircleSwordStrike advances its internal angle at the DONE-call tail"
+        );
+        assert_eq!(
+            attacker_entity.element_data().direction(),
+            0,
+            "the DONE call must not rotate the true-circle sprite"
+        );
+        assert_eq!(
+            soldier_life(&engine, victim),
+            50,
+            "the DONE effect branch only initializes victims and cannot hit"
+        );
+    }
+
+    #[test]
+    fn lateral_done_initialization_does_not_advance_or_hit() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 90.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let mut active = crate::movement::ActiveMelee::new(victim, SwordStrike::D, None, 0);
+        active.frames_remaining =
+            crate::movement::MELEE_STRIKE_DURATION - crate::movement::MELEE_HIT_FRAME;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_melee = active;
+
+        let initialized = engine.tick_nonstraight_melee_for(sim, &assets, attacker);
+        assert!(
+            initialized,
+            "the lateral DONE branch must initialize a sweep"
+        );
+        let initial_current = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .unwrap()
+            .current_angle;
+        engine.tick_sweep_for(sim, &assets, attacker, initialized);
+
+        let current = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("lateral victim must remain pending after DONE")
+            .current_angle;
+        assert_eq!(
+            current, initial_current,
+            "ExecuteLateralSwordStrike uses an else-if, so DONE cannot also run its IN_PROGRESS advance"
+        );
+        assert_eq!(
+            soldier_life(&engine, victim),
+            50,
+            "lateral initialization cannot hit until a later Hourglass"
+        );
+    }
+
+    #[test]
+    fn later_circle_frame_tests_existing_angle_before_tail_advance() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::F,
+            crate::profiles::WeaponThrustKind::FalseHalfCircle,
+        );
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: std::f32::consts::PI,
+            rotation_per_frame: std::f32::consts::FRAC_PI_2,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::F,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
+        });
+
+        engine.tick_sweep_for(sim, &assets, attacker, false);
+        assert_eq!(
+            soldier_life(&engine, victim),
+            50,
+            "the victim in the newly reached sector cannot be tested before the circle tail advance"
+        );
+        let sweep = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("pending final-sector victim must keep the sweep alive");
+        assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
+
+        engine.tick_sweep_for(sim, &assets, attacker, false);
+        assert!(
+            soldier_life(&engine, victim) < 50,
+            "the next IN_PROGRESS effect must test the angle reached by the prior tail advance"
+        );
+    }
+
+    #[test]
+    fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let pending_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::F,
+            crate::profiles::WeaponThrustKind::FalseHalfCircle,
+        );
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![pending_victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: 0.70,
+            rotation_per_frame: 0.75,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::F,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
+        });
+
+        engine.tick_sweep_for(sim, &assets, attacker, false);
+
+        let current = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("unreached victim keeps the circle sweep observable")
+            .current_angle;
+        assert!(
+            (current - 0.75).abs() < f32::EPSILON,
+            "a candidate past 0.70 in the same final sector must be retained instead of clamped"
+        );
+    }
+
+    #[test]
+    fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let pending_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![pending_victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: 0.70,
+            rotation_per_frame: 1.20,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::D,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::Lateral,
+        });
+
+        engine.tick_sweep_for(sim, &assets, attacker, false);
+
+        let current = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("unreached victim keeps the lateral sweep observable")
+            .current_angle;
+        assert!(
+            (current - 1.20).abs() < f32::EPSILON,
+            "lateral Execute applies its signed rotation directly even past final_angle"
+        );
+    }
+
+    #[test]
+    fn push_victims_receive_synchronous_damage_in_creation_fifo() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let first_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 80.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let second_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 60.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        for victim in [first_victim, second_victim] {
+            engine
+                .get_entity_mut(victim)
+                .unwrap()
+                .element_data_mut()
+                .sprite
+                .position_iface
+                .set_move_box(crate::coordinates::MoveBox::from_corners(
+                    crate::coordinates::MapVec::new(-5.0, -5.0),
+                    crate::coordinates::MapVec::new(5.0, 5.0),
+                ));
+        }
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::PushAside,
+        );
+        let mut active = crate::movement::ActiveMelee::new(first_victim, SwordStrike::D, None, 0);
+        active.frames_remaining =
+            crate::movement::MELEE_STRIKE_DURATION - crate::movement::MELEE_HIT_FRAME;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_melee = active;
+
+        assert!(!engine.tick_nonstraight_melee_for(sim, &assets, attacker));
+
+        assert!(
+            soldier_life(&engine, first_victim) < 50 && soldier_life(&engine, second_victim) < 50,
+            "both push victims must be damaged before the attacker's slot returns"
+        );
+        let damage_fifo: Vec<EntityId> = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| element.command == Command::ReceiveSwordDamage)
+            .filter_map(|element| element.owner)
+            .collect();
+        assert_eq!(
+            damage_fifo,
+            vec![first_victim, second_victim],
+            "push damage launches must retain the original actor-list victim FIFO"
         );
     }
 

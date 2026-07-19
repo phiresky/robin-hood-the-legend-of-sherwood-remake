@@ -785,6 +785,189 @@ fn straight_strike_damage_interrupts_only_later_creation_slots() {
     );
 }
 
+#[derive(Clone, Copy)]
+enum NonstraightInterrupt {
+    Lateral,
+    Push,
+}
+
+fn chained_nonstraight_strike_lives(
+    interrupt: NonstraightInterrupt,
+    interrupter_first: bool,
+) -> (i16, i16) {
+    use crate::coordinates::{MapVec, MoveBox, WorldPoint3D};
+    use crate::element::Posture;
+    use crate::movement::{ActiveMelee, MELEE_HIT_FRAME, MELEE_STRIKE_DURATION, SweepState};
+    use crate::profiles::{
+        CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile, WeaponThrustDirection,
+        WeaponThrustKind,
+    };
+    use crate::weapons::SwordStrike;
+
+    fn position(entity: &mut Entity, x: f32, y: f32) {
+        let element = entity.element_data_mut();
+        element.active = true;
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
+        element.set_position_map(MapPoint { x, y });
+        element.set_direction_instantly(0);
+        element
+            .sprite
+            .position_iface
+            .set_move_box(MoveBox::from_corners(
+                MapVec::new(-5.0, -5.0),
+                MapVec::new(5.0, 5.0),
+            ));
+    }
+
+    let mut engine = EngineInner::new();
+    let mut interrupter = make_test_pc(Posture::Upright);
+    position(&mut interrupter, 0.0, 100.0);
+    let mut chained_attacker = make_test_soldier(Posture::Upright);
+    position(&mut chained_attacker, 0.0, 50.0);
+    let Entity::Soldier(soldier) = &mut chained_attacker else {
+        unreachable!();
+    };
+    soldier.npc.life_points = 1;
+    soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    let mut final_target = make_test_pc(Posture::Upright);
+    // Remain within the chained attacker's 100-unit straight range but
+    // outside the interrupter's 100x100 push rectangle (half-width 50).
+    position(&mut final_target, 60.0, 50.0);
+    let Entity::Pc(pc) = &mut final_target else {
+        unreachable!();
+    };
+    pc.pc.life_points = 50;
+
+    let (interrupter_id, chained_attacker_id) = if interrupter_first {
+        (
+            engine.add_entity(interrupter),
+            engine.add_entity(chained_attacker),
+        )
+    } else {
+        let chained_attacker_id = engine.add_entity(chained_attacker);
+        let interrupter_id = engine.add_entity(interrupter);
+        (interrupter_id, chained_attacker_id)
+    };
+    let final_target_id = engine.add_entity(final_target);
+
+    let mut chained = ActiveMelee::new(final_target_id, SwordStrike::A, None, 0);
+    chained.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
+    engine
+        .get_entity_mut(chained_attacker_id)
+        .expect("chained attacker present")
+        .actor_data_mut()
+        .expect("chained attacker has actor data")
+        .active_melee = chained;
+
+    match interrupt {
+        NonstraightInterrupt::Lateral => {
+            engine
+                .get_entity_mut(interrupter_id)
+                .expect("lateral attacker present")
+                .actor_data_mut()
+                .expect("lateral attacker has actor data")
+                .sweep_state = Some(SweepState {
+                pending_victims: vec![chained_attacker_id],
+                initial_angle: 0.0,
+                current_angle: 0.0,
+                final_angle: std::f32::consts::FRAC_PI_2,
+                rotation_per_frame: 0.1,
+                direction: WeaponThrustDirection::LeftToRight,
+                strike: SwordStrike::D,
+                attacker_profile_idx: Some(1),
+                strike_kind: WeaponThrustKind::Lateral,
+            });
+        }
+        NonstraightInterrupt::Push => {
+            let mut push = ActiveMelee::new(chained_attacker_id, SwordStrike::D, None, 0);
+            push.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
+            engine
+                .get_entity_mut(interrupter_id)
+                .expect("push attacker present")
+                .actor_data_mut()
+                .expect("push attacker has actor data")
+                .active_melee = push;
+        }
+    }
+
+    let mut profiles = ProfileManager::new();
+    let mut weapon = HtHWeaponProfile::default();
+    let straight = &mut weapon.thrusts[SwordStrike::A as usize];
+    straight.minimal_distance = 0;
+    straight.maximal_distance = 100;
+    straight.cutting = 100;
+    let nonstraight = &mut weapon.thrusts[SwordStrike::D as usize];
+    nonstraight.kind = match interrupt {
+        NonstraightInterrupt::Lateral => WeaponThrustKind::Lateral,
+        NonstraightInterrupt::Push => WeaponThrustKind::PushAside,
+    };
+    nonstraight.direction = WeaponThrustDirection::LeftToRight;
+    nonstraight.minimal_distance = 0;
+    nonstraight.maximal_distance = 100;
+    nonstraight.repulsion = 100;
+    nonstraight.cutting = 100;
+    profiles.hth_weapons.push(weapon);
+    profiles.characters.push(CharacterProfile {
+        hth_weapon_id: 1,
+        ..CharacterProfile::default()
+    });
+    profiles.soldiers.push(SoldierProfile {
+        hth_weapon_id: 1,
+        ..SoldierProfile::default()
+    });
+    let assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+    let mut display = HostDisplayState::default();
+
+    crate::sim_rng::with_seed(0xD_E_F, |sim| {
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
+    });
+
+    let Entity::Pc(target) = engine
+        .get_entity(final_target_id)
+        .expect("final chained-strike target present")
+    else {
+        panic!("final chained-strike target must be a PC");
+    };
+    let final_target_life = target.pc.life_points;
+    let Entity::Soldier(chained_attacker) = engine
+        .get_entity(chained_attacker_id)
+        .expect("interrupted chained attacker remains present")
+    else {
+        panic!("chained attacker must remain a soldier");
+    };
+    (final_target_life, chained_attacker.npc.life_points)
+}
+
+#[test]
+fn hourglass_nonstraight_damage_interrupts_only_later_creation_slots() {
+    for (interrupt, label) in [
+        (NonstraightInterrupt::Lateral, "lateral"),
+        (NonstraightInterrupt::Push, "push"),
+    ] {
+        let (final_life, interrupted_life) = chained_nonstraight_strike_lives(interrupt, true);
+        assert!(
+            interrupted_life <= 0,
+            "the earlier {label} must synchronously mutate the later victim"
+        );
+        assert_eq!(
+            final_life, 50,
+            "an earlier lethal {label} must stop the later actor before its strike"
+        );
+        let (final_life, interrupted_life) = chained_nonstraight_strike_lives(interrupt, false);
+        assert!(
+            interrupted_life <= 0,
+            "the later-created {label} must still land after the chained attacker's slot"
+        );
+        assert!(
+            final_life < 50,
+            "the chained actor must hit before a later-created lethal {label} interrupts it"
+        );
+    }
+}
+
 #[test]
 fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
     let mut engine = EngineInner::new();
