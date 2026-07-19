@@ -19,22 +19,44 @@ fn overlay_final_detection_scan(
     live: &mut crate::ai::AiPerTickData,
     aggregate: &crate::ai::AiPerTickData,
 ) {
-    // TODO(parity): original ReinitializeThemList can re-walk a detectable
-    // list changed synchronously by a script between two Think calls. This
-    // aggregate intentionally freezes RefreshDetection's completed scan; live
-    // mid-FIFO detectable-list mutation needs a separate script-boundary test.
-    live.enemy_sq_distances = aggregate.enemy_sq_distances.clone();
-    live.min_sq_enemy_distance = aggregate.min_sq_enemy_distance;
-    live.personally_visible_enemies = aggregate.personally_visible_enemies;
-    live.unconscious_enemies = aggregate.unconscious_enemies.clone();
+    // Enemy list products are deliberately not copied here. Original
+    // `ReinitializeThemList` re-walks the live detectable list during every
+    // Think, including mutations made synchronously by a preceding queued
+    // Think/script. `overlay_live_enemy_detection_scan_for_think` rebuilds
+    // those fields at the exact FIFO boundary.
     live.nearby_sleeping_enemies = aggregate.nearby_sleeping_enemies.clone();
-    live.seen_last_frame_enemies = aggregate.seen_last_frame_enemies.clone();
 
     // These are also products of RefreshDetection's completed detectable-list
     // walk rather than properties of the stimulus target.
     live.visible_seeking_friends = aggregate.visible_seeking_friends;
     live.friend_seek_clears_help_flag = aggregate.friend_seek_clears_help_flag;
     live.camp_ko_money_fighters = aggregate.camp_ko_money_fighters.clone();
+}
+
+fn enemy_detection_handles(
+    detectables: &[crate::element::Detectable],
+    npc_id: EntityId,
+) -> (Vec<EntityId>, Vec<EntityId>) {
+    let mut visible = Vec::new();
+    let mut latched = Vec::new();
+    for detectable in detectables {
+        if !detectable.seen_now && !detectable.seen_last_frame {
+            continue;
+        }
+        let target = detectable.element.unwrap_or_else(|| {
+            panic!(
+                "visible/latched Enemy detectable for NPC {} has no target",
+                npc_id.index()
+            )
+        });
+        if detectable.seen_now {
+            visible.push(target);
+        }
+        if detectable.seen_last_frame {
+            latched.push(target);
+        }
+    }
+    (visible, latched)
 }
 
 impl PendingEnemyDetectionTickData {
@@ -463,6 +485,7 @@ impl EngineInner {
                     Some(target_id),
                 );
                 overlay_final_detection_scan(&mut live, &aggregate);
+                self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut live);
                 live
             } else {
                 let target_override = match stimulus.info {
@@ -584,7 +607,7 @@ impl EngineInner {
                     stimulus.stimulus_type,
                     crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
                 ) {
-                    self.overlay_live_enemy_detection_scan_for_replay(
+                    self.overlay_live_enemy_detection_scan_for_think(
                         npc_id,
                         &scratch,
                         &mut tick_data,
@@ -596,35 +619,36 @@ impl EngineInner {
     }
 
     /// Rebuild the Enemy-list products that original queued VIEW/OUTOFVIEW
-    /// handlers read through `ReinitializeThemList` when a retained stimulus
-    /// is finally replayed. Retained queues store only stimuli, so carrying
-    /// the old scan aggregate would be both lossy and stale; the original
-    /// re-walks the live detectable list at replay time as well.
-    fn overlay_live_enemy_detection_scan_for_replay(
+    /// handlers read through `ReinitializeThemList` at every Think boundary.
+    /// This covers both the immediate RefreshDetection FIFO and retained
+    /// stimuli replayed later: in either case the original reads `seen_now`
+    /// from the live detectable list, not a frozen scan aggregate.
+    fn overlay_live_enemy_detection_scan_for_think(
         &self,
         npc_id: EntityId,
         scratch: &SimScratch,
         tick_data: &mut crate::ai::AiPerTickData,
     ) {
-        let (observer_position, visible_targets) = {
-            let Some(entity @ Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
-                return;
-            };
+        let (observer_position, visible_targets, latched_targets) = {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} disappeared before live Enemy-list reconstruction",
+                    npc_id.index()
+                )
+            });
+            let npc = entity.npc_data().unwrap_or_else(|| {
+                panic!(
+                    "entity {} has no NPC data for live Enemy-list reconstruction",
+                    npc_id.index()
+                )
+            });
             let enemy_idx = crate::element::DetectableType::Enemy as usize;
+            let (visible_targets, latched_targets) =
+                enemy_detection_handles(&npc.detectable_lists[enemy_idx], npc_id);
             (
                 super::detection::human_eye_point_for_visibility(entity).0,
-                soldier.npc.detectable_lists[enemy_idx]
-                    .iter()
-                    .filter(|detectable| detectable.seen_last_frame)
-                    .map(|detectable| {
-                        detectable.element.unwrap_or_else(|| {
-                            panic!(
-                                "latched Enemy detectable for NPC {} has no target during queued replay",
-                                npc_id.index()
-                            )
-                        })
-                    })
-                    .collect::<Vec<_>>(),
+                visible_targets,
+                latched_targets,
             )
         };
 
@@ -632,7 +656,10 @@ impl EngineInner {
         tick_data.min_sq_enemy_distance = i32::MAX;
         tick_data.personally_visible_enemies = 0;
         tick_data.unconscious_enemies.clear();
-        tick_data.seen_last_frame_enemies.clear();
+        tick_data.seen_last_frame_enemies = latched_targets
+            .iter()
+            .map(|target| target.index())
+            .collect();
 
         for target_id in visible_targets {
             let target = scratch
@@ -645,8 +672,6 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-            tick_data.seen_last_frame_enemies.push(target_id.index());
-
             if target.is_unconscious {
                 if !target.is_carried {
                     tick_data
@@ -677,6 +702,79 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn enemy_detectable(
+        handle: u32,
+        seen_now: bool,
+        seen_last_frame: bool,
+    ) -> crate::element::Detectable {
+        crate::element::Detectable {
+            element: Some(EntityId::Soldier(crate::entity_id::SoldierId(handle))),
+            detectable_type: crate::element::DetectableType::Enemy,
+            seen_now,
+            seen_last_frame,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reinitialize_them_inputs_use_seen_now_and_preserve_detectable_order() {
+        let detectables = vec![
+            enemy_detectable(9, true, false),
+            enemy_detectable(4, false, true),
+            enemy_detectable(7, true, true),
+            enemy_detectable(2, false, false),
+        ];
+        let npc_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+
+        let (visible, latched) = enemy_detection_handles(&detectables, npc_id);
+
+        assert_eq!(
+            visible.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![9, 7],
+            "ReinitializeThemList must consume live IsEnemySeen/seen_now in list order"
+        );
+        assert_eq!(
+            latched.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![4, 7],
+            "arrow-protection latches remain distinct from live visibility"
+        );
+    }
+
+    #[test]
+    fn final_scan_overlay_does_not_refreeze_live_enemy_list_products() {
+        let mut live = crate::ai::AiPerTickData::stub();
+        live.enemy_sq_distances = vec![(9, 81)];
+        live.min_sq_enemy_distance = 81;
+        live.personally_visible_enemies = 1;
+        live.unconscious_enemies = vec![crate::ai::SleepingEnemyInfo {
+            handle: 7,
+            position: crate::ai::Position::default(),
+            is_pc: false,
+            is_robin: false,
+            is_vip: false,
+        }];
+
+        let mut aggregate = crate::ai::AiPerTickData::stub();
+        aggregate.enemy_sq_distances = vec![(4, 16)];
+        aggregate.min_sq_enemy_distance = 16;
+        aggregate.personally_visible_enemies = 8;
+        aggregate.nearby_sleeping_enemies = vec![crate::ai::SleepingEnemyInfo {
+            handle: 3,
+            position: crate::ai::Position::default(),
+            is_pc: false,
+            is_robin: false,
+            is_vip: false,
+        }];
+
+        overlay_final_detection_scan(&mut live, &aggregate);
+
+        assert_eq!(live.enemy_sq_distances, vec![(9, 81)]);
+        assert_eq!(live.min_sq_enemy_distance, 81);
+        assert_eq!(live.personally_visible_enemies, 1);
+        assert_eq!(live.unconscious_enemies[0].handle, 7);
+        assert_eq!(live.nearby_sleeping_enemies[0].handle, 3);
+    }
 
     #[test]
     fn enemy_detection_tick_data_override_matches_the_exact_fifo_block() {
