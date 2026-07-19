@@ -147,11 +147,9 @@ impl SaveGameManager {
     /// (`<root>/Profile_NNN/`). Loads the existing slot index from
     /// `saves.json` if present; otherwise starts empty.
     pub fn open_for_context(application_context: &crate::host::ApplicationContext) -> Self {
-        let profile_id = application_context
-            .active_profile_snapshot()
-            .unwrap_or_else(|error| panic!("save manager requires an active profile: {error}"))
-            .id;
-        let dir = save_file::save_directory_for_profile(profile_id);
+        let dir = application_context
+            .active_profile_save_directory()
+            .unwrap_or_else(|error| panic!("save manager requires an active profile: {error}"));
         let dir_str = dir.to_string_lossy().into_owned();
         match Self::load_index(&dir_str) {
             Ok(mgr) => mgr,

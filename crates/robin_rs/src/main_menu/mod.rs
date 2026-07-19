@@ -223,11 +223,6 @@ pub(crate) async fn show_main_menu(
     }
     let mut menu_audio = MainMenuAudio::new(application_context);
 
-    // Local save manager for browsing/loading at the main menu.  The
-    // session layer builds its own in `RustCallbacks::new`; both read
-    // the same on-disk save directory so the slot indices match.
-    let mut save_manager = SaveGameManager::open_for_context(application_context);
-
     // Cursor — hide the OS cursor and render the in-game arrow sprite
     // (the default cursor is set at start-up, before the menu comes up).
     // Reuses the DEFAULT.RES already opened by `IngameMenuResources`.
@@ -343,6 +338,13 @@ pub(crate) async fn show_main_menu(
         &mut cursor_renderer,
     )
     .await;
+
+    // First launch may replace placeholder profile 0 with a newly allocated
+    // profile id. Construct the save manager only after that atomic
+    // profile/key-config transition so it can never retain Profile_000 as a
+    // stale target. The session layer follows the same rule by constructing
+    // callbacks only after the menu returns.
+    let mut save_manager = SaveGameManager::open_for_context(application_context);
 
     // ── Event-loop state ─────────────────────────────────────────────
     let mut input_state = ModalInputState::new();
@@ -531,8 +533,8 @@ pub(crate) async fn show_main_menu(
 /// auto-creates a placeholder "Robin".
 ///
 /// Clears the flag unconditionally (even on cancel) so the prompt never
-/// repeats.  On OK, delete the placeholder (profile 0) and install the
-/// user's new profile.  On cancel, keep the placeholder as-is.
+/// repeats. On OK, replaces the placeholder and its key configuration as one
+/// context transition. On cancel, the placeholder becomes the final profile.
 async fn prompt_first_launch_new_player(
     application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
@@ -565,28 +567,13 @@ async fn prompt_first_launch_new_player(
     .await;
 
     application_context
-        .with_player_profiles_mut(|mgr| {
-            // Clear the flag unconditionally so the prompt doesn't fire again
-            // on the next menu entry even if the user cancelled.
-            mgr.default_profiles = false;
-
-            if let Some((name, difficulty)) = outcome {
-                if !mgr.profiles.is_empty() {
-                    mgr.delete_profile(0);
-                }
-                let screen_dims = Some((
-                    renderer.screen_width() as u32,
-                    renderer.screen_height() as u32,
-                ));
-                let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
-                mgr.set_active(idx);
-                if let Err(err) = mgr.save() {
-                    tracing::error!(
-                        "Main menu first-launch: failed to persist profile manager: {err:#}"
-                    );
-                }
-            }
-        })
+        .complete_first_launch_profile(
+            outcome,
+            (
+                renderer.screen_width() as u32,
+                renderer.screen_height() as u32,
+            ),
+        )
         .unwrap_or_else(|error| panic!("first-launch profile update failed: {error}"));
 }
 

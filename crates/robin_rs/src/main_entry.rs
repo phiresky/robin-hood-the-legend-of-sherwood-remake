@@ -749,6 +749,14 @@ fn rust_init_finish(
     let application_context =
         ApplicationContext::complete(options, player_profiles, key_configs, shipping)?;
 
+    // Compatibility boundary only: DifficultyLevel::current and the
+    // remaining engine-owned difficulty/speech consumers still read the
+    // PlayerProfileManager singleton. Host, menu, loading, rendering, and
+    // session setup code must continue to use ApplicationContext directly.
+    // TODO(app-context): delete this mirror once every engine difficulty and
+    // sound-setting consumer accepts explicit SimConfig/profile inputs.
+    application_context.install_engine_profile_compatibility_mirror()?;
+
     let campaign = Campaign::create(&profiles);
 
     Ok((campaign, profiles, application_context))

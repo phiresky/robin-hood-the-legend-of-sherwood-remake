@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bg_cache::BackgroundDecal;
 use crate::draw_manager::DrawManager;
-use crate::key_config_store::KeyConfigStore;
+use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
 use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
@@ -46,6 +46,11 @@ struct ApplicationServices {
     player_profiles: Mutex<PlayerProfileManager>,
     key_configs: Mutex<KeyConfigStore>,
     shipping: Option<Arc<ShippingDatadir>>,
+    /// True only for the process context installed by `rust_init_finish`.
+    /// Test/headless contexts remain isolated from the engine compatibility
+    /// singleton.
+    #[serde(skip)]
+    mirror_profiles_to_engine_global: Mutex<bool>,
 }
 
 /// Explicit application-owned configuration and persistence context.
@@ -116,6 +121,7 @@ impl ApplicationContext {
                 player_profiles: Mutex::new(player_profiles),
                 key_configs: Mutex::new(key_configs),
                 shipping,
+                mirror_profiles_to_engine_global: Mutex::new(false),
             })),
         })
     }
@@ -175,28 +181,119 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty) = {
+        let (result, difficulty, profiles_snapshot) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
                 .lock()
                 .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
             let result = update(&mut profiles);
-            // The original Select Player menu permits deleting the final
-            // profile (`RHMenuSelectPlayer::OnDelete`), temporarily leaving
-            // no active profile. Session/host construction still rejects
-            // that state through `active_profile_snapshot`/`host_snapshot`.
-            let difficulty = profiles.get_active().map(|profile| profile.difficulty);
-            (result, difficulty)
+            let difficulty = profiles
+                .get_active()
+                .ok_or_else(|| {
+                    "ApplicationContext profile mutation must leave an active profile".to_string()
+                })?
+                .difficulty;
+            (result, difficulty, profiles.clone())
         };
-        if let Some(difficulty) = difficulty {
-            *self
-                .sim_config
-                .lock()
-                .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? =
-                engine_api::SimConfig::from_options(&self.options, difficulty);
-        }
+        self.refresh_profile_derived_state(difficulty, profiles_snapshot)?;
         Ok(result)
+    }
+
+    /// Replace the auto-created first-launch placeholder and its parallel key
+    /// configuration while both context service locks are held. The returned
+    /// id is the final active profile id that save/session construction must
+    /// use. `None` keeps the placeholder but still finalizes first launch.
+    pub(crate) fn complete_first_launch_profile(
+        &self,
+        replacement: Option<(String, robin_engine::player_profile::DifficultyLevel)>,
+        screen_dims: (u32, u32),
+    ) -> Result<u32, String> {
+        let services = self.required_services()?;
+        let (profile_id, difficulty, profiles_snapshot) = {
+            // Keep this lock order (profiles, then keys) consistent for the
+            // only operation that must update both services as one domain
+            // transition. No guard escapes this synchronous method.
+            let mut profiles = services
+                .player_profiles
+                .lock()
+                .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+            let mut key_configs = services
+                .key_configs
+                .lock()
+                .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+
+            if !profiles.default_profiles {
+                return Err("first-launch profile transition was already completed".to_string());
+            }
+
+            if let Some((name, difficulty)) = replacement {
+                if profiles.profiles.len() != 1 || profiles.active_index != Some(0) {
+                    return Err(format!(
+                        "first-launch replacement requires one active placeholder, found {} profiles with active index {:?}",
+                        profiles.profiles.len(),
+                        profiles.active_index,
+                    ));
+                }
+                profiles.default_profiles = false;
+                let placeholder_id = profiles.profiles[0].id;
+                profiles.delete_profile(0);
+                let index =
+                    profiles.create_profile_with_screen_dims(name, difficulty, Some(screen_dims));
+                profiles.set_active(index);
+                let profile_id = profiles.profiles[index].id;
+
+                key_configs.configs.remove(&placeholder_id);
+                key_configs
+                    .configs
+                    .insert(profile_id, ProfileKeyConfig::fresh());
+            } else {
+                profiles.default_profiles = false;
+            }
+
+            let active = profiles.get_active().ok_or_else(|| {
+                "first-launch transition did not leave an active profile".to_string()
+            })?;
+            let profile_id = active.id;
+            let difficulty = active.difficulty;
+
+            profiles.save().map_err(|error| {
+                format!("failed to persist first-launch player profile: {error}")
+            })?;
+            key_configs.save().map_err(|error| {
+                format!("failed to persist first-launch key configuration: {error}")
+            })?;
+            (profile_id, difficulty, profiles.clone())
+        };
+
+        self.refresh_profile_derived_state(difficulty, profiles_snapshot)?;
+        Ok(profile_id)
+    }
+
+    /// Install the temporary engine-facing profile mirror required by legacy
+    /// difficulty and sound-setting reads. Migrated host/menu code must keep
+    /// using this context rather than consulting the mirror.
+    pub(crate) fn install_engine_profile_compatibility_mirror(&self) -> Result<(), String> {
+        let services = self.required_services()?;
+        let profiles = self.player_profiles_snapshot()?;
+        *services
+            .mirror_profiles_to_engine_global
+            .lock()
+            .map_err(|_| "ApplicationContext compatibility-mirror lock poisoned".to_string())? =
+            true;
+        *PlayerProfileManager::global() = Some(profiles);
+        Ok(())
+    }
+
+    pub(crate) fn active_profile_save_directory(&self) -> Result<std::path::PathBuf, String> {
+        self.with_player_profiles(|profiles| {
+            let profile = profiles.get_active().ok_or_else(|| {
+                "ApplicationContext has no active profile for save directory".to_string()
+            })?;
+            Ok(std::path::Path::new(&profiles.save_directory).join(
+                robin_engine::player_profile::profile_save_subdirectory(profile.id),
+            ))
+        })?
     }
 
     pub(crate) fn with_key_configs<R>(
@@ -249,6 +346,28 @@ impl ApplicationContext {
         self.services.as_deref().ok_or_else(|| {
             "ApplicationContext services requested before rust initialization".to_string()
         })
+    }
+
+    fn refresh_profile_derived_state(
+        &self,
+        difficulty: robin_engine::player_profile::DifficultyLevel,
+        profiles_snapshot: PlayerProfileManager,
+    ) -> Result<(), String> {
+        *self
+            .sim_config
+            .lock()
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? =
+            engine_api::SimConfig::from_options(&self.options, difficulty);
+
+        let mirror_enabled = *self
+            .required_services()?
+            .mirror_profiles_to_engine_global
+            .lock()
+            .map_err(|_| "ApplicationContext compatibility-mirror lock poisoned".to_string())?;
+        if mirror_enabled {
+            *PlayerProfileManager::global() = Some(profiles_snapshot);
+        }
+        Ok(())
     }
 }
 
@@ -1287,6 +1406,61 @@ mod application_context_tests {
                 Some(KeyCode::F4)
             );
         });
+    }
+
+    #[test]
+    fn first_launch_replacement_installs_keys_host_and_save_target_for_new_id() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let placeholder = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        profiles.set_active(placeholder);
+        profiles.default_profiles = true;
+        profiles.save().unwrap();
+
+        let mut keys = KeyConfigStore::new(root_path.clone());
+        keys.entry_or_default(0);
+        keys.save().unwrap();
+        let context = ApplicationContext::complete(
+            engine_api::GlobalOptions::default(),
+            profiles,
+            keys,
+            None,
+        )
+        .unwrap();
+
+        let new_id = context
+            .complete_first_launch_profile(
+                Some(("Marian".into(), DifficultyLevel::Hard)),
+                (1280, 720),
+            )
+            .unwrap();
+        assert_eq!(new_id, 1);
+        assert_eq!(context.active_profile_snapshot().unwrap().id, new_id);
+
+        let (active_keys, custom_keys) = context.active_key_configs().unwrap();
+        assert!(!active_keys.bindings.is_empty());
+        assert!(!custom_keys.bindings.is_empty());
+        context
+            .with_key_configs(|store| {
+                assert!(store.get(0).is_none());
+                assert!(store.get(new_id).is_some());
+            })
+            .unwrap();
+
+        let host = Host::new(context.clone(), 1280.0, 720.0);
+        assert_eq!(host.key_config.key_type, active_keys.key_type);
+        assert_eq!(host.custom_key_config.key_type, custom_keys.key_type);
+
+        let mut saves = crate::savegame::SaveGameManager::open_for_context(&context);
+        let slot = saves.create("First save".into(), 7);
+        let expected_save_root = root.path().join("Profile_001");
+        assert_eq!(
+            std::path::Path::new(&saves.save_directory),
+            expected_save_root
+        );
+        assert!(saves.save_path(slot).starts_with(&expected_save_root));
+        assert!(!std::path::Path::new(&saves.save_directory).ends_with("Profile_000"));
     }
 
     #[test]

@@ -131,7 +131,9 @@ pub(crate) async fn show_select_player(
         let can_select = has_profile;
         let can_new = profiles.len() < MAX_PROFILES;
         let can_rename = has_profile;
-        let can_delete = has_profile;
+        // A completed application context must always have a final active
+        // profile before menus, saves, or sessions can continue.
+        let can_delete = can_delete_profile(profiles.len());
 
         set_button_enabled(&mut frame, ID_SELECT, can_select);
         set_button_enabled(&mut frame, ID_NEW, can_new);
@@ -403,6 +405,10 @@ fn profile_count(application_context: &ApplicationContext) -> usize {
         .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
 }
 
+fn can_delete_profile(profile_count: usize) -> bool {
+    profile_count > 1
+}
+
 fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: bool) {
     let Some(widget) = frame.widget_mut(id) else {
         panic!("Select Player: missing button widget {id}");
@@ -514,6 +520,12 @@ fn delete_profile(application_context: &ApplicationContext, idx: usize) {
     let deleted_profile_id = application_context
         .with_player_profiles_mut(|mgr| {
             if idx >= mgr.profile_count() {
+                return None;
+            }
+            if mgr.profile_count() == 1 {
+                tracing::warn!(
+                    "Select Player: refusing to delete the final profile; create a replacement first"
+                );
                 return None;
             }
             let profile_id = mgr.profiles[idx].id;
@@ -1090,4 +1102,40 @@ async fn run_name_prompt(
     };
     crate::window::stop_text_input();
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::key_config_store::KeyConfigStore;
+    use robin_engine::engine::GlobalOptions;
+    use robin_engine::player_profile::PlayerProfileManager;
+
+    #[test]
+    fn deleting_the_final_profile_is_refused() {
+        assert!(!can_delete_profile(1));
+        assert!(can_delete_profile(2));
+
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let index = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        profiles.set_active(index);
+
+        let mut keys = KeyConfigStore::new(root_path);
+        keys.entry_or_default(profiles.profiles[index].id);
+        let context =
+            ApplicationContext::complete(GlobalOptions::default(), profiles, keys, None).unwrap();
+
+        delete_profile(&context, 0);
+
+        context
+            .with_player_profiles(|profiles| {
+                assert_eq!(profiles.profile_count(), 1);
+                assert_eq!(profiles.active_index, Some(0));
+                assert_eq!(profiles.get_active().unwrap().name, "Robin");
+            })
+            .unwrap();
+        assert!(context.active_key_configs().is_ok());
+    }
 }
