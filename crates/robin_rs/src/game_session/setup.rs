@@ -1509,6 +1509,46 @@ pub(super) fn load_level_and_sprite_bank(
     })
 }
 
+/// Install the local deterministic seat and publish the host's authoritative
+/// frame-zero state. This admission setup is shared by interactive and true-
+/// headless missions and deliberately has no renderer, UI, input-device, or
+/// audio dependency.
+pub(super) fn setup_local_seat_and_multiplayer_snapshot(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    args: &crate::main_entry::CliArgs,
+) {
+    // Clients adopt the server snapshot (which already includes seat 0) and
+    // receive their own ConnectSeat through the server-ordered input stream.
+    if args.connect.is_some() {
+        return;
+    }
+
+    let nickname = args.mp_nickname.clone();
+    engine.apply_command(
+        &mut host.frontend.engine_display,
+        &mut host.frontend.input,
+        assets,
+        &PlayerCommand::ConnectSeat {
+            player_id: host.transport.local_seat,
+            nickname,
+        },
+    );
+    tracing::info!(
+        seat = ?host.transport.local_seat,
+        "bootstrap ConnectSeat applied to local engine",
+    );
+    if let Some(net) = host.transport.net.as_ref() {
+        net.publish_initial_snapshot(0, engine)
+            .unwrap_or_else(|error| {
+                panic!("multiplayer: failed to publish frame-0 host snapshot: {error}")
+            });
+        net.send_ready_to_sim(0);
+        tracing::info!("multiplayer: cached and published frame-0 host snapshot");
+    }
+}
+
 /// Build `ThreadedInput` + `InputTranslator`, load the active profile's
 /// key bindings into both the host cache and the translator, push the
 /// `DisplayMap` accelerator into the engine minimap, center the camera
@@ -1582,34 +1622,7 @@ pub(super) fn setup_input_and_camera(
     // **Headless dedicated server** is a future scope: a `--server`
     // process without a local seat.  Today every `--server` is
     // also a player — keeping that path intact below.
-    let is_client = args.connect.is_some();
-    if !is_client {
-        let nickname = args.mp_nickname.clone();
-        engine.apply_command(
-            &mut host.frontend.engine_display,
-            &mut host.frontend.input,
-            assets,
-            &PlayerCommand::ConnectSeat {
-                player_id: host.transport.local_seat,
-                nickname,
-            },
-        );
-        tracing::info!(
-            seat = ?host.transport.local_seat,
-            "bootstrap ConnectSeat applied to local engine",
-        );
-        if let Some(net) = host.transport.net.as_ref() {
-            match net.publish_initial_snapshot(0, engine) {
-                Ok(()) => {
-                    net.send_ready_to_sim(0);
-                    tracing::info!("multiplayer: cached and published frame-0 host snapshot");
-                }
-                Err(e) => {
-                    tracing::warn!("multiplayer: failed to cache frame-0 host snapshot: {e}");
-                }
-            }
-        }
-    }
+    setup_local_seat_and_multiplayer_snapshot(engine, host, assets, args);
     if let Some(&pc_id) = engine.pc_ids().first()
         && let Some(entity) = engine.get_entity(pc_id)
     {

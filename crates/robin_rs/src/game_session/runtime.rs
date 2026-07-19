@@ -4,7 +4,7 @@
 //! presentation work, but they share the same deterministic frame
 //! bookkeeping through [`TimelineRuntime`].
 
-use super::multiplayer::MultiplayerRollbackTelemetry;
+use super::multiplayer::{MultiplayerAdmissionEvent, MultiplayerRollbackTelemetry};
 use super::replay_init::ReplayAndRollback;
 use crate::game::Game;
 use crate::host::Host;
@@ -474,15 +474,29 @@ pub(super) struct TimelineRuntime {
 
     pub(super) peer_hashes: BTreeMap<u32, u64>,
     pub(super) recent_timeline_history: SnapshotHistory,
-    pub(super) mp_start_gate: Option<u64>,
-    pub(super) mp_waiting_for_initial_snapshot: bool,
-    pub(super) mp_waiting_for_begin_sim: bool,
+    pub(super) mp_admission: MultiplayerAdmission,
     pub(super) mp_host_frame_schedule: Option<(u32, u32)>,
     pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
     pub(super) last_mp_clock_ahead_log_ms: u32,
     pub(super) last_mp_sleep_correction_log_ms: u32,
     pub(super) last_mp_state_hash_frame: Option<u32>,
     pub(super) pending_mp_state_hash: Option<(u32, u64)>,
+}
+
+/// Network admission state for the deterministic mission timeline.
+///
+/// The transport owns handshakes and wire delivery; this state machine owns
+/// the point at which a loaded mission may begin advancing simulation. Keeping
+/// it in `TimelineRuntime` also keeps snapshot adoption ahead of replay and
+/// rollback frame capture for both graphical and true-headless drivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum MultiplayerAdmission {
+    NotRequired,
+    HostWaitingForBegin,
+    PeerWaitingForSnapshot,
+    PeerWaitingForBegin { snapshot_frame: u32 },
+    WaitingForStart { frame: u32, start_epoch_ms: u64 },
+    Running,
 }
 
 impl TimelineRuntime {
@@ -510,9 +524,11 @@ impl TimelineRuntime {
                     capacity: RECENT_TIMELINE_HISTORY_FRAMES,
                 },
             ),
-            mp_start_gate: None,
-            mp_waiting_for_initial_snapshot: wait_for_multiplayer_start && !local_is_host,
-            mp_waiting_for_begin_sim: wait_for_multiplayer_start,
+            mp_admission: match (wait_for_multiplayer_start, local_is_host) {
+                (false, _) => MultiplayerAdmission::NotRequired,
+                (true, true) => MultiplayerAdmission::HostWaitingForBegin,
+                (true, false) => MultiplayerAdmission::PeerWaitingForSnapshot,
+            },
             mp_host_frame_schedule: None,
             last_mp_rollback: None,
             last_mp_clock_ahead_log_ms: 0,
@@ -523,7 +539,67 @@ impl TimelineRuntime {
     }
 
     pub(super) fn initially_paused(&self) -> bool {
-        self.start_paused || self.mp_waiting_for_initial_snapshot || self.mp_waiting_for_begin_sim
+        self.start_paused
+    }
+
+    pub(super) fn apply_multiplayer_admission_events(
+        &mut self,
+        events: &[MultiplayerAdmissionEvent],
+    ) {
+        for event in events {
+            self.mp_admission = match (self.mp_admission, *event) {
+                (_, MultiplayerAdmissionEvent::Disconnected) => {
+                    MultiplayerAdmission::PeerWaitingForSnapshot
+                }
+                (
+                    MultiplayerAdmission::PeerWaitingForSnapshot,
+                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
+                ) => MultiplayerAdmission::PeerWaitingForBegin {
+                    snapshot_frame: frame,
+                },
+                (
+                    MultiplayerAdmission::PeerWaitingForBegin { snapshot_frame },
+                    MultiplayerAdmissionEvent::BeginSim {
+                        frame,
+                        start_epoch_ms,
+                    },
+                ) if frame == snapshot_frame => MultiplayerAdmission::WaitingForStart {
+                    frame,
+                    start_epoch_ms,
+                },
+                (
+                    MultiplayerAdmission::HostWaitingForBegin,
+                    MultiplayerAdmissionEvent::BeginSim {
+                        frame,
+                        start_epoch_ms,
+                    },
+                ) => MultiplayerAdmission::WaitingForStart {
+                    frame,
+                    start_epoch_ms,
+                },
+                (state, event) => panic!(
+                    "invalid multiplayer admission ordering: state {state:?}, event {event:?}"
+                ),
+            };
+        }
+    }
+
+    /// Advance the wall-clock release gate and report whether simulation must
+    /// remain held for multiplayer admission.
+    pub(super) fn multiplayer_admission_paused(&mut self, now_epoch_ms: u64) -> bool {
+        if let MultiplayerAdmission::WaitingForStart {
+            frame,
+            start_epoch_ms,
+        } = self.mp_admission
+            && now_epoch_ms >= start_epoch_ms
+        {
+            self.mp_admission = MultiplayerAdmission::Running;
+            tracing::info!(frame, "multiplayer: synchronized start gate opened");
+        }
+        !matches!(
+            self.mp_admission,
+            MultiplayerAdmission::NotRequired | MultiplayerAdmission::Running
+        )
     }
 
     pub(super) fn frame_contract(&self) -> FrameContract {
@@ -750,6 +826,98 @@ mod tests {
             false,
             true,
         )
+    }
+
+    fn multiplayer_timeline(local_is_host: bool) -> TimelineRuntime {
+        TimelineRuntime::new(
+            ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Headless,
+            true,
+            local_is_host,
+        )
+    }
+
+    #[test]
+    fn host_waits_for_begin_and_the_synchronized_release_time() {
+        let mut timeline = multiplayer_timeline(true);
+        assert_eq!(
+            timeline.mp_admission,
+            MultiplayerAdmission::HostWaitingForBegin
+        );
+        assert!(timeline.multiplayer_admission_paused(500));
+
+        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+            frame: 0,
+            start_epoch_ms: 1_000,
+        }]);
+
+        assert!(timeline.multiplayer_admission_paused(999));
+        assert!(!timeline.multiplayer_admission_paused(1_000));
+        assert_eq!(timeline.mp_admission, MultiplayerAdmission::Running);
+    }
+
+    #[test]
+    fn joining_peer_requires_snapshot_then_begin_before_release() {
+        let mut timeline = multiplayer_timeline(false);
+        assert_eq!(
+            timeline.mp_admission,
+            MultiplayerAdmission::PeerWaitingForSnapshot
+        );
+
+        timeline.apply_multiplayer_admission_events(&[
+            MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 37 },
+            MultiplayerAdmissionEvent::BeginSim {
+                frame: 37,
+                start_epoch_ms: 2_000,
+            },
+        ]);
+
+        assert_eq!(
+            timeline.mp_admission,
+            MultiplayerAdmission::WaitingForStart {
+                frame: 37,
+                start_epoch_ms: 2_000,
+            }
+        );
+        assert!(timeline.multiplayer_admission_paused(1_999));
+        assert!(!timeline.multiplayer_admission_paused(2_000));
+    }
+
+    #[test]
+    fn disconnect_returns_running_peer_to_snapshot_admission() {
+        let mut timeline = multiplayer_timeline(false);
+        timeline.apply_multiplayer_admission_events(&[
+            MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 0 },
+            MultiplayerAdmissionEvent::BeginSim {
+                frame: 0,
+                start_epoch_ms: 10,
+            },
+        ]);
+        assert!(!timeline.multiplayer_admission_paused(10));
+
+        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected]);
+
+        assert_eq!(
+            timeline.mp_admission,
+            MultiplayerAdmission::PeerWaitingForSnapshot
+        );
+        assert!(timeline.multiplayer_admission_paused(11));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid multiplayer admission ordering")]
+    fn joining_peer_rejects_begin_before_snapshot() {
+        let mut timeline = multiplayer_timeline(false);
+        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+            frame: 0,
+            start_epoch_ms: 10,
+        }]);
     }
 
     #[test]

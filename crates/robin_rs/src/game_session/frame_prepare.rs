@@ -56,7 +56,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     let MissionRuntime {
         world,
         timeline: runtime,
-        control,
+        control: _,
     } = runtime;
     let MissionWorld {
         host,
@@ -64,22 +64,10 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
         assets,
         ..
     } = world;
-    let manual_pause = &mut control.manual_pause;
     let hud = &mut frontend.hud;
     let presentation = &mut frontend.presentation;
     let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
     runtime.begin_execution_trace(FrameContractStage::NetworkIngress);
-    if let Some(start_at) = runtime.mp_start_gate {
-        if current_epoch_ms() >= start_at {
-            runtime.mp_start_gate = None;
-            if !runtime.start_paused {
-                *manual_pause = false;
-            }
-            tracing::info!("multiplayer: synchronized lobby start gate opened");
-        } else {
-            *manual_pause = true;
-        }
-    }
 
     // ── Multiplayer: drain incoming wire events ───────────────
     // - Future inputs queue in `pending_inputs[target_frame]`.
@@ -95,85 +83,16 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
     // fresh cursor.
-    if let Some(net) = host.transport.net.as_ref() {
-        net.publish_frame(manager.sim_frame);
-    }
-    let net_drain = drain_net_inputs(
+    let net_drain = drain_mission_network(
+        runtime,
         host,
         manager,
         assets.as_ref(),
-        &mut runtime.rewind_buffer,
-        &mut runtime.peer_hashes,
-        &mut runtime.recent_timeline_history,
+        true,
+        current_epoch_ms(),
     );
-    if net_drain.rewrote_sim_state
-        && let Some(ref mut checker) = runtime.rollback_checker
-    {
-        checker.reset();
-    }
-    if let Some(rollback) = net_drain.rollback.clone() {
-        runtime.last_mp_rollback = Some(rollback);
-    }
-    if let Some((_frame, start_epoch_ms)) = net_drain.begin_sim {
-        runtime.mp_waiting_for_begin_sim = false;
-        runtime.mp_start_gate = Some(start_epoch_ms);
-        *manual_pause = true;
-    }
-    if runtime.mp_waiting_for_initial_snapshot && net_drain.received_initial_snapshot {
-        runtime.mp_waiting_for_initial_snapshot = false;
-        tracing::info!("multiplayer: initial snapshot received; client ready for start barrier");
-    }
-    if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
-        *manual_pause = true;
-    }
-    if host.transport.reconnecting {
-        *manual_pause = true;
-    }
-    if host.transport.net.is_some()
-        && host.transport.local_seat != engine_player_command::PlayerId::HOST
-        && let Some((clock_frame, ms_until_next_frame)) = net_drain.latest_host_clock_sample
-    {
-        accept_host_frame_schedule(
-            &mut runtime.mp_host_frame_schedule,
-            clock_frame,
-            ms_until_next_frame,
-            manager.sim_frame,
-        );
-    }
-    let mut mp_clock_pause = false;
-    if host.transport.net.is_some()
-        && host.transport.local_seat != engine_player_command::PlayerId::HOST
-        && !runtime.mp_waiting_for_initial_snapshot
-        && !runtime.mp_waiting_for_begin_sim
-        && runtime.mp_start_gate.is_none()
-    {
-        if let Some(deadline_ms) =
-            host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
-        {
-            let now_ms = crate::window::process_uptime_ms();
-            let until_frame_ms = deadline_ms - i64::from(now_ms);
-            if until_frame_ms > 0 {
-                mp_clock_pause = true;
-                if now_ms.saturating_sub(runtime.last_mp_clock_ahead_log_ms) >= 1000 {
-                    runtime.last_mp_clock_ahead_log_ms = now_ms;
-                    tracing::info!(
-                        scheduled_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
-                        local_frame = manager.sim_frame,
-                        until_frame_ms,
-                        "multiplayer: local frame is ahead of host schedule; holding sim"
-                    );
-                }
-            }
-        } else {
-            mp_clock_pause = true;
-        }
-    }
+    let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
-    if host.transport.net.is_some() {
-        runtime
-            .recent_timeline_history
-            .checkpoint(manager.sim_frame, &manager.engine);
-    }
     if !net_inputs.is_empty() {
         manager.engine.apply_commands(
             &mut host.frontend.engine_display,
@@ -312,7 +231,6 @@ fn drain_pre_tick_network(
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
     frame: &mut MissionFrame,
-    manual_pause: &mut bool,
     mp_clock_pause: &mut bool,
     rewind_active: bool,
 ) {
@@ -321,83 +239,8 @@ fn drain_pre_tick_network(
     }
 
     runtime.trace(FrameContractStage::SecondNetworkDrain);
-    if let Some(net) = host.transport.net.as_ref() {
-        net.publish_frame(manager.sim_frame);
-    }
-    let drain = drain_net_inputs(
-        host,
-        manager,
-        assets,
-        &mut runtime.rewind_buffer,
-        &mut runtime.peer_hashes,
-        &mut runtime.recent_timeline_history,
-    );
-    if drain.rewrote_sim_state
-        && let Some(ref mut checker) = runtime.rollback_checker
-    {
-        checker.reset();
-    }
-    if let Some(rollback) = drain.rollback.clone() {
-        runtime.last_mp_rollback = Some(rollback);
-    }
-    if let Some((_frame, start_epoch_ms)) = drain.begin_sim {
-        runtime.mp_waiting_for_begin_sim = false;
-        runtime.mp_start_gate = Some(start_epoch_ms);
-        *manual_pause = true;
-    }
-    if runtime.mp_waiting_for_initial_snapshot && drain.received_initial_snapshot {
-        runtime.mp_waiting_for_initial_snapshot = false;
-        tracing::info!("multiplayer: initial snapshot received; client ready for start barrier");
-    }
-    if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
-        *manual_pause = true;
-    }
-    if host.transport.reconnecting {
-        *manual_pause = true;
-    }
-    if host.transport.net.is_some()
-        && host.transport.local_seat != engine_player_command::PlayerId::HOST
-        && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
-    {
-        accept_host_frame_schedule(
-            &mut runtime.mp_host_frame_schedule,
-            clock_frame,
-            ms_until_next_frame,
-            manager.sim_frame,
-        );
-    }
-    if host.transport.net.is_some()
-        && host.transport.local_seat != engine_player_command::PlayerId::HOST
-        && !runtime.mp_waiting_for_initial_snapshot
-        && !runtime.mp_waiting_for_begin_sim
-        && runtime.mp_start_gate.is_none()
-    {
-        if let Some(deadline_ms) =
-            host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
-        {
-            let now_ms = crate::window::process_uptime_ms();
-            let until_frame_ms = deadline_ms - i64::from(now_ms);
-            if until_frame_ms > 0 {
-                *mp_clock_pause = true;
-                if now_ms.saturating_sub(runtime.last_mp_clock_ahead_log_ms) >= 1000 {
-                    runtime.last_mp_clock_ahead_log_ms = now_ms;
-                    tracing::info!(
-                        scheduled_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
-                        local_frame = manager.sim_frame,
-                        until_frame_ms,
-                        "multiplayer: local frame is ahead of host schedule; holding sim"
-                    );
-                }
-            }
-        } else {
-            *mp_clock_pause = true;
-        }
-    }
-    if drain.rewrote_sim_state && host.transport.net.is_some() {
-        runtime
-            .recent_timeline_history
-            .checkpoint(manager.sim_frame, &manager.engine);
-    }
+    let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms());
+    *mp_clock_pause |= drain.pause_simulation;
     if !drain.inputs.is_empty() {
         manager.engine.apply_commands(
             &mut host.frontend.engine_display,
@@ -411,7 +254,7 @@ fn drain_pre_tick_network(
 
 /// Publish or verify the periodic multiplayer state hash after the second
 /// network drain has made this frame's command set final.
-fn process_pre_tick_state_hash(
+pub(super) fn process_pre_tick_state_hash(
     runtime: &mut super::runtime::TimelineRuntime,
     host: &Host,
     manager: &robin_engine::engine_manager::EngineManager,
@@ -1112,7 +955,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             manager,
             assets.as_ref(),
             &mut frame,
-            manual_pause,
             &mut mp_clock_pause,
             rewind_active,
         );
