@@ -14,7 +14,7 @@ use super::runtime::{
 use super::setup::{
     HeadlessEngineResources, LoadedInteractiveResources, LoadedMissionCore, MissionLoadError,
     MissionProcessResources, load_level_and_sprite_bank, pre_decode_maps_and_resources,
-    setup_mission_audio,
+    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{MissionOutcome, install_pending_lua_session, setup_multiplayer_session};
 use crate::game::Game;
@@ -291,12 +291,13 @@ impl MissionBootstrap {
         assert_eq!(self.spec.frontend, MissionFrontendKind::Headless);
         self.lifecycle
             .require(MissionBootstrapPhase::CampaignClockStarted);
+        let wait_for_multiplayer_start = self.host.transport.net.is_some();
         HeadlessMission {
             runtime: self.finish_runtime(
                 args,
                 profiles,
                 FrameContract::Headless,
-                policy.wait_for_multiplayer_start,
+                wait_for_multiplayer_start,
             ),
             policy,
         }
@@ -871,6 +872,12 @@ impl HeadlessMissionBuilder {
             ));
         }
         bootstrap.prepare_audio(None, profiles);
+        setup_local_seat_and_multiplayer_snapshot(
+            &mut bootstrap.loaded.engine,
+            &mut bootstrap.host,
+            &bootstrap.loaded.assets,
+            args,
+        );
         bootstrap.start_campaign_clock(callbacks);
         let mission = bootstrap.finish_headless(args, profiles, HeadlessPolicy::replay_runner());
         HeadlessBuildOutcome::Ready(BuiltHeadlessMission { mission })

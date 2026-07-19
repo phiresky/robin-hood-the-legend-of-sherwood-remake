@@ -26,7 +26,10 @@ constructor is for single-player and explicitly host-owned paths.
 `NetChannels`, the shared frame cursor and the snapshot handoff. Native and
 browser WebSocket transports live in `robin_rs::multiplayer::{native, wasm}`.
 Mission-loop admission, input scheduling, rollback, hash comparison and modal
-synchronization live in `robin_rs::game_session::multiplayer`.
+synchronization live in `robin_rs::game_session::multiplayer`. The graphical
+and true-headless drivers use the same network drain and timeline admission
+state; the headless path does not construct renderer, native-input, UI, or
+audio substitutes.
 
 The Engine owns deterministic seats and the shared script/director camera. The
 interactive host owns its one local `ViewportState`; rendering projects the
@@ -87,14 +90,21 @@ must not be repaired by silently adopting a new default Engine.
   initialization.
 - A joining peer installs the exact snapshot and trims older pending input/hash
   state before announcing `ReadyToSim`.
-- The native interactive path waits until the configured expected players are
-  ready, then the server broadcasts `BeginSim`.
-- The true-headless driver currently does not implement this start-barrier
-  wait. That remains an explicit TODO; it must not be hidden behind a fake
-  success value.
+- Both interactive and true-headless missions wait until the configured
+  expected players are ready, then the server broadcasts `BeginSim`.
+- Admission is an explicit timeline state machine: a host waits for
+  `BeginSim`; a peer waits for successful snapshot adoption, then `BeginSim`;
+  both wait for `start_epoch_ms` before simulation advances. A peer never
+  announces `ReadyToSim` after a decode/adoption failure, and `BeginSim` before
+  its snapshot is a fatal ordering error.
+- True-headless hosts perform the same local-seat bootstrap and frame-zero
+  snapshot publication as interactive hosts, then keep the reconnect snapshot
+  and host clock samples current while running.
 - Native clients reconnect with exponential backoff and reclaim a seat by
-  nickname. Inputs queued only in the disconnected process are not guaranteed
-  to survive transport loss.
+  nickname. Disconnect immediately returns admission to the snapshot-wait
+  state; simulation and headless HTTP timeline steps remain held until the
+  replacement snapshot and `BeginSim` are accepted. Inputs queued only in the
+  disconnected process are not guaranteed to survive transport loss.
 - Browser clients use `web_sys::WebSocket`; browsers can join a native server
   but cannot host a listening server.
 
@@ -142,9 +152,10 @@ full command surface.
 
 ## Remaining work
 
-- implement the real multiplayer start barrier in `HeadlessMission`;
 - add longer network fault/reorder tests around reconnect and modal lanes;
 - define a host viewport policy for split-screen or replay viewing from a
   non-local seat;
+- define dedicated-server seat ownership; a true-headless `--server` still
+  owns and bootstraps seat 0 like an interactive host;
 - keep Spellforge Lua rejected in multiplayer until its VM/state is
   serializable and its event surface is versioned.

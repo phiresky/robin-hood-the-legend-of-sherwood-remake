@@ -9,6 +9,14 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::PlayerInput;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum MultiplayerAdmissionEvent {
+    Disconnected,
+    InitialSnapshotAdopted { frame: u32 },
+    BeginSim { frame: u32, start_epoch_ms: u64 },
+}
 
 fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
     if inputs.len() <= 1 {
@@ -33,14 +41,14 @@ pub(crate) struct NetDrainResult {
     /// short-horizon diagnostic history captured before that point
     /// belongs to the previous timeline and must be discarded.
     pub rewrote_sim_state: bool,
-    /// True once a client has successfully received and processed an
-    /// authoritative host snapshot for this mission.
-    pub received_initial_snapshot: bool,
+    /// Admission events in exact wire-drain order. Snapshot events are only
+    /// emitted after decode and adoption have succeeded.
+    pub(super) admission_events: Vec<MultiplayerAdmissionEvent>,
+    /// Network-owned pause sources after admission and host-clock scheduling.
+    pub(super) pause_simulation: bool,
     /// Latest host clock phase sample observed this drain:
     /// `(host_frame, ms_until_next_frame)`.
     pub latest_host_clock_sample: Option<(u32, u32)>,
-    /// Multiplayer ready-barrier release, if received this drain.
-    pub begin_sim: Option<(u32, u64)>,
     /// Rollback diagnostic from this drain, if a late input rewrote
     /// the local timeline.
     pub rollback: Option<MultiplayerRollbackTelemetry>,
@@ -91,9 +99,9 @@ pub(crate) fn drain_net_inputs(
                 .remove(&manager.sim_frame)
                 .unwrap_or_default(),
             rewrote_sim_state: false,
-            received_initial_snapshot: false,
+            admission_events: Vec::new(),
+            pause_simulation: false,
             latest_host_clock_sample: None,
-            begin_sim: None,
             rollback: None,
         };
     };
@@ -101,9 +109,8 @@ pub(crate) fn drain_net_inputs(
     // 1. Drain transport into "future" and "late" buckets.
     let mut late_inputs: Vec<(u32, PlayerInput)> = Vec::new();
     let mut rewrote_sim_state = false;
-    let mut received_initial_snapshot = false;
+    let mut admission_events = Vec::new();
     let mut latest_host_clock_sample: Option<(u32, u32)> = None;
-    let mut begin_sim: Option<(u32, u64)> = None;
     let mut rollback_telemetry = None;
     while let Ok(event) = net.try_recv_event() {
         match event {
@@ -146,6 +153,7 @@ pub(crate) fn drain_net_inputs(
                          simulation is held until an authoritative snapshot arrives"
                     );
                     host.transport.reconnecting = true;
+                    admission_events.push(MultiplayerAdmissionEvent::Disconnected);
                 }
                 #[cfg(target_arch = "wasm32")]
                 panic!(
@@ -203,7 +211,9 @@ pub(crate) fn drain_net_inputs(
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
                                 host.transport.reconnecting = false;
-                                received_initial_snapshot = true;
+                                admission_events.push(
+                                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
+                                );
                                 tracing::info!(
                                     hash = format!("{local_hash:016x}"),
                                     "multiplayer: skipping frame-0 snapshot adopt; \
@@ -216,7 +226,11 @@ pub(crate) fn drain_net_inputs(
                                 match manager.engine.try_adopt_snapshot(snapshot, assets) {
                                     Ok(()) => {
                                         host.transport.reconnecting = false;
-                                        received_initial_snapshot = true;
+                                        admission_events.push(
+                                            MultiplayerAdmissionEvent::InitialSnapshotAdopted {
+                                                frame,
+                                            },
+                                        );
                                         let adopted_hash =
                                             robin_engine::replay::state_hash(&manager.engine);
                                         tracing::info!(
@@ -259,7 +273,9 @@ pub(crate) fn drain_net_inputs(
                         match manager.engine.try_adopt_snapshot(snapshot, assets) {
                             Ok(()) => {
                                 host.transport.reconnecting = false;
-                                received_initial_snapshot = true;
+                                admission_events.push(
+                                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
+                                );
                                 let adopted_hash =
                                     robin_engine::replay::state_hash(&manager.engine);
                                 tracing::info!(
@@ -320,7 +336,10 @@ pub(crate) fn drain_net_inputs(
                     peer_hashes.retain(|&f, _| f >= frame);
                     rewrote_sim_state = true;
                 }
-                begin_sim = Some((frame, start_epoch_ms));
+                admission_events.push(MultiplayerAdmissionEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                });
             }
             NetEvent::ModalDismiss { kind, result } => {
                 tracing::debug!(
@@ -449,11 +468,93 @@ pub(crate) fn drain_net_inputs(
     NetDrainResult {
         inputs: due_inputs,
         rewrote_sim_state,
-        received_initial_snapshot,
+        admission_events,
+        pause_simulation: false,
         latest_host_clock_sample,
-        begin_sim,
         rollback: rollback_telemetry,
     }
+}
+
+/// Drain one deterministic multiplayer ingress boundary and fold its
+/// process-side effects into the timeline owner. The caller remains
+/// responsible for applying returned inputs and recording them in its own
+/// frame, so graphical and true-headless drivers keep their distinct input
+/// contracts without duplicating admission state.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drain_mission_network(
+    timeline: &mut super::runtime::TimelineRuntime,
+    host: &mut Host,
+    manager: &mut engine_manager_api::EngineManager,
+    assets: &LevelAssets,
+    checkpoint_always: bool,
+    now_epoch_ms: u64,
+) -> NetDrainResult {
+    if let Some(net) = host.transport.net.as_ref() {
+        net.publish_frame(manager.sim_frame);
+    }
+    let mut drain = drain_net_inputs(
+        host,
+        manager,
+        assets,
+        &mut timeline.rewind_buffer,
+        &mut timeline.peer_hashes,
+        &mut timeline.recent_timeline_history,
+    );
+    if drain.rewrote_sim_state
+        && let Some(checker) = timeline.rollback_checker.as_mut()
+    {
+        checker.reset();
+    }
+    if let Some(rollback) = drain.rollback.clone() {
+        timeline.last_mp_rollback = Some(rollback);
+    }
+    timeline.apply_multiplayer_admission_events(&drain.admission_events);
+
+    let local_is_peer = host.transport.net.is_some()
+        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST;
+    if local_is_peer
+        && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
+    {
+        accept_host_frame_schedule(
+            &mut timeline.mp_host_frame_schedule,
+            clock_frame,
+            ms_until_next_frame,
+            manager.sim_frame,
+        );
+    }
+
+    let admission_pause = timeline.multiplayer_admission_paused(now_epoch_ms);
+    let mut clock_pause = false;
+    if local_is_peer && !admission_pause {
+        if let Some(deadline_ms) =
+            host_scheduled_frame_deadline_ms(timeline.mp_host_frame_schedule, manager.sim_frame)
+        {
+            let now_ms = crate::window::process_uptime_ms();
+            let until_frame_ms = deadline_ms - i64::from(now_ms);
+            if until_frame_ms > 0 {
+                clock_pause = true;
+                if now_ms.saturating_sub(timeline.last_mp_clock_ahead_log_ms) >= 1000 {
+                    timeline.last_mp_clock_ahead_log_ms = now_ms;
+                    tracing::info!(
+                        scheduled_frame = timeline.mp_host_frame_schedule.map(|(frame, _)| frame),
+                        local_frame = manager.sim_frame,
+                        until_frame_ms,
+                        "multiplayer: local frame is ahead of host schedule; holding sim"
+                    );
+                }
+            }
+        } else {
+            clock_pause = true;
+        }
+    }
+    drain.pause_simulation = admission_pause || host.transport.reconnecting || clock_pause;
+
+    if host.transport.net.is_some() && (checkpoint_always || drain.rewrote_sim_state) {
+        timeline
+            .recent_timeline_history
+            .checkpoint(manager.sim_frame, &manager.engine);
+    }
+    drain
 }
 
 fn rewind_from_recent_timeline_history(
@@ -738,8 +839,34 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
 }
 
 #[cfg(test)]
-mod launch_validation_tests {
-    use super::validate_multiplayer_launch_args;
+mod tests {
+    use super::{MultiplayerAdmissionEvent, drain_net_inputs, validate_multiplayer_launch_args};
+    use crate::host::Host;
+    use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
+    use crate::rewind::RewindBuffer;
+    use crate::sim_timeline::{CheckpointPolicy, RetentionPolicy, SnapshotHistory};
+    use robin_engine::campaign::Campaign;
+    use robin_engine::engine::{Engine, LevelAssets};
+    use robin_engine::engine_manager::EngineManager;
+    use robin_engine::player_command::{PlayerCommand, PlayerId};
+
+    fn network_drain_fixture() -> (
+        Host,
+        EngineManager,
+        LevelAssets,
+        std::sync::mpsc::Sender<NetEvent>,
+        std::sync::mpsc::Receiver<NetOutbound>,
+    ) {
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let manager = EngineManager::new(engine, PlayerId(1));
+        let (channels, incoming, outgoing, _, _) = NetChannels::new();
+        let mut host = Host::default();
+        host.transport.local_seat = PlayerId(1);
+        host.transport.net = Some(channels);
+        (host, manager, assets, incoming, outgoing)
+    }
 
     #[test]
     fn multiplayer_rejects_replay_before_engine_construction() {
@@ -755,5 +882,75 @@ mod launch_validation_tests {
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
+    }
+
+    #[test]
+    fn snapshot_is_adopted_before_ready_is_announced() {
+        let (mut host, mut manager, assets, incoming, outgoing) = network_drain_fixture();
+        let mut snapshot = manager.engine.clone();
+        snapshot.apply_command(
+            &mut robin_engine::engine::HostDisplayState::default(),
+            &mut robin_engine::engine::InputState::default(),
+            &assets,
+            &PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+        );
+        let engine_bytes = bincode::serde::encode_to_vec(&snapshot, bincode::config::standard())
+            .expect("serialize snapshot");
+        incoming
+            .send(NetEvent::InitialSnapshot {
+                frame: 0,
+                engine_bytes,
+            })
+            .expect("queue snapshot");
+        let mut rewind = RewindBuffer::new();
+        let mut hashes = std::collections::BTreeMap::new();
+        let mut recent = SnapshotHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+
+        let drain = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+            &mut recent,
+        );
+
+        assert!(drain.rewrote_sim_state);
+        assert_eq!(manager.engine.sim_config().amount_of_speaking, 9);
+        assert_eq!(
+            drain.admission_events,
+            [MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 0 }]
+        );
+        assert!(matches!(
+            outgoing.recv().expect("ReadyToSim after adoption"),
+            NetOutbound::ReadyToSim { frame: 0 }
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "fatal multiplayer session error: test transport failure")]
+    fn fatal_transport_event_fails_the_mission_drain_loudly() {
+        let (mut host, mut manager, assets, incoming, _outgoing) = network_drain_fixture();
+        incoming
+            .send(NetEvent::Fatal("test transport failure".into()))
+            .expect("queue fatal event");
+        let mut rewind = RewindBuffer::new();
+        let mut hashes = std::collections::BTreeMap::new();
+        let mut recent = SnapshotHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+
+        let _ = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            &assets,
+            &mut rewind,
+            &mut hashes,
+            &mut recent,
+        );
     }
 }

@@ -45,8 +45,7 @@ use mouse_input::{
     handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
 };
 use multiplayer::{
-    accept_host_frame_schedule, drain_net_inputs, host_scheduled_frame_deadline_ms,
-    setup_multiplayer_session,
+    drain_mission_network, host_scheduled_frame_deadline_ms, setup_multiplayer_session,
 };
 pub use render::RenderContext;
 use render::{

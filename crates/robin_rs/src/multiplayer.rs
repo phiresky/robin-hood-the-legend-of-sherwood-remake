@@ -321,4 +321,115 @@ mod tests {
 
         let _ = (PlayerInput::new(PlayerId(0), PlayerCommand::CrouchDown),);
     }
+
+    #[test]
+    fn server_releases_begin_only_after_snapshot_and_both_ready_messages() {
+        let (server_in_tx, server_in_rx) = channel::<NetEvent>();
+        let (server_out_tx, server_out_rx) = channel::<NetOutbound>();
+        let server_cursor = new_frame_cursor();
+        let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let _server = start_server(
+            "127.0.0.1:0",
+            "host".into(),
+            "Dem_Lei_MP".into(),
+            42,
+            robin_engine::engine::SimConfig::default(),
+            server_in_tx,
+            server_out_rx,
+            server_cursor,
+            server_snapshot,
+            2,
+        )
+        .expect("start_server");
+        let (client_in_tx, client_in_rx) = channel::<NetEvent>();
+        let (client_out_tx, client_out_rx) = channel::<NetOutbound>();
+        let _client = connect_client(
+            _server.local_addr().to_string(),
+            "alice".into(),
+            client_in_tx,
+            client_out_rx,
+        )
+        .expect("connect_client");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "client did not receive seat assignment"
+            );
+            if matches!(
+                client_in_rx.recv_timeout(Duration::from_millis(50)),
+                Ok(NetEvent::AssignedLocalSeat(PlayerId(1)))
+            ) {
+                break;
+            }
+        }
+
+        server_out_tx
+            .send(NetOutbound::InitialSnapshot {
+                frame: 0,
+                engine_bytes: vec![1, 2, 3, 4],
+            })
+            .expect("publish snapshot");
+        let snapshot_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            assert!(
+                std::time::Instant::now() < snapshot_deadline,
+                "joining peer did not receive initial snapshot"
+            );
+            match client_in_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(NetEvent::InitialSnapshot {
+                    frame: 0,
+                    engine_bytes,
+                }) => {
+                    assert_eq!(engine_bytes, [1, 2, 3, 4]);
+                    break;
+                }
+                Ok(NetEvent::BeginSim { .. }) => {
+                    panic!("BeginSim arrived before the joining peer was ready")
+                }
+                Ok(_) | Err(_) => {}
+            }
+        }
+
+        client_out_tx
+            .send(NetOutbound::ReadyToSim { frame: 0 })
+            .expect("peer ready");
+        let no_begin_deadline = std::time::Instant::now() + Duration::from_millis(150);
+        while std::time::Instant::now() < no_begin_deadline {
+            if matches!(
+                client_in_rx.recv_timeout(Duration::from_millis(20)),
+                Ok(NetEvent::BeginSim { .. })
+            ) {
+                panic!("BeginSim arrived before the delayed host readiness");
+            }
+        }
+
+        server_out_tx
+            .send(NetOutbound::ReadyToSim { frame: 0 })
+            .expect("host ready");
+        let server_begin = loop {
+            match server_in_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(NetEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                }) => break (frame, start_epoch_ms),
+                Ok(_) => continue,
+                Err(error) => panic!("host did not receive BeginSim: {error}"),
+            }
+        };
+        let client_begin = loop {
+            match client_in_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(NetEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                }) => break (frame, start_epoch_ms),
+                Ok(_) => continue,
+                Err(error) => panic!("peer did not receive BeginSim: {error}"),
+            }
+        };
+
+        assert_eq!(server_begin, client_begin);
+        assert_eq!(server_begin.0, 0);
+    }
 }

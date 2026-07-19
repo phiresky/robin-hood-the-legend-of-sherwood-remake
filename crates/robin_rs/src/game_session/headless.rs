@@ -1,11 +1,13 @@
 //! Complete ownership and policy for a loaded true-headless mission.
 
 use super::modal_state::ActiveModal;
+use super::multiplayer::{drain_mission_network, host_scheduled_frame_deadline_ms};
 use super::runtime::{
     FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionRuntime, MissionWorld,
     TickPolicy,
 };
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
+use crate::multiplayer::lobby::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use serde::{Deserialize, Serialize};
@@ -15,7 +17,6 @@ use serde::{Deserialize, Serialize};
 pub(super) struct HeadlessPolicy {
     pub(super) auto_dismiss_modals: bool,
     pub(super) exit_when_replay_finishes: bool,
-    pub(super) wait_for_multiplayer_start: bool,
 }
 
 impl HeadlessPolicy {
@@ -23,9 +24,6 @@ impl HeadlessPolicy {
         Self {
             auto_dismiss_modals: true,
             exit_when_replay_finishes: true,
-            // TODO(parity): Teach the true-headless driver to drain the
-            // multiplayer start barrier before enabling this.
-            wait_for_multiplayer_start: false,
         }
     }
 }
@@ -99,14 +97,41 @@ impl HeadlessMission {
     /// policy here; consuming campaign return and async host pacing remain in
     /// the outer driver.
     pub(super) fn run_frame(&mut self, args: &crate::main_entry::CliArgs) -> HeadlessFrameResult {
-        let mut frame = self.runtime.begin_frame(crate::window::process_uptime_ms());
+        let frame_started_at_ms = crate::window::process_uptime_ms();
+        let net_drain = {
+            let MissionRuntime {
+                world, timeline, ..
+            } = &mut self.runtime;
+            drain_mission_network(
+                timeline,
+                &mut world.host,
+                &mut world.manager,
+                &world.assets,
+                true,
+                current_epoch_ms(),
+            )
+        };
+        let network_paused = net_drain.pause_simulation;
+        let tick_paused = self.runtime.control.manual_pause || network_paused;
+        let net_inputs = net_drain.inputs;
+        if !net_inputs.is_empty() {
+            self.runtime.world.manager.engine.apply_commands(
+                &mut self.runtime.world.host.frontend.engine_display,
+                &mut self.runtime.world.host.frontend.input,
+                &self.runtime.world.assets,
+                &net_inputs,
+            );
+        }
+        let mut frame = self.runtime.begin_frame(frame_started_at_ms);
+        frame.commands.commands.extend(net_inputs);
 
-        if self
-            .runtime
-            .timeline
-            .replay_player
-            .as_ref()
-            .is_some_and(|player| !player.is_finished())
+        if !tick_paused
+            && self
+                .runtime
+                .timeline
+                .replay_player
+                .as_ref()
+                .is_some_and(|player| !player.is_finished())
         {
             self.runtime.inject_next_replay_frame(&mut frame);
         }
@@ -117,20 +142,24 @@ impl HeadlessMission {
         self.runtime
             .timeline
             .trace(FrameContractStage::PreTickCommands);
-        let tick_paused = self.runtime.control.manual_pause;
+        super::frame_prepare::process_pre_tick_state_hash(
+            &mut self.runtime.timeline,
+            &self.runtime.world.host,
+            &self.runtime.world.manager,
+        );
         let tick_exit_code = self.runtime.run_tick(TickPolicy {
             skip_tick: tick_paused,
             paused: false,
         });
         self.runtime.drain_host_rpc();
-        self.drain_headless_modals_and_steps(&mut frame);
+        self.drain_headless_modals_and_steps(&mut frame, !network_paused);
         self.runtime.timeline.trace(FrameContractStage::ModalDrain);
 
         // Original ordering differs here: graphical crosses this boundary
         // after presentation, but headless must do so before frame-zero
         // recorder commit. See the frame-contract tests in runtime.rs.
         self.runtime.run_post_initialize();
-        let paused = self.runtime.control.manual_pause;
+        let paused = tick_paused;
         self.commit_frame(&mut frame, paused);
 
         let replay_finished = self
@@ -161,6 +190,17 @@ impl HeadlessMission {
             self.runtime.timeline.trace(FrameContractStage::Exit);
         }
         self.runtime.timeline.trace(FrameContractStage::Pacing);
+        let host_deadline_ms = if self.runtime.world.host.transport.net.is_some()
+            && self.runtime.world.host.transport.local_seat
+                != robin_engine::player_command::PlayerId::HOST
+        {
+            host_scheduled_frame_deadline_ms(
+                self.runtime.timeline.mp_host_frame_schedule,
+                self.runtime.world.manager.sim_frame,
+            )
+        } else {
+            None
+        };
         let outcome = self.runtime.timeline.plan_frame_outcome(
             crate::window::process_uptime_ms(),
             FramePacing {
@@ -168,10 +208,24 @@ impl HeadlessMission {
                 headless: true,
                 engine_fast_forward: self.runtime.world.manager.engine.is_fast_forward(),
                 slow_motion: self.runtime.world.host.slow_motion,
-                host_deadline_ms: None,
+                host_deadline_ms,
             },
             exit_code,
         );
+        if let FrameOutcome::Continue { sleep_ms } = outcome
+            && let Some((hash_frame, hash)) = self.runtime.timeline.pending_mp_state_hash
+            && let Some(net) = self.runtime.world.host.transport.net.as_ref()
+            && self.runtime.world.host.transport.local_seat
+                == robin_engine::player_command::PlayerId::HOST
+        {
+            net.publish_frame(self.runtime.world.manager.sim_frame);
+            net.send_state_hash(
+                hash_frame,
+                hash,
+                self.runtime.world.manager.sim_frame,
+                sleep_ms,
+            );
+        }
 
         HeadlessFrameResult {
             outcome,
@@ -180,7 +234,11 @@ impl HeadlessMission {
         }
     }
 
-    fn drain_headless_modals_and_steps(&mut self, frame: &mut super::runtime::MissionFrame) {
+    fn drain_headless_modals_and_steps(
+        &mut self,
+        frame: &mut super::runtime::MissionFrame,
+        allow_timeline_steps: bool,
+    ) {
         let MissionRuntime {
             world,
             timeline,
@@ -225,18 +283,20 @@ impl HeadlessMission {
         }
 
         let mut active_modal: Option<ActiveModal> = None;
-        drain_steps(
-            manager,
-            host,
-            assets,
-            dev,
-            game,
-            &mut timeline.rewind_buffer,
-            &mut timeline.rollback_checker,
-            &mut timeline.replay_player,
-            &mut control.manual_pause,
-            &mut active_modal,
-        );
+        if allow_timeline_steps {
+            drain_steps(
+                manager,
+                host,
+                assets,
+                dev,
+                game,
+                &mut timeline.rewind_buffer,
+                &mut timeline.rollback_checker,
+                &mut timeline.replay_player,
+                &mut control.manual_pause,
+                &mut active_modal,
+            );
+        }
         let dismissed = if self.policy.auto_dismiss_modals {
             dismiss_pending_modals(host)
         } else {
@@ -272,6 +332,11 @@ impl HeadlessMission {
         timeline.record_commands(frame, true);
         timeline.finish_recording(frame);
         world.manager.sim_frame += 1;
+        if let Some(net) = world.host.transport.net.as_ref()
+            && world.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+        {
+            net.set_initial_snapshot(world.manager.sim_frame, &world.manager.engine);
+        }
     }
 }
 
@@ -285,6 +350,5 @@ mod tests {
 
         assert!(policy.auto_dismiss_modals);
         assert!(policy.exit_when_replay_finishes);
-        assert!(!policy.wait_for_multiplayer_start);
     }
 }

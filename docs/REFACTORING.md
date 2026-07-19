@@ -77,7 +77,7 @@ Do not split a coherent state machine merely to make a file smaller.
 | 2 | Close remaining snapshot inputs | Audit every `apply_commands` and `perform_hourglass` read. Simulation-relevant host/display controls must be snapshotted or command-derived. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, lift approach geometry and contextual stale-ID failures are landed. Remaining civilian/generalized optical detection and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
-| 5 | Complete true-headless multiplayer admission | The headless policy deliberately does not wait at the multiplayer start barrier. Implement the real drain; do not simulate an interactive frontend. |
+| 5 | Complete true-headless multiplayer admission | **Complete.** `TimelineRuntime` owns the snapshot → ready → begin → wall-clock release state machine, while the shared mission-network drain serves both drivers. Headless bootstrap publishes the real host snapshot and advances without renderer/UI/audio stand-ins. |
 | 6 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
 
 The detailed gameplay ledger and Original evidence live in
