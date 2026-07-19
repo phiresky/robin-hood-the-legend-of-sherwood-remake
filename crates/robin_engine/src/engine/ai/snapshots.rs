@@ -83,6 +83,9 @@ pub(super) struct PcSnapshot {
     /// PC.  Differs from `eye_z` in lying/carried postures
     /// (+2 vs +5; +25 vs default).
     pub(super) detection_z: f32,
+    /// Exact ground Z used to reconstruct Original world-horizontal Y from
+    /// the projected map point during cross-elevation visibility checks.
+    pub(super) ground_z: f32,
     /// PC's current melee target for FighterSnapshot.
     pub(super) melee_target: Option<EntityId>,
     /// Active swordfight principal opponent, i.e. first entry of the
@@ -281,6 +284,8 @@ pub(super) struct HumanTarget {
     pub(super) position: MapPoint,
     pub(super) layer: u16,
     pub(super) eye_z: f32,
+    /// Exact ground Z for projected-map to world-horizontal conversion.
+    pub(super) ground_z: f32,
     pub(super) posture: crate::element::Posture,
     /// 16-sector facing.  Used for the `LeaningOut` arm of
     /// `compute_detection_point`: the detection point projects
@@ -323,6 +328,8 @@ pub(super) struct HumanTarget {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct ObjectTarget {
     pub(super) position: MapPoint,
+    /// Original object point after the detection path's `mZ += 1`.
+    pub(super) world_position: crate::coordinates::WorldPoint3D,
     pub(super) layer: u16,
     pub(super) belongs_to_beggar: bool,
     pub(super) active: bool,
@@ -566,6 +573,7 @@ impl EngineInner {
                 is_robin: pc.pc.robin,
                 eye_z,
                 detection_z,
+                ground_z: pc_ground_z,
                 melee_target: pc.pc.melee_target,
                 principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
                 opponent_handles: pc.human.opponents.iter().map(|id| id.index()).collect(),
@@ -1131,8 +1139,8 @@ impl EngineInner {
             // they differ for Lying (+2 vs +5) and Carried (+25 vs
             // default).
             let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
-            let eye_z = entity.element_data().position().z
-                + crate::stealth::detection_z_for_posture(posture, is_rider);
+            let ground_z = entity.element_data().position().z;
+            let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
             let direction = entity.element_data().direction();
             let is_pc = matches!(entity, Entity::Pc(_));
             // Only PCs carry a guard; everything else is unguarded
@@ -1172,6 +1180,7 @@ impl EngineInner {
                     position,
                     layer,
                     eye_z,
+                    ground_z,
                     posture,
                     direction,
                     action_state,
@@ -1195,6 +1204,8 @@ impl EngineInner {
                 continue;
             };
             let position = entity.element_data().position_map();
+            let mut world_position = entity.element_data().position();
+            world_position.z += 1.0;
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
             // Original `RefreshDetection` casts DETECTABLE_OBJECT entries to
@@ -1209,6 +1220,7 @@ impl EngineInner {
                 id,
                 ObjectTarget {
                     position,
+                    world_position,
                     layer,
                     belongs_to_beggar,
                     active,

@@ -30,7 +30,7 @@
 //! candidate obstacles from the FastFindGrid cells crossed by the ray,
 //! then checking opaque blockers on that smaller candidate list.
 
-use crate::coordinates::{GroundBBox, GroundPoint, MapPoint};
+use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
 use crate::order::OrderType;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
@@ -148,8 +148,10 @@ pub const ALPHA_START: u16 = 154;
 /// viewer's sector, and the target's human data lives in here.
 #[derive(Debug, Clone, Copy)]
 pub struct VisibilityQuery<'a> {
-    /// Viewer's projected map position.
-    pub viewer: MapPoint,
+    /// Projected eye point used only for opaque line of sight.
+    pub viewer_los: MapPoint,
+    /// Original world-space eye point used for distance and cone geometry.
+    pub viewer_world: WorldPoint3D,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test.
     pub viewer_direction: i16,
@@ -198,15 +200,12 @@ pub struct VisibilityQuery<'a> {
     /// target.  When false, the test returns 0.
     pub target_is_active_and_outside_building: bool,
 
-    /// Target projected map position.
-    pub target: MapPoint,
+    /// Projected detection point used only for opaque line of sight.
+    pub target_los: MapPoint,
+    /// Original world-space detection point used for distance and cone geometry.
+    pub target_world: WorldPoint3D,
     /// Target posture (`Posture::Crouched`, `Posture::Spy`, etc).
     pub target_posture: Posture,
-    /// Viewer's eye-point Z, i.e. `viewer.z + eye_z_for_posture(viewer_posture)`.
-    pub viewer_eye_z: f32,
-    /// Target's detection-point Z, i.e.
-    /// `target.z + eye_z_for_posture(target_posture)`.
-    pub target_eye_z: f32,
     /// Target action state (affects sharpness modifier).
     pub target_action_state: ActionState,
     /// Is the target a PC?  Drives the golden-eye check.
@@ -281,10 +280,11 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
         };
     }
 
-    // Stretched view vector.  Z is zero in the 2D test, so the 3D
-    // and 2D squared norms agree here.
-    let dx = q.target.x - q.viewer.x;
-    let dy = q.target.y - q.viewer.y;
+    // Original `ComputeVisibility(human)` subtracts the world-space eye and
+    // detection points, then stretches world Y. Projected map Y is reserved
+    // for the later `IsReachable` call because elevation changes it.
+    let dx = q.target_world.x - q.viewer_world.x;
+    let dy = q.target_world.y - q.viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
     let sqr_distance = dx * dx + sy * sy;
 
@@ -303,8 +303,9 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
     // (viewer eye-point to target detection-point).  Adding the Z
     // component tightens the gate so a target well above or below
     // the viewer isn't auto-spotted at short horizontal range.
-    let dz = q.target_eye_z - q.viewer_eye_z;
-    if sqr_distance + dz * dz < 400.0 {
+    let dz = q.target_world.z - q.viewer_world.z;
+    let sqr_distance_3d = sqr_distance + dz * dz;
+    if sqr_distance_3d < 400.0 {
         return 1.0;
     }
 
@@ -318,11 +319,11 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
     }
 
     // Cone + LOS test.
-    if !is_detecting(q, dx, sy, sqr_distance, fx, fy, false) {
+    if !is_detecting(q, dx, sy, sqr_distance_3d, fx, fy, false) {
         return 0.0;
     }
 
-    let sharpness = distance_sharpness(sqr_distance, view_radius);
+    let sharpness = distance_sharpness(sqr_distance_3d, view_radius);
 
     // Posture / action-state sharpness modifier.
     if q.target_posture == Posture::Crouched {
@@ -354,8 +355,10 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
 /// forward-halfplane + cone + LOS gate.
 #[derive(Debug, Clone, Copy)]
 pub struct ObjectVisibilityQuery<'a> {
-    /// Viewer's projected map position.
-    pub viewer: MapPoint,
+    /// Projected eye point used only for opaque line of sight.
+    pub viewer_los: MapPoint,
+    /// Original world-space eye point used for distance and cone geometry.
+    pub viewer_world: WorldPoint3D,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test inside
     /// `is_detecting` — though note the object path rejects any
@@ -375,8 +378,10 @@ pub struct ObjectVisibilityQuery<'a> {
     /// `true` for beggar-dropped coins, which are invisible to
     /// soldiers.
     pub object_belongs_to_beggar: bool,
-    /// Target object's projected map position.
-    pub target: MapPoint,
+    /// Projected object point used only for opaque line of sight.
+    pub target_los: MapPoint,
+    /// Original world-space object point (`GetPosition()`, with Z + 1).
+    pub target_world: WorldPoint3D,
     /// Sight obstacle list plus FastFindGrid for the LOS check.
     pub sight_obstacles: crate::sight_obstacle::ObstacleList<'a>,
     pub fast_grid: &'a crate::fast_find_grid::FastFindGrid,
@@ -406,13 +411,13 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
         return 0.0;
     }
 
-    // Stretched view vector from viewer eye point to object position.
-    // The 2D test drops the Z component entirely (the object path
-    // has no close-range auto-visible branch that would consult it).
-    let dx = q.target.x - q.viewer.x;
-    let dy = q.target.y - q.viewer.y;
+    // Original object visibility uses the complete stretched world-space
+    // vector for radius, half-circle, and sharpness checks.
+    let dx = q.target_world.x - q.viewer_world.x;
+    let dy = q.target_world.y - q.viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
-    let sqr_distance = dx * dx + sy * sy;
+    let dz = q.target_world.z - q.viewer_world.z;
+    let sqr_distance = dx * dx + sy * sy + dz * dz;
 
     let (fx, fy) = q.view_forward;
     let view_radius = q.view_radius as f32;
@@ -433,13 +438,13 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
     // eye-status and viewer-in-building short-circuits inside
     // `is_detecting` are redundant with the ones we already ran.
     if !is_detecting_cone_and_los(
-        q.viewer,
+        q.viewer_los,
         q.viewer_direction,
         q.real_half_aperture,
         q.layer,
         q.sight_obstacles,
         q.fast_grid,
-        q.target,
+        q.target_los,
         None,
         dx,
         sy,
@@ -492,14 +497,14 @@ fn is_detecting(
     }
 
     is_detecting_cone_and_los(
-        q.viewer,
+        q.viewer_los,
         q.viewer_direction,
         q.real_half_aperture,
         q.layer,
         q.sight_obstacles,
         q.fast_grid,
-        q.target,
-        Some((q.viewer_eye_z, q.target_eye_z)),
+        q.target_los,
+        Some((q.viewer_world.z, q.target_world.z)),
         view_x,
         view_y,
         sqr_distance,
@@ -598,8 +603,8 @@ fn los_clear_for_detection(
 /// half-plane bounded by the view radius — no narrow cone, no distance
 /// curve.
 fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
-    let dx = q.target.x - q.viewer.x;
-    let dy = q.target.y - q.viewer.y;
+    let dx = q.target_world.x - q.viewer_world.x;
+    let dy = q.target_world.y - q.viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
     let sqr_distance = dx * dx + sy * sy;
     let view_radius = q.view_radius as f32;
@@ -640,7 +645,13 @@ fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
         return false;
     }
 
-    los_clear_spatial(q.viewer, q.target, q.layer, q.sight_obstacles, q.fast_grid)
+    los_clear_spatial(
+        q.viewer_los,
+        q.target_los,
+        q.layer,
+        q.sight_obstacles,
+        q.fast_grid,
+    )
 }
 
 /// Three-segment distance sharpness curve.
@@ -944,18 +955,20 @@ pub fn los_clear_spatial(
 /// the raw inputs.
 #[allow(clippy::too_many_arguments)]
 pub fn is_detecting_target(
-    viewer: MapPoint,
+    viewer_los: MapPoint,
+    viewer_world: GroundPoint,
     viewer_direction: i16,
     view_forward: (f32, f32),
     real_half_aperture: f32,
     view_radius: u16,
-    target: MapPoint,
+    target_los: MapPoint,
+    target_world: GroundPoint,
     layer: u16,
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
 ) -> bool {
-    let dx = target.x - viewer.x;
-    let dy = target.y - viewer.y;
+    let dx = target_world.x - viewer_world.x;
+    let dy = target_world.y - viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
     let sqr_distance = dx * dx + sy * sy;
     let view_radius_f = view_radius as f32;
@@ -970,13 +983,13 @@ pub fn is_detecting_target(
         return false;
     }
     is_detecting_cone_and_los(
-        viewer,
+        viewer_los,
         viewer_direction,
         real_half_aperture,
         layer,
         obstacles,
         fast_grid,
-        target,
+        target_los,
         None,
         dx,
         sy,
@@ -1428,7 +1441,8 @@ mod tests {
         obstacles: &'a [SightObstacle],
     ) -> VisibilityQuery<'a> {
         VisibilityQuery {
-            viewer,
+            viewer_los: viewer,
+            viewer_world: WorldPoint3D::new(viewer.x, viewer.y, 30.0),
             viewer_direction: dir,
             view_forward: sector_to_forward(dir),
             view_radius: DEFAULT_VIEW_RADIUS,
@@ -1440,12 +1454,11 @@ mod tests {
             golden_eye_mode: false,
             effective_view_radius: DEFAULT_VIEW_RADIUS as f32,
             target_is_active_and_outside_building: true,
-            target,
+            target_los: target,
+            target_world: WorldPoint3D::new(target.x, target.y, 30.0),
             target_posture: Posture::Upright,
             target_action_state: ActionState::Waiting,
             target_is_pc: true,
-            viewer_eye_z: 30.0,
-            target_eye_z: 30.0,
             sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(obstacles),
             fast_grid: fast_grid_for_obstacles(obstacles),
             layer: 0,
@@ -1472,6 +1485,35 @@ mod tests {
         let grid = empty_grid();
         let q = query(pt(0.0, 0.0), 4, pt(10.0, 0.0), grid);
         assert_eq!(compute_visibility(&q), 1.0);
+    }
+
+    #[test]
+    fn cross_elevation_visibility_uses_world_horizontal_distance() {
+        // Original `GetPosition()` points share world Y here, while their
+        // projected map Y differs by the 300-unit ground elevation. Feeding
+        // projected Y into the radius test would manufacture a ~523-unit
+        // horizontal separation and reject this target outside radius 400.
+        let grid = empty_grid();
+        let mut q = query(pt(0.0, 0.0), 4, pt(0.0, -300.0), grid);
+        q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
+        q.target_world = WorldPoint3D::new(0.0, 0.0, 345.0);
+
+        assert!(compute_visibility(&q) > 0.0);
+    }
+
+    #[test]
+    fn vertical_separation_contributes_to_human_distance_sharpness() {
+        let grid = empty_grid();
+        let mut q = query(pt(0.0, 0.0), 4, pt(0.0, 0.0), grid);
+        q.view_radius = 200;
+        q.effective_view_radius = 200.0;
+        q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
+        q.target_world = WorldPoint3D::new(0.0, 0.0, 145.0);
+
+        assert_eq!(
+            compute_visibility(&q),
+            distance_sharpness(100.0 * 100.0, 200.0)
+        );
     }
 
     #[test]
@@ -2060,7 +2102,8 @@ mod tests {
         obstacles: &'a [SightObstacle],
     ) -> ObjectVisibilityQuery<'a> {
         ObjectVisibilityQuery {
-            viewer,
+            viewer_los: viewer,
+            viewer_world: WorldPoint3D::new(viewer.x, viewer.y, 0.0),
             viewer_direction: dir,
             view_forward: sector_to_forward(dir),
             view_radius: DEFAULT_VIEW_RADIUS,
@@ -2068,7 +2111,8 @@ mod tests {
             real_half_aperture: NORMAL_HALF_APERTURE,
             viewer_in_building: false,
             object_belongs_to_beggar: false,
-            target,
+            target_los: target,
+            target_world: WorldPoint3D::new(target.x, target.y, 0.0),
             sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(obstacles),
             fast_grid: fast_grid_for_obstacles(obstacles),
             layer: 0,
@@ -2082,6 +2126,16 @@ mod tests {
         let q = obj_query(pt(0.0, 0.0), 4, pt(100.0, 0.0), &[]);
         let v = compute_object_visibility(&q);
         assert!(v > 0.0 && v <= 1.0, "got {}", v);
+    }
+
+    #[test]
+    fn cross_elevation_object_visibility_uses_world_3d_vector() {
+        let grid = empty_grid();
+        let mut q = obj_query(pt(0.0, 0.0), 4, pt(0.0, -300.0), grid);
+        q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
+        q.target_world = WorldPoint3D::new(0.0, 0.0, 301.0);
+
+        assert!(compute_object_visibility(&q) > 0.0);
     }
 
     #[test]
