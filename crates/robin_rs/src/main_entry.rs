@@ -718,16 +718,15 @@ pub fn rust_init() -> Result<RustInit, String> {
     rust_init_finish(shipping)
 }
 
-/// Wasm variant of [`rust_init`] — the JS host has already decoded the
-/// shipping datadir from the fetched `datadir.bin` bytes and installed
-/// it via `install_global`, so we skip the
-/// `try_load` step and reuse the supplied handle.
+/// Initialize from a shipping datadir decoded and installed by the platform
+/// bootstrap (the wasm host or Android NativeActivity entry point), skipping
+/// the filesystem-backed [`assets_shipping_datadir::try_load`] path.
 pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
     crate::init_tracing();
     setup_data_dir()?;
-    tracing::info!("Robin Hood — Rust entry point (wasm boot)");
+    tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
     rust_init_finish(shipping)
 }
 
