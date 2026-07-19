@@ -455,19 +455,30 @@ pub enum PlayerCommand {
     /// map is deployed.
     MinimapMouseDown {
         click_pt: ScreenPoint,
+        /// Whether host presentation had already started a drag before this
+        /// edge. This fully resolves the UI-focus message decision so command
+        /// application never derives engine output from host display scratch.
+        continuing_drag: bool,
     },
     /// Mouse move — drives hover state, drag continuation, and the
     /// entered-nicely / capture flags.
     MinimapMouseMove {
         mouse_pt: ScreenPoint,
         left_mouse_down: bool,
+        /// Whether the host-owned minimap drag is continuing on this move.
+        /// Engine-visible focus output is derived from this recorded bit.
+        continuing_drag: bool,
     },
     /// Left mouse up while interacting with the minimap (either the
     /// cursor is over the widget or a drag is in progress).  Handles
     /// the click / drag-end / center-on-map-click branch.
     MinimapMouseUp {
-        click_pt: ScreenPoint,
         on_minimap: bool,
+        /// Fully-resolved map point to center the shared camera on. `None`
+        /// represents a drag release, collapsed-map click, dead-zone click,
+        /// or failed minimap projection. Host minimap geometry is never read
+        /// to decide the deterministic camera mutation during replay.
+        center_on: Option<MapPoint>,
     },
     /// Right-click on the displayed minimap — close the map and clear
     /// pending highlights.

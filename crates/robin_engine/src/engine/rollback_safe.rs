@@ -870,6 +870,45 @@ impl Engine {
 
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
+    pub fn test_set_camera_transition_inputs(
+        &mut self,
+        zoom_init_done: bool,
+        mechanized_zoom: bool,
+        displacement: crate::coordinates::MapVec,
+        displacement_counter: u16,
+        pending_zoom_mouse_screen: Option<crate::coordinates::ScreenPoint>,
+    ) {
+        let camera = &mut self.inner.feedback.cutscene_camera;
+        camera.zoom_init_done = zoom_init_done;
+        camera.mechanized_zoom = mechanized_zoom;
+        camera.displacement = displacement;
+        camera.displacement_counter = displacement_counter;
+        camera.pending_zoom_mouse_screen = pending_zoom_mouse_screen;
+    }
+
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
+    pub fn test_camera_transition_inputs(
+        &self,
+    ) -> (
+        bool,
+        bool,
+        crate::coordinates::MapVec,
+        u16,
+        Option<crate::coordinates::ScreenPoint>,
+    ) {
+        let camera = &self.inner.feedback.cutscene_camera;
+        (
+            camera.zoom_init_done,
+            camera.mechanized_zoom,
+            camera.displacement,
+            camera.displacement_counter,
+            camera.pending_zoom_mouse_screen,
+        )
+    }
+
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
     pub fn test_assert_level_assets_attached(&self, assets: &LevelAssets) {
         assert!(std::sync::Arc::ptr_eq(
             &self.inner.world.fast_grid.level,

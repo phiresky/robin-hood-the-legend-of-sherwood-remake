@@ -359,10 +359,10 @@ mod tests {
         for frame in 0..3 {
             rewind.begin_frame(frame, &engine, &assets);
 
-            let zoom_to_up = engine.is_zoom_up_in_progress(&display);
-            let zoom_to_down = engine.is_zoom_down_in_progress(&display);
-            display.background_transform.zoom_to_up = zoom_to_up;
-            display.background_transform.zoom_to_down = zoom_to_down;
+            // Deliberately keep host scratch contradictory. The Engine-owned
+            // camera transition is the only gameplay gate.
+            display.background_transform.zoom_to_up = false;
+            display.background_transform.zoom_to_down = true;
             run_engine_tick_core(&mut host, &mut display, &assets, &mut engine, &mut dev);
             run_post_initialize_stage(&mut host, &mut display, &assets, &mut engine, &mut dev);
 

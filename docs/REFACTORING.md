@@ -22,7 +22,7 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   into focused modules.
 - Rendering debug, HUD and minimap code is separated from normal entity/frame
   rendering.
-- Save version 48, replay version 5 and network version 11 are the only current
+- Save version 49, replay version 6 and network version 12 are the only current
   schemas. Historical save/replay compatibility is intentionally unsupported.
 
 ## Required invariants
@@ -82,7 +82,8 @@ Do not split a coherent state machine merely to make a file smaller.
 
 The detailed gameplay ledger and Original evidence live in
 [`PARITY_AUDIT.md`](PARITY_AUDIT.md). RNG call-order ownership lives in
-[`RNG_AUDIT.md`](RNG_AUDIT.md).
+[`RNG_AUDIT.md`](RNG_AUDIT.md). The focused command/tick ownership ledger lives
+in [`SNAPSHOT_INPUT_AUDIT.md`](SNAPSHOT_INPUT_AUDIT.md).
 
 ## Tick provenance
 

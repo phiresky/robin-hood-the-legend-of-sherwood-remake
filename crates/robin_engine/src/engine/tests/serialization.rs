@@ -49,36 +49,21 @@ fn serde_roundtrip_stays_in_sync() {
 }
 
 #[test]
-fn camera_display_scratch_is_not_serialized_or_hashed() {
+fn camera_write_only_presentation_scratch_is_not_serialized_or_hashed() {
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.old_view_position =
         crate::coordinates::MapPoint::new(11.0, 22.0);
     engine.feedback.cutscene_camera.old_zoom_factor = 0.5;
-    engine.feedback.cutscene_camera.zoom_init_done = true;
-    engine.feedback.cutscene_camera.mechanized_zoom = true;
-    engine.feedback.cutscene_camera.displacement = MapVec::new(3.0, 4.0);
-    engine.feedback.cutscene_camera.displacement_counter = 7;
-    engine.feedback.cutscene_camera.pending_zoom_mouse_screen =
-        Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
 
     let baseline_hash = crate::replay::state_hash(&engine);
     let json = serde_json::to_string(&engine).expect("serialize engine");
     assert!(!json.contains("old_view_position"));
     assert!(!json.contains("old_zoom_factor"));
-    assert!(!json.contains("zoom_init_done"));
-    assert!(!json.contains("mechanized_zoom"));
-    assert!(!json.contains("displacement_counter"));
-    assert!(!json.contains("pending_zoom_mouse_screen"));
 
     let mut changed = engine.clone();
     changed.feedback.cutscene_camera.old_view_position =
         crate::coordinates::MapPoint::new(99.0, 100.0);
     changed.feedback.cutscene_camera.old_zoom_factor = 2.0;
-    changed.feedback.cutscene_camera.zoom_init_done = false;
-    changed.feedback.cutscene_camera.mechanized_zoom = false;
-    changed.feedback.cutscene_camera.displacement = MapVec::new(-30.0, -40.0);
-    changed.feedback.cutscene_camera.displacement_counter = 0;
-    changed.feedback.cutscene_camera.pending_zoom_mouse_screen = None;
     assert_eq!(baseline_hash, crate::replay::state_hash(&changed));
 
     let restored: EngineInner = serde_json::from_str(&json).expect("deserialize engine");
@@ -87,14 +72,107 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
         crate::coordinates::MapPoint::new(0.0, 0.0)
     );
     assert_eq!(restored.feedback.cutscene_camera.old_zoom_factor, 1.0);
-    assert!(!restored.feedback.cutscene_camera.zoom_init_done);
-    assert!(!restored.feedback.cutscene_camera.mechanized_zoom);
-    assert_eq!(restored.feedback.cutscene_camera.displacement, MapVec::ZERO);
-    assert_eq!(restored.feedback.cutscene_camera.displacement_counter, 0);
-    assert_eq!(
-        restored.feedback.cutscene_camera.pending_zoom_mouse_screen,
-        None
+}
+
+#[test]
+fn camera_transition_inputs_are_serialized_and_hashed() {
+    let baseline = EngineInner::new();
+
+    let mut changed = baseline.clone();
+    changed.feedback.cutscene_camera.zoom_init_done = true;
+    assert_ne!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed),
+        "zoom_init_done gates gameplay and sequence completion"
     );
+
+    let mut changed = baseline.clone();
+    changed.feedback.cutscene_camera.mechanized_zoom = true;
+    assert_ne!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed),
+        "mechanized_zoom changes the zoom anchor"
+    );
+
+    let mut changed = baseline.clone();
+    changed.feedback.cutscene_camera.displacement = MapVec::new(3.0, 4.0);
+    assert_ne!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed),
+        "follow displacement changes the next camera position"
+    );
+
+    let mut changed = baseline.clone();
+    changed.feedback.cutscene_camera.displacement_counter = 7;
+    assert_ne!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed),
+        "follow displacement counter changes the next camera step"
+    );
+
+    let mut changed = baseline.clone();
+    changed.feedback.cutscene_camera.pending_zoom_mouse_screen =
+        Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
+    assert_ne!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed),
+        "pending zoom anchor changes the next camera transition"
+    );
+
+    let json = serde_json::to_value(&changed).expect("serialize deterministic camera inputs");
+    let camera = &json["feedback"]["cutscene_camera"];
+    assert!(camera.get("zoom_init_done").is_some());
+    assert!(camera.get("mechanized_zoom").is_some());
+    assert!(camera.get("displacement").is_some());
+    assert!(camera.get("displacement_counter").is_some());
+    assert!(camera.get("pending_zoom_mouse_screen").is_some());
+    let restored: EngineInner = serde_json::from_value(json).expect("restore camera inputs");
+    assert_eq!(
+        crate::replay::state_hash(&restored),
+        crate::replay::state_hash(&changed)
+    );
+}
+
+#[test]
+fn missing_required_camera_transition_input_fails_contextually() {
+    for field in [
+        "zoom_init_done",
+        "mechanized_zoom",
+        "displacement",
+        "displacement_counter",
+        "pending_zoom_mouse_screen",
+    ] {
+        let mut json = serde_json::to_value(EngineInner::new()).expect("serialize engine");
+        json["feedback"]["cutscene_camera"]
+            .as_object_mut()
+            .expect("camera snapshot object")
+            .remove(field);
+        let error = match serde_json::from_value::<EngineInner>(json) {
+            Ok(_) => panic!("missing deterministic camera input {field} must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(field),
+            "missing {field} error lacked field context: {error}"
+        );
+    }
+}
+
+#[test]
+fn host_only_minimap_position_output_is_not_serialized_or_hashed() {
+    let baseline = EngineInner::new();
+    let mut changed = baseline.clone();
+    changed
+        .feedback
+        .pending_side_effects
+        .pending_minimap_position = Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
+
+    assert_eq!(
+        crate::replay::state_hash(&baseline),
+        crate::replay::state_hash(&changed)
+    );
+    let json = serde_json::to_string(&changed).expect("serialize engine");
+    assert!(!json.contains("pending_minimap_position"));
 }
 
 #[test]

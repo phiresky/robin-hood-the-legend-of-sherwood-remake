@@ -1388,7 +1388,7 @@ pub(crate) fn validate_save_mission(
     Ok(mission_idx)
 }
 
-/// Validate every decoded v48 mission invariant and decide whether its
+/// Validate every decoded v49 mission invariant and decide whether its
 /// immutable level assets match the active Engine. `Some(id)` means the
 /// payload is valid but must be routed through a mission reload before apply;
 /// `None` means it may be applied to the current assets.

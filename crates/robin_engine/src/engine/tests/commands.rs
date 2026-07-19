@@ -1,4 +1,5 @@
 use super::*;
+use crate::player_command::PlayerCommand;
 
 #[test]
 fn script_globals() {
@@ -1369,6 +1370,92 @@ fn zoom_step_completes_after_8_steps() {
     assert_eq!(display.display_op, DisplayOpCode::NoBackgroundMove);
     assert!(!display.background_transform.zoom_to_up);
     assert!(!engine.feedback.cutscene_camera.zoom_init_done);
+}
+
+#[test]
+fn minimap_command_outputs_are_derived_from_recorded_inputs() {
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut first = EngineInner::new();
+    first.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    let mut replay = first.clone();
+
+    let mut first_display = HostDisplayState::default();
+    let mut replay_display = HostDisplayState::default();
+    replay_display.minimap.map_displayed = true;
+    replay_display.minimap.drag_start = true;
+    replay_display.minimap.dragged = true;
+    let mut first_input = InputState::default();
+    let mut replay_input = InputState::default();
+
+    let focus = PlayerCommand::MinimapMouseMove {
+        mouse_pt: crate::coordinates::ScreenPoint::new(300.0, 200.0),
+        left_mouse_down: true,
+        continuing_drag: true,
+    };
+    first.apply_command(&sim, &mut first_display, &mut first_input, &assets, &focus);
+    replay.apply_command(
+        &sim,
+        &mut replay_display,
+        &mut replay_input,
+        &assets,
+        &focus,
+    );
+    assert_eq!(
+        crate::replay::state_hash(&first),
+        crate::replay::state_hash(&replay),
+        "host drag scratch must not decide the UiHasFocus message"
+    );
+
+    let mouse_up = PlayerCommand::MinimapMouseUp {
+        on_minimap: true,
+        center_on: Some(crate::coordinates::MapPoint::new(1200.0, 900.0)),
+    };
+    first.apply_command(
+        &sim,
+        &mut first_display,
+        &mut first_input,
+        &assets,
+        &mouse_up,
+    );
+    replay.apply_command(
+        &sim,
+        &mut replay_display,
+        &mut replay_input,
+        &assets,
+        &mouse_up,
+    );
+    assert_eq!(
+        crate::replay::state_hash(&first),
+        crate::replay::state_hash(&replay),
+        "host minimap geometry must not decide the camera mutation"
+    );
+    assert_eq!(
+        first.feedback.cutscene_camera.view_position,
+        replay.feedback.cutscene_camera.view_position
+    );
+}
+
+#[test]
+#[should_panic(expected = "MinimapMouseUp center_on point")]
+fn minimap_command_rejects_center_outside_required_level_bounds() {
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.feedback.cutscene_camera.level_size = MapSize::new(1024.0, 768.0);
+    let mut display = HostDisplayState::default();
+    let mut input = InputState::default();
+
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        &assets,
+        &PlayerCommand::MinimapMouseUp {
+            on_minimap: true,
+            center_on: Some(crate::coordinates::MapPoint::new(2048.0, 10.0)),
+        },
+    );
 }
 
 // ── Scroll hourglass / IsTaken dispatch ──────────────────────

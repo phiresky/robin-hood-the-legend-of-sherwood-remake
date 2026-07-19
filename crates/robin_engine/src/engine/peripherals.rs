@@ -81,6 +81,26 @@ impl HostDisplayState {
         self.minimap.display_map(show, restore_position);
     }
 
+    /// Resolve the deterministic camera target of a minimap mouse-up while
+    /// all host-owned geometry and drag state are available. The returned
+    /// point is recorded on `PlayerCommand::MinimapMouseUp`; command apply
+    /// never re-reads this presentation state to decide an Engine mutation.
+    pub fn resolve_minimap_center(
+        &self,
+        click_pt: crate::coordinates::ScreenPoint,
+        on_minimap: bool,
+        level_size: crate::coordinates::MapSize,
+    ) -> Option<crate::coordinates::MapPoint> {
+        if self.minimap.dragged || !on_minimap || !self.minimap.is_displayed() {
+            return None;
+        }
+        let usable = crate::minimap::usable_area(&self.minimap.map_box);
+        usable
+            .contains_point(click_pt)
+            .then(|| self.minimap.map_to_real(click_pt, level_size))
+            .flatten()
+    }
+
     /// One-shot level-load wiring for the minimap corner button:
     /// geometry and pixel hit mask.
     pub fn setup_minimap_widget(
