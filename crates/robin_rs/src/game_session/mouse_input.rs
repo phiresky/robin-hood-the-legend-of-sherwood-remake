@@ -1129,6 +1129,7 @@ pub(super) async fn handle_pause_menu_events(
                     if let Some((profile_id, mut graphic_config, mut sound_config)) =
                         profile_settings
                     {
+                        let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(
@@ -1170,6 +1171,13 @@ pub(super) async fn handle_pause_menu_events(
                                 .unwrap_or_else(|error| {
                                     panic!("Options profile update failed: {error}")
                                 });
+                        }
+
+                        if sound_config.amount_of_speaking != profile_amount_of_speaking {
+                            let cmd = PlayerCommand::SetAmountOfSpeaking {
+                                amount: sound_config.amount_of_speaking,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
 
                         let new_resolution = options_outcome

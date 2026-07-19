@@ -486,6 +486,15 @@ pub enum PlayerCommand {
     /// NPC.  Issued after the bars have been rendered for the frame.
     ClearNpcDoubleStatusBarFlags,
 
+    /// Change the authoritative hero-comment frequency immediately.
+    /// The original `HeroSpeaking` reads the active profile setting on every
+    /// call; carrying the edit as a command gives replay, rollback, and
+    /// multiplayer the same application frame and RNG-flow gate.
+    SetAmountOfSpeaking {
+        /// Sound-menu slider value in the original 0..=9 range.
+        amount: u16,
+    },
+
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
     /// handlers that need to emit a UX-feedback voice line when a

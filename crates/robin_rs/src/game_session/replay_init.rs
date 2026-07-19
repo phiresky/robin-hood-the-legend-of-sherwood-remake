@@ -5,7 +5,7 @@
 
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::LevelAssets;
 use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ pub(super) struct ReplayAndRollback {
 /// Engine construction; this function only attaches playback/recording and
 /// rollback instrumentation to that frame-0 state.
 pub(super) fn init_replay_and_rollback(
-    engine: &mut Engine,
+    replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
     args: &crate::main_entry::CliArgs,
     _mission_idx: usize,
@@ -177,10 +177,10 @@ pub(super) fn init_replay_and_rollback(
         // `mission_id` (e.g. `"Dem_Lei_MP"`, `"Sherwood"`) is the
         // `.rhm` filename — stamped into the header so a later
         // `--replay` picks the right mission without threading the
-        // campaign index through.  Pre-resolved by the caller;
-        // `run_mission` has already moved the campaign into the
-        // engine by now, so the `&Campaign` lookup that used to live
-        // here would see an empty stub.
+        // campaign index through. `replay_campaign` is the exact clone made
+        // immediately before Engine construction; the engine-owned campaign
+        // may already have been changed by level initialization (Sherwood
+        // clears its mission team after using it to spawn PCs).
         primary.and_then(|primary| {
             let writer: Box<dyn std::io::Write + Send> = Box::new(TeeWriter {
                 primary,
@@ -191,7 +191,7 @@ pub(super) fn init_replay_and_rollback(
                 mission_id.to_string(),
                 engine_rng_seed,
                 engine_sim_config,
-                engine.campaign(),
+                replay_campaign,
             ) {
                 Ok(rec) => Some(rec),
                 Err(e) => {

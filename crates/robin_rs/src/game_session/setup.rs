@@ -1148,6 +1148,12 @@ fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<S
 /// caches. Consequently it deliberately does not implement serde.
 pub(super) struct LoadedMissionCore {
     pub(super) engine: Engine,
+    /// Exact campaign input captured immediately before `Engine::new`.
+    /// Level initialization mutates the engine-owned campaign (notably,
+    /// Sherwood clears `mission_team_indices` after spawning PCs), so replay
+    /// reconstruction must use this pre-construction snapshot rather than
+    /// `engine.campaign()`.
+    pub(super) replay_campaign: Campaign,
     pub(super) assets: engine_api::LevelAssets,
     pub(super) dev: engine_api::DevState,
     pub(super) pre_decoded_background: Option<engine_api::level_loading::PreDecodedBackground>,
@@ -1437,6 +1443,7 @@ pub(super) fn load_level_and_sprite_bank(
     // Every fallible file/decode step above borrows the session campaign, and
     // the preserving constructor returns the exact allocation on ingestion
     // failure.
+    let replay_campaign = campaign.clone();
     let engine = {
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
@@ -1492,6 +1499,7 @@ pub(super) fn load_level_and_sprite_bank(
 
     Ok(LoadedMissionCore {
         engine,
+        replay_campaign,
         assets,
         dev,
         pre_decoded_background: pre_decoded_bg,

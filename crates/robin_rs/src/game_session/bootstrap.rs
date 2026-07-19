@@ -303,7 +303,7 @@ impl MissionBootstrap {
     }
 
     fn finish_runtime(
-        mut self,
+        self,
         args: &crate::main_entry::CliArgs,
         profiles: &ProfileManager,
         contract: FrameContract,
@@ -324,7 +324,7 @@ impl MissionBootstrap {
         let mission_id = mission.profile(profiles).mission_filename.clone();
         let assets = Arc::new(self.loaded.assets);
         let replay = init_replay_and_rollback(
-            &mut self.loaded.engine,
+            &self.loaded.replay_campaign,
             Arc::clone(&assets),
             args,
             self.spec.mission_idx,

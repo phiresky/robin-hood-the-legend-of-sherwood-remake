@@ -413,6 +413,17 @@ mod tests {
     use super::*;
     use crate::player_command::PlayerCommand;
 
+    fn unique_replay_path(label: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "robin_{label}_{}_{}.rhrec.jsonl",
+                std::process::id(),
+                std::thread::current().name().unwrap_or("unnamed")
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn record_and_playback_roundtrip() {
         let dir = std::env::temp_dir().join("replay_test_sparse.jsonl");
@@ -523,6 +534,172 @@ mod tests {
         assert_eq!(f0[0].player_id, PlayerId(0));
         assert_eq!(f0[1].player_id, PlayerId(2));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn amount_of_speaking_command_applies_live_and_replays_to_the_same_hash() {
+        let path = unique_replay_path("speaking_command");
+        let campaign = crate::campaign::Campaign::default();
+        let command = PlayerCommand::SetAmountOfSpeaking { amount: 9 };
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "speaking".into(),
+            0,
+            crate::engine::SimConfig::default(),
+            &campaign,
+        )
+        .unwrap();
+        recorder.push(command.clone());
+        recorder.end_frame();
+        drop(recorder);
+
+        let mut live = crate::engine::EngineInner::new();
+        let mut replayed = live.clone();
+        let assets = crate::engine::LevelAssets::new();
+        let mut live_display = crate::engine::HostDisplayState::default();
+        let mut live_input = crate::engine::InputState::default();
+        live.apply_local_commands(
+            &mut live_display,
+            &mut live_input,
+            &assets,
+            std::slice::from_ref(&command),
+        );
+        assert_eq!(live.control.sim_config.amount_of_speaking, 9);
+
+        let data = ReplayData::from_file(&path).unwrap();
+        let replay_commands = ReplayPlayer::new(data)
+            .next_frame()
+            .into_iter()
+            .map(|input| input.command.clone())
+            .collect::<Vec<_>>();
+        let mut replay_display = crate::engine::HostDisplayState::default();
+        let mut replay_input = crate::engine::InputState::default();
+        replayed.apply_local_commands(
+            &mut replay_display,
+            &mut replay_input,
+            &assets,
+            &replay_commands,
+        );
+
+        assert_eq!(replayed.control.sim_config.amount_of_speaking, 9);
+        assert_eq!(state_hash(&live), state_hash(&replayed));
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn sherwood_fixture() -> (
+        crate::campaign::Campaign,
+        crate::engine::LevelAssets,
+        crate::level_data::LoadedLevel,
+    ) {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            location: crate::profiles::MissionLocation::Sherwood,
+            ..Default::default()
+        });
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            filename: "missing-test-sprite".into(),
+            profile_name: "Replay Test Hero".into(),
+            ..Default::default()
+        });
+
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        campaign.characters.push(crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        });
+        campaign.gang_indices.push(0);
+        campaign.mission_team_indices.push(0);
+
+        let mut assets = crate::engine::LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(profiles);
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.beam_mes.push(crate::level_data::BeamMe {
+            position: crate::coordinates::MapPoint::new(100.0, 200.0),
+            direction: 0,
+            action: 0,
+            projection_area: u16::MAX,
+            sector: 0,
+            layer: 0,
+            material: 0,
+            action_required: Default::default(),
+            index: 0,
+            script: None,
+            required_pc: 0,
+        });
+        (campaign, assets, loaded)
+    }
+
+    fn construct_sherwood_frame_zero(
+        campaign: crate::campaign::Campaign,
+        mut assets: crate::engine::LevelAssets,
+        loaded: crate::level_data::LoadedLevel,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+    ) -> (crate::engine::Engine, crate::engine::LevelAssets) {
+        let engine = crate::engine::Engine::new(crate::engine::EngineArgs {
+            campaign,
+            level: crate::engine::LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (0.0, 0.0),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed,
+            sim_config,
+        })
+        .unwrap();
+        (engine, assets)
+    }
+
+    #[test]
+    fn sherwood_recording_reconstructs_frame_zero_team_pcs_and_hash() {
+        let path = unique_replay_path("sherwood_frame_zero");
+        let rng_seed = 0x5EED_5151;
+        let sim_config = crate::engine::SimConfig::default();
+        let (campaign, assets, loaded) = sherwood_fixture();
+        let pre_engine_campaign = campaign.clone();
+        let (live, _live_assets) =
+            construct_sherwood_frame_zero(campaign, assets, loaded, rng_seed, sim_config);
+
+        assert_eq!(live.pc_ids().len(), 1);
+        assert!(live.campaign().mission_team_indices.is_empty());
+        let live_hash = state_hash(&live);
+
+        let recorder = ReplayRecorder::new(
+            &path,
+            "Sherwood".into(),
+            rng_seed,
+            sim_config,
+            &pre_engine_campaign,
+        )
+        .unwrap();
+        drop(recorder);
+
+        let replay = ReplayData::from_file(&path).unwrap();
+        let replay_campaign: crate::campaign::Campaign =
+            bitcode::deserialize(&replay.header.campaign).unwrap();
+        assert_eq!(replay_campaign.mission_team_indices, vec![0]);
+        let (_, replay_assets, replay_loaded) = sherwood_fixture();
+        let (reconstructed, _replay_assets) = construct_sherwood_frame_zero(
+            replay_campaign,
+            replay_assets,
+            replay_loaded,
+            replay.header.rng_seed,
+            replay.header.sim_config,
+        );
+
+        assert_eq!(reconstructed.pc_ids().len(), 1);
+        assert!(reconstructed.campaign().mission_team_indices.is_empty());
+        assert_eq!(state_hash(&reconstructed), live_hash);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

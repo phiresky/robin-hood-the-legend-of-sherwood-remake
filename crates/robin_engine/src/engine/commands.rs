@@ -899,6 +899,13 @@ impl EngineInner {
             ClearNpcDoubleStatusBarFlags => {
                 self.clear_npc_double_status_bar_flags();
             }
+            SetAmountOfSpeaking { amount } => {
+                assert!(
+                    *amount <= 9,
+                    "SetAmountOfSpeaking requires the sound-menu range 0..=9, got {amount}"
+                );
+                self.control.sim_config.amount_of_speaking = *amount;
+            }
 
             HeroSpeak { pc_id, expression } => {
                 self.hero_speaking(assets, *pc_id, *expression);
