@@ -5,7 +5,7 @@
 
 use robin_assets::scb;
 use robin_engine::interp::Vm;
-use robin_engine::natives::{GameHost, NativeContext, ScriptState};
+use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
 use robin_engine::vm::{self, Instruction};
 
 fn main() {
@@ -43,7 +43,7 @@ fn main() {
                     .map(|q| vm::decode(*q).unwrap_or(Instruction::Empty))
                     .collect();
 
-                let mut game_host = GameHost::new();
+                let mut script_effects = ScriptEffects::new();
                 let mut entities = robin_engine::entities::Entities::new();
                 let mut ai_global = robin_engine::ai::AiGlobalState::default();
                 let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -57,7 +57,7 @@ fn main() {
                 let mut script_state = ScriptState::default();
                 let mut script_domains = robin_engine::engine::ScriptDomains::default();
                 let context = NativeContext::new(
-                    &mut game_host,
+                    &mut script_effects,
                     &mut script_state,
                     &mut script_domains,
                     &capabilities,
@@ -93,7 +93,7 @@ fn main() {
                     robin_engine::interp::StopReason::StepLimit => "LIMIT",
                     robin_engine::interp::StopReason::HitEmpty => "EMPTY",
                     robin_engine::interp::StopReason::Unimplemented(_) => "UNIMPL",
-                    robin_engine::interp::StopReason::PendingNestedCall(_) => "NESTED",
+                    robin_engine::interp::StopReason::Yield(_) => "YIELD",
                 };
 
                 let final_ip = vm_state.vm.ip as usize;
@@ -104,7 +104,7 @@ fn main() {
                 results.push((
                     format!("{}::{}", class.class_name, func.name),
                     stop_str,
-                    host.game_host().commands.len(),
+                    host.script_effects().engine_commands().len(),
                     final_ip,
                 ));
                 found = true;

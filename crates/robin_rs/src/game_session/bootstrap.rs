@@ -179,7 +179,7 @@ impl MissionBootstrap {
                 lua.mission_basename(),
                 self.loaded.engine_rng_seed,
             );
-            self.loaded.engine.with_mission_script_game_host_and_rng(
+            self.loaded.engine.with_mission_script_effects_and_rng(
                 &self.loaded.assets,
                 |_simulation, native_parts| {
                     lua.run_required_startup_events(

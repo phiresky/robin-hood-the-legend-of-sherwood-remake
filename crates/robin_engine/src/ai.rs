@@ -1432,6 +1432,59 @@ pub enum Substate {
 }
 
 impl Substate {
+    /// Return the top-level AI state that owns this numeric substate.
+    ///
+    /// The original `SetState` asserts these numeric family boundaries in
+    /// debug builds. Additional substates live after the contiguous family
+    /// ranges, so they are mapped explicitly here rather than inferred from
+    /// their names.
+    pub const fn ai_state_family(self) -> Option<AiState> {
+        let raw = self as u32;
+        if raw > Self::StartSleepingSubstates as u32 && raw < Self::EndSleepingSubstates as u32 {
+            return Some(AiState::Sleeping);
+        }
+        if raw > Self::StartDefaultSubstates as u32 && raw < Self::EndDefaultSubstates as u32 {
+            return Some(AiState::Default);
+        }
+        if raw > Self::StartWonderingSubstates as u32 && raw < Self::EndWonderingSubstates as u32 {
+            return Some(AiState::Wondering);
+        }
+        if raw > Self::StartSeekingSubstates as u32 && raw < Self::EndSeekingSubstates as u32 {
+            return Some(AiState::Seeking);
+        }
+        if raw > Self::StartAttackingSubstates as u32 && raw < Self::EndAttackingSubstates as u32 {
+            return Some(AiState::Attacking);
+        }
+        if raw > Self::StartMenacingSubstates as u32 && raw < Self::EndMenacingSubstates as u32 {
+            return Some(AiState::Menacing);
+        }
+        if raw > Self::StartFleeingSubstates as u32 && raw < Self::EndFleeingSubstates as u32 {
+            return Some(AiState::Fleeing);
+        }
+
+        match self {
+            Self::AttackingSwordfightStepBack
+            | Self::AttackingReturnToOtherPcAfterMenacing
+            | Self::AttackingRunningToLadder
+            | Self::AttackingWaitingAtLadder
+            | Self::AttackingLastReserve
+            | Self::AttackingRunToAvengerOnRoof
+            | Self::AttackingWaitForAvengerOnRoof => Some(AiState::Attacking),
+            Self::WonderingAppleSauceInTheVisor
+            | Self::WonderingApproachingBrawlVictim
+            | Self::WonderingAwakenBrawlVictim
+            | Self::WonderingOfficerFinishingBrawlWaiting => Some(AiState::Wondering),
+            Self::DefaultPatrolEnrouteRunning
+            | Self::DefaultGotoChief
+            | Self::DefaultPatrolChiefReturnToPatrol => Some(AiState::Default),
+            Self::SeekingCharlyGetLectureByOfficer2
+            | Self::SeekingHeardstepsPreReactiontime
+            | Self::SeekingGotStopEvent
+            | Self::SeekingGetAlertingReportFromCivilianLook => Some(AiState::Seeking),
+            _ => None,
+        }
+    }
+
     pub fn log_string_from_u16(raw: u16) -> String {
         Self::try_from(u32::from(raw))
             .ok()
@@ -3208,12 +3261,12 @@ pub struct RepulsivePoint {
 // ---------------------------------------------------------------------------
 
 /// Minimal door info cached on AiGlobalState for `FindDoorEnemyCouldBeBehind`.
-/// Populated at level load from the full `Door` data on GameHost.
+/// Populated at level load from the canonical interactable door table.
 /// Serialized with `AiGlobalState`; includes cached authorization data that
 /// should match the exact door state at the save point.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct DoorSeekInfo {
-    /// Index into the game host's full `doors` array. Carried so AI
+    /// Index into the canonical interactable door array. Carried so AI
     /// helpers (e.g. `RunAndAlertSoldiers`) can stash a door reference
     /// onto the NPC.
     pub door_index: crate::gate::DoorIndex,
@@ -3901,7 +3954,7 @@ impl AiPerTickData {
 pub struct ReinforcementDoorInfo {
     /// Inner position of the door (where the NPC walks *to*).
     pub position_in: Position,
-    /// Index into the game host's door array.
+    /// Index into the canonical interactable door array.
     pub door_index: crate::gate::DoorIndex,
     /// Outer point of the door (where the NPC exits the map).
     pub point_out: MapPoint,
@@ -3937,14 +3990,13 @@ pub struct House {
     /// Sector index (into `FastFindGrid::sectors`) of the building's
     /// interior motion area.
     pub sector_index: u32,
-    /// Building index (into `GameHost::building_occupants`) if this
-    /// sector is linked to one. Same index used by the tenant list and
-    /// the `host.building_occupants` parallel table. `None` when the
+    /// Building index (into canonical `BuildingState`) if this sector is
+    /// linked to one. The same index addresses the tenant list. `None` when the
     /// sector isn't proto-linked to a building (e.g. script-synthesised
     /// portals).
     pub building_index: Option<crate::sector::BuildingIdx>,
     /// Doors that connect this building to the outside.  Indices into
-    /// `GameHost::doors`.
+    /// the canonical interactable door table.
     pub door_indices: Vec<u32>,
     /// Entities currently inside the building.  Kept live by the
     /// `PassDoor` Enter / Leave hooks in `engine::door_pass`.
@@ -3988,8 +4040,8 @@ impl House {
 //     live by the `execute_pass_door` Enter / Leave hooks.  New AI
 //     code should query this.
 //
-//   * `natives::GameHost::building_occupants: Vec<Vec<i32>>` — the
-//     script-facing view, indexed by `building_index` with actor
+//   * `ScriptDomains::buildings` — the script-facing view, indexed by
+//     `building_index` with actor
 //     script handles. Kept in sync by the same hooks so script
 //     natives (`GetNumberOfOccupants`, `GetOccupant`, etc.) see the
 //     same occupancy that AI code does.
@@ -3999,7 +4051,7 @@ impl House {
 // codebase and neither can be dropped independently.  Long-term
 // consolidation would either migrate script natives to `EntityId`
 // or delete `building_occupants` once all natives query via a
-// `GameHost::occupants_of(building_index) -> &[i32]` helper that
+// a canonical `occupants_of(building_index) -> &[i32]` helper that
 // derives from the House list on demand.
 //
 
@@ -4012,7 +4064,7 @@ impl House {
 pub struct DoorRallyPoint {
     /// World position (outside the door).
     pub position: Position,
-    /// Door index in `GameHost::doors`.
+    /// Door index in the canonical interactable door table.
     pub door_index: crate::gate::DoorIndex,
     /// Radius around `position` within which NPCs are "at" the rally
     /// point.
@@ -4371,6 +4423,53 @@ pub struct AttentiveModeEffect {
     pub fast_officer_variant: bool,
 }
 
+/// Typed PC relationship delta emitted by `EnemyAi::set_guarded_pc`.
+/// `None` is the original null-pointer case; using `PcId` prevents an NPC or
+/// object handle from entering this PC-only relationship channel.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct GuardedPcEffect {
+    pub old: Option<crate::entity_id::PcId>,
+    pub new: Option<crate::entity_id::PcId>,
+}
+
+/// Typed location of an owned shooting point in the global archery tables.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct ReservedShootingPoint {
+    pub sector_index: u16,
+    pub point_index: crate::sector::ArcheryPointIdx,
+}
+
+impl From<(u16, u16)> for ReservedShootingPoint {
+    fn from((sector_index, point_index): (u16, u16)) -> Self {
+        Self {
+            sector_index,
+            point_index: point_index.into(),
+        }
+    }
+}
+
+/// Archery ownership work consumed at the post-refill/pre-unalert actor
+/// barrier in `EngineInner::drain_pending_for_npc`.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub struct ArcheryReservationRelease {
+    pub shooting_point: Option<ReservedShootingPoint>,
+    pub release_sector: bool,
+}
+
 impl AttentiveModeEffect {
     pub const fn new(target: bool, fast_officer_variant: bool) -> Self {
         Self {
@@ -4418,7 +4517,7 @@ pub struct AiActorOutbox {
     pub forget_nearby_coins: Option<Position>,
     pub set_direction_instantly: Option<i16>,
     pub set_attentive_mode: Option<AttentiveModeEffect>,
-    pub set_guarded_pc: Option<(HumanHandle, HumanHandle)>,
+    pub set_guarded_pc: Option<GuardedPcEffect>,
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
@@ -4427,6 +4526,7 @@ pub struct AiActorOutbox {
     pub begin_panic: Option<PanicRequest>,
     pub panic_seek_fallback: bool,
     pub script_seek_area: Option<ScriptSeekAreaRequest>,
+    pub archery_reservation_release: ArcheryReservationRelease,
 }
 
 #[derive(Debug, Default)]
@@ -4502,6 +4602,12 @@ impl AiActorOutbox {
             slowly_open_eyes: std::mem::take(&mut self.slowly_open_eyes),
             posture: self.posture.take(),
         }
+    }
+
+    /// Drain archery ownership work only at its original application point,
+    /// after bow-ammo refill and before the Charly-seeker broadcast barrier.
+    pub(crate) fn take_archery_reservation_release(&mut self) -> ArcheryReservationRelease {
+        std::mem::take(&mut self.archery_reservation_release)
     }
 }
 
@@ -6945,43 +7051,14 @@ impl AiController {
     /// flags on the AiController that the engine drains after think
     /// returns. `handle_death_with_damage_element` needs to clear every
     /// one of them so stale intents from the pre-death think don't fire
-    /// on a corpse; this single method keeps that cauterise tidy. New
-    /// `pending_*` fields must be added here when introduced.
+    /// on a corpse; replacing the complete outbox keeps that cauterisation
+    /// exhaustive as new effect fields are introduced.
     pub fn clear_all_pending(&mut self) {
-        let _ = self.take_pending_orders();
-        self.outbox.actor.halt = false;
-        self.outbox.actor.enter_swordfight = None;
-        self.outbox.actor.enter_swordfight_jump_line = None;
-        self.outbox.actor.stop_target = None;
-        self.outbox.actor.set_principal = None;
-        self.outbox.actor.friend_primary_target_swap = None;
-        self.outbox.actor.shoot_target = None;
-        self.outbox.actor.focus = None;
-        self.outbox.actor.unfocus = false;
-        self.outbox.actor.focus_point = None;
-        self.outbox.actor.set_direction_instantly = None;
-        self.outbox.actor.deactivate = false;
-        self.outbox.actor.broadcast_panic = false;
-        self.outbox.actor.script_seek_area = None;
-        self.outbox.actor.launch_commands.clear();
-        self.outbox.actor.launch_on_target.clear();
-        self.outbox.actor.launch_sequences.clear();
-        self.outbox.actor.look_sidewards = None;
-        self.outbox.actor.add_detectables.clear();
-        self.outbox.actor.delete_detectables.clear();
-        self.outbox.actor.delete_detectable_entity.clear();
-        self.outbox.actor.delete_beggar_for_all_npc.clear();
-        self.outbox.actor.blink_enemy_specific.clear();
-        self.outbox.actor.slowly_open_eyes = false;
-        self.outbox.actor.restore_detectable_objects = false;
-        self.outbox.actor.forget_nearby_coins = None;
-        self.outbox.actor.posture = None;
-        self.outbox.actor.quit_swordfight = false;
-        self.outbox.actor.stop_menace = false;
-        self.outbox.actor.lower_shield = false;
-        self.outbox.actor.unalert_near_charly_seekers = None;
-        self.outbox.actor.refill_bow_ammo = false;
-        self.outbox.actor.set_reported_to_officer.clear();
+        // Replace the entire outbox so death/teardown clears every barrier,
+        // including detection, re-entrant, recovery, speech, and music work.
+        // This is deliberately exhaustive-by-construction: adding a new
+        // effect field to AiOutbox cannot silently escape this cauterisation.
+        self.outbox = AiOutbox::default();
     }
 
     // -- Movement commands --
@@ -9347,6 +9424,13 @@ mod tests {
         outbox.actor.quit_swordfight = true;
         outbox.reentrant.self_stimuli.push(StimulusType::EventDone);
         outbox.music.instant_change = true;
+        outbox.actor.archery_reservation_release = ArcheryReservationRelease {
+            shooting_point: Some(ReservedShootingPoint {
+                sector_index: 3,
+                point_index: crate::sector::ArcheryPointIdx(4),
+            }),
+            release_sector: true,
+        };
 
         let encoded = serde_json::to_string(&outbox).expect("serialize AI outbox");
         let mut decoded: AiOutbox = serde_json::from_str(&encoded).expect("deserialize AI outbox");
@@ -9357,6 +9441,7 @@ mod tests {
         assert!(!preemption.lower_shield);
         assert!(!decoded.actor.halt);
         assert!(decoded.actor.quit_swordfight);
+        assert!(decoded.actor.archery_reservation_release.release_sector);
         assert_eq!(
             decoded.reentrant.self_stimuli,
             vec![StimulusType::EventDone]
@@ -9366,10 +9451,134 @@ mod tests {
         let core = decoded.actor.take_core();
         assert!(core.quit_swordfight);
         assert!(!decoded.actor.quit_swordfight);
+        assert!(decoded.actor.archery_reservation_release.release_sector);
         assert_eq!(
             decoded.reentrant.self_stimuli,
             vec![StimulusType::EventDone]
         );
         assert!(decoded.music.instant_change);
+
+        let archery = decoded.actor.take_archery_reservation_release();
+        assert_eq!(
+            archery,
+            ArcheryReservationRelease {
+                shooting_point: Some(ReservedShootingPoint {
+                    sector_index: 3,
+                    point_index: crate::sector::ArcheryPointIdx(4),
+                }),
+                release_sector: true,
+            }
+        );
+        assert_eq!(
+            decoded.actor.archery_reservation_release,
+            ArcheryReservationRelease::default()
+        );
+        assert_eq!(
+            decoded.reentrant.self_stimuli,
+            vec![StimulusType::EventDone]
+        );
+        assert!(decoded.music.instant_change);
+    }
+
+    #[test]
+    fn clear_all_pending_clears_every_outbox_barrier() {
+        let mut ai = AiController::default();
+        ai.outbox.patrol.direction_broadcast = Some(7);
+        ai.outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventView));
+        ai.outbox.detection.mark_alerted = true;
+        ai.outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::BreakPhalanx { target: 8 });
+        ai.outbox
+            .reentrant
+            .self_stimuli
+            .push(StimulusType::EventDone);
+        ai.outbox
+            .reentrant
+            .state_change_notifications
+            .push((AiState::Seeking, AiStateChangeSource::SelfActor));
+        ai.outbox.reentrant.waypoint_script_reach_point =
+            Some((PathId::new(2).expect("non-sentinel path"), 3));
+
+        ai.outbox.actor.orders.push(AiOrderIntent::new(
+            crate::order::OrderType::WaitingUpright,
+            0.0,
+            0.0,
+        ));
+        ai.outbox.actor.blink_all_enemies = true;
+        ai.outbox.actor.enemy_in_house_alert = true;
+        ai.outbox.actor.set_attentive_mode = Some(AttentiveModeEffect::new(true, false));
+        ai.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
+            old: Some(crate::entity_id::PcId(4)),
+            new: Some(crate::entity_id::PcId(5)),
+        });
+        ai.outbox.actor.begin_panic = Some(PanicRequest {
+            center: None,
+            runs: 2,
+            alert: AlertLevel::Yellow,
+            is_new_panic: true,
+        });
+        ai.outbox.actor.panic_seek_fallback = true;
+        ai.outbox.actor.archery_reservation_release = ArcheryReservationRelease {
+            shooting_point: Some(ReservedShootingPoint {
+                sector_index: 6,
+                point_index: crate::sector::ArcheryPointIdx(7),
+            }),
+            release_sector: true,
+        };
+
+        ai.outbox.recovery.inform_resurrection = true;
+        ai.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+        ai.outbox.speech.mytalk_flags = 0x80;
+        ai.outbox.music.instant_change = true;
+
+        ai.clear_all_pending();
+
+        assert_eq!(
+            serde_json::to_value(&ai.outbox).expect("serialize cleared outbox"),
+            serde_json::to_value(AiOutbox::default()).expect("serialize default outbox")
+        );
+    }
+
+    #[test]
+    fn every_real_substate_has_exactly_one_numeric_family() {
+        use Substate::*;
+
+        for raw in 0..NumberOfSubstates as u32 {
+            let substate = Substate::try_from(raw).expect("contiguous substate discriminant");
+            let is_marker = matches!(
+                substate,
+                StartSleepingSubstates
+                    | EndSleepingSubstates
+                    | StartDefaultSubstates
+                    | EndDefaultSubstates
+                    | StartWonderingSubstates
+                    | EndWonderingSubstates
+                    | StartSeekingSubstates
+                    | EndSeekingSubstates
+                    | StartAttackingSubstates
+                    | EndAttackingSubstates
+                    | StartMenacingSubstates
+                    | EndMenacingSubstates
+                    | StartFleeingSubstates
+                    | EndFleeingSubstates
+                    | BeginAdditionalSubstates
+            );
+            assert_eq!(
+                substate.ai_state_family().is_none(),
+                is_marker,
+                "unexpected numeric family mapping for {substate:?}"
+            );
+        }
+
+        assert_eq!(Substate::None.ai_state_family(), std::option::Option::None);
+        assert_eq!(
+            Substate::NumberOfSubstates.ai_state_family(),
+            std::option::Option::None
+        );
     }
 }

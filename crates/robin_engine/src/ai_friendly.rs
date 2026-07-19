@@ -71,6 +71,12 @@ impl FriendlyAi {
     /// (green for default/wondering, yellow for seeking/fleeing) and
     /// notifies the script system.
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
+        debug_assert_eq!(
+            substate.ai_state_family(),
+            Some(state),
+            "FriendlyAi::set_state received mismatched state/substate: {state:?}/{substate:?}"
+        );
+
         self.base
             .register_log_line(LogLineType::ChangeState, substate as u16);
 
@@ -562,6 +568,14 @@ impl FriendlyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
     ) -> bool {
+        debug_assert_eq!(
+            self.base.current_substate.ai_state_family(),
+            Some(self.base.current_state),
+            "FriendlyAi expected-event dispatch received mismatched state/substate: {:?}/{:?}",
+            self.base.current_state,
+            self.base.current_substate
+        );
+
         let stimulus_type = stimulus.stimulus_type;
 
         match self.base.current_substate {

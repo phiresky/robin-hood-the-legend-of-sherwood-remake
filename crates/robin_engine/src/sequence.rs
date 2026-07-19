@@ -1980,7 +1980,9 @@ impl Sequence {
 
 /// An action the engine needs to perform on behalf of the sequence system.
 /// Returned by [`SequenceManager::hourglass`].
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub enum SequenceAction {
     /// Dispatch this element to its owner entity via `Instruct()`.
     /// The entity will translate the command into orders.
@@ -2084,7 +2086,6 @@ pub struct SequenceManager {
     /// siblings. External entry-point wrappers can continue to drain only
     /// the immediate subset through
     /// [`take_pending_immediate_actions`](Self::take_pending_immediate_actions).
-    #[serde(alias = "pending_immediate_actions")]
     pending_synchronous_actions: VecDeque<SequenceAction>,
 
     /// Pending `SendCondolationCard` notifications.  Populated whenever
@@ -2782,6 +2783,17 @@ impl SequenceManager {
         immediate
     }
 
+    /// Pop the next synchronous action without disturbing the remainder.
+    /// Script-native sequence launch uses this to stop exactly at a re-entrant
+    /// SendMessage callback, then continue in order before the outer VM resumes.
+    pub fn pop_pending_immediate_action(&mut self) -> Option<SequenceAction> {
+        self.pending_synchronous_actions.pop_front()
+    }
+
+    pub fn next_pending_immediate_action(&self) -> Option<&SequenceAction> {
+        self.pending_synchronous_actions.front()
+    }
+
     /// Drain the complete ordered stream emitted synchronously by sequence
     /// registration: direct WAIT `Go()` actions interleaved with
     /// `ExecutedImmediately()` actions.
@@ -2795,35 +2807,11 @@ impl SequenceManager {
         self.pending_synchronous_actions.drain(..).collect()
     }
 
-    /// Remove the pending immediate action for one freshly-launched
-    /// sequence element without disturbing older actions in the queue.
-    ///
-    /// Script `SendMessage` uses this to reproduce the original
-    /// `LaunchSequenceElement` call synchronously at the post-VM boundary:
-    /// the message's own immediate action is dispatched before the element
-    /// terminates, while unrelated immediate actions retain their queue
-    /// position for the normal hourglass drain.
-    pub(crate) fn take_pending_immediate_action_for(
-        &mut self,
-        sequence_id: SequenceId,
-        element_index: usize,
-    ) -> Option<SequenceAction> {
-        let position = self
-            .pending_synchronous_actions
-            .iter()
-            .position(|action| match action {
-                SequenceAction::ExecuteImmediateOwner {
-                    sequence_id: action_sequence_id,
-                    element_index: action_element_index,
-                    ..
-                }
-                | SequenceAction::ExecuteImmediateEngine {
-                    sequence_id: action_sequence_id,
-                    element_index: action_element_index,
-                } => *action_sequence_id == sequence_id && *action_element_index == element_index,
-                _ => false,
-            })?;
-        self.pending_synchronous_actions.remove(position)
+    /// Restore a parent callback's detached synchronous continuation after a
+    /// nested callback has fully returned. Any actions still produced by the
+    /// child stay in front, matching the Original's recursive call stack.
+    pub fn restore_pending_synchronous_actions(&mut self, continuation: Vec<SequenceAction>) {
+        self.pending_synchronous_actions.extend(continuation);
     }
 
     /// `true` iff there is at least one immediate-dispatch action awaiting

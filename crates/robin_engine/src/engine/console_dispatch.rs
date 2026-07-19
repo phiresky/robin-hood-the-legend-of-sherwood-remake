@@ -159,15 +159,13 @@ impl EngineInner {
                 // information-bars command so script-side consumers and
                 // the blazon-bar state recomputation see the hook —
                 // same pattern as the `WinMission` branch below.
-                if let Some(game_host) = self
+                if let Some(effects) = self
                     .scripts
                     .mission
                     .as_mut()
-                    .and_then(|s| s.game_host_mut())
+                    .map(|s| s.script_effects_mut())
                 {
-                    game_host
-                        .commands
-                        .push(EngineCommand::UpdateInformationBars);
+                    effects.emit_engine(EngineCommand::UpdateInformationBars);
                 }
                 ConsoleResponse::Ok(format!("{amount} blazons added."))
             }
@@ -244,15 +242,13 @@ impl EngineInner {
                 // Rust's HUD is immediate-mode so no widget rebuild is
                 // needed, but we still push the information-bars
                 // command so script-side consumers see the hook.
-                if let Some(game_host) = self
+                if let Some(effects) = self
                     .scripts
                     .mission
                     .as_mut()
-                    .and_then(|s| s.game_host_mut())
+                    .map(|s| s.script_effects_mut())
                 {
-                    game_host
-                        .commands
-                        .push(EngineCommand::UpdateInformationBars);
+                    effects.emit_engine(EngineCommand::UpdateInformationBars);
                 }
                 self.win(true);
                 self.mission_domain.state.quit_won = true;
@@ -579,7 +575,7 @@ impl EngineInner {
                     // side-effects get dispatched to
                     // `pending_concussion_side_effects` for
                     // `perform_hourglass` to drain.
-                    self.apply_concussion(assets, id, 31, false);
+                    self.apply_concussion(sim, assets, id, 31, false);
                 }
                 ConsoleResponse::Ok("Wake up !".to_string())
             }
@@ -599,7 +595,7 @@ impl EngineInner {
                     // victim is dropped from opponents' lists and gets
                     // the unconscious-star titbit + lose-consciousness
                     // stimulus.
-                    self.apply_concussion(assets, id, 100, false);
+                    self.apply_concussion(sim, assets, id, 100, false);
                     if let Some(entity) = self.get_entity_mut(id) {
                         entity.set_posture(Posture::Lying);
                     }
@@ -702,7 +698,7 @@ impl EngineInner {
                 // (drop from sword-fight opponents' lists,
                 // unconscious-star titbit, lose-consciousness stimulus)
                 // fire — a direct `set_concussion` call would skip them.
-                self.apply_concussion(assets, id, 100, false);
+                self.apply_concussion(sim, assets, id, 100, false);
                 if let Some(entity) = self.get_entity_mut(id) {
                     entity.set_posture(Posture::Lying);
                 }

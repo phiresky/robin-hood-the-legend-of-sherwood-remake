@@ -463,6 +463,7 @@ mod tests {
     use super::{
         current_mission_id, preflight_or_use_decoded_load, requested_replay_data,
         required_mission_id, try_parse_cli_from, validate_save_mission,
+        validated_save_reload_target,
     };
     use robin_engine::campaign::Campaign;
 
@@ -592,6 +593,58 @@ mod tests {
         let error = validate_save_mission(&save, &profiles).unwrap_err();
         assert!(error.contains("current mission Some(0)"));
         assert!(error.contains("mission id 20 at index 1"));
+    }
+
+    #[test]
+    fn strict_save_route_rejects_zero_and_routes_valid_cross_mission_payload() {
+        use robin_engine::engine::{Engine, LevelAssets};
+        use robin_engine::mission::Mission;
+        use robin_engine::profiles::MissionProfile;
+
+        let mut profiles = ProfileManager::new();
+        profiles.missions = vec![
+            MissionProfile {
+                id: 10,
+                ..Default::default()
+            },
+            MissionProfile {
+                id: 20,
+                ..Default::default()
+            },
+        ];
+        let mut campaign = Campaign::default();
+        campaign.missions = vec![
+            Mission {
+                profile_idx: Some(0),
+                ..Default::default()
+            },
+            Mission {
+                profile_idx: Some(1),
+                ..Default::default()
+            },
+        ];
+        campaign.current_mission_idx = Some(1);
+        campaign
+            .snapshot_preselected_with_simulation(7, robin_engine::engine::SimConfig::default());
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(profiles.clone());
+        let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
+        let host = crate::host::Host::scratch(800.0, 600.0);
+        let mut save = crate::save_file::GameSaveFile::capture(&engine, &host, 20, "route".into());
+
+        assert_eq!(
+            validated_save_reload_target(&save, &profiles, 10).unwrap(),
+            Some(20)
+        );
+        assert_eq!(
+            validated_save_reload_target(&save, &profiles, 20).unwrap(),
+            None
+        );
+        save.header.mission_id = 0;
+        assert_eq!(
+            validated_save_reload_target(&save, &profiles, 10).unwrap_err(),
+            "save header mission ID zero is invalid"
+        );
     }
 
     #[test]
@@ -862,16 +915,15 @@ pub fn rust_init() -> Result<RustInit, String> {
     rust_init_finish(shipping)
 }
 
-/// Wasm variant of [`rust_init`] — the JS host has already decoded the
-/// shipping datadir from the fetched `datadir.bin` bytes and installed
-/// it via `install_global`, so we skip the
-/// `try_load` step and reuse the supplied handle.
+/// Initialize from a shipping datadir decoded and installed by the platform
+/// bootstrap (the wasm host or Android NativeActivity entry point), skipping
+/// the filesystem-backed [`assets_shipping_datadir::try_load`] path.
 pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
     crate::init_tracing();
     setup_data_dir()?;
-    tracing::info!("Robin Hood — Rust entry point (wasm boot)");
+    tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
     rust_init_finish(shipping)
 }
 
@@ -1035,6 +1087,10 @@ pub(crate) struct RustCallbacks {
     /// and re-queues a `SaveLoadRequest::Load` on the fresh engine so the
     /// first frame of the new mission applies the save.
     pub pending_level_load: Option<PendingLevelLoad>,
+    /// A restart payload could not be safely applied. The frame loop must
+    /// leave the current mission with `LevelRestart` so the outer session
+    /// restores its authoritative campaign/RNG/SimConfig checkpoint.
+    pub pending_level_restart: bool,
 }
 
 /// Save-slot bookkeeping passed from an in-mission "load" click through
@@ -1080,11 +1136,10 @@ pub enum SaveLoadRequest {
     /// Load a save and apply it to the engine.
     /// `None` slot = load the Continue auto-save.
     ///
-    /// `mission_id` is the mission the caller expected the save to match.
-    /// The load path reads the on-disk header and compares it against
-    /// this field; a mismatch is logged at warn level (the save/load
-    /// menu can cross missions at the cost of a campaign-map round-trip,
-    /// rather than refusing the load outright).
+    /// `mission_id` records the mission expected by the request producer.
+    /// Apply-time validation derives the active mission from the live Engine,
+    /// validates the decoded header against its campaign, and routes a valid
+    /// cross-mission payload through the session reload boundary.
     Load {
         slot: Option<usize>,
         mission_id: u32,
@@ -1129,6 +1184,7 @@ impl RustCallbacks {
             app_effects: AppEffectQueue::default(),
             post_load_sync: None,
             pending_level_load: None,
+            pending_level_restart: false,
             pending_save_banner: None,
             pending_reset_input: false,
         }
@@ -1299,6 +1355,9 @@ pub(crate) fn validate_save_mission(
     profiles: &engine_profiles::ProfileManager,
 ) -> Result<usize, String> {
     let mission_id = save.header.mission_id;
+    if mission_id == 0 {
+        return Err("save header mission ID zero is invalid".to_string());
+    }
     let campaign = save.engine.campaign();
     let mut mission_idx = None;
     for (index, mission) in campaign.missions.iter().enumerate() {
@@ -1327,6 +1386,23 @@ pub(crate) fn validate_save_mission(
         return Err("save campaign is missing its mission restart checkpoint".to_string());
     }
     Ok(mission_idx)
+}
+
+/// Validate every decoded v48 mission invariant and decide whether its
+/// immutable level assets match the active Engine. `Some(id)` means the
+/// payload is valid but must be routed through a mission reload before apply;
+/// `None` means it may be applied to the current assets.
+pub(crate) fn validated_save_reload_target(
+    save: &crate::save_file::GameSaveFile,
+    profiles: &engine_profiles::ProfileManager,
+    active_mission_id: u32,
+) -> Result<Option<u32>, String> {
+    assert_ne!(
+        active_mission_id, 0,
+        "validated_save_reload_target: active mission ID zero is invalid"
+    );
+    validate_save_mission(save, profiles)?;
+    Ok((save.header.mission_id != active_mission_id).then_some(save.header.mission_id))
 }
 
 /// Consume an already-decoded save with its exact preflighted slot, or do the
@@ -1501,7 +1577,7 @@ pub(crate) fn perform_pending_save_load(
         }
         SaveLoadRequest::Load {
             slot,
-            mission_id,
+            mission_id: _,
             save,
         } => {
             // If the save targets a different mission than the one currently
@@ -1519,17 +1595,21 @@ pub(crate) fn perform_pending_save_load(
             };
             match resolved {
                 Some((idx, save)) => {
-                    if let Err(error) = validate_save_mission(&save, profiles) {
-                        tracing::error!("Load preflight rejected slot {idx}: {error}");
-                        return true;
-                    }
-                    if mission_id != 0 && save.header.mission_id != mission_id {
-                        let target_mission_id = save.header.mission_id;
+                    let active_mission_id = current_mission_id(engine.campaign(), profiles);
+                    let reload_target =
+                        match validated_save_reload_target(&save, profiles, active_mission_id) {
+                            Ok(target) => target,
+                            Err(error) => {
+                                tracing::error!("Load preflight rejected slot {idx}: {error}");
+                                return true;
+                            }
+                        };
+                    if let Some(target_mission_id) = reload_target {
                         tracing::info!(
                             "Load slot {idx}: cross-mission load (header={}, current={}) — \
                              routing through session LevelLoad",
                             target_mission_id,
-                            mission_id,
+                            active_mission_id,
                         );
                         callbacks.pending_level_load = Some(PendingLevelLoad {
                             slot: idx,
@@ -1538,6 +1618,7 @@ pub(crate) fn perform_pending_save_load(
                         });
                         return true;
                     }
+                    let validated_mission_id = save.header.mission_id;
                     match save.apply_to_with_game(engine, host, game, assets) {
                         Err(err) => {
                             tracing::error!("Load failed: {err:#}");
@@ -1568,16 +1649,12 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror the load into the Continue slot,
                             // guarded by IsContinue/IsRestart so we
                             // don't clobber the slot we just loaded.
-                            let mid = required_mission_id(
-                                callbacks.save_manager.slot_mission_id(idx),
-                                "loaded save slot must retain its cached mission ID",
-                            );
                             if !is_continue && !is_restart {
                                 callbacks.save_manager.write_continue_save_background(
                                     host,
                                     game,
                                     engine,
-                                    mid,
+                                    validated_mission_id,
                                     Some(profiles),
                                     thumb_ref,
                                 );
@@ -1611,22 +1688,36 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::LoadRestart => {
-            match callbacks
-                .save_manager
-                .load_restart_save(host, game, engine, assets)
-            {
-                Ok(true) => {
+            let restore_result = (|| -> anyhow::Result<()> {
+                let (_idx, save) = callbacks
+                    .save_manager
+                    .preflight_restart_save()?
+                    .ok_or_else(|| anyhow::anyhow!("no restart snapshot exists"))?;
+                let active_mission_id = current_mission_id(engine.campaign(), profiles);
+                if let Some(target_mission_id) =
+                    validated_save_reload_target(&save, profiles, active_mission_id)
+                        .map_err(anyhow::Error::msg)?
+                {
+                    anyhow::bail!(
+                        "save mission {target_mission_id} does not match active mission {active_mission_id}"
+                    );
+                }
+                save.apply_to_with_game(engine, host, game, assets)?;
+                Ok(())
+            })();
+            match restore_result {
+                Ok(()) => {
                     // Restart = never Continue slot; still sync campaign-map state.
                     callbacks.post_load_sync = Some(PostLoadSync { is_continue: false });
                     tracing::info!("Restart snapshot restored");
                 }
-                Ok(false) => {
-                    // No restart save on disk — the caller should fall
-                    // back to reinitializing the mission from scratch.
-                    // Silent no-op when the restart snapshot is missing.
-                    tracing::warn!("LoadRestart requested but no restart snapshot exists");
+                Err(error) => {
+                    tracing::error!(
+                        "Restart snapshot could not be restored; routing through authoritative LevelRestart: {error:#}"
+                    );
+                    callbacks.pending_level_restart = true;
+                    game.operation.set(GameCode::LevelRestart);
                 }
-                Err(err) => tracing::error!("Restart load failed: {err:#}"),
             }
         }
         SaveLoadRequest::Continue { mission_id } => {
@@ -1682,14 +1773,45 @@ pub(crate) fn perform_pending_save_load(
             let idx = callbacks.save_manager.find_by_filename(slot_name);
             match idx {
                 Some(i) if callbacks.save_manager.slot_file_exists(i) => {
-                    match callbacks
-                        .save_manager
-                        .load_save_into_engine(i, engine, host, game, assets)
-                    {
-                        Err(err) => {
-                            tracing::error!("Quick load ({slot_name}) failed: {err:#}");
+                    match callbacks.save_manager.preflight_load(Some(i)) {
+                        Err(error) => {
+                            tracing::error!("Quick load ({slot_name}) preflight failed: {error:#}");
                         }
-                        _ => {
+                        Ok(None) => {
+                            tracing::error!(
+                                "Quick load ({slot_name}) lost its selected slot during preflight"
+                            );
+                        }
+                        Ok(Some((decoded_idx, save))) => {
+                            let active_mission_id = current_mission_id(engine.campaign(), profiles);
+                            let reload_target = match validated_save_reload_target(
+                                &save,
+                                profiles,
+                                active_mission_id,
+                            ) {
+                                Ok(target) => target,
+                                Err(error) => {
+                                    tracing::error!("Quick load ({slot_name}) rejected: {error}");
+                                    return true;
+                                }
+                            };
+                            if let Some(target_mission_id) = reload_target {
+                                tracing::info!(
+                                    "Quick load ({slot_name}): routing mission {target_mission_id} through session LevelLoad"
+                                );
+                                callbacks.pending_level_load = Some(PendingLevelLoad {
+                                    slot: decoded_idx,
+                                    target_mission_id,
+                                    save,
+                                });
+                                return true;
+                            }
+                            let validated_mission_id = save.header.mission_id;
+                            if let Err(error) = save.apply_to_with_game(engine, host, game, assets)
+                            {
+                                tracing::error!("Quick load ({slot_name}) failed: {error:#}");
+                                return true;
+                            }
                             // QuickSave is not the Continue slot; just re-sync
                             // campaign-map state.
                             callbacks.post_load_sync = Some(PostLoadSync { is_continue: false });
@@ -1697,15 +1819,11 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror into the Continue slot — QuickSave is
                             // neither Continue nor Restart so it always
                             // mirrors.
-                            let mid = required_mission_id(
-                                callbacks.save_manager.slot_mission_id(i),
-                                "loaded QuickSave slot must retain its cached mission ID",
-                            );
                             callbacks.save_manager.write_continue_save_background(
                                 host,
                                 game,
                                 engine,
-                                mid,
+                                validated_mission_id,
                                 Some(profiles),
                                 thumb_ref,
                             );

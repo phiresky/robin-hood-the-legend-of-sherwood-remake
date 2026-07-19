@@ -1,19 +1,19 @@
-//! Host-to-engine commands queued by script natives.
+//! Typed effects and engine barriers queued by script natives.
 //!
-//! Native functions run inside the scripting VM and can't touch the
-//! engine directly (no `&mut EngineInner` available). Instead, natives push
-//! command values onto these queues, which the engine drains after each
-//! script step and applies in its own mutation context.
+//! Native functions mutate deterministic state synchronously through
+//! [`NativeSessionCapabilities`](super::NativeSessionCapabilities). They only
+//! queue work that crosses into presentation/external systems or needs a wider
+//! `EngineInner` mutation context. The engine drains these streams after each
+//! script step without changing their command order.
 //!
 //! - `EngineCommand` — camera, dialog, map, fade, minimap, outline, …
 //! - `SoundCommand`  — sound source activate / suspend / destroy.
-//! - `DeferredCommand` — game-logic actions that need sequence manager
-//!   or global engine state (SendMessage, SelectPC, StopActor, FreezeAll).
+//! - `DeferredCommand` — wider-context game-logic follow-ups such as SelectPC,
+//!   StopActor, FreezeAll, and patch application.
 
-/// Deferred commands queued by native functions for the engine to process
-/// after script execution. GameHost cannot access the EngineInner directly
-/// during native calls, so commands that need engine state are queued
-/// here and drained by the engine each frame.
+/// Ordered engine-bound commands queued by native functions for processing
+/// after script execution. [`EngineCommand::domain`] distinguishes genuine
+/// presentation from deterministic follow-up barriers.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -38,10 +38,6 @@ pub enum EngineCommand {
         location_handle: i32,
         apex_height: i32,
     },
-    /// Add a short briefing entry.
-    AddShortBriefing { id: i32, primary: bool },
-    /// Mark a short briefing as done.
-    DoneShortBriefing { id: i32 },
     /// Select victory/defeat dialogue text.
     ChooseVictoryDefeatText { id: i32 },
     /// Display popup text by resource ID.
@@ -52,8 +48,6 @@ pub enum EngineCommand {
     FadeToBlack { speed: i32 },
     /// Set outline/hidden entity rendering mode.
     SetOutlineDisplay { display: bool },
-    /// Set fog-of-war view radius for all NPCs.
-    SetViewRadius { radius: i32 },
     /// Teleport actor to a new position (called by SetActorLocation
     /// and RecordEnterGame).  When `dest_layer_sector` is `Some`, the
     /// engine-side handler will also reconcile the projection-area
@@ -74,9 +68,6 @@ pub enum EngineCommand {
         dest_layer_sector: Option<(u16, u16)>,
         spawn_elevation_probe: Option<(f32, f32)>,
     },
-    /// Play a UI jingle.  The post-script merge translates this into a
-    /// `pending_side_effects.sounds` entry.
-    PlayJingle(crate::sound::Jingle),
     /// Mission won.
     Win { show_window: bool },
     /// Update information bars (blazon display, etc.).
@@ -112,13 +103,54 @@ pub enum EngineCommand {
     /// Crouch a PC via the full sequence/animation rewrite path:
     /// rewrite an active movement sequence to its crouched variant, or
     /// launch a brand-new `RHCOMMAND_CROUCH_DOWN` so the actor plays
-    /// the crouch-down animation.  The native arm runs in `GameHost`
+    /// the crouch-down animation.  The native arm runs in `ScriptEffects`
     /// without the `EngineInner` borrow, so it queues this command for
     /// the engine to drain via `actor_make_crouched`.
     ScriptMakePCCrouched { actor_handle: i32 },
     /// Propagate generic Activate/Deactivate from the script-visible mobile
     /// handle to its non-entity RHElementMobile master.
     SetMobileActive { mobile_index: u16, active: bool },
+}
+
+/// Whether an ordered engine command is a genuine host-facing effect or a
+/// deterministic follow-up that still needs a wider engine mutation context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptCommandDomain {
+    Presentation,
+    SimulationBarrier,
+}
+
+impl EngineCommand {
+    /// Compiler-exhaustive queue classification. Adding a command variant must
+    /// make an explicit architectural choice here.
+    pub const fn domain(&self) -> ScriptCommandDomain {
+        use EngineCommand::*;
+        match self {
+            ScrollCameraTo { .. }
+            | JumpCameraTo { .. }
+            | SetZoomLevel { .. }
+            | DisplayMap { .. }
+            | DisplayConsole
+            | DisplayPopupText { .. }
+            | DisplaySherwoodReport
+            | UpdateInformationBars
+            | SetOutlineDisplay { .. }
+            | MarkPc { .. } => ScriptCommandDomain::Presentation,
+
+            StartDialog { .. }
+            | ChooseVictoryDefeatText { .. }
+            | FadeToBlack { .. }
+            | HeroSpeak { .. }
+            | CustomizeMinimapDisplay { .. }
+            | DefineFlatTrajectoryZone { .. }
+            | SetActorLocation { .. }
+            | Win { .. }
+            | MakeNoise { .. }
+            | SetScrollStatus { .. }
+            | ScriptMakePCCrouched { .. }
+            | SetMobileActive { .. } => ScriptCommandDomain::SimulationBarrier,
+        }
+    }
 }
 
 /// Commands queued by script natives for the engine's sound system.
@@ -132,6 +164,7 @@ pub enum SoundCommand {
     Activate(i32),
     Deactivate(i32),
     Destroy(i32),
+    PlayJingle(crate::sound::Jingle),
 }
 
 /// Commands queued by script natives for the engine to process after
@@ -140,15 +173,6 @@ pub enum SoundCommand {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum DeferredCommand {
-    /// SendMessage / SendMessageWithArguments. The engine must turn this
-    /// into a one-element `Command::SendMessage` sequence; it is not a
-    /// direct `ProcessMessage` callback request.
-    SendMessage {
-        actor: i32,
-        message: i32,
-        arg1: i32,
-        arg2: i32,
-    },
     /// Finish SelectActorPC(actor, select) after the native has already
     /// updated the canonical selection synchronously. `actor == 0` means
     /// "all PCs". The engine-side barrier performs action/sequence and
@@ -163,9 +187,6 @@ pub enum DeferredCommand {
     /// `MSG_DISABLE_CHARACTER`. The engine should update the portrait
     /// bar when processing this command.
     SetPlayable { actor: i32, playable: bool },
-    /// Handle death for an actor whose life points reached 0.
-    /// EngineInner should set death posture, quit swordfight, play dying animation.
-    HandleDeath { actor: i32 },
     /// Quit any active swordfight for the actor. Used when teleporting
     /// an actor to "honolulu" (SetActorLocation with null location).
     QuitSwordfight { actor: i32 },
@@ -174,21 +195,6 @@ pub enum DeferredCommand {
     /// is checked in the handler).  Used when a human actor is sent to
     /// honolulu (null location).
     RemoveUnconsciousStars { actor: i32 },
-    /// Legacy save compatibility for AI locks queued by builds before the
-    /// synchronous native-context migration. There are no live producers;
-    /// keeping this variant in place preserves all following serialized enum
-    /// discriminants. The drain applies the previously queued write once.
-    ScriptLockAI { actor: i32, send_back: bool },
-    /// Spawn a floating damage-number titbit above an entity.  Used by
-    /// script natives (`InflictPain`, `SetPersistentProperty LIFEPOINTS`)
-    /// that apply damage without going through the combat helpers.
-    SpawnDamageNumber { actor: i32, damage: u16 },
-    /// Fire the PC-override hero-speech edge triggers
-    /// (`HERO_DIE` / `HERO_HURT`) after a scripted life-point drop.
-    /// The native writes life points directly (bypassing
-    /// `combat::set_life_points`), so this deferred command routes
-    /// through `say_ouch` to keep the hero-speech cues in parity.
-    PcSayOuchForLifeDrop { actor: i32, damage: u16 },
     /// Process patch effects produced by ApplyPatch/ResetPatch script natives.
     /// The patch state was already mutated in the native; this deferred command
     /// lets the engine apply the side effects (swap objects, toggle animations,
@@ -208,68 +214,9 @@ pub enum DeferredCommand {
     /// `NUMBER_OF_QA_MEMORY` slots, call `SetQuickActionSequence(0, 0,
     /// i, 0xFFFFFFFF)` on each (deletes sequence, titbits, QUICKITOS),
     /// and `RemoveQuickActionTitbitsFor`.  The per-slot logic lives in
-    /// engine/commands.rs; we iterate here so the native keeps to
+    /// the engine command path; we iterate here so the native keeps to
     /// entity-state writes.
     ClearAllQuickActionSlots { actor: i32 },
-    /// Launch a low-priority `RHCOMMAND_WAIT` sequence element on the
-    /// actor: build a fresh wait at `RHPRIORITY_WAIT` and feed it into
-    /// the sequence manager so the instruct arbitration kicks the
-    /// actor out of any already-running sequence at lower-or-equal
-    /// priority.  Used by every `Set*` posture/action-state script
-    /// native (which calls `Wait()` after stamping the new state) so
-    /// the actor doesn't continue executing whatever command was
-    /// running before the script poked at it.
-    LaunchWait { actor: i32 },
-    /// Apply a scripted life-points write through the full
-    /// `combat::set_life_points` pipeline.  Clamps negative values to
-    /// zero, ignores already-dead actors, blocks Sherwood-PC damage,
-    /// stores max life for invulnerable actors, and runs the death
-    /// pipeline (`Kill`) when the actor reaches zero.  The PC override
-    /// fires HERO_DIE / HERO_HURT cues on a drop.  No damage titbit is
-    /// emitted on the script call site.
-    SetScriptedLifePoints { actor: i32, amount: i32 },
-    /// Apply a scripted concussion write through the full
-    /// `EngineInner::apply_concussion` pipeline.  Clamps to
-    /// `[0, CONCUSSION_MAX]`, honours invulnerability/Sherwood guards,
-    /// preserves wakeup threshold for tied/carried (script-locked is
-    /// bypassed because `force_value` is `true`), toggles unconscious
-    /// state, quits swordfight on KO, adds unconscious-stars titbit,
-    /// and dispatches `EVENT_FITAGAIN` on wakeup.
-    SetScriptedConcussion {
-        actor: i32,
-        amount: i32,
-        force_value: bool,
-    },
-    /// Stop the actor's current and pending sequence elements at a
-    /// caller-specified priority, used outside the script-level
-    /// `StopActor` flow — currently used by `SetActorPosture`'s `ID_KO`
-    /// arm which calls `Stop(RHPRIORITY_INJURY)` before stamping the
-    /// lying posture so any in-flight preference/normal-priority
-    /// sequence is torn down at the correct level.
-    StopActorAtPriority {
-        actor: i32,
-        priority: crate::sequence::SequencePriority,
-    },
-    /// NPC-only AI broadcast that fires when an NPC is forced into KO
-    /// or tied posture from script.  Queues a
-    /// `StimulusType::EventLoseConsciousness` on the NPC's own AI
-    /// brain (`pending_stimuli`) and broadcasts the body as a
-    /// DETECTABLE_BODY to every other NPC via
-    /// `broadcast_body_detectable`.  Handler is a no-op for non-NPC
-    /// actors so the native can enqueue without re-checking.
-    BroadcastLoseConsciousness { actor: i32 },
-    /// NPC-only AI broadcast that fires when an NPC is brought back
-    /// to upright from a LYING posture via script.  Walks every other
-    /// NPC and removes the resurrected NPC from their
-    /// `DETECTABLE_BODY` list so allies stop reacting to a "downed"
-    /// friend.
-    BroadcastResurrection { actor: i32 },
-    /// Add a HIDDEN titbit attached to the given actor.  The
-    /// script-level posture stamp on the `ID_ANONYMOUS_ARCHER` arm
-    /// does not go through the stealth-command transition that
-    /// normally adds the HIDDEN titbit, so this restores the visual
-    /// "disguise" indicator above the actor.
-    AddHiddenTitbitForActor { actor: i32 },
     /// Re-issue the in-flight `GoTo` for a patrolling NPC so a
     /// just-changed `default_path_walking_flags` (e.g. RUN ↔ WALK from
     /// `SetPathWalkingStyle`) takes effect mid-segment instead of
@@ -278,27 +225,4 @@ pub enum DeferredCommand {
     /// current hiking-path waypoint, compute `WillStopAtNextWaypoint`,
     /// and call `ai.go_to(pos, default_flags | DONT_STOP if !will_stop, ctx)`.
     RelaunchPathAtNewSpeed { actor: i32 },
-    /// Spellforge `SetPatrolShouldRun(actor, should_run)`: toggle
-    /// whether the NPC's patrol moves at walk or run speed. The
-    /// engine handler stamps the patrol's `should_run` field; the
-    /// per-tick patrol re-issue picks the new speed up via the
-    /// existing `RelaunchPathAtNewSpeed` flow.
-    SetPatrolShouldRun { actor: i32, should_run: bool },
-}
-
-/// Mission-objective panel changes queued by the Spellforge
-/// `AddObjective` / `CompleteObjective` natives. The objectives UI
-/// itself doesn't live in `robin_engine` (the host owns rendering and
-/// localisation), so the engine just records the requested changes and
-/// the host drains `GameHost::pending_objective_changes` each frame.
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
-)]
-pub enum ObjectiveChange {
-    /// Add a new objective entry. `is_main` distinguishes primary
-    /// vs. optional objectives — the Spellforge UI uses different
-    /// glyphs for each.
-    Add { id: i32, is_main: bool },
-    /// Mark a previously-added objective complete.
-    Complete { id: i32 },
 }

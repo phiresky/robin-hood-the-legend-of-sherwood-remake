@@ -54,8 +54,10 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 5 requires the complete campaign
-/// snapshot and [`crate::engine::SimConfig`] used for frame-0 construction.
+/// On-disk replay schema version. Version 5 requires the complete campaign and
+/// [`crate::engine::SimConfig`] used for frame-0 construction, stores typed
+/// script effects in one global emission order, and includes synchronous
+/// sequence continuation state.
 pub const REPLAY_SCHEMA_VERSION: u32 = 5;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic

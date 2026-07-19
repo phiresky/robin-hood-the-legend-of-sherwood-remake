@@ -46,7 +46,7 @@ impl NativeContext<'_, '_> {
                 }
                 // Mark only on the success branch.
                 if added {
-                    self.commands.push(EngineCommand::MarkPc {
+                    self.emit_engine(EngineCommand::MarkPc {
                         actor_handle: actor,
                     });
                 }
@@ -175,24 +175,17 @@ impl NativeContext<'_, '_> {
             }
 
             // --- production / sector ---
-            //
-            // The engine drains these queues in
-            // `apply_production_registrations` (engine/script.rs) —
-            // it resolves each location handle to a script zone
-            // sector, sets the sector's production type, and pushes
-            // per-sector geometry into the campaign production
-            // table.  Nothing to do here beyond queuing.
             RegisterAsProductionSector => {
                 let speed = stack.pop_i32();
                 let loc = stack.pop_i32();
                 let prod_type = stack.pop_i32();
-                self.production_registrations.push((prod_type, loc, speed));
+                self.register_production_sector(prod_type, loc, speed);
                 0
             }
             AddProductionPoint => {
                 let loc = stack.pop_i32();
                 let prod_type = stack.pop_i32();
-                self.production_points.push((prod_type, loc));
+                self.add_production_point(prod_type, loc);
                 0
             }
             GetNumberOfActorsInSector => {
@@ -435,7 +428,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.apply_script_selection(actor, select != 0);
-                self.deferred_commands.push(DeferredCommand::SelectPC {
+                self.emit_barrier(DeferredCommand::SelectPC {
                     actor,
                     select: select != 0,
                 });
@@ -532,42 +525,36 @@ impl NativeContext<'_, '_> {
                 i32::from(dead || tied || unconscious)
             }
             AddObjective => {
-                // Queues a UI objective for the host to surface
-                // in the objectives panel. Implementation is in
-                // the host (objectives panel doesn't exist on
-                // engine side); this just records the request.
-                // TODO: define the objectives UI on the host
-                // and consume `pending_objective_changes`.
                 let is_main = stack.pop_i32();
                 let id = stack.pop_i32();
-                self.pending_objective_changes.push(ObjectiveChange::Add {
-                    id,
-                    is_main: is_main != 0,
-                });
+                self.short_briefings
+                    .as_mut()
+                    .expect("AddObjective requires live mission objectives")
+                    .add(id as u32, is_main != 0);
                 0
             }
             CompleteObjective => {
                 let id = stack.pop_i32();
-                self.pending_objective_changes
-                    .push(ObjectiveChange::Complete { id });
+                self.short_briefings
+                    .as_mut()
+                    .expect("CompleteObjective requires live mission objectives")
+                    .mark_done(id as u32);
                 0
             }
             SetPatrolShouldRun => {
-                // Toggles whether a patrolling NPC walks or
-                // runs along its assigned path. The patrol
-                // walk/run flag lives on the patrol
-                // descriptor; we stamp it via a deferred
-                // command so the engine reads a consistent
-                // value post-script.
-                // TODO: route into the patrol subsystem once
-                // the patrol walk/run flag is wired up.
+                // This Rust extension has never had a patrol-domain field or
+                // consumer in the port. Retain its registry ABI but do not
+                // manufacture a write-only queue. Implementing the AI behavior
+                // is intentionally outside this architecture-only cleanup.
                 let should_run = stack.pop_i32();
                 let actor = stack.pop_i32();
-                self.deferred_commands
-                    .push(DeferredCommand::SetPatrolShouldRun {
-                        actor,
-                        should_run: should_run != 0,
-                    });
+                // TODO(ai parity): implement once patrol run state has a
+                // canonical owner and an Original/Spellforge behavior oracle.
+                tracing::error!(
+                    actor,
+                    should_run = should_run != 0,
+                    "TODO(ai parity): SetPatrolShouldRun has no documented Original or Spellforge contract; request was not applied"
+                );
                 0
             }
             ComputeLocationBetween => {

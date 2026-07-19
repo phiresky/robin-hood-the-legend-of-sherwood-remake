@@ -1692,7 +1692,7 @@ pub struct FxData {
     /// pass of `SortForDisplay` (characters can walk behind them).
     pub display_polyline: Vec<MapPoint>,
     /// If this FX entity is a patch's animation element, the patch
-    /// index (into `GameHost::patches`).  Used by the animation tick
+    /// index (into the canonical interactable patch table). Used by the animation tick
     /// to apply reversed playback and detect transition completion.
     pub patch_index: Option<crate::patch::PatchIndex>,
     /// Index of the owning mission mobile element for its masked child

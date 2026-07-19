@@ -198,19 +198,18 @@ impl EngineInner {
         // at Opened.
         let scroll_handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc);
-        let script_result = self
-            .with_script_session(sim, assets, |script, script_domains, capabilities| {
-                script.call_scroll_function(
-                    scroll_handle,
-                    "IsTaken",
-                    &[pc_handle],
-                    script_domains,
-                    capabilities,
-                )
-            })
-            .transpose();
+        let script_result = self.call_script_vm(
+            sim,
+            assets,
+            super::ScriptVmKey::Scroll(scroll_handle),
+            "IsTaken",
+            &[pc_handle],
+            crate::natives::ScriptCallFrame::default()
+                .with_script_this(scroll_handle)
+                .with_current_scroll(scroll_handle),
+        );
         match script_result {
-            Ok(Some(v)) if v != 0 => {
+            Ok(v) if v != 0 => {
                 self.set_scroll_status(scroll, ScrollStatus::Taken);
             }
             Ok(_) => {}

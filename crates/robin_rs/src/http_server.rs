@@ -1872,7 +1872,8 @@ fn snapshot_script(engine: &Engine) -> serde_json::Value {
     let Some(script) = engine.mission_script() else {
         return serde_json::json!({"loaded": false});
     };
-    let scb = script.manager.scb();
+    let scb = script.scb();
+    let counts = script.instance_counts();
     let classes: Vec<_> = scb
         .classes
         .iter()
@@ -1892,11 +1893,11 @@ fn snapshot_script(engine: &Engine) -> serde_json::Value {
         "loaded": true,
         "version": scb.version,
         "class_count": classes.len(),
-        "actor_instances": script.actor_instances.len(),
-        "zone_instances": script.zone_instances.len(),
-        "target_instances": script.target_instances.len(),
-        "scroll_instances": script.scroll_instances.len(),
-        "waypoint_instances": script.waypoint_instances.len(),
+        "actor_instances": counts.actors,
+        "zone_instances": counts.zones,
+        "target_instances": counts.targets,
+        "scroll_instances": counts.scrolls,
+        "waypoint_instances": counts.waypoints,
         "classes": classes,
     })
 }
@@ -1905,7 +1906,7 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
     let Some(script) = engine.mission_script() else {
         return serde_json::json!({"error": "no mission script loaded"});
     };
-    let scb = script.manager.scb();
+    let scb = script.scb();
     let source = if let Some(name) = class {
         // Single-class mode: rebuild a minimal ScbFile holding just
         // this class so the existing whole-file decompiler can run on

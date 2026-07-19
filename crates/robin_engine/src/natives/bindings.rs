@@ -71,10 +71,10 @@ impl std::ops::Deref for ScriptBindings<'_> {
 mod tests {
     use super::*;
     use crate::interp::{HostFunctions, NativeStack};
-    use crate::natives::{GameHost, NativeContext, NativeFn, ScriptState};
+    use crate::natives::{NativeContext, NativeFn, ScriptEffects, ScriptState};
 
     fn get_location(bindings: &AttachedScriptBindings, index: i32) -> i32 {
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();

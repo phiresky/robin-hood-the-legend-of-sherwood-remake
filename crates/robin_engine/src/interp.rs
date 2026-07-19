@@ -66,23 +66,96 @@ pub enum StopReason {
     /// Hit the step-limit guard.
     StepLimit,
     /// A native called by `NativeCall` requested a nested-script call
-    /// (see [`PendingNestedCall`]).  The interpreter has advanced the
+    /// (see [`ScriptCallRequest`]). The interpreter has advanced the
     /// IP past the `NativeCall` instruction; the engine must dispatch
     /// the requested call, write its result into `vm.native_return_value`,
     /// and call `vm.run_up_to(...)` again to resume.  The script's
     /// next `Aff1NativeGetReturn` then reads the resolved value.
-    PendingNestedCall(PendingNestedCall),
+    Yield(NativeYield),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SynchronousScriptRequest {
+    SetActorPosture {
+        actor: i32,
+        posture: i32,
+        native_return: i32,
+    },
+    SetPersistentLifePoints {
+        actor: i32,
+        amount: i32,
+        native_return: i32,
+    },
+    SetPersistentConcussion {
+        actor: i32,
+        amount: i32,
+        native_return: i32,
+    },
+    SetActorLocation {
+        actor: i32,
+        location: i32,
+        native_return: i32,
+    },
+    SetActorActionState {
+        actor: i32,
+        state: i32,
+        native_return: i32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeOperation {
+    ScriptCall(ScriptCallRequest),
+    SequenceAction(SynchronousSequenceOperation),
+    EngineAction(SynchronousScriptRequest),
+}
+
+/// One immediately executed sequence action plus the remainder of the
+/// sequence that must stay invisible while that action re-enters script.
+///
+/// `RHSequence::Go` is recursive: a child sequence launched by an immediate
+/// element completes before the parent's next element is considered. Owning
+/// the detached tail here makes that ordering structural instead of relying
+/// on a shared FIFO.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynchronousSequenceOperation {
+    pub action: crate::sequence::SequenceAction,
+    pub continuation: Vec<crate::sequence::SequenceAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumePolicy {
+    OperationResult,
+    Fixed(i32),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NativeYield {
+    pub operation: NativeOperation,
+    pub resume: ResumePolicy,
+}
+
+impl SynchronousScriptRequest {
+    pub fn native_return(&self) -> i32 {
+        match *self {
+            Self::SetActorPosture { native_return, .. }
+            | Self::SetPersistentLifePoints { native_return, .. }
+            | Self::SetPersistentConcussion { native_return, .. }
+            | Self::SetActorLocation { native_return, .. }
+            | Self::SetActorActionState { native_return, .. } => native_return,
+        }
+    }
 }
 
 /// A nested-script call requested by a native (e.g. `PrototypeFilterEvent`)
 /// during a running VM. Carried by value to the engine layer when the outer
-/// VM yields with [`StopReason::PendingNestedCall`].
+/// VM yields with [`StopReason::Yield`].
 ///
 /// `fn_name` is owned `String` rather than `&'static str` so the same
 /// type can carry both literal native-side dispatch names and (in the
 /// future) script-supplied function names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingNestedCall {
+pub struct ScriptCallRequest {
     /// Actor script handle of the script instance to invoke against.
     pub actor_handle: i32,
     /// Function name to invoke on the target's bound script class.
@@ -105,10 +178,10 @@ pub enum NestedCallScriptThis {
 /// A nested script call is control flow, not an integer return value. Keeping
 /// it explicit prevents the VM from briefly staging a fake return and lets a
 /// borrowed host hand the request directly back to the script driver.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NativeCallOutcome {
     Return(i32),
-    PendingNestedCall(PendingNestedCall),
+    Yield(NativeYield),
 }
 
 impl NativeCallOutcome {
@@ -119,8 +192,8 @@ impl NativeCallOutcome {
     pub fn expect_return(self, context: &str) -> i32 {
         match self {
             Self::Return(value) => value,
-            Self::PendingNestedCall(call) => {
-                panic!("{context}: nested script call requires a MissionScript driver: {call:?}")
+            Self::Yield(request) => {
+                panic!("{context}: native yield requires an Engine driver: {request:?}")
             }
         }
     }
@@ -210,6 +283,24 @@ pub struct Vm {
     pub ip: u32,
 }
 
+/// Control state for one active top-level script callback.
+///
+/// A `ScriptInstance` owns the persistent heap, while every re-entrant call
+/// owns one of these values. Polling swaps it into the instance VM only for
+/// the duration of the interpreter run, so A→A and A→B→A calls cannot clear
+/// their suspended caller's frames or instruction pointer.
+#[derive(
+    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct VmActivationState {
+    pub frames: Vec<Frame>,
+    pub outgoing_params: Vec<u8>,
+    pub native_stack: NativeStack,
+    pub native_return_value: i32,
+    pub return_value: i32,
+    pub ip: u32,
+}
+
 impl Vm {
     pub fn new() -> Self {
         Self {
@@ -222,6 +313,24 @@ impl Vm {
             return_value: 0,
             ip: 0,
         }
+    }
+
+    pub(crate) fn swap_activation(&mut self, activation: &mut VmActivationState) {
+        std::mem::swap(&mut self.frames, &mut activation.frames);
+        std::mem::swap(&mut self.outgoing_params, &mut activation.outgoing_params);
+        std::mem::swap(&mut self.native_stack, &mut activation.native_stack);
+        std::mem::swap(
+            &mut self.native_return_value,
+            &mut activation.native_return_value,
+        );
+        std::mem::swap(&mut self.return_value, &mut activation.return_value);
+        std::mem::swap(&mut self.ip, &mut activation.ip);
+    }
+
+    pub(crate) fn take_activation(&mut self) -> VmActivationState {
+        let mut activation = VmActivationState::default();
+        self.swap_activation(&mut activation);
+        activation
     }
 
     /// Pair this VM with a native-call host for ad-hoc execution.
@@ -529,9 +638,7 @@ impl Vm {
                 self.ip += 1;
                 match outcome {
                     NativeCallOutcome::Return(value) => self.native_return_value = value,
-                    NativeCallOutcome::PendingNestedCall(call) => {
-                        return Some(StopReason::PendingNestedCall(call));
-                    }
+                    NativeCallOutcome::Yield(request) => return Some(StopReason::Yield(request)),
                 }
             }
             Aff1NativeGetReturn { sym } => {
@@ -1177,11 +1284,14 @@ mod tests {
 
     impl HostFunctions for NestedCallHost {
         fn call(&mut self, _index: u32, _stack: &mut NativeStack) -> NativeCallOutcome {
-            NativeCallOutcome::PendingNestedCall(PendingNestedCall {
-                actor_handle: 23,
-                fn_name: "FilterAIEvent".to_owned(),
-                params: vec![7, 11],
-                script_this: NestedCallScriptThis::TargetActor,
+            NativeCallOutcome::Yield(NativeYield {
+                operation: NativeOperation::ScriptCall(ScriptCallRequest {
+                    actor_handle: 23,
+                    fn_name: "FilterAIEvent".to_owned(),
+                    params: vec![7, 11],
+                    script_this: NestedCallScriptThis::TargetActor,
+                }),
+                resume: ResumePolicy::OperationResult,
             })
         }
     }
@@ -1207,7 +1317,11 @@ mod tests {
             "a nested call must not stage a fake native return"
         );
 
-        let StopReason::PendingNestedCall(pending) = stop else {
+        let StopReason::Yield(NativeYield {
+            operation: NativeOperation::ScriptCall(pending),
+            ..
+        }) = stop
+        else {
             panic!("expected nested-call yield, got {stop:?}");
         };
         assert_eq!(pending.actor_handle, 23);

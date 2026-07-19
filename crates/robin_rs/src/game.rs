@@ -48,23 +48,32 @@ pub struct GamePersistentState {
     /// Whether men-to-blazon conversion mode is active.
     pub men_to_blazon_conversion: bool,
     /// Start-mission widget enabled flag.
-    #[serde(default)]
     pub start_mission_enabled: bool,
     /// Quit-mission widget enabled flag.
-    #[serde(default)]
     pub quit_mission_enabled: bool,
     /// Start-mission transient-disable override.
-    #[serde(default)]
     pub start_mission_disabled_temp: bool,
     /// Quit-mission transient-disable override.
-    #[serde(default)]
     pub quit_mission_disabled_temp: bool,
     /// Debug "draw hidden" toggle.  The runtime copy lives on
     /// [`InputState::draw_hidden`]; save/load plumbing in
     /// [`GameSaveFile::capture_with_game`] / [`GameSaveFile::apply_to_with_game`]
     /// copies the value in and out so the toggle round-trips.
-    #[serde(default)]
     pub draw_hidden: bool,
+}
+
+fn required_current_mission_id(
+    campaign: &Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    context: &str,
+) -> u32 {
+    let mission_id = campaign
+        .current_mission_idx
+        .and_then(|idx| campaign.missions.get(idx))
+        .map(|mission| mission.profile(profiles).id)
+        .unwrap_or_else(|| panic!("{context}: campaign must have a current mission"));
+    assert_ne!(mission_id, 0, "{context}: mission ID zero is invalid");
+    mission_id
 }
 
 // ─── Game (full runtime state) ──────────────────────────────────────
@@ -211,11 +220,8 @@ impl Game {
         }
 
         let save_mission_id = callbacks.save_game_mission_id();
-        let current_mission_id = campaign
-            .current_mission_idx
-            .and_then(|idx| campaign.missions.get(idx))
-            .map(|m| m.profile(profiles).id)
-            .unwrap_or(0);
+        let current_mission_id =
+            required_current_mission_id(campaign, profiles, "Game::handle_level_load");
 
         if save_mission_id == current_mission_id {
             callbacks.serialize_load(save_mission_id);
@@ -242,11 +248,7 @@ impl Game {
         callbacks.synchronize_profile_with_campaign(campaign, profiles);
 
         // Create the "continue" save game.
-        let mission_id = campaign
-            .current_mission_idx
-            .and_then(|idx| campaign.missions.get(idx))
-            .map(|m| m.profile(profiles).id)
-            .unwrap_or(0);
+        let mission_id = required_current_mission_id(campaign, profiles, "Game::handle_quit");
         callbacks.serialize_continue_save(mission_id);
         callbacks.save_profiles();
     }
@@ -827,19 +829,13 @@ mod tests {
     }
 
     #[test]
-    fn persistent_state_backcompat_missing_widget_fields() {
-        // Old-format saves don't have the widget-enable fields; serde
-        // default should fill them in rather than fail to parse.
+    fn persistent_state_rejects_missing_current_v48_fields() {
         let json = r#"{
             "campaign_map_active": false,
             "campaign_map_displayed": false,
             "men_to_blazon_conversion": false
         }"#;
-        let back: GamePersistentState = serde_json::from_str(json).unwrap();
-        assert!(!back.start_mission_enabled);
-        assert!(!back.quit_mission_enabled);
-        assert!(!back.start_mission_disabled_temp);
-        assert!(!back.quit_mission_disabled_temp);
+        assert!(serde_json::from_str::<GamePersistentState>(json).is_err());
     }
 
     #[test]
@@ -946,12 +942,49 @@ mod tests {
     fn process_quit_returns_quit() {
         let mut game = Game::default();
         game.operation.set(GameCode::Quit);
-        let campaign = Campaign::default();
-        let profiles = engine_profiles::ProfileManager::new();
+        let mut campaign = Campaign::default();
+        campaign.missions.push(robin_engine::mission::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut profiles = engine_profiles::ProfileManager::new();
+        profiles.missions.push(engine_profiles::MissionProfile {
+            id: 42,
+            ..Default::default()
+        });
         let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert_eq!(result, Some(GameCode::Quit));
+    }
+
+    #[test]
+    #[should_panic(expected = "Game::handle_quit: campaign must have a current mission")]
+    fn process_quit_rejects_missing_required_mission() {
+        let mut game = Game::default();
+        game.operation.set(GameCode::Quit);
+        game.process_operation(
+            &Campaign::default(),
+            &engine_profiles::ProfileManager::new(),
+            &mut StubCallbacks::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Game::handle_level_load: campaign must have a current mission")]
+    fn process_load_rejects_missing_required_mission_when_save_exists() {
+        let mut game = Game::default();
+        game.operation.set(GameCode::LevelLoad);
+        game.process_operation(
+            &Campaign::default(),
+            &engine_profiles::ProfileManager::new(),
+            &mut StubCallbacks {
+                save_exists: true,
+                save_mission_id: 1,
+                ..Default::default()
+            },
+        );
     }
 
     #[test]

@@ -4,8 +4,7 @@
 //! URL / bug-report paste: the engine's `ReplayData` is flattened into
 //! a [`ReplayFile`], bitcode-serialized, zstd-compressed, then
 //! base64-encoded (URL-safe, no padding). A short engine git hash is
-//! prepended so the loader can reject a replay produced on a
-//! different build.
+//! prepended so the loader rejects replays produced by a different build.
 //!
 //! The canonical recording format on disk is still JSONL (see
 //! [`robin_engine::replay`]) — that streams incrementally and is
@@ -21,8 +20,8 @@
 //!    string (any extension; convenient for shell redirection).
 //! 3. A filesystem path to a legacy `*.rhrec.jsonl` file.
 //!
-//! The version hash is checked on decode; mismatches are rejected because
-//! state hashes and deterministic behavior are build-specific contracts.
+//! The version hash is checked before playback. A mismatch is rejected because
+//! simulation compatibility is not promised across engine revisions.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
@@ -63,8 +62,11 @@ pub enum FormatError {
         "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
     )]
     UnsupportedVersion { version: u32 },
-    #[error("replay engine hash `{actual}` does not match this build `{expected}`")]
-    EngineHashMismatch { actual: String, expected: String },
+    #[error("replay engine version `{recorded}` does not match this build `{current}`")]
+    EngineVersionMismatch {
+        recorded: String,
+        current: &'static str,
+    },
 }
 
 /// Encode an in-memory [`ReplayData`] as a `rhrec-{hash}-{base64}`
@@ -79,8 +81,8 @@ pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatErr
 }
 
 /// Parse a `rhrec-{hash}-{base64}` string back into a [`ReplayData`],
-/// returning the embedded version hash so the caller can compare it
-/// against [`ENGINE_VERSION_HASH`] and reject a mismatch.
+/// returning the embedded version hash so callers can inspect it. Playback
+/// entry points reject a mismatch via [`validate_engine_hash`].
 pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
     let rest = text
         .trim()
@@ -111,14 +113,15 @@ pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
 /// Load a replay from either the compact inline format, a file
 /// containing the compact format, or a `*.rhrec.jsonl` file.
 ///
-/// Compact replays whose engine hash differs from this build are rejected.
+/// Compact replay hashes are an exact compatibility gate. JSONL recordings do
+/// not embed the build hash and remain governed by their replay schema.
 pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     // Inline `rhrec-…` wins first so `--replay rhrec-…` works without
     // shell escaping headaches on a token that might also look like a
     // relative path.
     if spec.trim_start().starts_with(COMPACT_PREFIX) {
         let (hash, data) = decode_compact(spec)?;
-        require_matching_hash(&hash)?;
+        validate_engine_hash(&hash)?;
         return Ok(data);
     }
     // Otherwise read the file. If its contents start with `rhrec-`,
@@ -127,7 +130,7 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     let trimmed = contents.trim_start();
     if trimmed.starts_with(COMPACT_PREFIX) {
         let (hash, data) = decode_compact(trimmed)?;
-        require_matching_hash(&hash)?;
+        validate_engine_hash(&hash)?;
         Ok(data)
     } else {
         let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
@@ -136,11 +139,11 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     }
 }
 
-fn require_matching_hash(hash: &str) -> Result<(), FormatError> {
+fn validate_engine_hash(hash: &str) -> Result<(), FormatError> {
     if hash != ENGINE_VERSION_HASH {
-        return Err(FormatError::EngineHashMismatch {
-            actual: hash.to_string(),
-            expected: ENGINE_VERSION_HASH.to_string(),
+        return Err(FormatError::EngineVersionMismatch {
+            recorded: hash.to_owned(),
+            current: ENGINE_VERSION_HASH,
         });
     }
     Ok(())
@@ -213,13 +216,16 @@ mod tests {
     #[test]
     fn load_spec_rejects_a_different_engine_hash() {
         let data = sample_data();
-        // Compact hashes use `-` as their field separator; production hashes
-        // are hexadecimal git IDs, so keep the deliberately wrong fixture in
-        // that same token domain.
-        let s = encode_compact(&data, "deadbeefdeadbeef").unwrap();
+        let mismatched = if ENGINE_VERSION_HASH == "different" {
+            "another"
+        } else {
+            "different"
+        };
+        let encoded = encode_compact(&data, mismatched).unwrap();
         assert!(matches!(
-            load_replay_spec(&s),
-            Err(FormatError::EngineHashMismatch { .. })
+            load_replay_spec(&encoded),
+            Err(FormatError::EngineVersionMismatch { recorded, current })
+                if recorded == mismatched && current == ENGINE_VERSION_HASH
         ));
     }
 }

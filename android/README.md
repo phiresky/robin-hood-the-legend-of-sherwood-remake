@@ -15,7 +15,7 @@ CC_aarch64_linux_android=aarch64-linux-android35-clang \
 CXX_aarch64_linux_android=aarch64-linux-android35-clang++ \
 AR_aarch64_linux_android=llvm-ar \
 CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android35-clang \
-RUSTC_WRAPPER= cargo build -p robin_rs --lib \
+RUSTC_WRAPPER= cargo rustc -p robin_rs --lib --crate-type cdylib \
   --target aarch64-linux-android \
   --profile android-dev \
   --no-default-features --features android
@@ -32,3 +32,9 @@ The Android boot path reads the bundled shipping datadir from APK
 assets. Loose filesystem data remains available for debug installs by
 putting a `Data/` directory in the app external files directory, or by
 setting `ROBINHOOD_DATA_DIR` before startup in a custom launcher.
+
+Android forces the graphical main menu for the bundled demo and disables
+the desktop script-RPC HTTP listener. Hosting the standalone lobby broker
+with `--lobby-server` is not supported. Multiplayer clients do not use a
+hard-coded server: a custom launcher may provide `ROBINHOOD_LOBBY_WS`, and
+the lobby UI reports that multiplayer is unavailable when it is unset.

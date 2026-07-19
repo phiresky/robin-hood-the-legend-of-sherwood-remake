@@ -20,7 +20,6 @@ use robin_assets::frame_holder::{FrameHolder, SHADOW_KEY, SpriteVariant};
 
 use crate::font::TrueTypeFont;
 use crate::gfx_types::{BlendMode, Color, Rect};
-use crate::gpu_upscale::GpuUpscale;
 use crate::presentation::{
     PresentationFrameId, ZoomPresentation, ZoomPresentationState, ZoomPresentationUnavailable,
     ZoomPresentationUpdate,
@@ -28,6 +27,15 @@ use crate::presentation::{
 use crate::ui::AlphaMask;
 use crate::window::{GpuContext, SharedSurface};
 use crate::zoom_hud::ZoomTooltipTracker;
+
+mod frame;
+mod pipelines;
+mod readback;
+mod resources;
+
+use frame::FrameState;
+use pipelines::PipelineStore;
+use resources::GpuResources;
 
 // ---------------------------------------------------------------------
 // Constants
@@ -236,138 +244,12 @@ struct ScreenUniform {
 pub struct Renderer {
     /// Shared GPU context (device/queue/surface format).
     pub(crate) gpu: GpuContext,
-    /// Decoded UI/minimap resource images that still use legacy surface IDs.
-    managed_surfaces: HashMap<u32, ManagedSurface>,
-    next_id: u32,
-    /// Logical screen dimensions in pixels.
-    width: u16,
-    height: u16,
-    /// Bit depth: 15 or 16.
-    bit_depth: u16,
-
-    // -- GPU rendering state --
-    /// True after a legacy caller crosses the old flush boundary.
-    /// Kept as a phase assertion for HUD/menu helpers; it no longer
-    /// protects a CPU surface.
-    gpu_phase_active: bool,
-    /// Sprite-frame cache (decompressed sprite GPU textures).
-    sprite_cache: SpriteTextureCache,
-    /// Per-mask occlusion alpha textures (R8), built once per level and
-    /// rasterized into stencil for each affected sprite.
-    mask_alpha_cache: HashMap<u32, MaskAlpha>,
-    /// Level background map as a persistent immutable GPU texture.
-    background_texture: Option<BackgroundTexture>,
-    /// Cached colorized framebuffer texture (pause-menu dim path).
-    cached_dim_texture: Option<(wgpu::Texture, wgpu::TextureView)>,
-    /// Currently selected upscale mode.
-    scale_mode: TextureScaleMode,
-    /// Selected `third_party/slang-shaders` preset for `TextureScaleMode::RetroArch`.
-    shader_preset: String,
-    /// Lazily-built upscale pipelines.
-    gpu_upscale: GpuUpscale,
-    /// Optional libretro shader FrameCount override. Gameplay sets this from
-    /// the engine frame counter so temporal shader effects follow simulation
-    /// frames instead of swapchain presents.
-    shader_frame_count: Option<usize>,
-    /// Update-owned zoom HUD data. Kept beside the frame queue so throwaway
-    /// screenshot and thumbnail passes share the live frame's immutable
-    /// presentation instead of advancing hover state during drawing.
+    resources: GpuResources,
+    pipelines: PipelineStore,
+    frame: FrameState,
+    /// Update-owned zoom HUD data. Kept separate from GPU ownership because
+    /// throwaway screenshot and thumbnail passes must not advance it.
     zoom_presentation: ZoomPresentationState,
-    /// Shared swapchain surface — renderer acquires the next frame's
-    /// texture from this in `present()`. On Android the native surface
-    /// can be replaced under this shared handle after resume.
-    surface: SharedSurface,
-    surface_config: Option<wgpu::SurfaceConfiguration>,
-    /// Offscreen render target at logical size. The first pass of
-    /// `present()` draws the queue here; the second pass blits this
-    /// into the swapchain with letterboxing so the game's fixed
-    /// logical resolution survives whatever shape the WM hands us.
-    render_target_texture: wgpu::Texture,
-    render_target_view: wgpu::TextureView,
-    /// Transient stencil attachment used to reject masked sprite fragments.
-    _sprite_stencil_texture: wgpu::Texture,
-    sprite_stencil_view: wgpu::TextureView,
-    /// Bind group for sampling `render_target_view` in the second
-    /// pass (blit to swapchain). Rebuilt on `resize`.
-    render_target_bg: wgpu::BindGroup,
-    /// Scratch copy of the composited render target used as the source
-    /// for C++-style alpha polygons. The original C++ draws these against
-    /// the map surface after map-patch mutations have landed there; in
-    /// Rust map patches are GPU draws, so we snapshot the current RT.
-    alpha_source_texture: wgpu::Texture,
-    alpha_source_view: wgpu::TextureView,
-    alpha_source_bg: wgpu::BindGroup,
-    /// Sampler used by the textured-quad pipeline.
-    sampler: wgpu::Sampler,
-    /// 1×1 white texture view — held alive for `white_bg`'s lifetime;
-    /// solid-color draws sample through the bind group, never the view
-    /// directly.
-    _white_view: wgpu::TextureView,
-    /// Bind-group layout for `(texture, sampler)` (group 1 in
-    /// `shaders/quad.wgsl`).
-    bgl_tex: wgpu::BindGroupLayout,
-    /// Cached bind groups for textures we re-use every frame.
-    white_bg: wgpu::BindGroup,
-    /// Pass-1 (logical-size) screen uniform (group 0 in `shaders/quad.wgsl`).
-    screen_uniform: wgpu::Buffer,
-    screen_bg: wgpu::BindGroup,
-    /// Pass-2 (swapchain-size) screen uniform — separate buffer so a
-    /// per-frame uniform rewrite doesn't bleed across passes within
-    /// the same submission.
-    swap_screen_uniform: wgpu::Buffer,
-    swap_screen_bg: wgpu::BindGroup,
-    /// Vertex buffer that grows on demand each frame.
-    vertex_buffer: Option<wgpu::Buffer>,
-    vertex_capacity: u64,
-    /// Per-blend-mode RenderPipeline targeting the offscreen RT
-    /// (`Rgba8UnormSrgb`), keyed by `blend_index()`.
-    pipelines: [Option<wgpu::RenderPipeline>; 4],
-    /// Matching blend pipelines which reject fragments where the
-    /// sprite-occlusion stencil is non-zero.
-    masked_pipelines: [Option<wgpu::RenderPipeline>; 4],
-    /// One pipeline targeting the swapchain format, used by the
-    /// final letterboxed RT-to-swapchain blit.
-    blit_pipeline: wgpu::RenderPipeline,
-    /// Pipeline for `TextureRef::ColorizeFromFrozen` — `fs_colorize`
-    /// fragment, samples the frozen-scene texture, writes to RT
-    /// (Rgba8UnormSrgb).
-    colorize_pipeline: wgpu::RenderPipeline,
-    /// Pipeline for `TextureRef::BackgroundAlpha` — `fs_bg_alpha_polygon`
-    /// in `shaders/quad.wgsl`.
-    bg_alpha_pipeline: wgpu::RenderPipeline,
-    /// Pipeline for `TextureRef::ViewConeGradient` —
-    /// `fs_view_cone_gradient` in `shaders/quad.wgsl`.
-    view_cone_pipeline: wgpu::RenderPipeline,
-    /// Color-write-free pipeline that writes sampled building masks into
-    /// stencil and clears them again by drawing the white texture.
-    mask_stencil_pipeline: wgpu::RenderPipeline,
-    /// Pipeline for `TextureRef::LoadingDissolveFrame` —
-    /// `shaders/loading_dissolve.wgsl`, samples initial/final/mask images.
-    loading_dissolve_pipeline: wgpu::RenderPipeline,
-    bgl_loading_dissolve: wgpu::BindGroupLayout,
-    /// Cached per-(texture, blend) draw queue. `pending_draws` is the
-    /// recording surface; `present` walks it linearly.
-    queued: Vec<QueuedDraw>,
-    /// Per-frame bind groups for the texture views queued via
-    /// `TextureRef::Frame(idx)`. Cleared at the end of every frame.
-    frame_texture_bgs: Vec<wgpu::BindGroup>,
-    /// One GPU texture per `NativeFont` holding the full glyph
-    /// atlas (RGB from the font's glyph picture, alpha from the
-    /// font's alpha picture). `render_text_argb` looks up the atlas
-    /// once and emits one quad per glyph against it — eliminates
-    /// the per-string upload that the old `text_cache` paid for
-    /// each unique label.
-    font_atlas_cache: HashMap<u64, FontAtlas>,
-    /// Reused single-quad VBO for the present's letterbox blit.
-    /// Re-allocating this every frame caused noticeable jank.
-    blit_vbo: Option<wgpu::Buffer>,
-    /// Snapshot of the offscreen render target taken at modal-menu
-    /// entry so the menu can dim/tint and overlay widgets on top of
-    /// the previous gameplay frame. `Some` while a modal is active;
-    /// `None` once the gameplay path resumes via `clear_frozen_scene`.
-    /// Unlike `flush_base_layer`, this captures the complete rendered scene,
-    /// including GPU sprites such as portraits, HUD elements, and characters.
-    frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 struct FontAtlas {
@@ -425,230 +307,6 @@ fn make_alpha_source(
     (texture, view, bind_group)
 }
 
-const SPRITE_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
-
-fn sprite_stencil_state(
-    compare: wgpu::CompareFunction,
-    pass_op: wgpu::StencilOperation,
-) -> wgpu::DepthStencilState {
-    wgpu::DepthStencilState {
-        format: SPRITE_STENCIL_FORMAT,
-        depth_write_enabled: Some(false),
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        stencil: wgpu::StencilState {
-            front: wgpu::StencilFaceState {
-                compare,
-                fail_op: wgpu::StencilOperation::Keep,
-                depth_fail_op: wgpu::StencilOperation::Keep,
-                pass_op,
-            },
-            back: wgpu::StencilFaceState {
-                compare,
-                fail_op: wgpu::StencilOperation::Keep,
-                depth_fail_op: wgpu::StencilOperation::Keep,
-                pass_op,
-            },
-            read_mask: 0xFF,
-            write_mask: if pass_op == wgpu::StencilOperation::Replace {
-                0xFF
-            } else {
-                0
-            },
-        },
-        bias: wgpu::DepthBiasState::default(),
-    }
-}
-
-fn make_sprite_stencil_texture(
-    device: &wgpu::Device,
-    width: u16,
-    height: u16,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("sprite occlusion stencil"),
-        size: wgpu::Extent3d {
-            width: width as u32,
-            height: height as u32,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: SPRITE_STENCIL_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
-}
-
-fn build_mask_stencil_pipeline(
-    device: &wgpu::Device,
-    bgl_screen: &wgpu::BindGroupLayout,
-    bgl_tex: &wgpu::BindGroupLayout,
-    output_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("sprite_mask_stencil.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(
-            include_str!("../shaders/sprite_mask_stencil.wgsl").into(),
-        ),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("sprite mask stencil layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
-        immediate_size: 0,
-    });
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<QuadVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 8,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-        ],
-    }];
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/sprite_mask_stencil"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_buffers[0].clone())],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::empty(),
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
-            wgpu::CompareFunction::Always,
-            wgpu::StencilOperation::Replace,
-        )),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-
-fn build_quad_pipelines(
-    device: &wgpu::Device,
-    bgl_screen: &wgpu::BindGroupLayout,
-    bgl_tex: &wgpu::BindGroupLayout,
-    output_format: wgpu::TextureFormat,
-    stencil_attachment: bool,
-    masked: bool,
-) -> [Option<wgpu::RenderPipeline>; 4] {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("quad.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/quad.wgsl").into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("quad layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
-        immediate_size: 0,
-    });
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<QuadVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 8,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-        ],
-    }];
-
-    let mut out: [Option<wgpu::RenderPipeline>; 4] = [None, None, None, None];
-    for &(blend, idx, normal_label, masked_label) in &[
-        (BlendMode::None, 0usize, "quad/none", "quad/masked_none"),
-        (BlendMode::Blend, 1, "quad/blend", "quad/masked_blend"),
-        (BlendMode::Add, 2, "quad/add", "quad/masked_add"),
-        (BlendMode::Mod, 3, "quad/mod", "quad/masked_mod"),
-    ] {
-        let label = if masked { masked_label } else { normal_label };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(vertex_buffers[0].clone())],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: output_format,
-                    blend: blend.to_wgpu(),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: if masked {
-                Some(sprite_stencil_state(
-                    wgpu::CompareFunction::Equal,
-                    wgpu::StencilOperation::Keep,
-                ))
-            } else if stencil_attachment {
-                Some(sprite_stencil_state(
-                    wgpu::CompareFunction::Always,
-                    wgpu::StencilOperation::Keep,
-                ))
-            } else {
-                None
-            },
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        out[idx] = Some(pipeline);
-    }
-    out
-}
-
-#[inline]
-fn blend_index(b: BlendMode) -> usize {
-    match b {
-        BlendMode::None => 0,
-        BlendMode::Blend => 1,
-        BlendMode::Add => 2,
-        BlendMode::Mod => 3,
-    }
-}
-
 fn mark_draws_stencil_tested(draws: &mut [QueuedDraw]) {
     for draw in draws {
         draw.tex = match draw.tex {
@@ -657,213 +315,6 @@ fn mark_draws_stencil_tested(draws: &mut [QueuedDraw]) {
             _ => panic!("non-textured draw queued inside a sprite mask region"),
         };
     }
-}
-
-/// Build the HSV-replace pipeline used by `Renderer::colorize_framebuffer`.
-/// Same vertex shader + bind-group layout as the textured-quad
-/// pipelines, but the fragment stage is `fs_colorize` (per-pixel HSV
-/// conversion). Targets the offscreen RT (Rgba8UnormSrgb) and writes
-/// fully-opaque output, so it always uses no blend.
-fn build_colorize_pipeline(
-    device: &wgpu::Device,
-    bgl_screen: &wgpu::BindGroupLayout,
-    bgl_tex: &wgpu::BindGroupLayout,
-    output_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("quad.wgsl (colorize)"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/quad.wgsl").into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("colorize layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
-        immediate_size: 0,
-    });
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<QuadVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 8,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-        ],
-    }];
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/colorize"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_buffers[0].clone())],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_colorize"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
-            wgpu::CompareFunction::Always,
-            wgpu::StencilOperation::Keep,
-        )),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-
-/// Build the background-sampled alpha polygon pipeline used by
-/// `DrawManager::draw_alpha_polygon`.
-fn build_bg_alpha_pipeline(
-    device: &wgpu::Device,
-    bgl_screen: &wgpu::BindGroupLayout,
-    bgl_tex: &wgpu::BindGroupLayout,
-    output_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("quad.wgsl (bg alpha polygon)"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/quad.wgsl").into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("bg alpha polygon layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
-        immediate_size: 0,
-    });
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<QuadVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 8,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-        ],
-    }];
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/bg_alpha_polygon"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_buffers[0].clone())],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_bg_alpha_polygon"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
-            wgpu::CompareFunction::Always,
-            wgpu::StencilOperation::Keep,
-        )),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-
-/// Build the view-cone gradient span pipeline used by
-/// `shadow_polygon::render_darken_inside`.
-fn build_view_cone_pipeline(
-    device: &wgpu::Device,
-    bgl_screen: &wgpu::BindGroupLayout,
-    bgl_tex: &wgpu::BindGroupLayout,
-    output_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("quad.wgsl (view cone gradient)"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/quad.wgsl").into()),
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("view cone gradient layout"),
-        bind_group_layouts: &[Some(bgl_screen), Some(bgl_tex)],
-        immediate_size: 0,
-    });
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: std::mem::size_of::<QuadVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 8,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 2,
-            },
-        ],
-    }];
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("quad/view_cone_gradient"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[Some(vertex_buffers[0].clone())],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_view_cone_gradient"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: output_format,
-                blend: BlendMode::Blend.to_wgpu(),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
-            wgpu::CompareFunction::Always,
-            wgpu::StencilOperation::Keep,
-        )),
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
 }
 
 impl Renderer {
@@ -979,9 +430,6 @@ impl Renderer {
                     },
                 ],
             });
-        let bgl_loading_dissolve =
-            crate::loading_dissolve_gpu::create_bind_group_layout(&gpu.device);
-
         let screen_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("quad screen uniform"),
             size: std::mem::size_of::<ScreenUniform>() as u64,
@@ -1019,170 +467,42 @@ impl Renderer {
         });
 
         let white_bg = make_tex_bg(&gpu.device, &bgl_tex, &white_view, &sampler, "white bg");
-
-        // Game pipelines render into the Rgba8UnormSrgb offscreen RT.
-        // Separate single-blend `blit_pipeline` renders the RT into
-        // the swapchain (whose format is `gpu.surface_format`).
-        let pipelines = build_quad_pipelines(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            true,
-            false,
-        );
-        let masked_pipelines = build_quad_pipelines(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            true,
-            true,
-        );
-        let blit_pipeline = build_quad_pipelines(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            gpu.surface_format,
-            false,
-            false,
-        )[blend_index(BlendMode::None)]
-        .clone()
-        .expect("blit pipeline");
-        let colorize_pipeline = build_colorize_pipeline(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let bg_alpha_pipeline = build_bg_alpha_pipeline(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let view_cone_pipeline = build_view_cone_pipeline(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let mask_stencil_pipeline = build_mask_stencil_pipeline(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_tex,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        );
-        let loading_dissolve_pipeline = crate::loading_dissolve_gpu::build_pipeline(
-            &gpu.device,
-            &bgl_screen,
-            &bgl_loading_dissolve,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            std::mem::size_of::<QuadVertex>() as u64,
-            SPRITE_STENCIL_FORMAT,
-        );
-
-        // Offscreen render target at logical size.
-        let render_target_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("logical render target"),
-            size: wgpu::Extent3d {
-                width: width as u32,
-                height: height as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // COPY_SRC lets `freeze_scene_for_modal` snapshot the
-            // composited scene into a held texture for pause menus.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let render_target_view =
-            render_target_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let (sprite_stencil_texture, sprite_stencil_view) =
-            make_sprite_stencil_texture(&gpu.device, width, height);
-        let render_target_bg = make_tex_bg(
-            &gpu.device,
-            &bgl_tex,
-            &render_target_view,
-            &sampler,
-            "rt bg",
-        );
-        let (alpha_source_texture, alpha_source_view, alpha_source_bg) =
-            make_alpha_source(&gpu.device, &bgl_tex, &sampler, width, height);
-
-        let upscale = GpuUpscale::new(gpu.clone(), gpu.surface_format);
-
-        Renderer {
-            gpu,
-            managed_surfaces: HashMap::new(),
-            next_id: 2,
-            width,
-            height,
-            bit_depth: 16,
-            gpu_phase_active: false,
-            sprite_cache: SpriteTextureCache::default(),
-            mask_alpha_cache: HashMap::new(),
-            background_texture: None,
-            cached_dim_texture: None,
-            scale_mode,
-            shader_preset: String::new(),
-            gpu_upscale: upscale,
-            shader_frame_count: None,
-            zoom_presentation: ZoomPresentationState::default(),
-            surface,
-            surface_config,
-            render_target_texture,
-            render_target_view,
-            _sprite_stencil_texture: sprite_stencil_texture,
-            sprite_stencil_view,
-            render_target_bg,
-            alpha_source_texture,
-            alpha_source_view,
-            alpha_source_bg,
-            blit_pipeline,
-            colorize_pipeline,
-            bg_alpha_pipeline,
-            view_cone_pipeline,
-            mask_stencil_pipeline,
-            loading_dissolve_pipeline,
-            bgl_loading_dissolve,
-            sampler,
-            _white_view: white_view,
-            bgl_tex,
-            white_bg,
+        let resources = GpuResources::new(sampler, bgl_tex, white_view, white_bg);
+        let pipelines = PipelineStore::new(&gpu, &bgl_screen, &resources.bgl_tex, scale_mode);
+        let frame = FrameState::new(
+            &gpu,
+            &resources,
             screen_uniform,
             screen_bg,
             swap_screen_uniform,
             swap_screen_bg,
-            vertex_buffer: None,
-            vertex_capacity: 0,
+            surface,
+            surface_config,
+            width,
+            height,
+        );
+
+        Renderer {
+            gpu,
+            resources,
             pipelines,
-            masked_pipelines,
-            queued: Vec::new(),
-            frame_texture_bgs: Vec::new(),
-            font_atlas_cache: HashMap::new(),
-            blit_vbo: None,
-            frozen_scene: None,
+            frame,
+            zoom_presentation: ZoomPresentationState::default(),
         }
     }
 
     // ----- accessors that stayed compatible -----
 
     pub fn screen_width(&self) -> u16 {
-        self.width
+        self.frame.dimensions().0
     }
 
     pub fn screen_height(&self) -> u16 {
-        self.height
+        self.frame.dimensions().1
     }
 
     pub fn transparent_color(&self) -> u16 {
-        if self.bit_depth == 15 {
+        if self.resources.bit_depth == 15 {
             TRANSPARENT_COLOR_KEY_15
         } else {
             TRANSPARENT_COLOR_KEY_16
@@ -1190,19 +510,19 @@ impl Renderer {
     }
 
     pub fn scale_mode(&self) -> TextureScaleMode {
-        self.scale_mode
+        self.pipelines.scale_mode()
     }
 
     pub fn set_scale_mode(&mut self, mode: TextureScaleMode) {
-        self.scale_mode = mode;
+        self.pipelines.set_scale_mode(mode);
     }
 
     pub fn set_shader_preset(&mut self, preset: impl Into<String>) {
-        self.shader_preset = preset.into();
+        self.pipelines.set_shader_preset(preset);
     }
 
     pub fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
-        self.shader_frame_count = frame_count;
+        self.frame.set_shader_frame_count(frame_count);
     }
 
     pub(crate) fn update_zoom_presentation(
@@ -1223,12 +543,12 @@ impl Renderer {
     }
 
     pub fn is_gpu_phase(&self) -> bool {
-        self.gpu_phase_active
+        self.frame.is_gpu_phase()
     }
 
     /// Resolve the "surface 1 means surface 0" alias.
     fn resolve_id(&self, id: u32) -> u32 {
-        if id == 1 { 0 } else { id }
+        GpuResources::resolve_surface_id(id)
     }
 
     pub fn create_color_16(r: u8, g: u8, b: u8) -> u16 {
@@ -1255,11 +575,8 @@ impl Renderer {
             );
             return None;
         }
-        let id = self.next_id;
-        self.next_id += 1;
         let surface = self.build_managed_surface(width, height, pixels, DEFAULT_SHADOW_ALPHA)?;
-        self.managed_surfaces.insert(id, surface);
-        Some(id)
+        Some(self.resources.insert_managed_surface(surface))
     }
 
     fn build_managed_surface(
@@ -1295,9 +612,9 @@ impl Renderer {
         );
         let opaque_bg = make_tex_bg(
             &self.gpu.device,
-            &self.bgl_tex,
+            &self.resources.bgl_tex,
             &opaque_view,
-            &self.sampler,
+            &self.resources.sampler,
             "managed surface opaque bg",
         );
         let (color_texture, color_view) = upload_rgba_texture(
@@ -1309,9 +626,9 @@ impl Renderer {
         );
         let color_bg = make_tex_bg(
             &self.gpu.device,
-            &self.bgl_tex,
+            &self.resources.bgl_tex,
             &color_view,
-            &self.sampler,
+            &self.resources.sampler,
             "managed surface color bg",
         );
         let (shadow_texture, shadow_view, shadow_bg) = if has_shadow {
@@ -1324,9 +641,9 @@ impl Renderer {
             );
             let bg = make_tex_bg(
                 &self.gpu.device,
-                &self.bgl_tex,
+                &self.resources.bgl_tex,
                 &view,
-                &self.sampler,
+                &self.resources.sampler,
                 "managed surface shadow bg",
             );
             (Some(texture), Some(view), Some(bg))
@@ -1352,24 +669,19 @@ impl Renderer {
     }
 
     pub fn delete_surface(&mut self, id: u32) -> bool {
-        let id = self.resolve_id(id);
-        if id == 0 {
-            return false;
-        }
-        self.managed_surfaces.remove(&id).is_some()
+        self.resources.delete_managed_surface(id)
     }
 
     pub fn surface_width(&self, id: u32) -> u16 {
-        let id = self.resolve_id(id);
-        self.managed_surfaces.get(&id).map(|s| s.width).unwrap_or(0)
+        self.resources
+            .surface_dimensions(id)
+            .map_or(0, |(width, _)| width)
     }
 
     pub fn surface_height(&self, id: u32) -> u16 {
-        let id = self.resolve_id(id);
-        self.managed_surfaces
-            .get(&id)
-            .map(|s| s.height)
-            .unwrap_or(0)
+        self.resources
+            .surface_dimensions(id)
+            .map_or(0, |(_, height)| height)
     }
 
     /// Build an `AlphaMask` from a managed surface — one bit per pixel,
@@ -1378,9 +690,7 @@ impl Renderer {
     /// clicks on visually-transparent corners of round/non-rectangular
     /// sprites get rejected via a viewport pixel sample.
     pub fn build_alpha_mask(&self, id: u32) -> Option<AlphaMask> {
-        let id = self.resolve_id(id);
-        let s = self.managed_surfaces.get(&id)?;
-        Some(s.alpha_mask.clone())
+        self.resources.alpha_mask(id)
     }
 
     /// Override the shadow alpha baked into `SHADOW_KEY` pixels at
@@ -1388,11 +698,7 @@ impl Renderer {
     /// menu-button packs, leave at the default `DEFAULT_SHADOW_ALPHA`
     /// (40%) for everything else.
     pub fn set_shadow_alpha(&mut self, id: u32, shadow_alpha: u8) {
-        let id = self.resolve_id(id);
-        let Some(s) = self.managed_surfaces.get_mut(&id) else {
-            return;
-        };
-        s.shadow_alpha = shadow_alpha;
+        self.resources.set_shadow_alpha(id, shadow_alpha);
     }
 
     pub fn create_loading_dissolve_textures(
@@ -1423,13 +729,13 @@ impl Renderer {
         }
         let bind_group = crate::loading_dissolve_gpu::create_frame_bind_group(
             &self.gpu.device,
-            &self.bgl_loading_dissolve,
+            &self.pipelines.bgl_loading_dissolve,
             textures,
-            &self.sampler,
+            &self.resources.sampler,
         );
-        let frame_idx = self.frame_texture_bgs.len() as u32;
-        self.frame_texture_bgs.push(bind_group);
-        self.queued.push(QueuedDraw {
+        let frame_idx = self.frame.frame_texture_bgs.len() as u32;
+        self.frame.frame_texture_bgs.push(bind_group);
+        self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x: 0,
                 y: 0,
@@ -1480,9 +786,9 @@ impl Renderer {
             upload_rgba_texture(&self.gpu, &rgba, width as u32, height as u32, label);
         let bind_group = make_tex_bg(
             &self.gpu.device,
-            &self.bgl_tex,
+            &self.resources.bgl_tex,
             &view,
-            &self.sampler,
+            &self.resources.sampler,
             "gpu image bg",
         );
         Some(GpuImage {
@@ -1515,9 +821,9 @@ impl Renderer {
             upload_rgba_texture(&self.gpu, rgba, width as u32, height as u32, label);
         let bind_group = make_tex_bg(
             &self.gpu.device,
-            &self.bgl_tex,
+            &self.resources.bgl_tex,
             &view,
-            &self.sampler,
+            &self.resources.sampler,
             "gpu image bg",
         );
         Some(GpuImage {
@@ -1555,11 +861,11 @@ impl Renderer {
             dst_rect,
             image.width as f32,
             image.height as f32,
-            self.width as i32,
-            self.height as i32,
+            self.frame.width as i32,
+            self.frame.height as i32,
         );
         let tex_idx = self.queue_cached_bg(image.bind_group.clone());
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst,
             corners: None,
             uv,
@@ -1573,7 +879,7 @@ impl Renderer {
     /// framebuffer pixels here; the current renderer draws the level
     /// background and all overlays as GPU quads.
     pub fn flush_base_layer(&mut self) {
-        self.gpu_phase_active = true;
+        self.frame.enter_gpu_phase();
     }
 
     /// Snapshot the offscreen render target into a held texture so a
@@ -1586,417 +892,14 @@ impl Renderer {
     /// Unlike the old `flush_base_layer` snapshot, this captures every GPU
     /// sprite drawn over the software background layer.
     pub fn freeze_scene_for_modal(&mut self) {
-        if self.frozen_scene.is_some() {
-            return;
-        }
-        let w = self.width as u32;
-        let h = self.height as u32;
-        let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("frozen scene"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("freeze scene"),
-            });
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.render_target_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.gpu.queue.submit(Some(encoder.finish()));
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "frozen scene bg",
-        );
-        self.frozen_scene = Some((texture, view, bind_group));
-        // Modals draw via the GPU queue and call helpers that assert
-        // we're in the GPU phase (hud_text, shadow_polygon, etc.).
-        // The frozen snapshot replaces the old CPU framebuffer upload in
-        // this path so flush_base_layer doesn't run — mark the phase here.
-        self.gpu_phase_active = true;
+        self.frame.freeze_scene(&self.gpu, &self.resources);
     }
 
     /// Drop the modal-snapshot texture. Called by the gameplay render
     /// path on every frame so the snapshot is alive only while a modal
     /// is up.
     pub fn clear_frozen_scene(&mut self) {
-        self.frozen_scene = None;
-    }
-
-    /// Push the implicit frozen-scene quad at the front of the queue.
-    /// Called by both `present()` and the screenshot readback path so
-    /// the captured framebuffer matches what `present()` would put on
-    /// screen.
-    fn push_implicit_base_quad(&mut self) {
-        let fullscreen_dst = Rect {
-            x: 0,
-            y: 0,
-            w: self.width as i32,
-            h: self.height as i32,
-        };
-        if self.frozen_scene.is_some() {
-            self.queued.insert(
-                0,
-                QueuedDraw {
-                    dst: fullscreen_dst,
-                    corners: None,
-                    uv: [0.0, 0.0, 1.0, 1.0],
-                    tint: [1.0, 1.0, 1.0, 1.0],
-                    tex: TextureRef::FrozenScene,
-                    blend: BlendMode::None,
-                },
-            );
-        }
-    }
-
-    /// Materialise the per-quad vertices, write them into the shared
-    /// vbo, and refresh the pass-1 screen uniform.
-    fn upload_queue_geometry(&mut self) {
-        let mut verts: Vec<QuadVertex> = Vec::with_capacity(self.queued.len() * 6);
-        for d in &self.queued {
-            // Default 4-corner layout from `dst`. Order is TL, TR, BL,
-            // BR — matched by `corners` overrides for line/triangle.
-            let corners = d.corners.unwrap_or_else(|| {
-                let x0 = d.dst.x as f32;
-                let y0 = d.dst.y as f32;
-                let x1 = (d.dst.x + d.dst.w) as f32;
-                let y1 = (d.dst.y + d.dst.h) as f32;
-                [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
-            });
-            let [u0, v0, u1, v1] = d.uv;
-            let tl = QuadVertex {
-                pos: [corners[0].0, corners[0].1],
-                uv: [u0, v0],
-                tint: d.tint,
-            };
-            let tr = QuadVertex {
-                pos: [corners[1].0, corners[1].1],
-                uv: [u1, v0],
-                tint: d.tint,
-            };
-            let bl = QuadVertex {
-                pos: [corners[2].0, corners[2].1],
-                uv: [u0, v1],
-                tint: d.tint,
-            };
-            let br = QuadVertex {
-                pos: [corners[3].0, corners[3].1],
-                uv: [u1, v1],
-                tint: d.tint,
-            };
-            verts.extend_from_slice(&[tl, tr, bl, bl, tr, br]);
-        }
-        let needed = (verts.len() * std::mem::size_of::<QuadVertex>()) as u64;
-        if needed > 0 {
-            if self.vertex_capacity < needed {
-                let cap = needed.next_power_of_two().max(4096);
-                self.vertex_buffer = Some(self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("quad vbo"),
-                    size: cap,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }));
-                self.vertex_capacity = cap;
-            }
-            if let Some(buf) = &self.vertex_buffer {
-                self.gpu
-                    .queue
-                    .write_buffer(buf, 0, bytemuck::cast_slice(&verts));
-            }
-        }
-        let screen_logical = ScreenUniform {
-            screen_size: [self.width as f32, self.height as f32],
-            _pad: [0.0; 2],
-        };
-        self.gpu
-            .queue
-            .write_buffer(&self.screen_uniform, 0, bytemuck::bytes_of(&screen_logical));
-    }
-
-    fn copy_rt_to_alpha_source(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.render_target_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.alpha_source_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: self.width as u32,
-                height: self.height as u32,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-
-    /// Encode pass 1: queued draws → offscreen render target. Caller
-    /// owns the encoder so it can either follow up with pass 2
-    /// (`present`) or with a `copy_texture_to_buffer` (screenshot
-    /// readback).
-    fn encode_pass1_to_rt(&self, encoder: &mut wgpu::CommandEncoder) {
-        let first_framebuffer_alpha = self
-            .queued
-            .iter()
-            .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
-        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
-            self.encode_pass1_range_to_rt(
-                encoder,
-                0,
-                self.queued.len(),
-                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-            );
-            return;
-        };
-
-        self.encode_pass1_range_to_rt(
-            encoder,
-            0,
-            first_framebuffer_alpha,
-            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-        );
-        self.copy_rt_to_alpha_source(encoder);
-        self.encode_pass1_range_to_rt(
-            encoder,
-            first_framebuffer_alpha,
-            self.queued.len(),
-            wgpu::LoadOp::Load,
-        );
-    }
-
-    fn encode_pass1_range_to_rt(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        start: usize,
-        end: usize,
-        load: wgpu::LoadOp<wgpu::Color>,
-    ) {
-        if start >= end && !matches!(load, wgpu::LoadOp::Clear(_)) {
-            return;
-        }
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("present quads → RT"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.render_target_view,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.sprite_stencil_view,
-                depth_ops: None,
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Discard,
-                }),
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
-        let Some(vbo) = self.vertex_buffer.as_ref() else {
-            return;
-        };
-        pass.set_bind_group(0, &self.screen_bg, &[]);
-        pass.set_vertex_buffer(0, vbo.slice(..));
-
-        // `last_pipeline_kind`: track which fragment pipeline is bound
-        // separately from the blend index, since `Colorize` uses its
-        // own pipeline regardless of the queued draw's blend slot.
-        let mut last_pipeline_kind: Option<&'static str> = None;
-        let mut last_blend: Option<usize> = None;
-        let mut last_tex: Option<&'static str> = None;
-        let mut last_frame_idx: Option<u32> = None;
-        for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
-            match d.tex {
-                TextureRef::ColorizeFromFrozen => {
-                    if last_pipeline_kind != Some("colorize") {
-                        pass.set_pipeline(&self.colorize_pipeline);
-                        last_pipeline_kind = Some("colorize");
-                        last_blend = None;
-                    }
-                }
-                TextureRef::FramebufferAlpha => {
-                    if last_pipeline_kind != Some("bg_alpha") {
-                        pass.set_pipeline(&self.bg_alpha_pipeline);
-                        last_pipeline_kind = Some("bg_alpha");
-                        last_blend = None;
-                    }
-                }
-                TextureRef::ViewConeGradient => {
-                    if last_pipeline_kind != Some("view_cone") {
-                        pass.set_pipeline(&self.view_cone_pipeline);
-                        last_pipeline_kind = Some("view_cone");
-                        last_blend = None;
-                    }
-                }
-                TextureRef::MaskAlpha(_) | TextureRef::StencilClear => {
-                    if last_pipeline_kind != Some("mask_stencil") {
-                        pass.set_pipeline(&self.mask_stencil_pipeline);
-                        last_pipeline_kind = Some("mask_stencil");
-                        last_blend = None;
-                    }
-                    pass.set_stencil_reference(if matches!(d.tex, TextureRef::MaskAlpha(_)) {
-                        1
-                    } else {
-                        0
-                    });
-                }
-                TextureRef::MaskedFrame(_) => {
-                    let bidx = blend_index(d.blend);
-                    let need_rebind_pipe =
-                        last_pipeline_kind != Some("masked_quad") || last_blend != Some(bidx);
-                    if need_rebind_pipe {
-                        if let Some(p) = self.masked_pipelines[bidx].as_ref() {
-                            pass.set_pipeline(p);
-                            pass.set_stencil_reference(0);
-                            last_pipeline_kind = Some("masked_quad");
-                            last_blend = Some(bidx);
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-                TextureRef::LoadingDissolveFrame(_) => {
-                    if last_pipeline_kind != Some("loading_dissolve") {
-                        pass.set_pipeline(&self.loading_dissolve_pipeline);
-                        last_pipeline_kind = Some("loading_dissolve");
-                        last_blend = None;
-                    }
-                }
-                _ => {
-                    let bidx = blend_index(d.blend);
-                    let need_rebind_pipe =
-                        last_pipeline_kind != Some("quad") || last_blend != Some(bidx);
-                    if need_rebind_pipe {
-                        if let Some(p) = self.pipelines[bidx].as_ref() {
-                            pass.set_pipeline(p);
-                            last_pipeline_kind = Some("quad");
-                            last_blend = Some(bidx);
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-            }
-            let need_rebind_tex = match d.tex {
-                TextureRef::White => last_tex != Some("white"),
-                TextureRef::FrozenScene => last_tex != Some("frozen"),
-                TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
-                TextureRef::FramebufferAlpha => last_tex != Some("alpha_source"),
-                TextureRef::ViewConeGradient => last_tex != Some("white"),
-                TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
-                    last_tex != Some("frame") || last_frame_idx != Some(idx)
-                }
-                TextureRef::MaskAlpha(idx) => {
-                    last_tex != Some("mask_alpha") || last_frame_idx != Some(idx)
-                }
-                TextureRef::StencilClear => last_tex != Some("white"),
-                TextureRef::LoadingDissolveFrame(idx) => {
-                    last_tex != Some("loading_dissolve") || last_frame_idx != Some(idx)
-                }
-            };
-            if need_rebind_tex {
-                match d.tex {
-                    TextureRef::White => {
-                        pass.set_bind_group(1, &self.white_bg, &[]);
-                        last_tex = Some("white");
-                        last_frame_idx = None;
-                    }
-                    TextureRef::FrozenScene | TextureRef::ColorizeFromFrozen => {
-                        if let Some((_, _, bg)) = self.frozen_scene.as_ref() {
-                            pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("frozen");
-                            last_frame_idx = None;
-                        } else {
-                            continue;
-                        }
-                    }
-                    TextureRef::FramebufferAlpha => {
-                        pass.set_bind_group(1, &self.alpha_source_bg, &[]);
-                        last_tex = Some("alpha_source");
-                        last_frame_idx = None;
-                    }
-                    TextureRef::ViewConeGradient => {
-                        pass.set_bind_group(1, &self.white_bg, &[]);
-                        last_tex = Some("white");
-                        last_frame_idx = None;
-                    }
-                    TextureRef::Frame(idx) | TextureRef::MaskedFrame(idx) => {
-                        if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
-                            pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("frame");
-                            last_frame_idx = Some(idx);
-                        } else {
-                            continue;
-                        }
-                    }
-                    TextureRef::MaskAlpha(idx) => {
-                        let mask = self.mask_alpha_cache.get(&idx).unwrap_or_else(|| {
-                            panic!("missing uploaded sprite mask {idx} during rendering")
-                        });
-                        pass.set_bind_group(1, &mask.bind_group, &[]);
-                        last_tex = Some("mask_alpha");
-                        last_frame_idx = Some(idx);
-                    }
-                    TextureRef::StencilClear => {
-                        pass.set_bind_group(1, &self.white_bg, &[]);
-                        last_tex = Some("white");
-                        last_frame_idx = None;
-                    }
-                    TextureRef::LoadingDissolveFrame(idx) => {
-                        if let Some(bg) = self.frame_texture_bgs.get(idx as usize) {
-                            pass.set_bind_group(1, bg, &[]);
-                            last_tex = Some("loading_dissolve");
-                            last_frame_idx = Some(idx);
-                        } else {
-                            continue;
-                        }
-                    }
-                }
-            }
-            let v0 = (i * 6) as u32;
-            pass.draw(v0..v0 + 6, 0..1);
-        }
+        self.frame.clear_frozen_scene();
     }
 
     /// Submit all queued draws and present to the swapchain.
@@ -2005,262 +908,12 @@ impl Renderer {
     /// in submission order, switching pipeline per blend-mode and
     /// rebinding the texture group per `TextureRef`.
     pub fn present(&mut self) {
-        let present_start = web_time::Instant::now();
-        let shader_frame_count = self.shader_frame_count.take();
-        self.push_implicit_base_quad();
-        self.upload_queue_geometry();
-
-        // Acquire swapchain frame.
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                self.reconfigure_surface();
-                f
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.reconfigure_surface();
-                self.queued.clear();
-                self.frame_texture_bgs.clear();
-                self.gpu_phase_active = false;
-                return;
-            }
-            status => {
-                tracing::warn!("get_current_texture: {status:?}");
-                self.queued.clear();
-                self.frame_texture_bgs.clear();
-                self.gpu_phase_active = false;
-                return;
-            }
-        };
-        let swap_view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let swap_w = frame.texture.width();
-        let swap_h = frame.texture.height();
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("present"),
-            });
-
-        self.encode_pass1_to_rt(&mut encoder);
-
-        // ── Pass 2: blit RT into swapchain with letterbox ──
-        // Compute the largest aspect-correct dst rect that fits in the
-        // swapchain. Bars outside the dst are the clear-to-black.
-        let logical_aspect = self.width as f32 / self.height as f32;
-        let swap_aspect = swap_w as f32 / swap_h as f32;
-        let (dst_w, dst_h) = if swap_aspect >= logical_aspect {
-            // Window is wider — bars on the sides.
-            let h = swap_h as f32;
-            let w = h * logical_aspect;
-            (w, h)
-        } else {
-            // Window is taller — bars on top/bottom.
-            let w = swap_w as f32;
-            let h = w / logical_aspect;
-            (w, h)
-        };
-        let dx = ((swap_w as f32 - dst_w) * 0.5) as i32;
-        let dy = ((swap_h as f32 - dst_h) * 0.5) as i32;
-        let dst_w_i = dst_w as i32;
-        let dst_h_i = dst_h as i32;
-
-        // One-quad vertex buffer for the blit. Build it on a separate
-        // small per-frame buffer so it can't collide with the queue's
-        // shared vbo offset usage.
-        let blit_verts = [
-            QuadVertex {
-                pos: [dx as f32, dy as f32],
-                uv: [0.0, 0.0],
-                tint: [1.0; 4],
-            },
-            QuadVertex {
-                pos: [(dx + dst_w_i) as f32, dy as f32],
-                uv: [1.0, 0.0],
-                tint: [1.0; 4],
-            },
-            QuadVertex {
-                pos: [dx as f32, (dy + dst_h_i) as f32],
-                uv: [0.0, 1.0],
-                tint: [1.0; 4],
-            },
-            QuadVertex {
-                pos: [dx as f32, (dy + dst_h_i) as f32],
-                uv: [0.0, 1.0],
-                tint: [1.0; 4],
-            },
-            QuadVertex {
-                pos: [(dx + dst_w_i) as f32, dy as f32],
-                uv: [1.0, 0.0],
-                tint: [1.0; 4],
-            },
-            QuadVertex {
-                pos: [(dx + dst_w_i) as f32, (dy + dst_h_i) as f32],
-                uv: [1.0, 1.0],
-                tint: [1.0; 4],
-            },
-        ];
-        // Reuse the blit vbo across frames — it's always 6 vertices,
-        // only the contents change as the letterbox dst rect adapts
-        // to the swapchain size.
-        if self.blit_vbo.is_none() {
-            self.blit_vbo = Some(self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("blit vbo"),
-                size: std::mem::size_of_val(&blit_verts) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-        }
-        let blit_vbo = self.blit_vbo.as_ref().unwrap();
-        self.gpu
-            .queue
-            .write_buffer(blit_vbo, 0, bytemuck::cast_slice(&blit_verts));
-
-        // Pass-2 screen uniform lives in its own buffer so the
-        // pass-1 uniform write isn't overwritten before the GPU
-        // executes pass 1 (queue.write_buffer + a single submit
-        // means both passes see the latest value of any buffer they
-        // share).
-        let screen_swap = ScreenUniform {
-            screen_size: [swap_w as f32, swap_h as f32],
-            _pad: [0.0; 2],
-        };
-        self.gpu.queue.write_buffer(
-            &self.swap_screen_uniform,
-            0,
-            bytemuck::bytes_of(&screen_swap),
-        );
-
-        let multipass_upscale = GpuUpscale::is_multipass_mode(self.scale_mode);
-        let multipass_rendered = multipass_upscale
-            && self
-                .gpu_upscale
-                .render_multipass(
-                    self.scale_mode,
-                    &mut encoder,
-                    &self.render_target_texture,
-                    &swap_view,
-                    [swap_w, swap_h],
-                    [dx as f32, dy as f32, dst_w, dst_h],
-                    shader_frame_count,
-                    Some(self.shader_preset.as_str()),
-                )
-                .is_some();
-        if !multipass_rendered {
-            // Shader-based upscalers (sharp-bilinear, bicubic, lanczos,
-            // CUT3, scale2x/3x, xBR) want their own pipeline + uniforms.
-            // Build the per-frame source bind group + uniform write here
-            // so the borrow on `gpu_upscale` doesn't outlive the pass.
-            let upscale_state = if self.scale_mode.needs_shader() && !multipass_upscale {
-                self.gpu_upscale.pipeline_for(self.scale_mode).map(|up| {
-                    let uniforms = crate::gpu_upscale::FrameUniforms {
-                        src: [
-                            self.width as f32,
-                            self.height as f32,
-                            1.0 / self.width as f32,
-                            1.0 / self.height as f32,
-                        ],
-                        dst: [dst_w, dst_h, 1.0 / dst_w, 1.0 / dst_h],
-                    };
-                    self.gpu.queue.write_buffer(
-                        &up.uniform_buffer,
-                        0,
-                        bytemuck::bytes_of(&uniforms),
-                    );
-                    let tex_bg = self
-                        .gpu
-                        .device
-                        .create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("upscale src bg"),
-                            layout: &up.bind_group_layout_tex,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(
-                                        &self.render_target_view,
-                                    ),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&up.sampler),
-                                },
-                            ],
-                        });
-                    (up, tex_bg)
-                })
-            } else {
-                None
-            };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("blit RT → swapchain"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &swap_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            if let Some((up, tex_bg)) = upscale_state.as_ref() {
-                // Upscale shader path: attribute-less fullscreen
-                // triangle constrained to the letterbox dst rect via
-                // viewport. Bind groups 0/1 are empty placeholders;
-                // 2 = source texture+sampler, 3 = src/dst uniforms.
-                pass.set_viewport(dx as f32, dy as f32, dst_w, dst_h, 0.0, 1.0);
-                pass.set_pipeline(&up.pipeline);
-                pass.set_bind_group(0, &up.empty_bind_group, &[]);
-                pass.set_bind_group(1, &up.empty_bind_group, &[]);
-                pass.set_bind_group(2, tex_bg, &[]);
-                pass.set_bind_group(3, &up.uniform_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            } else {
-                // Plain Nearest / Linear / PixelArt path — straight
-                // textured-quad blit through `blit_pipeline`.
-                pass.set_pipeline(&self.blit_pipeline);
-                pass.set_bind_group(0, &self.swap_screen_bg, &[]);
-                pass.set_bind_group(1, &self.render_target_bg, &[]);
-                pass.set_vertex_buffer(0, blit_vbo.slice(..));
-                pass.draw(0..6, 0..1);
-            }
-        }
-
-        self.gpu.queue.submit(Some(encoder.finish()));
-        self.gpu.queue.present(frame);
-
-        // Frame stats captured before the per-frame clears below.
-        let draws_this_frame = self.queued.len();
-        let uploads_this_frame = upload_counter::take_count();
-        let present_us = present_start.elapsed().as_micros() as u64;
-        present_time_record(present_us);
-
-        // Frame done — clear queues and reset GPU phase for next frame.
-        self.queued.clear();
-        self.frame_texture_bgs.clear();
-        self.gpu_phase_active = false;
-
-        log_fps(draws_this_frame, uploads_this_frame);
+        self.frame
+            .present(&self.gpu, &mut self.pipelines, &self.resources);
     }
 
     pub fn configure_surface_size(&mut self, width: u32, height: u32) {
-        if let Some(config) = &mut self.surface_config {
-            config.width = width.max(1);
-            config.height = height.max(1);
-            self.reconfigure_surface();
-        }
-    }
-
-    fn reconfigure_surface(&self) {
-        if let Some(config) = &self.surface_config {
-            self.surface.configure(&self.gpu.device, config);
-        }
+        self.frame.configure_surface_size(&self.gpu, width, height);
     }
 
     /// Cross the flush boundary and present in one shot. Loading/menu screens
@@ -2276,55 +929,7 @@ impl Renderer {
     /// genuinely wants to render at a new logical resolution (the
     /// graphics-options menu, for example).
     pub fn resize(&mut self, width: u16, height: u16) {
-        if width == 0 || height == 0 || (width == self.width && height == self.height) {
-            return;
-        }
-        self.width = width;
-        self.height = height;
-        self.cached_dim_texture = None;
-        // Rebuild the offscreen RT at the new logical size.
-        let rt = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("logical render target"),
-            size: wgpu::Extent3d {
-                width: width as u32,
-                height: height as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        self.render_target_view = rt.create_view(&wgpu::TextureViewDescriptor::default());
-        self.render_target_texture = rt;
-        let (sprite_stencil_texture, sprite_stencil_view) =
-            make_sprite_stencil_texture(&self.gpu.device, width, height);
-        self._sprite_stencil_texture = sprite_stencil_texture;
-        self.sprite_stencil_view = sprite_stencil_view;
-        self.render_target_bg = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &self.render_target_view,
-            &self.sampler,
-            "rt bg",
-        );
-        let (alpha_source_texture, alpha_source_view, alpha_source_bg) = make_alpha_source(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &self.sampler,
-            width,
-            height,
-        );
-        self.alpha_source_texture = alpha_source_texture;
-        self.alpha_source_view = alpha_source_view;
-        self.alpha_source_bg = alpha_source_bg;
-        // Resizing the logical viewport invalidates any modal scene
-        // snapshot — the captured pixels are the wrong size now.
-        self.frozen_scene = None;
+        self.frame.resize(&self.gpu, &self.resources, width, height);
     }
 
     /// Outline a rect on the GPU overlay layer. Color is RGB565 to match the
@@ -2355,7 +960,7 @@ impl Renderer {
                 (r.max.x - r.min.x) as i32,
                 (r.max.y - r.min.y) as i32,
             ),
-            None => (0, 0, self.width as i32, self.height as i32),
+            None => (0, 0, self.frame.width as i32, self.frame.height as i32),
         };
         self.render_gpu_rect(x, y, w, h, r, g, b, 255);
         true
@@ -2365,7 +970,7 @@ impl Renderer {
     /// no legacy framebuffer upload. Used by menus/loading states whose
     /// background is fully drawn by queued GPU quads.
     pub fn begin_gpu_frame_clear(&mut self) {
-        self.gpu_phase_active = true;
+        self.frame.enter_gpu_phase();
     }
 
     /// Blit a sprite from a managed RGB565 surface to the screen,
@@ -2389,11 +994,11 @@ impl Renderer {
             tracing::warn!("blit_with_shadow: GPU path requires screen destination");
             return false;
         }
-        self.gpu_phase_active = true;
+        self.frame.enter_gpu_phase();
 
         // Snapshot src-side data with a single immutable borrow.
         let (blit_w, blit_h, src_x, src_y) = {
-            let src_info = match self.managed_surfaces.get(&src_id) {
+            let src_info = match self.resources.managed_surfaces.get(&src_id) {
                 Some(i) => i,
                 None => return false,
             };
@@ -2435,7 +1040,7 @@ impl Renderer {
         if flags & BLIT_SOURCE_TRANSPARENT == 0 {
             return self.blit_to_screen(src_id, src_rect, dst_rect, flags);
         }
-        let Some(src_surface) = self.managed_surfaces.get(&src_id) else {
+        let Some(src_surface) = self.resources.managed_surfaces.get(&src_id) else {
             return false;
         };
         let sw = src_surface.width as f32;
@@ -2469,7 +1074,7 @@ impl Renderer {
     ) -> bool {
         let id = self.resolve_id(src_id);
         let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
-        let Some(surface) = self.managed_surfaces.get(&id) else {
+        let Some(surface) = self.resources.managed_surfaces.get(&id) else {
             return false;
         };
         let (sw, sh) = (surface.width as f32, surface.height as f32);
@@ -2478,8 +1083,8 @@ impl Renderer {
             dst_rect,
             sw,
             sh,
-            self.width as i32,
-            self.height as i32,
+            self.frame.width as i32,
+            self.frame.height as i32,
         );
         if transparent {
             self.queue_transparent_managed_bgs(
@@ -2492,7 +1097,7 @@ impl Renderer {
             );
         } else {
             let tex_idx = self.queue_cached_bg(surface.opaque_bg.clone());
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst: sub_dst,
                 corners: None,
                 uv: sub_uv,
@@ -2516,7 +1121,7 @@ impl Renderer {
     ) -> bool {
         let id = self.resolve_id(src_id);
         let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
-        let Some(surface) = self.managed_surfaces.get(&id) else {
+        let Some(surface) = self.resources.managed_surfaces.get(&id) else {
             return false;
         };
         let (sw, sh) = (surface.width as f32, surface.height as f32);
@@ -2525,8 +1130,8 @@ impl Renderer {
             dst_rect,
             sw,
             sh,
-            self.width as i32,
-            self.height as i32,
+            self.frame.width as i32,
+            self.frame.height as i32,
         );
         // alpha_level: 0 = fully opaque, 100 = fully transparent.
         // Convert to a 0..1 multiplier.
@@ -2542,7 +1147,7 @@ impl Renderer {
             );
         } else {
             let tex_idx = self.queue_cached_bg(surface.opaque_bg.clone());
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst: sub_dst,
                 corners: None,
                 uv: sub_uv,
@@ -2565,7 +1170,7 @@ impl Renderer {
     ) {
         if let Some(shadow_bg) = shadow_bg {
             let tex_idx = self.queue_cached_bg(shadow_bg);
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst,
                 corners: None,
                 uv,
@@ -2580,7 +1185,7 @@ impl Renderer {
             });
         }
         let tex_idx = self.queue_cached_bg(color_bg);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst,
             corners: None,
             uv,
@@ -2603,7 +1208,7 @@ impl Renderer {
         if y1 == y2 {
             let lx = x1.min(x2);
             let rx = x1.max(x2);
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst: Rect {
                     x: lx,
                     y: y1,
@@ -2621,7 +1226,7 @@ impl Renderer {
         if x1 == x2 {
             let ty = y1.min(y2);
             let by = y1.max(y2);
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst: Rect {
                     x: x1,
                     y: ty,
@@ -2653,7 +1258,7 @@ impl Renderer {
             (p1.0 - nx, p1.1 - ny), // BL
             (p2.0 - nx, p2.1 - ny), // BR
         ];
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x: 0,
                 y: 0,
@@ -2670,7 +1275,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn render_gpu_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8, a: u8) {
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect { x, y, w, h },
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -2687,7 +1292,7 @@ impl Renderer {
     /// zero-area triangle `(C, B, C)`. Used by the debug shadow /
     /// view-cone overlays.
     pub fn render_gpu_triangle(&mut self, pts: [(f32, f32); 3], r: u8, g: u8, b: u8, a: u8) {
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x: 0,
                 y: 0,
@@ -2715,7 +1320,7 @@ impl Renderer {
     /// unmodified frozen-scene quad that would otherwise have been
     /// pushed by `present()`.
     pub fn colorize_framebuffer(&mut self, desired_hue: f32, scale: f32) {
-        if self.frozen_scene.is_none() {
+        if self.frame.frozen_scene.is_none() {
             // No snapshot to recolour — colorize is a no-op outside
             // the modal flow. The recolour runs against the scene
             // snapshot captured by `freeze_scene_for_modal`.
@@ -2723,12 +1328,12 @@ impl Renderer {
         }
         let scale = scale.clamp(0.0, 1.0);
         let hue = desired_hue.rem_euclid(360.0) / 360.0;
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x: 0,
                 y: 0,
-                w: self.width as i32,
-                h: self.height as i32,
+                w: self.frame.width as i32,
+                h: self.frame.height as i32,
             },
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -2749,54 +1354,14 @@ impl Renderer {
         shadow_color: u16,
         shadow_level: u16,
     ) -> Option<(u16, u16)> {
-        let shadow_alpha = shadow_alpha_from_level(shadow_level);
-        let key = SpriteCacheKey {
-            bank_id,
-            variant,
-            shadow_color: shadow_color as u32,
-            shadow_alpha,
-        };
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
-        }
-        let w = frame_holder.sprite_width(bank_id);
-        let h = frame_holder.sprite_height(bank_id);
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let rgba = sprite_rgba_for_upload(
+        self.resources.ensure_sprite_cached(
+            &self.gpu,
             frame_holder,
             bank_id,
             variant,
             shadow_color,
-            shadow_alpha,
-            self.bit_depth,
-        );
-        let (texture, view) = upload_rgba_texture(
-            &self.gpu,
-            &rgba,
-            w as u32,
-            h as u32,
-            &format!("sprite {bank_id:?}/{variant:?}"),
-        );
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite bg",
-        );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: w,
-                height: h,
-            },
-        );
-        Some((w, h))
+            shadow_level,
+        )
     }
 
     /// Build the GPU cache for the edge-map outline used by the
@@ -2809,62 +1374,16 @@ impl Renderer {
         bank_id: u32,
         variant: SpriteVariant,
         shadow_color: u16,
-        _shadow_level: u16,
+        shadow_level: u16,
     ) -> Option<(u16, u16)> {
-        let key = outline_cache_key(bank_id, variant, shadow_color);
-        if let Some(c) = self.sprite_cache.entries.get(&key) {
-            return Some((c.width, c.height));
-        }
-
-        let w = frame_holder.sprite_width(bank_id);
-        let h = frame_holder.sprite_height(bank_id);
-        if w == 0 || h == 0 {
-            return None;
-        }
-
-        let mut rgb565 = vec![TRANSPARENT_COLOR_KEY_16; w as usize * h as usize];
-        frame_holder.uncompress_frame(
-            &mut rgb565,
-            w as usize,
+        self.resources.ensure_outline_cached(
+            &self.gpu,
+            frame_holder,
             bank_id,
             variant,
             shadow_color,
-            self.bit_depth,
-        );
-        let outline_w = w as usize + OUTLINE_PAD * 2;
-        let rgba = sprite_outline_rgba(
-            &rgb565,
-            w as usize,
-            h as usize,
-            outline_w,
-            TRANSPARENT_COLOR_KEY_16,
-            shadow_color,
-        );
-        let (texture, view) = upload_rgba_texture(
-            &self.gpu,
-            &rgba,
-            outline_w as u32,
-            h as u32,
-            &format!("sprite outline {bank_id:?}/{variant:?}"),
-        );
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite outline bg",
-        );
-        self.sprite_cache.entries.insert(
-            key,
-            CachedSprite {
-                _texture: texture,
-                _view: view,
-                bind_group,
-                width: outline_w as u16,
-                height: h,
-            },
-        );
-        Some((outline_w as u16, h))
+            shadow_level,
+        )
     }
 
     /// Upload the static binary alpha for a sprite-occlusion mask. It is
@@ -2877,77 +1396,14 @@ impl Renderer {
         mask_w: u16,
         mask_h: u16,
     ) -> bool {
-        if mask_w == 0 || mask_h == 0 {
-            return false;
-        }
-        let pixels = mask_w as usize * mask_h as usize;
-        if bitmap.len() < pixels {
-            return false;
-        }
-        // Spread the binary bitmap (`0` / `1`) into R8 (`0` / `255`) so
-        // the sampler returns full 0..1, matching the alpha falloff of
-        // the original RGBA compose at building edges.
-        let mut r8 = Vec::with_capacity(pixels);
-        for &b in &bitmap[..pixels] {
-            r8.push(if b != 0 { 0xFFu8 } else { 0x00 });
-        }
-        upload_counter::inc("mask alpha");
-        let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&format!("mask alpha {mask_index}")),
-            size: wgpu::Extent3d {
-                width: mask_w as u32,
-                height: mask_h as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &r8,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(mask_w as u32),
-                rows_per_image: Some(mask_h as u32),
-            },
-            wgpu::Extent3d {
-                width: mask_w as u32,
-                height: mask_h as u32,
-                depth_or_array_layers: 1,
-            },
-        );
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "sprite mask alpha bg",
-        );
-        self.mask_alpha_cache.insert(
-            mask_index,
-            MaskAlpha {
-                _texture: tex,
-                _view: view,
-                bind_group,
-            },
-        );
-        true
+        self.resources
+            .upload_mask_alpha(&self.gpu, mask_index, bitmap, mask_w, mask_h)
     }
 
     /// Return a stable insertion point immediately before the next sprite or
     /// ground-mark draw that may need building occlusion.
     pub(crate) fn draw_queue_checkpoint(&self) -> usize {
-        self.queued.len()
+        self.frame.queued.len()
     }
 
     /// Apply the union of `masks` to draws queued since `checkpoint`.
@@ -2963,22 +1419,22 @@ impl Renderer {
         clip_rect: Rect,
     ) {
         assert!(
-            checkpoint <= self.queued.len(),
+            checkpoint <= self.frame.queued.len(),
             "sprite mask checkpoint {checkpoint} exceeds draw queue length {}",
-            self.queued.len()
+            self.frame.queued.len()
         );
         if masks.is_empty() {
             return;
         }
         assert!(
-            checkpoint < self.queued.len(),
+            checkpoint < self.frame.queued.len(),
             "sprite masks require at least one queued draw"
         );
 
         let mut stencil_draws = Vec::with_capacity(masks.len());
         for &(mask_index, mask_rect) in masks {
             assert!(
-                self.mask_alpha_cache.contains_key(&mask_index),
+                self.resources.mask_alpha_cache.contains_key(&mask_index),
                 "sprite mask {mask_index} was not uploaded"
             );
             let Some((dst, uv)) = clip_dst_to_uv(mask_rect, clip_rect) else {
@@ -2997,9 +1453,11 @@ impl Renderer {
             return;
         }
 
-        mark_draws_stencil_tested(&mut self.queued[checkpoint..]);
-        self.queued.splice(checkpoint..checkpoint, stencil_draws);
-        self.queued.push(QueuedDraw {
+        mark_draws_stencil_tested(&mut self.frame.queued[checkpoint..]);
+        self.frame
+            .queued
+            .splice(checkpoint..checkpoint, stencil_draws);
+        self.frame.queued.push(QueuedDraw {
             dst: clip_rect,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -3026,12 +1484,12 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.sprite_cache.entries.get(&key) {
+        let bg = match self.resources.sprite_cache.entries.get(&key) {
             Some(c) => c.bind_group.clone(),
             None => return false,
         };
         let tex_idx = self.queue_cached_bg(bg);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -3059,12 +1517,12 @@ impl Renderer {
             shadow_color: shadow_color as u32,
             shadow_alpha: shadow_alpha_from_level(shadow_level),
         };
-        let bg = match self.sprite_cache.entries.get(&key) {
+        let bg = match self.resources.sprite_cache.entries.get(&key) {
             Some(c) => c.bind_group.clone(),
             None => return false,
         };
         let tex_idx = self.queue_cached_bg(bg);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -3088,12 +1546,12 @@ impl Renderer {
         alpha: u8,
     ) -> bool {
         let key = outline_cache_key(bank_id, variant, shadow_color);
-        let bg = match self.sprite_cache.entries.get(&key) {
+        let bg = match self.resources.sprite_cache.entries.get(&key) {
             Some(c) => c.bind_group.clone(),
             None => return false,
         };
         let tex_idx = self.queue_cached_bg(bg);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -3139,11 +1597,11 @@ impl Renderer {
         let right = mask_rect
             .right()
             .min(sprite_rect.right())
-            .min(self.width as i32);
+            .min(self.frame.width as i32);
         let bottom = mask_rect
             .bottom()
             .min(sprite_rect.bottom())
-            .min(self.height as i32);
+            .min(self.frame.height as i32);
         if left >= right || top >= bottom {
             return true;
         }
@@ -3161,7 +1619,7 @@ impl Renderer {
             bank_id,
             variant,
             shadow_color,
-            self.bit_depth,
+            self.resources.bit_depth,
         );
 
         let out_w = (right - left) as usize;
@@ -3224,7 +1682,7 @@ impl Renderer {
             "hidden mask outline",
         );
         let tex_idx = self.queue_frame_texture(&view);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect::new(left, top, out_w as u32, out_h as u32),
             corners: None,
             uv: [0.0, 0.0, 1.0, 1.0],
@@ -3236,66 +1694,12 @@ impl Renderer {
     }
 
     pub fn clear_mask_alpha_cache(&mut self) {
-        self.mask_alpha_cache.clear();
+        self.resources.clear_mask_alpha_cache();
     }
 
     pub fn upload_background_texture(&mut self, width: u32, height: u32, pixels: &[u16]) -> bool {
-        if width == 0 || height == 0 {
-            return false;
-        }
-        if pixels.len() != width as usize * height as usize {
-            return false;
-        }
-        let rgba = rgb565_to_rgba_opaque(pixels, width as usize, height as usize);
-        upload_counter::inc("background texture");
-        let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("level background"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "background bg",
-        );
-        self.background_texture = Some(BackgroundTexture {
-            _view: view,
-            bind_group,
-            width,
-            height,
-        });
-        true
+        self.resources
+            .upload_background_texture(&self.gpu, width, height, pixels)
     }
 
     pub fn render_background_texture(
@@ -3303,7 +1707,7 @@ impl Renderer {
         src_rect: Option<&BBox>,
         dst_rect: Option<&BBox>,
     ) -> bool {
-        let Some(bg) = self.background_texture.as_ref() else {
+        let Some(bg) = self.resources.background_texture.as_ref() else {
             return false;
         };
         let bg_bind_group = bg.bind_group.clone();
@@ -3312,11 +1716,11 @@ impl Renderer {
             dst_rect,
             bg.width as f32,
             bg.height as f32,
-            self.width as i32,
-            self.height as i32,
+            self.frame.width as i32,
+            self.frame.height as i32,
         );
         let tex_idx = self.queue_cached_bg(bg_bind_group);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst,
             corners: None,
             uv,
@@ -3341,7 +1745,7 @@ impl Renderer {
         let g = ((color >> 8) & 0xFF) as f32 / 255.0;
         let b = (color & 0xFF) as f32 / 255.0;
         let a = alpha_256.min(256) as f32 / 256.0;
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
             uv,
@@ -3362,7 +1766,7 @@ impl Renderer {
         if dst_rect.w <= 0 || dst_rect.h <= 0 {
             return;
         }
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: dst_rect,
             corners: None,
             uv: [
@@ -3407,7 +1811,7 @@ impl Renderer {
         let atlas_bg = self.ensure_font_atlas(font_id, font);
         let tex_idx = self.queue_cached_bg(atlas_bg);
         for q in font.layout_quads(text, x, y) {
-            self.queued.push(QueuedDraw {
+            self.frame.queued.push(QueuedDraw {
                 dst: Rect {
                     x: q.dst_x,
                     y: q.dst_y,
@@ -3462,7 +1866,7 @@ impl Renderer {
         }
         let (_tex, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "tt scratch");
         let tex_idx = self.queue_frame_texture(&view);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x,
                 y,
@@ -3485,28 +1889,7 @@ impl Renderer {
         font_id: u64,
         font: &crate::native_font::NativeFont,
     ) -> wgpu::BindGroup {
-        if let Some(a) = self.font_atlas_cache.get(&font_id) {
-            return a.bind_group.clone();
-        }
-        let (rgba, w, h) = font.build_rgba_atlas();
-        let (texture, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "font atlas");
-        let bind_group = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            &view,
-            &self.sampler,
-            "font atlas bg",
-        );
-        let bg_clone = bind_group.clone();
-        self.font_atlas_cache.insert(
-            font_id,
-            FontAtlas {
-                _texture: texture,
-                _view: view,
-                bind_group,
-            },
-        );
-        bg_clone
+        self.resources.ensure_font_atlas(&self.gpu, font_id, font)
     }
 
     /// Public helper for callers that own their own wgpu textures
@@ -3523,7 +1906,7 @@ impl Renderer {
         blend: BlendMode,
     ) {
         let tex_idx = self.queue_frame_texture(view);
-        self.queued.push(QueuedDraw {
+        self.frame.queued.push(QueuedDraw {
             dst,
             corners: None,
             uv,
@@ -3563,99 +1946,7 @@ impl Renderer {
     /// Used by the `/screenshot` HTTP endpoint, the `PrintScreen`
     /// hotkey path, and the savegame thumbnail.
     pub fn capture_frame_rgba(&mut self) -> Option<(u32, u32, Vec<u8>)> {
-        let w = self.width as u32;
-        let h = self.height as u32;
-        if w == 0 || h == 0 {
-            return None;
-        }
-
-        self.push_implicit_base_quad();
-        self.upload_queue_geometry();
-
-        // Pad rows up to wgpu's COPY_BYTES_PER_ROW_ALIGNMENT (256).
-        let bytes_per_pixel = 4u32;
-        let unpadded_bpr = w * bytes_per_pixel;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bpr = unpadded_bpr.div_ceil(align) * align;
-        let buffer_size = (padded_bpr as u64) * (h as u64);
-        let buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rt readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let mut encoder = self
-            .gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("capture frame"),
-            });
-        self.encode_pass1_to_rt(&mut encoder);
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.render_target_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bpr),
-                    rows_per_image: Some(h),
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.gpu.queue.submit(Some(encoder.finish()));
-
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
-        if self
-            .gpu
-            .device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .is_err()
-        {
-            tracing::warn!("capture_frame_rgba: device.poll(Wait) failed");
-            self.queued.clear();
-            self.frame_texture_bgs.clear();
-            self.gpu_phase_active = false;
-            return None;
-        }
-        let mapped = match slice.get_mapped_range() {
-            Ok(mapped) => mapped,
-            Err(error) => {
-                tracing::warn!(%error, "capture_frame_rgba: failed to access mapped buffer");
-                buffer.unmap();
-                self.queued.clear();
-                self.frame_texture_bgs.clear();
-                self.gpu_phase_active = false;
-                return None;
-            }
-        };
-        let mut rgba = Vec::with_capacity((w * h * bytes_per_pixel) as usize);
-        for row in 0..h {
-            let start = (row * padded_bpr) as usize;
-            let end = start + unpadded_bpr as usize;
-            rgba.extend_from_slice(&mapped[start..end]);
-        }
-        drop(mapped);
-        buffer.unmap();
-
-        // Match `present()`'s post-frame cleanup so the next live
-        // render starts from an empty queue.
-        self.queued.clear();
-        self.frame_texture_bgs.clear();
-        self.gpu_phase_active = false;
-
-        Some((w, h, rgba))
+        readback::capture_frame_rgba(&self.gpu, &self.pipelines, &self.resources, &mut self.frame)
     }
 
     /// No-op because wgpu has no target stack: `capture_frame_rgba` already
@@ -3675,16 +1966,8 @@ impl Renderer {
     /// uploads) are safe to use as long as the same call site queues
     /// + presents in one frame.
     fn queue_frame_texture(&mut self, view: &wgpu::TextureView) -> u32 {
-        let bg = make_tex_bg(
-            &self.gpu.device,
-            &self.bgl_tex,
-            view,
-            &self.sampler,
-            "frame tex bg",
-        );
-        let idx = self.frame_texture_bgs.len() as u32;
-        self.frame_texture_bgs.push(bg);
-        idx
+        self.frame
+            .queue_frame_texture(&self.gpu, &self.resources, view)
     }
 
     /// Reuse an already-built bind group (sprite cache, mask cache,
@@ -3692,9 +1975,7 @@ impl Renderer {
     /// `.clone()` is cheap — much cheaper than rebuilding the bg
     /// every frame inside `queue_frame_texture`.
     fn queue_cached_bg(&mut self, bg: wgpu::BindGroup) -> u32 {
-        let idx = self.frame_texture_bgs.len() as u32;
-        self.frame_texture_bgs.push(bg);
-        idx
+        self.frame.queue_cached_bg(bg)
     }
 }
 

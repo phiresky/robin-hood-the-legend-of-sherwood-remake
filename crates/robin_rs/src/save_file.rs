@@ -366,10 +366,13 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   missing snapshot fields by default.
 /// - **v46** (2026-07-19, nested engine snapshot): `EngineInner` serializes
 ///   its nine current state owners instead of the historical flat field list.
-/// - **v47** (2026-07-19, integrated main): prior current-format state changes.
-/// - **v48** (2026-07-19, simulation lifecycle): saves require persistent game
-///   state and serialize full SimConfig plus mission construction/restart RNG
-///   checkpoints.
+/// - **v47** (2026-07-19, script effects): mission scripts serialize the
+///   canonical `script_effects` owner with typed presentation, external, and
+///   simulation-barrier domains.
+/// - **v48** (2026-07-19, ordered effects and simulation lifecycle): typed
+///   effects serialize in one emission-ordered stream, sequence continuation
+///   state is explicit, persistent game state is required, and complete
+///   `SimConfig` plus mission construction/restart RNG checkpoints serialize.
 pub const SAVE_FORMAT_VERSION: u32 = 48;
 
 /// Save file header.
@@ -416,6 +419,9 @@ impl SaveHeader {
                 self.version
             );
         }
+        if self.mission_id == 0 {
+            bail!("invalid save mission ID: zero is not a valid mission");
+        }
         Ok(())
     }
 }
@@ -447,10 +453,11 @@ pub struct GameSaveFile {
 }
 
 impl GameSaveFile {
-    /// Build a save file from a live engine.
-    ///
-    /// Callers without a live `Game` handle receive the canonical default;
-    /// the real save/load pipeline uses [`capture_with_game`](Self::capture_with_game).
+    /// Test-only convenience for snapshots that do not exercise host-owned
+    /// persistent game flags. Production saves must use
+    /// [`capture_with_game`](Self::capture_with_game) so a valid-looking v48
+    /// payload can never silently substitute default persistent state.
+    #[cfg(test)]
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
         Self {
             header: SaveHeader::new(mission_id, display_text),
@@ -460,10 +467,8 @@ impl GameSaveFile {
         }
     }
 
-    /// Variant of [`capture`](Self::capture) that also snapshots the
-    /// host-side `GamePersistentState`.  Used by the real save pipeline
-    /// so campaign-map and widget-enable flags round-trip; test-only
-    /// call sites without a `Game` stay on [`capture`](Self::capture).
+    /// Build a production save while snapshotting the required host-side
+    /// `GamePersistentState`.
     pub fn capture_with_game(
         engine: &Engine,
         host: &Host,
@@ -471,14 +476,17 @@ impl GameSaveFile {
         mission_id: u32,
         display_text: String,
     ) -> Self {
-        let mut save = Self::capture(engine, host, mission_id, display_text);
         let mut persistent = game.persistent.clone();
         // The live `draw_hidden` flag lives on `InputState` so renderers
         // read it cheaply; snapshot it here so the debug toggle
         // round-trips through save/load.
         persistent.draw_hidden = host.input.draw_hidden;
-        save.game_persistent = persistent;
-        save
+        Self {
+            header: SaveHeader::new(mission_id, display_text),
+            engine: engine.clone(),
+            sound: host.audio.sound.clone(),
+            game_persistent: persistent,
+        }
     }
 
     /// Apply a save file to the engine, replacing it wholesale.
@@ -532,6 +540,7 @@ impl GameSaveFile {
 
     /// Write the save file to disk as JSON.
     pub fn write_to(&self, path: &Path) -> Result<()> {
+        self.header.validate()?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating save directory {}", parent.display()))?;
@@ -652,6 +661,15 @@ mod tests {
     }
 
     #[test]
+    fn header_rejects_zero_mission_id() {
+        let header = SaveHeader::new(0, String::new());
+        assert_eq!(
+            header.validate().unwrap_err().to_string(),
+            "invalid save mission ID: zero is not a valid mission"
+        );
+    }
+
+    #[test]
     fn save_round_trip_via_json() {
         // Seed scalar engine fields via `test_set_*` helpers (the only
         // back door into `EngineInner` from outside robin_engine), then
@@ -688,6 +706,35 @@ mod tests {
         value.as_object_mut().unwrap().remove("game_persistent");
 
         assert!(serde_json::from_value::<GameSaveFile>(value).is_err());
+    }
+
+    #[test]
+    fn current_v48_requires_every_persistent_game_flag() {
+        let (engine, _assets) = fresh_engine();
+        let host = Host::scratch(800.0, 600.0);
+        let required_fields = [
+            "campaign_map_active",
+            "campaign_map_displayed",
+            "men_to_blazon_conversion",
+            "start_mission_enabled",
+            "quit_mission_enabled",
+            "start_mission_disabled_temp",
+            "quit_mission_disabled_temp",
+            "draw_hidden",
+        ];
+
+        for field in required_fields {
+            let save = GameSaveFile::capture(&engine, &host, 7, "required".into());
+            let mut value = serde_json::to_value(save).unwrap();
+            value["game_persistent"]
+                .as_object_mut()
+                .expect("serialized persistent game state")
+                .remove(field);
+            assert!(
+                serde_json::from_value::<GameSaveFile>(value).is_err(),
+                "v48 payload missing {field} must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -760,13 +807,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_old_version_before_deserializing_flat_engine_payload() {
+    fn read_rejects_v46_before_deserializing_previous_script_effects_payload() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("old_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 45,
+                "version": 46,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Old Save"
@@ -783,7 +830,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 48, got 45"
+            "unsupported save file version: expected 48, got 46"
         );
     }
 

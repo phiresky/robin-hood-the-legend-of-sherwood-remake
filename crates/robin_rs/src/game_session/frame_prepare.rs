@@ -971,6 +971,14 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
                 checker.reset();
             }
+            if callbacks.pending_level_restart {
+                callbacks.pending_level_restart = false;
+                game.operation.set(GameCode::LevelRestart);
+                runtime.trace(FrameContractStage::Exit);
+                return Ok(Some(FrameControl::Exit(MissionExit::new(
+                    GameCode::LevelRestart,
+                ))));
+            }
             if let Some(sync) = callbacks.post_load_sync.take() {
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
@@ -989,6 +997,20 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         );
         if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
             checker.reset();
+        }
+
+        // A rejected/missing/unappliable Restart payload must leave this
+        // mission. Continuing after terminal debriefing reset the operation
+        // to LevelInProgress would keep the failed mission alive with mixed
+        // lifecycle state. The outer session owns the authoritative restart
+        // campaign/RNG/SimConfig checkpoint.
+        if callbacks.pending_level_restart {
+            callbacks.pending_level_restart = false;
+            game.operation.set(GameCode::LevelRestart);
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(Some(FrameControl::Exit(MissionExit::new(
+                GameCode::LevelRestart,
+            ))));
         }
 
         // ── Cross-mission load: bubble up ──

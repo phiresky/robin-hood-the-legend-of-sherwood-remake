@@ -2440,7 +2440,7 @@ impl EngineInner {
     ///
     /// Runtime occupant tracking is wired at the `execute_pass_door`
     /// Enter / Leave branches in `engine::door_pass`: the same hook
-    /// that updates `game_host.building_occupants` also updates
+    /// that updates canonical `BuildingState` occupants also updates
     /// `House::occupant_ids`.
     pub(super) fn initialize_buildings(&mut self) {
         use crate::ai::{AI_DOOR_RALLY_POINT_DISTANCE, DoorRallyPoint, House, Position};
@@ -2680,24 +2680,6 @@ impl EngineInner {
             prev,
             new_overall,
         );
-    }
-
-    /// Set every NPC's `view_radius_base`, `view_radius_goal`, and
-    /// `view_radius` from `standard_view_polygon_radius`.  Called at
-    /// init and when the script changes the radius at runtime.
-    pub(super) fn propagate_view_radius(&mut self) {
-        let r = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS
-        };
-        for (_, entity) in self.world.entities.npcs_mut() {
-            if let Some(npc) = entity.npc_data_mut() {
-                npc.view_radius_base = r;
-                npc.view_radius_goal = r;
-                npc.view_radius = r;
-            }
-        }
     }
 
     // ─── Turn order processing ──────────────────────────────────
@@ -4357,25 +4339,47 @@ impl EngineInner {
         } else {
             None
         };
-        if let Some((old_pc, new_pc)) = guard_delta {
+        if let Some(guard_delta) = guard_delta {
             // Clear `pc.guard` on the old target
             // (`guarded_pc.set_guard(NULL)`).
-            if old_pc != 0
-                && let Some(Entity::Pc(pc)) =
-                    self.world.entities.get_mut(EntityId::Pc(PcId(old_pc)))
-            {
-                pc.pc.guard = None;
+            if let Some(old_pc) = guard_delta.old {
+                let old_pc_id = EntityId::Pc(old_pc);
+                match self.world.entities.get_mut(old_pc_id) {
+                    Some(Entity::Pc(pc)) => pc.pc.guard = None,
+                    Some(entity) => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?old_pc_id,
+                        actual_kind = ?entity.kind(),
+                        "guarded-PC clear target has the wrong entity kind"
+                    ),
+                    None => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?old_pc_id,
+                        "guarded-PC clear target does not exist"
+                    ),
+                }
             }
             // Set `pc.guard` on the new target
             // (`guarded_pc.set_guard(self)`).  Asserts `is_in_coma()`
             // on the PC; the only caller already gates on the coma
             // check in the `AttackingApproachingSleepingEnemy`
             // handler, so skip the redundant debug_assert here.
-            if new_pc != 0
-                && let Some(Entity::Pc(pc)) =
-                    self.world.entities.get_mut(EntityId::Pc(PcId(new_pc)))
-            {
-                pc.pc.guard = Some(npc_id);
+            if let Some(new_pc) = guard_delta.new {
+                let new_pc_id = EntityId::Pc(new_pc);
+                match self.world.entities.get_mut(new_pc_id) {
+                    Some(Entity::Pc(pc)) => pc.pc.guard = Some(npc_id),
+                    Some(entity) => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?new_pc_id,
+                        actual_kind = ?entity.kind(),
+                        "guarded-PC set target has the wrong entity kind"
+                    ),
+                    None => tracing::warn!(
+                        npc = ?npc_id,
+                        target = ?new_pc_id,
+                        "guarded-PC set target does not exist"
+                    ),
+                }
             }
         }
 
@@ -4430,12 +4434,12 @@ impl EngineInner {
             }
         }
 
-        // Process pending archery-sector release — the
+        // Process the ordered archery-reservation release — the
         // `set_my_archery_sector(NULL)` call queued from
         // `EnemyAi::set_state` when the soldier leaves an archer-wait
         // substate.  Decrement the owner counter on the current
         // archery sector and clear the index.  The companion
-        // `pending_release_shooting_point` carries the prior shooting
+        // typed effect carries the prior shooting
         // point's `(sector, point)` so we can also run the
         // `set_my_shooting_point(NULL)` `set_owner(NULL)` write here —
         // the AI layer already cleared its own `my_shooting_point`
@@ -4444,19 +4448,23 @@ impl EngineInner {
             let release = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(enemy) = s.npc.ai_brain.enemy_mut()
             {
-                let sector = if std::mem::take(&mut enemy.pending_release_archery_sector) {
+                let effect = enemy.base.outbox.actor.take_archery_reservation_release();
+                let sector = if effect.release_sector {
                     enemy.my_archery_sector.take()
                 } else {
                     None
                 };
-                let point = enemy.pending_release_shooting_point.take();
-                (sector, point)
+                (sector, effect.shooting_point)
             } else {
                 (None, None)
             };
-            if let (_, Some((sec_idx, pt_idx))) = release
-                && let Some(sector) = self.ai.global.archery_sectors.get_mut(sec_idx as usize)
-                && let Some(pt) = sector.points.get_mut(pt_idx as usize)
+            if let (_, Some(point)) = release
+                && let Some(sector) = self
+                    .ai
+                    .global
+                    .archery_sectors
+                    .get_mut(point.sector_index as usize)
+                && let Some(pt) = sector.points.get_mut(usize::from(point.point_index))
             {
                 pt.owner = None;
             }
@@ -7515,33 +7523,28 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
-            for &(npc_id, path_idx, wp_idx) in &requests {
-                let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
-                match script.call_waypoint_function(
-                    path_idx,
-                    wp_idx,
-                    "ReachPoint",
-                    &[actor_handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                        // Debug assert — `ReachPoint` is part of the
-                        // `IWaypointScript` contract, so a bound
-                        // instance failing the call is a bug.
-                        debug_assert!(
-                            false,
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                    }
+        for &(npc_id, path_idx, wp_idx) in &requests {
+            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+            match self.call_script_vm(
+                sim,
+                assets,
+                ScriptVmKey::Waypoint(path_idx, wp_idx),
+                "ReachPoint",
+                &[actor_handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
+                    debug_assert!(
+                        false,
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
                 }
             }
-        });
+        }
 
         // ── Phase 2: synchronous Think(EventAfterScriptGoOn) ──
         // `think(EVENT_AFTER_SCRIPT_GO_ON)` fires immediately after

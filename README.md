@@ -161,9 +161,10 @@ Prerequisites:
     export AR_aarch64_linux_android=llvm-ar
     export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=aarch64-linux-android35-clang
 
-Build the Rust shared library:
+Build the Rust shared library (the crate defaults to `rlib` so ordinary native
+builds and tests do not also link an unused shared library):
 
-    RUSTC_WRAPPER= cargo build -p robin_rs --lib \
+    RUSTC_WRAPPER= cargo rustc -p robin_rs --lib --crate-type cdylib \
         --target aarch64-linux-android \
         --profile android-dev \
         --no-default-features --features android

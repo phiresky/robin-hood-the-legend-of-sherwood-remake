@@ -91,7 +91,7 @@ use crate::input_translator::{GameAction, TranslationFlags};
 use crate::lua_session::LuaSession;
 use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, execute_app_effects,
-    perform_pending_save_load, required_mission_id,
+    perform_pending_save_load, validated_save_reload_target,
 };
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::multiplayer::lobby::current_epoch_ms;
@@ -694,15 +694,10 @@ pub(crate) async fn run_session(
 /// Returns the exit GameCode.
 /// Cross-mission quick-load confirmation modal.
 ///
-/// Pre-screens a queued `SaveLoadRequest::QuickLoad` before it reaches
-/// `perform_pending_save_load`: if the targeted quicksave's mission ID
-/// differs from the running mission, ask "Do you really want to load
-/// this quicksave?".  On "No" the request is dropped; on "Yes" it is
-/// rewritten into `SaveLoadRequest::Load { slot, mission_id: current }`
-/// so the existing `Load` arm's `PendingLevelLoad` routing performs the
-/// mission switch + re-queue.  When the mission IDs match the request
-/// is left untouched and the modal is skipped (load proceeds without
-/// prompting).
+/// Decode and strictly validate the exact queued QuickLoad payload before
+/// deciding whether a cross-mission confirmation is required. The decoded
+/// bytes are carried into `Load`, so neither a stale `saves.json` entry nor a
+/// file replacement after the modal can change what is eventually applied.
 #[allow(clippy::too_many_arguments)]
 async fn confirm_quickload_cross_mission(
     callbacks: &mut RustCallbacks,
@@ -730,13 +725,34 @@ async fn confirm_quickload_cross_mission(
     if !callbacks.save_manager.slot_file_exists(idx) {
         return;
     }
-    let target_mission_id = required_mission_id(
-        callbacks.save_manager.slot_mission_id(idx),
-        "QuickLoad confirmation slot must have a cached mission ID",
-    );
-    let campaign = engine.campaign();
-    let current = current_mission_id(campaign, profiles);
-    if target_mission_id == current {
+    let save = match callbacks.save_manager.preflight_exact_slot(idx) {
+        Ok(save) => save,
+        Err(error) => {
+            tracing::error!("QuickLoad confirmation preflight failed for {slot_name}: {error:#}");
+            callbacks.pending = None;
+            return;
+        }
+    };
+    if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, &save) {
+        tracing::error!("QuickLoad confirmation rejected stale {slot_name} slot: {error:#}");
+        callbacks.pending = None;
+        return;
+    }
+    let current = current_mission_id(engine.campaign(), profiles);
+    let target_mission_id = match validated_save_reload_target(&save, profiles, current) {
+        Ok(target) => target,
+        Err(error) => {
+            tracing::error!("QuickLoad confirmation rejected {slot_name}: {error}");
+            callbacks.pending = None;
+            return;
+        }
+    };
+    if target_mission_id.is_none() {
+        callbacks.pending = Some(SaveLoadRequest::Load {
+            slot: Some(idx),
+            mission_id: current,
+            save: Some(save),
+        });
         return;
     }
     let resources = required_menu_resources(menu_resources, "cross-mission QuickLoad confirmation");
@@ -744,15 +760,12 @@ async fn confirm_quickload_cross_mission(
     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
     let confirmed = show_yesno(event_pump, renderer, resources, cursor, &msg).await;
     if confirmed {
-        // Route through the regular `Load` arm so its existing
-        // `PendingLevelLoad` cross-mission plumbing handles the mission
-        // swap + Load re-queue on the fresh engine.  Pass the running
-        // mission id so the arm's `header.mission_id != mission_id`
-        // check fires.
+        // Route the already-validated payload through the regular `Load`
+        // arm so its cross-mission plumbing switches immutable level assets.
         callbacks.pending = Some(SaveLoadRequest::Load {
             slot: Some(idx),
             mission_id: current,
-            save: None,
+            save: Some(save),
         });
     } else {
         callbacks.pending = None;

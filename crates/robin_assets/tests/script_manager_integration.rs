@@ -6,8 +6,9 @@
 mod support;
 
 use robin_assets::scb;
-use robin_engine::natives::{GameHost, NativeContext, NativeSessionCapabilities, ScriptState};
-use robin_engine::script_manager::{ScriptError, ScriptManager};
+use robin_engine::interp::{HostFunctions, NativeCallOutcome, NativeStack, StopReason};
+use robin_engine::natives::{NativeContext, NativeSessionCapabilities, ScriptEffects, ScriptState};
+use robin_engine::script_manager::{ScriptError, ScriptInstance, ScriptManager};
 use support::{data_directory, data_file};
 
 fn test_sim() -> robin_engine::sim_rng::SimulationContext {
@@ -52,6 +53,29 @@ fn make_scb_bytes(class_name: &str, fn_name: &str, heap_size: i32, quads: &[scb:
 fn load_manager(bytes: &[u8]) -> ScriptManager {
     let scb = scb::parse_bytes(bytes).unwrap();
     ScriptManager::new(scb)
+}
+
+struct NoNatives;
+
+impl HostFunctions for NoNatives {
+    fn call(&mut self, index: u32, _stack: &mut NativeStack) -> NativeCallOutcome {
+        panic!("test script unexpectedly called native {index}")
+    }
+}
+
+fn poll_call(
+    instance: &mut ScriptInstance,
+    manager: &mut ScriptManager,
+    function: &str,
+    params: &[i32],
+    host: &mut dyn HostFunctions,
+) -> Result<i32, ScriptError> {
+    let mut activation = instance.begin_activation(manager, function, params)?;
+    match instance.poll_activation_with_host(manager, &mut activation, 10_000_000, function, host) {
+        StopReason::ReturnedValue(value) => Ok(value),
+        StopReason::Returned => Ok(0),
+        other => Err(ScriptError::Vm(other)),
+    }
 }
 
 fn q_begin_function(vol: u16, tmp: u16) -> scb::Quad {
@@ -146,7 +170,7 @@ fn create_manager_and_instance() {
     assert!(inst.has_function(&mgr, "Main"));
     assert!(!inst.has_function(&mgr, "NoSuchFn"));
 
-    let result = inst.call_function(&mut mgr, "Main").unwrap();
+    let result = poll_call(&mut inst, &mut mgr, "Main", &[], &mut NoNatives).unwrap();
     assert_eq!(result, 42);
 }
 
@@ -167,7 +191,7 @@ fn function_not_found_error() {
     let mut mgr = load_manager(&bytes);
     let mut inst = mgr.create_instance("Test").unwrap();
 
-    let err = inst.call_function(&mut mgr, "NoSuchFn").unwrap_err();
+    let err = poll_call(&mut inst, &mut mgr, "NoSuchFn", &[], &mut NoNatives).unwrap_err();
     assert!(matches!(err, ScriptError::FunctionNotFound(_)));
 }
 
@@ -175,7 +199,7 @@ fn function_not_found_error() {
 fn static_area_shared_between_instances() {
     // Two instances of the same class. One writes a global via
     // InitGlobal, the other reads it via GetGlobal. The globals
-    // are stored in GameHost (not the static area), so this test
+    // are stored in ScriptEffects (not the static area), so this test
     // verifies the ScriptManager + instance API works correctly.
     let quads = vec![
         // fn SetGlobal42: InitGlobal(0, 42)
@@ -190,7 +214,7 @@ fn static_area_shared_between_instances() {
     let bytes = make_scb_bytes("Test", "SetGlobal42", 0, &quads);
     let mut mgr = load_manager(&bytes);
 
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -208,9 +232,7 @@ fn static_area_shared_between_instances() {
             &mut script_domains,
             &capabilities,
         );
-        let _ = inst
-            .call_function_with_host(&mut mgr, "SetGlobal42", &mut context)
-            .unwrap();
+        let _ = poll_call(&mut inst, &mut mgr, "SetGlobal42", &[], &mut context).unwrap();
     }
     assert_eq!(script_state.globals.get(&0), Some(&42));
 }
@@ -231,7 +253,7 @@ fn native_calls_through_instance() {
     let bytes = make_scb_bytes("Test", "Go", 0, &quads);
     let mut mgr = load_manager(&bytes);
     let mut inst = mgr.create_instance("Test").unwrap();
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -247,14 +269,12 @@ fn native_calls_through_instance() {
         &capabilities,
     );
 
-    let result = inst
-        .call_function_with_host(&mut mgr, "Go", &mut context)
-        .unwrap();
+    let result = poll_call(&mut inst, &mut mgr, "Go", &[], &mut context).unwrap();
     assert_eq!(result, 0x0F);
 }
 
 #[test]
-fn push_param_before_call() {
+fn activation_parameters_are_visible_to_the_polled_function() {
     // Build a .scb where Main(x) returns x + 100.
     let quads = vec![
         q_begin_function(0, 2),
@@ -276,8 +296,7 @@ fn push_param_before_call() {
     let mut mgr = load_manager(&bytes);
     let mut inst = mgr.create_instance("Test").unwrap();
 
-    inst.push_param(7);
-    let result = inst.call_function(&mut mgr, "Main").unwrap();
+    let result = poll_call(&mut inst, &mut mgr, "Main", &[7], &mut NoNatives).unwrap();
     assert_eq!(result, 107);
 }
 
@@ -321,7 +340,7 @@ fn demo_script_via_manager() {
     let mut inst = mgr.create_instance("StartUp").unwrap();
     assert!(inst.has_function(&mgr, "Initialize"));
 
-    let mut host = GameHost::new();
+    let mut host = ScriptEffects::new();
     let mut script_state = ScriptState::default();
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut entities = robin_engine::entities::Entities::new();
@@ -348,7 +367,7 @@ fn demo_script_via_manager() {
         &mut script_domains,
         &capabilities,
     );
-    let _ = inst.call_function_with_host(&mut mgr, &first_fn, &mut context);
+    let _ = poll_call(&mut inst, &mut mgr, &first_fn, &[], &mut context);
 }
 
 /// Exercises all fullgame scripts through the manager: load each .scb,

@@ -10,7 +10,7 @@
 //! * [`LiftType`] — lift sub-type + animation-translation logic + actor
 //!   authorisation.
 //! * [`BuildingIdx`] / [`ArcheryPointIdx`] — newtypes for the parallel
-//!   per-building / per-archery-point tables on `GameHost`.
+//!   canonical per-building / per-archery-point tables.
 //! * [`OccupantKind`] — building-occupant classifier returned by AI helpers.
 //! * [`ScriptSectorData`] — per-script-zone runtime state stored in
 //!   `EngineInner::script_zone_data`.

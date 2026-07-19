@@ -33,7 +33,7 @@ pub struct ComputedScriptLocation {
 pub struct SequenceRecorderState {
     pub recording: Option<RecordingSession>,
     /// Assigned by the original port's `Start`/`Then` implementation. It is
-    /// currently not read, but remains serialized until shipped-save/script
-    /// auditing proves it can be removed compatibly.
+    /// currently not read and is retained only until the recorder itself can
+    /// be simplified.
     pub sequence_id: i32,
 }

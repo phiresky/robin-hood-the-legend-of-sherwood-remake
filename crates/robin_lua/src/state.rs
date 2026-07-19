@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use mlua::Lua;
-use robin_engine::natives::{GameHost, NativeSessionCapabilities, ScriptState};
+use robin_engine::natives::{NativeSessionCapabilities, ScriptEffects, ScriptState};
 
 use crate::natives::{AttachedNativeCall, NativeCallSession};
 
@@ -199,7 +199,7 @@ impl MissionLuaState {
         self.natives_registered = true;
     }
 
-    /// Run `f` with the engine's [`GameHost`] attached as Lua app
+    /// Run `f` with the engine's [`ScriptEffects`] attached as Lua app
     /// data. All registered natives can reach into the host while
     /// `f` is on the stack; once `f` returns, the pointer is
     /// removed so a stray Lua coroutine resumed later can't see
@@ -213,7 +213,7 @@ impl MissionLuaState {
     /// unwind paths.
     pub fn with_host<R>(
         &self,
-        host: &mut GameHost,
+        host: &mut ScriptEffects,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         capabilities: &NativeSessionCapabilities<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
@@ -226,7 +226,7 @@ impl MissionLuaState {
     /// persist across Lua events alongside the SCB VMs.
     pub fn with_host_and_state<R>(
         &self,
-        host: &mut GameHost,
+        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         capabilities: &NativeSessionCapabilities<'_>,
@@ -244,7 +244,7 @@ impl MissionLuaState {
 
     pub fn with_host_state_and_bindings<R>(
         &self,
-        host: &mut GameHost,
+        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
@@ -520,7 +520,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let take5 = |seed: u64| {
             let state = MissionLuaState::new(dir.path()).unwrap();
-            let mut host = GameHost::new();
+            let mut host = ScriptEffects::new();
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut entities = robin_engine::entities::Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
@@ -556,7 +556,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let roll = |source: &str| {
             let state = MissionLuaState::new(dir.path()).unwrap();
-            let mut host = GameHost::new();
+            let mut host = ScriptEffects::new();
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut entities = robin_engine::entities::Entities::new();
             let mut ai_global = robin_engine::ai::AiGlobalState::default();

@@ -14,12 +14,13 @@
 use crate::host::Host;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::campaign::CampaignValue;
+#[cfg(test)]
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::profiles::ProfileManager;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
@@ -360,25 +361,17 @@ impl SaveGameManager {
         self.slot_file_exists(idx)
     }
 
-    /// Apply the "Restart" auto-save to the engine, restoring the
-    /// pre-restart snapshot.  Returns `false` (without touching the
-    /// engine) if no restart save exists — the caller should fall back
-    /// to a fresh `initialize_for_mission`.
-    pub fn load_restart_save(
-        &self,
-        host: &mut Host,
-        game: &mut crate::game::Game,
-        engine: &mut Engine,
-        assets: &engine_api::LevelAssets,
-    ) -> Result<bool> {
+    /// Decode the Restart auto-save without applying it. The caller must run
+    /// the shared strict mission validation before choosing whether the
+    /// payload can use the current mission's immutable assets.
+    pub(crate) fn preflight_restart_save(&self) -> Result<Option<(usize, GameSaveFile)>> {
         let Some(idx) = self.find_by_filename(save_file::special_slots::RESTART) else {
-            return Ok(false);
+            return Ok(None);
         };
         if !self.slot_file_exists(idx) {
-            return Ok(false);
+            return Ok(None);
         }
-        self.load_save_into_engine(idx, engine, host, game, assets)?;
-        Ok(true)
+        Ok(Some((idx, self.preflight_exact_slot(idx)?)))
     }
 
     /// Save the current engine state to the "Sherwood" checkpoint slot.
@@ -401,13 +394,12 @@ impl SaveGameManager {
 
     /// Find the save file to load given the user's request:
     ///
-    ///   1. If the caller supplied a slot index, use it.
-    ///   2. Otherwise fall back to the Continue auto-save.
+    ///   1. If the caller supplied a slot index, use only that exact slot
+    ///      when its file exists.
+    ///   2. Only an unspecified request may resolve the Continue auto-save.
     pub fn find_load_target(&self, explicit: Option<usize>) -> Option<usize> {
-        if let Some(idx) = explicit
-            && self.slot_file_exists(idx)
-        {
-            return Some(idx);
+        if let Some(idx) = explicit {
+            return self.slot_file_exists(idx).then_some(idx);
         }
         self.find_by_filename(save_file::special_slots::CONTINUE)
             .filter(|&i| self.slot_file_exists(i))
@@ -424,8 +416,25 @@ impl SaveGameManager {
         let Some(index) = self.find_load_target(explicit) else {
             return Ok(None);
         };
-        let save = GameSaveFile::read_from(&self.save_path(index))?;
+        let save = self.preflight_exact_slot(index)?;
         Ok(Some((index, save)))
+    }
+
+    /// Decode exactly the requested slot without falling back to Continue.
+    /// This is used when a UI decision and the later apply must refer to the
+    /// same selected file even if the directory changes concurrently.
+    pub(crate) fn preflight_exact_slot(&self, index: usize) -> Result<GameSaveFile> {
+        let slot = self
+            .saves
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("save slot index {index} is out of range"))?;
+        let path = self.save_path(index);
+        GameSaveFile::read_from(&path).with_context(|| {
+            format!(
+                "failed to decode exact save slot {index} ({})",
+                slot.filename
+            )
+        })
     }
 
     fn save_index_anyhow(&self) -> Result<()> {
@@ -475,6 +484,33 @@ impl SaveGameManager {
             .get(index)
             .map(|save| save.mission_id)
             .filter(|&mission_id| mission_id != 0)
+    }
+
+    /// Verify that a decoded payload is still the file described by the
+    /// selected `saves.json` entry. UI decisions based on cached metadata
+    /// must reject a replaced file instead of inheriting the old slot's
+    /// mission identity or confirmation decision.
+    pub(crate) fn validate_slot_identity(&self, index: usize, save: &GameSaveFile) -> Result<()> {
+        let slot = self
+            .saves
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("save slot index {index} is out of range"))?;
+        let header = &save.header;
+        if slot.mission_id != header.mission_id
+            || slot.version != header.version
+            || slot.timestamp != header.timestamp_unix.to_string()
+        {
+            anyhow::bail!(
+                "save slot {index} metadata does not match decoded payload: cached mission/version/timestamp={}/{}/{:?}, decoded={}/{}/{:?}",
+                slot.mission_id,
+                slot.version,
+                slot.timestamp,
+                header.mission_id,
+                header.version,
+                header.timestamp_unix.to_string(),
+            );
+        }
+        Ok(())
     }
 
     pub fn find_by_name(&self, text: &str) -> Option<usize> {
@@ -669,6 +705,7 @@ impl SaveGameManager {
     /// The caller must have already initialized the engine for the
     /// matching mission (level geometry loaded) — this function does
     /// **not** relaunch `initialize_for_mission`.
+    #[cfg(test)]
     pub fn load_save_into_engine(
         &self,
         index: usize,
@@ -837,6 +874,16 @@ mod tests {
             .unwrap();
         assert!(mgr.slot_file_exists(idx));
         assert_eq!(mgr.slot_mission_id(idx), Some(17));
+        let decoded = mgr.preflight_exact_slot(idx).unwrap();
+        mgr.validate_slot_identity(idx, &decoded).unwrap();
+        mgr.saves[idx].mission_id = 99;
+        assert!(
+            mgr.validate_slot_identity(idx, &decoded)
+                .unwrap_err()
+                .to_string()
+                .contains("metadata does not match decoded payload")
+        );
+        mgr.saves[idx].mission_id = 17;
 
         // Write a Continue auto-save.
         mgr.write_continue_save(&mut host, &game, &engine, 17, None, None)
@@ -858,6 +905,25 @@ mod tests {
         mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
+    }
+
+    #[test]
+    fn missing_explicit_slot_never_falls_back_to_continue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
+        let (engine, _assets) = fresh_engine();
+        let mut host = Host::scratch(800.0, 600.0);
+        let game = Game::default();
+        mgr.write_continue_save(&mut host, &game, &engine, 1, None, None)
+            .unwrap();
+        let missing = mgr.create("Missing explicit slot".into(), 1);
+
+        assert_eq!(mgr.find_load_target(Some(missing)), None);
+        assert!(mgr.preflight_load(Some(missing)).unwrap().is_none());
+        assert_eq!(
+            mgr.find_load_target(None),
+            mgr.find_by_filename(special_slots::CONTINUE)
+        );
     }
 
     #[test]

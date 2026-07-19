@@ -29,7 +29,7 @@
 //! this session. Mission scripts whose flow depends on those events will run
 //! their global startup path but miss the later dispatch.
 
-use robin_engine::natives::{GameHost, ScriptState};
+use robin_engine::natives::{ScriptEffects, ScriptState};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -135,9 +135,9 @@ pub enum SpellforgeSessionError {
     #[error("required Spellforge session was not created for mission `{mission}`")]
     RequiredSessionMissing { mission: String },
     #[error(
-        "required Spellforge event `{event}` for mission `{mission}` has no mission-script GameHost"
+        "required Spellforge event `{event}` for mission `{mission}` has no mission-script ScriptEffects"
     )]
-    MissingGameHost {
+    MissingScriptEffects {
         mission: String,
         event: &'static str,
     },
@@ -240,7 +240,7 @@ impl LuaSession {
         // don't call natives from their module-level body (they
         // only *define* event functions there), so app-data access
         // isn't required. If a script ever does, registration
-        // surfaces a clear "no GameHost attached" runtime error.
+        // surfaces a clear "no ScriptEffects attached" runtime error.
         state.load_script(&mission_basename)?;
 
         Ok(Some(Self {
@@ -276,7 +276,7 @@ impl LuaSession {
     }
 
     /// Look up a top-level event function on the Lua globals and
-    /// call it with the engine's [`GameHost`] attached. No-op (with
+    /// call it with the engine's [`ScriptEffects`] attached. No-op (with
     /// a `debug!`) if the script didn't define it — Spellforge
     /// missions cherry-pick which events they override, and missing
     /// ones are perfectly valid.
@@ -290,7 +290,7 @@ impl LuaSession {
     /// source becomes available. Runtime errors must remain errors regardless.
     pub fn run_event(
         &self,
-        host: &mut GameHost,
+        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         capabilities: &robin_engine::natives::NativeSessionCapabilities<'_>,
@@ -310,7 +310,7 @@ impl LuaSession {
 
     fn run_event_with_bindings(
         &self,
-        host: &mut GameHost,
+        host: &mut ScriptEffects,
         script_state: &mut ScriptState,
         script_domains: &mut robin_engine::engine::ScriptDomains,
         bindings: &robin_engine::natives::AttachedScriptBindings,
@@ -387,7 +387,7 @@ impl LuaSession {
     pub fn run_required_startup_events(
         &self,
         native_parts: Option<(
-            &mut GameHost,
+            &mut ScriptEffects,
             &mut ScriptState,
             &mut robin_engine::engine::ScriptDomains,
             &robin_engine::natives::AttachedScriptBindings,
@@ -397,7 +397,7 @@ impl LuaSession {
     ) -> Result<(), SpellforgeSessionError> {
         let Some((host, script_state, script_domains, bindings, capabilities)) = native_parts
         else {
-            return Err(SpellforgeSessionError::MissingGameHost {
+            return Err(SpellforgeSessionError::MissingScriptEffects {
                 mission: self.mission_basename.clone(),
                 event: "Initialize",
             });
@@ -668,7 +668,7 @@ mod tests {
             function BadReturn() return {} end
             "#,
         );
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = robin_engine::entities::Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -741,7 +741,7 @@ mod tests {
             end
             "#,
         );
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = robin_engine::entities::Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -782,7 +782,7 @@ mod tests {
             end
             "#,
         );
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = robin_engine::entities::Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
@@ -831,11 +831,11 @@ mod tests {
     }
 
     #[test]
-    fn required_startup_rejects_a_missing_game_host() {
+    fn required_startup_rejects_a_missing_script_effects() {
         let session = session_with_script("function Initialize() end");
         assert!(matches!(
             session.run_required_startup_events(None, 0),
-            Err(SpellforgeSessionError::MissingGameHost {
+            Err(SpellforgeSessionError::MissingScriptEffects {
                 event: "Initialize",
                 ..
             })
@@ -886,7 +886,7 @@ mod tests {
 
         let mut engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("construct engine with the minimal mission script");
-        engine.with_mission_script_game_host_and_rng(&assets, |_simulation, native_parts| {
+        engine.with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
             session
                 .run_required_startup_events(native_parts, 0)
                 .expect("Lua startup campaign native succeeds")
@@ -950,7 +950,7 @@ mod tests {
 
         let mut engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("construct engine with the minimal mission script");
-        engine.with_mission_script_game_host_and_rng(&assets, |_simulation, native_parts| {
+        engine.with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
             session
                 .run_required_startup_events(native_parts, 0)
                 .expect("Lua startup AI natives succeed")
@@ -969,7 +969,7 @@ mod tests {
             end
             "#,
         );
-        let mut host = GameHost::new();
+        let mut host = ScriptEffects::new();
         let mut entities = robin_engine::entities::Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();

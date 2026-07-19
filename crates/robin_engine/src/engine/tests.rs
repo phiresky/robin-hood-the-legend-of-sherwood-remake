@@ -3303,7 +3303,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     assert!(!accepted);
     // Without `mission_script`, the status store isn't populated
     // either — the setter early-returns.  Covering the "happens to
-    // have GameHost but no class" flow is left to the integration
+    // have ScriptEffects but no class" flow is left to the integration
     // level, so here we just confirm `false` + no panic.
     let _ = ScrollStatus::Opened; // keep symbol live
 }
@@ -3572,6 +3572,135 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 }
 
 #[test]
+fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
+    use crate::ai::{
+        AiState, AlertLevel, ArcheryReservationRelease, GuardedPcEffect, PointArchery,
+        ReservedShootingPoint, SectorArchery, Substate,
+    };
+    use crate::entity_id::PcId;
+    use crate::sector::{ArcheryPointIdx, SectorNumber};
+    use crate::sound::MusicMode;
+
+    let mut engine = EngineInner::new();
+
+    let old_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let current_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let EntityId::Pc(old_guarded_pc_typed) = old_guarded_pc else {
+        panic!("test PC has a non-PC entity ID")
+    };
+    let EntityId::Pc(current_guarded_pc_typed) = current_guarded_pc else {
+        panic!("test PC has a non-PC entity ID")
+    };
+
+    let mut victim = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+    let Entity::Soldier(victim_soldier) = &mut victim else {
+        unreachable!("make_test_ai_soldier returned non-soldier")
+    };
+    victim_soldier.element.active = true;
+    victim_soldier.npc.life_points = 100;
+    let victim_id = engine.add_entity(victim);
+
+    for guarded_pc in [old_guarded_pc, current_guarded_pc] {
+        let Some(Entity::Pc(pc)) = engine.get_entity_mut(guarded_pc) else {
+            panic!("test guarded PC exists")
+        };
+        pc.element.active = true;
+        pc.pc.life_points = 100;
+        pc.pc.guard = Some(victim_id);
+    }
+
+    engine.ai.global.archery_sectors.push(SectorArchery {
+        points: vec![PointArchery {
+            position: Default::default(),
+            direction: 0,
+            is_shooting_point: true,
+            sector_index: SectorNumber::new(1),
+            owner: Some(victim_id),
+        }],
+        polygon: Vec::new(),
+        layer: 0,
+        index_first_shooting_point: Some(ArcheryPointIdx(0)),
+        index_last_shooting_point: Some(ArcheryPointIdx(0)),
+        num_shooting_points: 1,
+        num_owners: 1,
+    });
+
+    let Some(Entity::Soldier(victim_soldier)) = engine.get_entity_mut(victim_id) else {
+        panic!("test victim exists")
+    };
+    let enemy = victim_soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test victim has enemy AI");
+    enemy.guarded_pc = Some(PcId(current_guarded_pc_typed.0));
+    enemy.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
+        old: Some(PcId(old_guarded_pc_typed.0)),
+        new: Some(PcId(current_guarded_pc_typed.0)),
+    });
+    // Model SetState having synchronously cleared the AI-side shooting
+    // point while its reciprocal/global release is still queued.
+    enemy.my_shooting_point = None;
+    enemy.my_archery_sector = Some(0);
+    enemy.base.outbox.actor.archery_reservation_release = ArcheryReservationRelease {
+        shooting_point: Some(ReservedShootingPoint {
+            sector_index: 0,
+            point_index: ArcheryPointIdx(0),
+        }),
+        release_sector: true,
+    };
+    enemy.base.current_state = AiState::Menacing;
+    enemy.base.current_substate = Substate::MenacingPcInComa;
+    enemy.base.current_music_alert_status = AlertLevel::Red;
+    enemy.base.view_alert_status = AlertLevel::Red;
+    enemy.base.outbox.actor.halt = true;
+    engine.ai.global.overall_villain_alert_status = AlertLevel::Red;
+    engine.ai.global.overall_alert_status = AlertLevel::Red;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);
+
+    for guarded_pc in [old_guarded_pc, current_guarded_pc] {
+        let Some(Entity::Pc(pc)) = engine.get_entity(guarded_pc) else {
+            panic!("test guarded PC survives")
+        };
+        assert_eq!(pc.pc.guard, None);
+    }
+    assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
+    assert_eq!(engine.ai.global.archery_sectors[0].num_owners, 0);
+
+    let Some(Entity::Soldier(victim_soldier)) = engine.get_entity(victim_id) else {
+        panic!("test victim survives as a corpse")
+    };
+    let enemy = victim_soldier
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("test victim retains enemy AI");
+    assert_eq!(enemy.guarded_pc, None);
+    assert_eq!(enemy.my_archery_sector, None);
+    assert_eq!(enemy.base.current_state, AiState::Sleeping);
+    assert_eq!(enemy.base.current_substate, Substate::SleepingForever);
+    assert!(!enemy.base.outbox.actor.halt);
+    assert_eq!(
+        enemy.base.outbox.actor.archery_reservation_release,
+        ArcheryReservationRelease::default()
+    );
+    assert!(enemy.base.outbox.music.instant_change);
+
+    engine.update_overall_villain_alert(&assets.profile_manager);
+    assert!(
+        engine
+            .feedback
+            .pending_side_effects
+            .sounds
+            .iter()
+            .any(|command| matches!(command, SoundCommand::ForceMusicMode(MusicMode::Quiet)))
+    );
+}
+
+#[test]
 fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     use crate::element::Posture;
 
@@ -3674,7 +3803,12 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("test officer has enemy AI");
-        officer.set_state(officer_state, Substate::DefaultOnPost);
+        let officer_substate = match officer_state {
+            AiState::Default => Substate::DefaultOnPost,
+            AiState::Attacking => Substate::AttackingSwordfight,
+            other => panic!("unsupported Charly-report officer state: {other:?}"),
+        };
+        officer.set_state(officer_state, officer_substate);
     }
 
     let scratch = engine.build_sim_scratch(sim, &assets);
@@ -7192,7 +7326,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
 // ─── Waypoint-script VM dispatch ───────────────────────────────────
 //
 // Covers the per-waypoint VM wiring added to `MissionScript`:
-// `bind_waypoint` + `call_waypoint_function`.  Each scripted waypoint
+// `bind_waypoint` + the shared ScriptVmKey driver. Each scripted waypoint
 // carries its own VM and `Initialize()` + `ReachPoint(actor)` dispatch
 // into that VM.
 
@@ -7258,10 +7392,9 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 }
 
 /// `bind_waypoint` inserts a `ScriptInstance` keyed by `(path, wp)`
-/// and runs `Initialize()` once.  A missing class returns `false`
-/// and stores nothing.
+/// without running callbacks through a bypass path.
 #[test]
-fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
+fn bind_waypoint_inserts_instance() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
@@ -7288,29 +7421,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
             .waypoint_instances
             .contains_key(&(crate::ai::PathId::new(2).unwrap(), 3))
     );
-
-    // Unknown class is a `false` return + no map insertion.
-    assert!(!script.bind_waypoint(
-        crate::ai::PathId::new(4).unwrap(),
-        0,
-        "NonExistent",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(
-        !script
-            .waypoint_instances
-            .contains_key(&(crate::ai::PathId::new(4).unwrap(), 0))
-    );
 }
 
-/// `call_waypoint_function` dispatches `ReachPoint(actor)` against the
-/// bound instance.  A key with no bound instance returns `Ok(0)` —
-/// matches the pattern used by `call_actor_function` / `call_scroll_function`.
 #[test]
-fn call_waypoint_function_dispatches_and_falls_back() {
-    let scb = scripted_waypoint_scb();
-    let mut script = MissionScript::from_scb(scb).expect("from_scb");
+#[should_panic(expected = "Waypoint script class 'NonExistent'")]
+fn bind_waypoint_rejects_missing_referenced_class() {
+    let mut script = MissionScript::from_scb(scripted_waypoint_scb()).expect("from_scb");
     let mut script_domains = crate::engine::ScriptDomains::default();
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
@@ -7322,50 +7438,76 @@ fn call_waypoint_function_dispatches_and_falls_back() {
         &mut ai_global,
         &mut fast_grid,
     );
-    assert!(script.bind_waypoint(
-        crate::ai::PathId::new(0).unwrap(),
+    script.bind_waypoint(
+        crate::ai::PathId::new(4).unwrap(),
         0,
-        "TestWaypoint",
+        "NonExistent",
         &mut script_domains,
         &capabilities,
-    ));
+    );
+}
+
+/// The Engine driver dispatches `ReachPoint(actor)` against the bound
+/// waypoint instance and distinguishes a missing VM from a missing method.
+#[test]
+fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
+    let scb = scripted_waypoint_scb();
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(MissionScript::from_scb(scb).expect("from_scb"));
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |script, script_domains, capabilities| {
+                assert!(script.bind_waypoint(
+                    crate::ai::PathId::new(0).unwrap(),
+                    0,
+                    "TestWaypoint",
+                    script_domains,
+                    capabilities,
+                ));
+            },
+        )
+        .expect("mission installed");
 
     // Bound: call dispatches cleanly.
     let actor_handle = 42;
-    let ret = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(0).unwrap(),
-            0,
+    let ret = engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "ReachPoint",
             &[actor_handle],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
         .expect("ReachPoint");
     assert_eq!(ret, 0, "empty ReachPoint should return 0");
 
-    // Unbound key: `Ok(0)`, no panic.
-    let ret_missing = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(7).unwrap(),
-            9,
+    // A missing required VM is structural, not an optional-method default.
+    let missing = engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(7).unwrap(), 9),
             "ReachPoint",
             &[actor_handle],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
-        .expect("missing instance should be Ok(0)");
-    assert_eq!(ret_missing, 0);
+        .expect_err("missing instance is an error");
+    assert!(missing.contains("required VM is not bound"));
 
     // Missing function on a bound instance: also `Ok(0)`.
-    let ret_no_fn = script
-        .call_waypoint_function(
-            crate::ai::PathId::new(0).unwrap(),
-            0,
+    let ret_no_fn = engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            super::ScriptVmKey::Waypoint(crate::ai::PathId::new(0).unwrap(), 0),
             "NotAFunction",
             &[],
-            &mut script_domains,
-            &capabilities,
+            crate::natives::ScriptCallFrame::default(),
         )
         .expect("missing function should be Ok(0)");
     assert_eq!(ret_no_fn, 0);
@@ -8338,4 +8480,28 @@ fn start_macro_empty_slot_is_noop() {
     assert!(engine.has_quick_action(pc, 2));
     assert!(!engine.has_quick_action(pc, 0));
     assert!(!engine.has_quick_action(pc, 1));
+}
+
+#[test]
+fn sherwood_harvest_detaches_production_sector_and_clears_points() {
+    let mut engine = EngineInner::new();
+    let mut sector =
+        crate::sector_production::SectorProduction::new(crate::sector_production::Type::MakeArrow);
+    sector.script_zone = Some(3);
+    sector
+        .production_points
+        .push(crate::sector_production::Point {
+            x: 12.0,
+            y: 34.0,
+            layer: 2,
+            sector: 7,
+            obstacle: 0xFFFF,
+        });
+    engine.mission_domain.campaign.production_sectors = vec![sector];
+
+    engine.harvest_production_sector_state(&LevelAssets::new());
+
+    let sector = &engine.mission_domain.campaign.production_sectors[0];
+    assert_eq!(sector.script_zone, None);
+    assert!(sector.production_points.is_empty());
 }
