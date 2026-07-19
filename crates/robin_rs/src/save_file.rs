@@ -3,8 +3,9 @@
 //! Logical fields are serialized through serde.  The format is JSON today
 //! for debuggability; switching to a compact binary format (e.g. bincode)
 //! is a future option once the set of serialized fields stabilizes.  A
-//! 4-byte "RHSG" magic plus a format version are stored in the header;
-//! field evolution relies on serde's structural compat.
+//! 4-byte "RHSG" magic plus a format version are stored in the header.
+//! Readers validate that header before deserializing the version-specific
+//! payload.
 //!
 //! ## What gets serialized
 //!
@@ -364,7 +365,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v45** (2026-04-30, engine-state cleanup): AI profile caches,
 ///   tactical state, and pending AI side-effect flags no longer accept
 ///   missing snapshot fields by default.
-pub const SAVE_FORMAT_VERSION: u32 = 45;
+/// - **v46** (2026-07-19, nested engine snapshot): `EngineInner` serializes
+///   its nine current state owners instead of the historical flat field list.
+pub const SAVE_FORMAT_VERSION: u32 = 46;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,10 +549,18 @@ impl GameSaveFile {
     pub fn read_from(path: &Path) -> Result<Self> {
         let json = fs::read_to_string(path)
             .with_context(|| format!("reading save file {}", path.display()))?;
-        let save: GameSaveFile = serde_json::from_str(&json)
+        let document: serde_json::Value = serde_json::from_str(&json)
             .with_context(|| format!("parsing save file {}", path.display()))?;
-        save.header.validate()?;
-        Ok(save)
+        let header: SaveHeader = serde_json::from_value(
+            document
+                .get("header")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("save file has no header"))?,
+        )
+        .with_context(|| format!("parsing save header {}", path.display()))?;
+        header.validate()?;
+        serde_json::from_value(document)
+            .with_context(|| format!("parsing save payload {}", path.display()))
     }
 }
 
@@ -704,6 +715,34 @@ mod tests {
         let loaded = GameSaveFile::read_from(&path).unwrap();
         assert_eq!(loaded.header.mission_id, 1);
         assert_eq!(loaded.engine.frame_counter(), 999);
+    }
+
+    #[test]
+    fn read_rejects_v45_before_deserializing_flat_engine_payload() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("old_save.json");
+        let old_save = serde_json::json!({
+            "header": {
+                "magic": SAVE_MAGIC,
+                "version": 45,
+                "mission_id": 1,
+                "timestamp_unix": 0,
+                "display_text": "Old Save"
+            },
+            "engine": {
+                "mission": {}
+            }
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("v45 saves must be rejected");
+        let message = format!("{error:#}");
+        assert_eq!(
+            message,
+            "unsupported save file version: expected 46, got 45"
+        );
     }
 
     #[test]
