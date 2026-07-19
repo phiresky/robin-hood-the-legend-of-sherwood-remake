@@ -14,27 +14,27 @@ use super::{
 pub(super) struct FrameState {
     pub(super) width: u16,
     pub(super) height: u16,
-    pub(super) gpu_phase_active: bool,
-    pub(super) shader_frame_count: Option<usize>,
-    pub(super) surface: SharedSurface,
-    pub(super) surface_config: Option<wgpu::SurfaceConfiguration>,
+    gpu_phase_active: bool,
+    shader_frame_count: Option<usize>,
+    surface: SharedSurface,
+    surface_config: Option<wgpu::SurfaceConfiguration>,
     pub(super) render_target_texture: wgpu::Texture,
-    pub(super) render_target_view: wgpu::TextureView,
-    pub(super) _sprite_stencil_texture: wgpu::Texture,
-    pub(super) sprite_stencil_view: wgpu::TextureView,
-    pub(super) render_target_bg: wgpu::BindGroup,
-    pub(super) alpha_source_texture: wgpu::Texture,
-    pub(super) alpha_source_view: wgpu::TextureView,
-    pub(super) alpha_source_bg: wgpu::BindGroup,
-    pub(super) screen_uniform: wgpu::Buffer,
-    pub(super) screen_bg: wgpu::BindGroup,
-    pub(super) swap_screen_uniform: wgpu::Buffer,
-    pub(super) swap_screen_bg: wgpu::BindGroup,
-    pub(super) vertex_buffer: Option<wgpu::Buffer>,
-    pub(super) vertex_capacity: u64,
+    render_target_view: wgpu::TextureView,
+    _sprite_stencil_texture: wgpu::Texture,
+    sprite_stencil_view: wgpu::TextureView,
+    render_target_bg: wgpu::BindGroup,
+    alpha_source_texture: wgpu::Texture,
+    alpha_source_view: wgpu::TextureView,
+    alpha_source_bg: wgpu::BindGroup,
+    screen_uniform: wgpu::Buffer,
+    screen_bg: wgpu::BindGroup,
+    swap_screen_uniform: wgpu::Buffer,
+    swap_screen_bg: wgpu::BindGroup,
+    vertex_buffer: Option<wgpu::Buffer>,
+    vertex_capacity: u64,
     pub(super) queued: Vec<QueuedDraw>,
     pub(super) frame_texture_bgs: Vec<wgpu::BindGroup>,
-    pub(super) blit_vbo: Option<wgpu::Buffer>,
+    blit_vbo: Option<wgpu::Buffer>,
     pub(super) frozen_scene: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
@@ -524,7 +524,7 @@ impl FrameState {
         self.gpu_phase_active = false;
     }
 
-    pub(super) fn reconfigure_surface(&self, gpu: &GpuContext) {
+    fn reconfigure_surface(&self, gpu: &GpuContext) {
         if let Some(config) = &self.surface_config {
             self.surface.configure(&gpu.device, config);
         }
@@ -541,7 +541,7 @@ impl FrameState {
     pub(super) fn resize(
         &mut self,
         gpu: &GpuContext,
-        resources: &mut GpuResources,
+        resources: &GpuResources,
         width: u16,
         height: u16,
     ) {
@@ -550,7 +550,6 @@ impl FrameState {
         }
         self.width = width;
         self.height = height;
-        resources.cached_dim_texture = None;
         self.render_target_texture = create_render_target(&gpu.device, width, height);
         self.render_target_view = self
             .render_target_texture

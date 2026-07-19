@@ -35,7 +35,6 @@ mod resources;
 
 use frame::FrameState;
 use pipelines::PipelineStore;
-use readback::ReadbackFacilities;
 use resources::GpuResources;
 
 // ---------------------------------------------------------------------
@@ -248,7 +247,6 @@ pub struct Renderer {
     resources: GpuResources,
     pipelines: PipelineStore,
     frame: FrameState,
-    readback: ReadbackFacilities,
     /// Update-owned zoom HUD data. Kept separate from GPU ownership because
     /// throwaway screenshot and thumbnail passes must not advance it.
     zoom_presentation: ZoomPresentationState,
@@ -489,7 +487,6 @@ impl Renderer {
             resources,
             pipelines,
             frame,
-            readback: ReadbackFacilities,
             zoom_presentation: ZoomPresentationState::default(),
         }
     }
@@ -932,8 +929,7 @@ impl Renderer {
     /// genuinely wants to render at a new logical resolution (the
     /// graphics-options menu, for example).
     pub fn resize(&mut self, width: u16, height: u16) {
-        self.frame
-            .resize(&self.gpu, &mut self.resources, width, height);
+        self.frame.resize(&self.gpu, &self.resources, width, height);
     }
 
     /// Outline a rect on the GPU overlay layer. Color is RGB565 to match the
@@ -1950,12 +1946,7 @@ impl Renderer {
     /// Used by the `/screenshot` HTTP endpoint, the `PrintScreen`
     /// hotkey path, and the savegame thumbnail.
     pub fn capture_frame_rgba(&mut self) -> Option<(u32, u32, Vec<u8>)> {
-        self.readback.capture_frame_rgba(
-            &self.gpu,
-            &self.pipelines,
-            &self.resources,
-            &mut self.frame,
-        )
+        readback::capture_frame_rgba(&self.gpu, &self.pipelines, &self.resources, &mut self.frame)
     }
 
     /// No-op because wgpu has no target stack: `capture_frame_rgba` already

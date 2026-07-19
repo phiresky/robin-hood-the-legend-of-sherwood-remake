@@ -21,12 +21,11 @@ pub(super) struct GpuResources {
     pub(super) sprite_cache: SpriteTextureCache,
     pub(super) mask_alpha_cache: HashMap<u32, MaskAlpha>,
     pub(super) background_texture: Option<BackgroundTexture>,
-    pub(super) cached_dim_texture: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(super) sampler: wgpu::Sampler,
     pub(super) bgl_tex: wgpu::BindGroupLayout,
     _white_view: wgpu::TextureView,
     pub(super) white_bg: wgpu::BindGroup,
-    pub(super) font_atlas_cache: HashMap<u64, FontAtlas>,
+    font_atlas_cache: HashMap<u64, FontAtlas>,
 }
 
 impl GpuResources {
@@ -254,7 +253,6 @@ impl GpuResources {
             sprite_cache: SpriteTextureCache::default(),
             mask_alpha_cache: HashMap::new(),
             background_texture: None,
-            cached_dim_texture: None,
             sampler,
             bgl_tex,
             _white_view: white_view,
