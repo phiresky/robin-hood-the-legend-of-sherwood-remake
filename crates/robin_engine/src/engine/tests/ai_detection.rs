@@ -1698,7 +1698,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
 }
 
 #[test]
-fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
+fn royalist_detection_alert_does_not_bypass_strict_cadence() {
     use crate::ai::{AiState, Substate};
     use crate::ai_enemy::task_priority;
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
@@ -1794,7 +1794,14 @@ fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
         listener.npc.view_direction = [1.0, 0.0];
         listener.npc.eye_status = crate::element::EyeStatus::LookForward;
 
-        engine.control.frame_counter = 7;
+        engine.control.frame_counter = (crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
+            - source_id.index() % crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
+            % crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC;
+        assert!(
+            (engine.control.frame_counter + source_id.index())
+                .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
+            "source fixture must start on an open Royalist NPC detection gate"
+        );
         assert!(
             !(engine.control.frame_counter + listener_id.index())
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
@@ -1852,15 +1859,15 @@ fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
     let source_first = observe(true);
     assert_eq!(
         source_first,
-        (true, AiState::Attacking, true),
-        "the first Royalist's synchronous VIEW alert must turn and open detection for the later slot"
+        (false, AiState::Wondering, false),
+        "a first Royalist's alert must not bypass the later Royalist's closed modulo-16 gate"
     );
 
     let listener_first = observe(false);
     assert_eq!(
         listener_first,
         (false, AiState::Wondering, false),
-        "an earlier listener slot must not retroactively rescan after the later source alerts it"
+        "an earlier closed listener slot must not retroactively rescan after the source alerts it"
     );
 }
 
@@ -2014,5 +2021,941 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
             (StimulusType::EventView, last_visible_id.index()),
         ],
         "Royalist HandleDetection must retain interleaved edges in detectable-list order"
+    );
+}
+
+#[test]
+fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
+    use crate::ai::{AiLockFlags, AlertLevel};
+    use crate::element::{Camp, Detectable, DetectableType, Entity, EyeStatus};
+
+    for (eye_status, alert_status) in [
+        (EyeStatus::Stare, AlertLevel::Green),
+        (EyeStatus::Follow, AlertLevel::Green),
+        (EyeStatus::LookForward, AlertLevel::Red),
+    ] {
+        let mut engine = EngineInner::new();
+        let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+        let target_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+        for (id, x) in [(observer_id, 0.0), (target_id, 80.0)] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("strict-cadence soldier exists")
+            else {
+                panic!("strict-cadence actor changed kind")
+            };
+            soldier.element.active = true;
+            soldier
+                .element
+                .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+            soldier.element.set_position_map(MapPoint::new(x, 0.0));
+            soldier.npc.life_points = 100;
+        }
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("strict-cadence observer exists after fixture")
+        else {
+            panic!("strict-cadence observer changed kind after fixture")
+        };
+        observer.element.set_direction_instantly(4);
+        observer.npc.view_direction = [1.0, 0.0];
+        observer.npc.view_radius = 200;
+        observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        observer.npc.eye_status = eye_status;
+        let ai = observer
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("strict-cadence observer has EnemyAi");
+        ai.base.current_music_alert_status = alert_status;
+        ai.base.locks_flag_field = AiLockFlags::BUSY;
+        observer.npc.detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+            element: Some(target_id),
+            detectable_type: DetectableType::Enemy,
+            seen_now: true,
+            seen_last_frame: true,
+            last_visibility: 0.25,
+            ..Detectable::default()
+        }];
+
+        engine.control.frame_counter = 1;
+        assert!(
+            !(engine.control.frame_counter + observer_id.index())
+                .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
+        );
+        crate::sim_rng::with_seed(0xA013_1600 + eye_status as u64, |sim| {
+            engine.tick_enemy_ai(sim, &assets)
+        });
+
+        let observer = engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("strict-cadence observer retains NPC state");
+        let detectable = &observer.detectable_lists[DetectableType::Enemy as usize][0];
+        assert_eq!(
+            (
+                detectable.seen_now,
+                detectable.seen_last_frame,
+                detectable.last_visibility
+            ),
+            (true, true, 0.25),
+            "Royalist {:?}/{:?} must reuse the cached sample without recomputing on a closed modulo-16 gate",
+            eye_status,
+            alert_status
+        );
+        assert!(
+            observer
+                .ai_brain
+                .base()
+                .expect("strict-cadence observer retains AI state")
+                .stimulus_queue
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
+    use crate::ai::{AiLockFlags, StimulusInfo, StimulusType};
+    use crate::element::{AiBrain, Camp, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let lacklandist_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("Royalist civilian exists")
+    else {
+        panic!("Royalist civilian changed kind")
+    };
+    civilian.element.active = true;
+    civilian.civilian.cached_camp = Camp::Royalists;
+    civilian.npc.life_points = 100;
+    civilian.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
+        civilian_id.index(),
+    )));
+    civilian.element.set_direction_instantly(4);
+    civilian.npc.view_direction = [1.0, 0.0];
+    civilian.npc.view_radius = 200;
+    civilian.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+
+    for (id, x) in [(pc_id, 80.0), (lacklandist_id, 100.0)] {
+        let entity = engine
+            .get_entity_mut(id)
+            .expect("Royalist-civilian target exists");
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint::new(x, 0.0));
+        match entity {
+            Entity::Pc(pc) => pc.pc.life_points = 100,
+            Entity::Soldier(soldier) => soldier.npc.life_points = 100,
+            _ => panic!("Royalist-civilian target changed kind"),
+        }
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let civilian = engine
+        .get_entity_mut(civilian_id)
+        .and_then(Entity::npc_data_mut)
+        .expect("Royalist civilian retains NPC state");
+    civilian.detectable_lists[DetectableType::Enemy as usize].clear();
+    civilian.detection_suspects[DetectableType::Enemy as usize] = 999;
+    civilian
+        .ai_brain
+        .base_mut()
+        .expect("Royalist civilian retains FriendlyAi")
+        .locks_flag_field = AiLockFlags::BUSY;
+
+    crate::sim_rng::with_seed(0xA013_C1A1, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let civilian = engine
+        .get_entity(civilian_id)
+        .and_then(Entity::npc_data)
+        .expect("Royalist civilian survives detection");
+    assert_eq!(
+        civilian.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .map(|detectable| detectable.element)
+            .collect::<Vec<_>>(),
+        vec![Some(pc_id)],
+        "Original Royalist civilian AddDetectable accepts PCs only"
+    );
+    let ai = civilian
+        .ai_brain
+        .base()
+        .expect("Royalist civilian retains FriendlyAi after detection");
+    assert_eq!(
+        ai.stimulus_queue
+            .iter()
+            .filter(|stimulus| stimulus.stimulus_type == StimulusType::EventView)
+            .map(|stimulus| stimulus.info)
+            .collect::<Vec<_>>(),
+        vec![StimulusInfo::Human(pc_id.index())]
+    );
+}
+
+fn mixed_enemy_fifo_fixture(
+    pc_first: bool,
+) -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
+    use crate::ai::{AiLockFlags, AiState, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let royalist_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("mixed-fifo observer exists")
+    else {
+        panic!("mixed-fifo observer changed kind")
+    };
+    observer.element.active = true;
+    observer
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+    observer.element.set_direction_instantly(4);
+    observer.npc.life_points = 100;
+    observer.npc.view_direction = [1.0, 0.0];
+    observer.npc.view_radius = 300;
+    observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    observer.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("mixed-fifo PC exists") else {
+        panic!("mixed-fifo PC changed kind")
+    };
+    pc.element.active = true;
+    pc.element
+        .set_position(crate::coordinates::WorldPoint3D::new(80.0, 0.0, 0.0));
+    pc.element.set_position_map(MapPoint::new(80.0, 0.0));
+    pc.pc.life_points = 100;
+
+    let Entity::Soldier(royalist) = engine
+        .get_entity_mut(royalist_id)
+        .expect("mixed-fifo Royalist target exists")
+    else {
+        panic!("mixed-fifo Royalist target changed kind")
+    };
+    royalist.element.active = true;
+    royalist
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(120.0, 0.0, 0.0));
+    royalist.element.set_position_map(MapPoint::new(120.0, 0.0));
+    royalist.npc.life_points = 100;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("mixed-fifo observer exists after fixture")
+    else {
+        panic!("mixed-fifo observer changed kind after fixture")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("mixed-fifo observer has EnemyAi");
+    ai.base.me = observer_id.index();
+    ai.base.current_state = AiState::Default;
+    ai.base.current_substate = Substate::DefaultOnPost;
+    ai.current_task_priority = task_priority::NONE;
+    ai.base.locks_flag_field = AiLockFlags::BUSY;
+    ai.base.got_the_beggar_trick = true;
+
+    observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    let ordered = if pc_first {
+        [pc_id, royalist_id]
+    } else {
+        [royalist_id, pc_id]
+    };
+    for target_id in ordered {
+        observer.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+            element: Some(target_id),
+            detectable_type: DetectableType::Enemy,
+            // Keep the oracle on VIEW order, not shadow predetection.
+            shadow_seen_last_frame: true,
+            ..Detectable::default()
+        });
+    }
+
+    (engine, assets, observer_id, pc_id, royalist_id)
+}
+
+#[test]
+fn lacklandist_mixed_pc_soldier_enemy_fifo_follows_detectable_order() {
+    use crate::ai::{StimulusInfo, StimulusType};
+    use crate::element::Entity;
+
+    for pc_first in [true, false] {
+        let (mut engine, assets, observer_id, pc_id, royalist_id) =
+            mixed_enemy_fifo_fixture(pc_first);
+        crate::sim_rng::with_seed(0xA013_F1F0, |sim| engine.tick_enemy_ai(sim, &assets));
+
+        let ai = engine
+            .get_entity(observer_id)
+            .and_then(Entity::ai_controller)
+            .expect("mixed-fifo observer retains its controller");
+        let actual = ai
+            .stimulus_queue
+            .iter()
+            .map(|stimulus| {
+                assert_eq!(stimulus.stimulus_type, StimulusType::EventView);
+                let StimulusInfo::Human(target) = stimulus.info else {
+                    panic!("mixed Enemy VIEW lost its human target")
+                };
+                target
+            })
+            .collect::<Vec<_>>();
+        let expected = if pc_first {
+            vec![pc_id.index(), royalist_id.index()]
+        } else {
+            vec![royalist_id.index(), pc_id.index()]
+        };
+        assert_eq!(
+            actual, expected,
+            "one HandleDetection pass must retain interleaved PC/soldier insertion order"
+        );
+    }
+}
+
+#[test]
+fn mixed_enemy_fifo_survives_detectable_mutation_between_entries() {
+    use crate::ai::{AiLockFlags, StimulusInfo, StimulusType};
+    use crate::element::{DetectableType, Entity};
+
+    let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
+    crate::sim_rng::with_seed(0xA013_F1F1, |sim| {
+        engine.tick_enemy_ai(sim, &assets);
+
+        // Consume the first retained entry, then model the detectable-list
+        // mutation that Original explicitly postpones until after its full
+        // HandleDetection FIFO has been built. The second queued VIEW must be
+        // independent of the now-live list.
+        let first = engine
+            .get_entity_mut(observer_id)
+            .and_then(Entity::ai_controller_mut)
+            .expect("mixed-fifo observer retains its controller")
+            .stimulus_queue
+            .remove(0);
+        assert_eq!(first.stimulus_type, StimulusType::EventView);
+        assert_eq!(first.info, StimulusInfo::Human(pc_id.index()));
+
+        let observer = engine
+            .get_entity_mut(observer_id)
+            .and_then(Entity::npc_data_mut)
+            .expect("mixed-fifo observer retains NPC state");
+        observer.detectable_lists[DetectableType::Enemy as usize]
+            .retain(|detectable| detectable.element != Some(royalist_id));
+        observer
+            .ai_brain
+            .base_mut()
+            .expect("mixed-fifo observer retains AI state")
+            .locks_flag_field = AiLockFlags::empty();
+
+        engine.tick_ai_queued_stimuli(sim, &assets);
+    });
+
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("mixed-fifo observer retains EnemyAi after replay");
+    assert_eq!(
+        ai.base.last_stimulus_actor,
+        Some(royalist_id.index()),
+        "later mixed VIEW must already be queued before an earlier Think can mutate detectables"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Enemy detectable target 999999 for NPC 0 is missing")]
+fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
+    use crate::element::{DetectableType, Entity};
+
+    let (mut engine, assets, observer_id, _, _) = mixed_enemy_fifo_fixture(true);
+    let observer = engine
+        .get_entity_mut(observer_id)
+        .and_then(Entity::npc_data_mut)
+        .expect("missing-target observer retains NPC state");
+    observer.detectable_lists[DetectableType::Enemy as usize][0].element =
+        Some(EntityId::Soldier(crate::entity_id::SoldierId(999_999)));
+
+    crate::sim_rng::with_seed(0xA013_BAD1, |sim| engine.tick_enemy_ai(sim, &assets));
+}
+
+#[test]
+#[should_panic(expected = "eligible civilian NPC 0 has no FriendlyAi brain during detection")]
+fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
+    use crate::element::Entity;
+
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("missing-AI civilian exists")
+    else {
+        panic!("missing-AI observer changed kind")
+    };
+    civilian.element.active = true;
+    civilian.npc.life_points = 100;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    crate::sim_rng::with_seed(0xA013_BAD2, |sim| engine.tick_enemy_ai(sim, &assets));
+}
+
+#[test]
+#[should_panic(expected = "eligible soldier NPC 0 has no EnemyAi brain during detection")]
+fn mixed_enemy_walk_rejects_friendly_ai_on_a_soldier() {
+    use crate::element::{AiBrain, Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("wrong-AI soldier exists")
+    else {
+        panic!("wrong-AI observer changed kind")
+    };
+    soldier.element.active = true;
+    soldier.npc.life_points = 100;
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("wrong-AI soldier survives fixture setup")
+    else {
+        panic!("wrong-AI observer changed kind after fixture")
+    };
+    soldier.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
+        soldier_id.index(),
+    )));
+    let _ = engine.enemy_optical_viewer_context_for_test(soldier_id);
+}
+
+#[test]
+fn mixed_enemy_cleanup_removes_negative_life_targets() {
+    use crate::element::{DetectableType, Entity};
+
+    let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(pc_id)
+        .expect("negative-life PC target exists")
+    else {
+        panic!("negative-life PC target changed kind")
+    };
+    pc.pc.life_points = -5;
+    let Entity::Soldier(royalist) = engine
+        .get_entity_mut(royalist_id)
+        .expect("negative-life soldier target exists")
+    else {
+        panic!("negative-life soldier target changed kind")
+    };
+    royalist.npc.life_points = -7;
+
+    crate::sim_rng::with_seed(0xA013_DEAD, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("negative-life observer retains NPC state");
+    assert!(
+        observer.detectable_lists[DetectableType::Enemy as usize].is_empty(),
+        "CleanUpDetectables must use IsDead (life <= 0) for PCs and soldiers"
+    );
+}
+
+#[test]
+fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
+    use crate::ai::{AlertLevel, StimulusInfo, StimulusType};
+    use crate::element::Entity;
+
+    fn observed_targets(frame: u32) -> Vec<u32> {
+        let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
+        engine.control.frame_counter = frame;
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("cadence observer exists")
+        else {
+            panic!("cadence observer changed kind")
+        };
+        observer.npc.eye_status = crate::element::EyeStatus::LookForward;
+        observer
+            .npc
+            .ai_brain
+            .base_mut()
+            .expect("cadence observer retains AI state")
+            .current_music_alert_status = AlertLevel::Green;
+
+        crate::sim_rng::with_seed(0xA013_CADE, |sim| engine.tick_enemy_ai(sim, &assets));
+
+        let ai = engine
+            .get_entity(observer_id)
+            .and_then(Entity::ai_controller)
+            .expect("cadence observer retains controller");
+        let targets = ai
+            .stimulus_queue
+            .iter()
+            .filter_map(|stimulus| {
+                (stimulus.stimulus_type == StimulusType::EventView).then(|| {
+                    let StimulusInfo::Human(target) = stimulus.info else {
+                        panic!("cadence VIEW lost its human target")
+                    };
+                    target
+                })
+            })
+            .collect::<Vec<_>>();
+        let expected = if frame == 2 {
+            vec![pc_id.index()]
+        } else {
+            vec![pc_id.index(), royalist_id.index()]
+        };
+        assert_eq!(targets, expected);
+        targets
+    }
+
+    assert_eq!(observed_targets(2).len(), 1);
+    assert_eq!(observed_targets(16).len(), 2);
+}
+
+#[test]
+fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
+    use crate::ai::{AlertLevel, StimulusInfo, StimulusType};
+    use crate::element::{DetectableType, Entity, EyeStatus};
+
+    #[derive(Clone, Copy, Debug)]
+    enum Blocker {
+        BlindEyes,
+        BlippedViewer,
+        GuardedPc,
+    }
+
+    for blocker in [
+        Blocker::BlindEyes,
+        Blocker::BlippedViewer,
+        Blocker::GuardedPc,
+    ] {
+        let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+        engine.control.frame_counter = 1;
+
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("closed-cadence observer exists")
+        else {
+            panic!("closed-cadence observer changed kind")
+        };
+        observer.npc.eye_status = if matches!(blocker, Blocker::BlindEyes) {
+            EyeStatus::Closed
+        } else {
+            EyeStatus::LookForward
+        };
+        observer.element.blipped = matches!(blocker, Blocker::BlippedViewer);
+        observer
+            .npc
+            .ai_brain
+            .base_mut()
+            .expect("closed-cadence observer retains AI state")
+            .current_music_alert_status = AlertLevel::Green;
+        let detectable = observer.npc.detectable_lists[DetectableType::Enemy as usize]
+            .iter_mut()
+            .find(|detectable| detectable.element == Some(pc_id))
+            .expect("closed-cadence observer tracks PC");
+        detectable.last_visibility = 1.0;
+        detectable.seen_now = true;
+        detectable.seen_last_frame = !matches!(blocker, Blocker::GuardedPc);
+
+        if matches!(blocker, Blocker::GuardedPc) {
+            let Entity::Pc(pc) = engine
+                .get_entity_mut(pc_id)
+                .expect("closed-cadence guarded PC exists")
+            else {
+                panic!("closed-cadence guarded target changed kind")
+            };
+            pc.pc.guard = Some(observer_id);
+        }
+
+        assert!(
+            !(engine.control.frame_counter + observer_id.index())
+                .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_PC)
+        );
+        crate::sim_rng::with_seed(0xA013_1A00 + blocker as u64, |sim| {
+            engine.tick_enemy_ai(sim, &assets)
+        });
+
+        let observer = engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("closed-cadence observer retains NPC state");
+        let detectable = observer.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .find(|detectable| detectable.element == Some(pc_id))
+            .expect("blocked PC remains detectable");
+        assert_eq!(
+            (
+                detectable.seen_now,
+                detectable.seen_last_frame,
+                detectable.last_visibility,
+            ),
+            (false, false, 0.0),
+            "{blocker:?} must invalidate cached visibility before cadence"
+        );
+        let ai = observer
+            .ai_brain
+            .base()
+            .expect("closed-cadence observer retains AI state");
+        let out_of_view_targets = ai
+            .stimulus_queue
+            .iter()
+            .filter_map(|stimulus| {
+                (stimulus.stimulus_type == StimulusType::EventOutOfView).then(|| {
+                    let StimulusInfo::Human(target) = stimulus.info else {
+                        panic!("closed-cadence OUTOFVIEW lost its human target")
+                    };
+                    target
+                })
+            })
+            .collect::<Vec<_>>();
+        let expected = if matches!(blocker, Blocker::GuardedPc) {
+            Vec::new()
+        } else {
+            vec![pc_id.index()]
+        };
+        assert_eq!(
+            out_of_view_targets, expected,
+            "{blocker:?} must preserve the Original falling-edge semantics"
+        );
+    }
+}
+
+#[test]
+fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
+    use crate::ai::{StimulusInfo, StimulusType};
+    use crate::element::{DetectableType, Entity};
+    use crate::position_interface::DoorHandle;
+
+    let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
+    engine.control.frame_counter = 1;
+
+    let Entity::Soldier(royalist) = engine
+        .get_entity_mut(royalist_id)
+        .expect("door-transit rear target exists")
+    else {
+        panic!("door-transit rear target changed kind")
+    };
+    royalist
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(-120.0, 0.0, 0.0));
+    royalist
+        .element
+        .set_position_map(MapPoint::new(-120.0, 0.0));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("door-transit optical observer exists")
+    else {
+        panic!("door-transit optical observer changed kind")
+    };
+    observer.element.blipped = true;
+    observer
+        .element
+        .sprite
+        .position_iface
+        .set_door_for_test(DoorHandle(0));
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+
+    assert!(
+        !(engine.control.frame_counter + observer_id.index())
+            .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
+        "fixture must keep NPC blip auto-reveal closed"
+    );
+    crate::sim_rng::with_seed(0xA013_D016, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("door-transit optical observer retains NPC state");
+    let view_targets = observer
+        .ai_brain
+        .base()
+        .expect("door-transit optical observer retains AI state")
+        .stimulus_queue
+        .iter()
+        .filter_map(|stimulus| {
+            (stimulus.stimulus_type == StimulusType::EventView).then(|| {
+                let StimulusInfo::Human(target) = stimulus.info else {
+                    panic!("door-transit VIEW lost its human target")
+                };
+                target
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        view_targets,
+        vec![pc_id.index()],
+        "the door pointer passes the PC blip gate, but must not fabricate a same-building handle that reveals the rear soldier"
+    );
+}
+
+#[test]
+fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
+    use crate::ai::{StimulusInfo, StimulusType};
+    use crate::element::{DetectableType, Entity};
+    use crate::order::OrderType;
+
+    let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+    let mut element = crate::sequence::SequenceElement::new_generic(
+        1,
+        crate::element::Command::Wait,
+        Some(pc_id),
+    );
+    element.state = crate::sequence::SequenceState::InProgress;
+    element.push_order(crate::order::Order::test_new(
+        OrderType::SimulatingBeggar,
+        0.0,
+        0.0,
+    ));
+    let seq_id = engine.orders.sequence_manager.launch_element(element);
+    let elem_idx = 0;
+
+    let observer = engine
+        .get_entity_mut(observer_id)
+        .and_then(Entity::npc_data_mut)
+        .expect("live-order observer retains NPC state");
+    observer.detection_suspects[DetectableType::Enemy as usize] = 999;
+    observer
+        .ai_brain
+        .base_mut()
+        .expect("live-order observer retains AI state")
+        .got_the_beggar_trick = false;
+
+    crate::sim_rng::with_seed(0xA013_11E0, |sim| {
+        engine.refresh_detection_after_world_snapshot_for_test(sim, &assets, |engine| {
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+                .expect("live-order sequence survives snapshot")
+                .orders
+                .front_mut()
+                .expect("live-order sequence retains a front order")
+                .order_type = OrderType::TransitionWaitingUprightSimulatingBeggar;
+        });
+    });
+
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::ai_controller)
+        .expect("live-order observer retains AI controller");
+    assert!(
+        ai.stimulus_queue.iter().any(|stimulus| {
+            stimulus.stimulus_type == StimulusType::EventView
+                && stimulus.info == StimulusInfo::Human(pc_id.index())
+        }),
+        "the live beggar transition must replace the snapshotted resting disguise"
+    );
+    assert!(
+        ai.got_the_beggar_trick,
+        "seeing the live beggar transition must teach the observer the disguise trick"
+    );
+}
+
+#[test]
+fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
+    use crate::element::{DetectableType, Entity, Posture};
+
+    let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("live-Z PC exists") else {
+        panic!("live-Z target changed kind")
+    };
+    pc.element
+        .set_position(crate::coordinates::WorldPoint3D::new(15.0, 0.0, 20.0));
+    pc.element
+        .set_position_map_preserving_3d(MapPoint::new(15.0, -20.0));
+    pc.element.posture = Posture::Upright;
+
+    let observer = engine
+        .get_entity_mut(observer_id)
+        .and_then(Entity::npc_data_mut)
+        .expect("live-Z observer retains NPC state");
+    observer.detection_suspects[DetectableType::Enemy as usize] = 999;
+    observer
+        .ai_brain
+        .base_mut()
+        .expect("live-Z observer retains AI state")
+        .got_the_beggar_trick = true;
+
+    crate::sim_rng::with_seed(0xA013_11E1, |sim| {
+        engine.refresh_detection_after_world_snapshot_for_test(sim, &assets, |engine| {
+            let Entity::Pc(pc) = engine
+                .get_entity_mut(pc_id)
+                .expect("live-Z PC survives snapshot")
+            else {
+                panic!("live-Z target changed kind after snapshot")
+            };
+            pc.element.posture = Posture::Crouched;
+        });
+    });
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("live-Z observer retains NPC state");
+    let detectable = observer.detectable_lists[DetectableType::Enemy as usize]
+        .iter()
+        .find(|detectable| detectable.element == Some(pc_id))
+        .expect("live-Z observer retains the PC detectable");
+    assert_eq!(
+        detectable.last_visibility, 2.0,
+        "live crouched detection Z must satisfy the 3D close-visibility gate"
+    );
+}
+
+#[test]
+fn lacklandist_enemy_optics_keeps_but_cannot_see_hollow_man() {
+    use crate::ai::{StimulusInfo, StimulusType};
+    use crate::element::{DetectableType, Entity};
+
+    let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
+    engine
+        .get_entity_mut(pc_id)
+        .and_then(Entity::human_data_mut)
+        .expect("hollow target retains human state")
+        .hollow_man = true;
+
+    crate::sim_rng::with_seed(0xA013_4011, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("hollow observer retains NPC state");
+    assert_eq!(
+        observer.detectable_lists[DetectableType::Enemy as usize].len(),
+        2,
+        "HollowMan is invisible, not cleaned up"
+    );
+    assert!(!observer.detectable_lists[DetectableType::Enemy as usize][0].seen_now);
+    let ai = observer
+        .ai_brain
+        .base()
+        .expect("hollow observer retains AI state");
+    assert_eq!(ai.stimulus_queue.len(), 1);
+    assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
+    assert_eq!(
+        ai.stimulus_queue[0].info,
+        StimulusInfo::Human(royalist_id.index())
+    );
+}
+
+#[test]
+fn civilian_enemy_optics_uses_the_common_npc_walk() {
+    use crate::ai::{AiLockFlags, StimulusInfo, StimulusType};
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("optical civilian exists")
+    else {
+        panic!("optical civilian changed kind")
+    };
+    civilian.element.active = true;
+    civilian.civilian.cached_camp = Camp::Lacklandists;
+    civilian.npc.life_points = 100;
+    civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
+        crate::ai_friendly::FriendlyAi::new(civilian_id.index()),
+    ));
+    civilian.element.set_direction_instantly(4);
+    civilian.npc.view_direction = [1.0, 0.0];
+    civilian.npc.view_radius = 300;
+    civilian.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    civilian.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(pc_id)
+        .expect("civilian target exists")
+    else {
+        panic!("civilian target changed kind")
+    };
+    pc.element.active = true;
+    pc.element
+        .set_position(crate::coordinates::WorldPoint3D::new(80.0, 0.0, 0.0));
+    pc.element.set_position_map(MapPoint::new(80.0, 0.0));
+    pc.pc.life_points = 100;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("optical civilian exists after fixture")
+    else {
+        panic!("optical civilian changed kind after fixture")
+    };
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("optical civilian has FriendlyAi");
+    ai.me = civilian_id.index();
+    ai.locks_flag_field = AiLockFlags::BUSY;
+    ai.got_the_beggar_trick = true;
+    civilian.npc.detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+        element: Some(pc_id),
+        detectable_type: DetectableType::Enemy,
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    }];
+    civilian.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+
+    crate::sim_rng::with_seed(0xA013_C1A0, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let ai = engine
+        .get_entity(civilian_id)
+        .and_then(Entity::ai_controller)
+        .expect("optical civilian retains FriendlyAi");
+    assert_eq!(ai.stimulus_queue.len(), 1);
+    assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
+    assert_eq!(
+        ai.stimulus_queue[0].info,
+        StimulusInfo::Human(pc_id.index())
     );
 }
