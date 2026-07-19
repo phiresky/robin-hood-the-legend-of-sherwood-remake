@@ -373,7 +373,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   effects serialize in one emission-ordered stream, sequence continuation
 ///   state is explicit, persistent game state is required, and complete
 ///   `SimConfig` plus mission construction/restart RNG checkpoints serialize.
-pub const SAVE_FORMAT_VERSION: u32 = 48;
+/// - **v49** (2026-07-19, snapshot-input ownership): shared-camera transition
+///   inputs that affect a later tick are required snapshot fields.
+pub const SAVE_FORMAT_VERSION: u32 = 49;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,7 +457,7 @@ pub struct GameSaveFile {
 impl GameSaveFile {
     /// Test-only convenience for snapshots that do not exercise host-owned
     /// persistent game flags. Production saves must use
-    /// [`capture_with_game`](Self::capture_with_game) so a valid-looking v48
+    /// [`capture_with_game`](Self::capture_with_game) so a valid-looking v49
     /// payload can never silently substitute default persistent state.
     #[cfg(test)]
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
@@ -698,6 +700,28 @@ mod tests {
     }
 
     #[test]
+    fn save_payload_round_trips_required_camera_transition_inputs() {
+        let (mut engine, _assets) = fresh_engine();
+        let expected = (
+            true,
+            true,
+            robin_engine::coordinates::MapVec::new(3.0, -4.0),
+            7,
+            Some(robin_engine::coordinates::ScreenPoint::new(123.0, 456.0)),
+        );
+        engine.test_set_camera_transition_inputs(
+            expected.0, expected.1, expected.2, expected.3, expected.4,
+        );
+        let host = Host::scratch(800.0, 600.0);
+
+        let save = GameSaveFile::capture(&engine, &host, 7, "camera inputs".into());
+        let json = serde_json::to_string(&save).expect("serialize current save");
+        let decoded: GameSaveFile = serde_json::from_str(&json).expect("decode current save");
+
+        assert_eq!(decoded.engine.test_camera_transition_inputs(), expected);
+    }
+
+    #[test]
     fn save_requires_game_persistent_state() {
         let (engine, _assets) = fresh_engine();
         let host = Host::scratch(800.0, 600.0);
@@ -709,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn current_v48_requires_every_persistent_game_flag() {
+    fn current_v49_requires_every_persistent_game_flag() {
         let (engine, _assets) = fresh_engine();
         let host = Host::scratch(800.0, 600.0);
         let required_fields = [
@@ -732,7 +756,7 @@ mod tests {
                 .remove(field);
             assert!(
                 serde_json::from_value::<GameSaveFile>(value).is_err(),
-                "v48 payload missing {field} must be rejected"
+                "v49 payload missing {field} must be rejected"
             );
         }
     }
@@ -830,7 +854,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 48, got 46"
+            "unsupported save file version: expected 49, got 46"
         );
     }
 

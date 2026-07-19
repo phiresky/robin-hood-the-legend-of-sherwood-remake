@@ -188,6 +188,48 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
 }
 
 #[test]
+fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
+    let assets = LevelAssets::new();
+    let mut live = EngineInner::new();
+    live.feedback
+        .cutscene_camera
+        .display
+        .background_transform
+        .zoom_to_up = true;
+    live.feedback.cutscene_camera.zoom_init_done = true;
+    live.send_simple_message(crate::messenger::SimpleMessage::LockAlt);
+
+    let bytes = bincode::serde::encode_to_vec(&live, bincode::config::standard())
+        .expect("encode active camera transition");
+    let (mut replay, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("decode active camera transition");
+    assert_eq!(consumed, bytes.len());
+
+    let mut live_display = HostDisplayState::default();
+    live_display.background_transform.zoom_to_up = false;
+    live_display.background_transform.zoom_to_down = false;
+    let mut replay_display = HostDisplayState::default();
+    replay_display.background_transform.zoom_to_up = false;
+    replay_display.background_transform.zoom_to_down = true;
+    let mut live_dev = DevState::default();
+    let mut replay_dev = DevState::default();
+
+    live.perform_hourglass(&mut live_display, &assets, &mut live_dev);
+    replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+
+    assert!(
+        !live.is_lock_alt(),
+        "active Engine zoom must gate messenger work"
+    );
+    assert!(!replay.is_lock_alt());
+    assert_eq!(
+        crate::replay::state_hash(&live),
+        crate::replay::state_hash(&replay)
+    );
+}
+
+#[test]
 fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
     let mut live = EngineInner::new();
     live.restore_rng_from_seed(0xA036_5EED_CAFE_BEEF);

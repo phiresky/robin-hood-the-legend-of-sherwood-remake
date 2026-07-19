@@ -427,6 +427,14 @@ fn default_zoom_factor() -> f32 {
     1.0
 }
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 /// Script/director camera state.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct CameraState {
@@ -452,25 +460,21 @@ pub struct CameraState {
     pub old_zoom_factor: f32,
     /// Target zoom factor for smooth zoom transitions.
     pub desired_zoom_factor: f32,
-    /// Whether zoom initialization is done for current transition.
-    /// Display-state machine scratch; excluded from sim snapshots.
-    #[serde(skip)]
+    /// Whether zoom initialization is done for the current transition.
+    /// This gates gameplay advancement and controls when a camera sequence
+    /// element terminates, so it is deterministic snapshot state.
     pub zoom_init_done: bool,
     /// Whether the current zoom was triggered programmatically.
-    /// Transient zoom-message context; excluded from sim snapshots.
-    #[serde(skip)]
+    /// Consumed by the deterministic camera transition when choosing its
+    /// anchor, so it must survive rollback between request and init.
     pub mechanized_zoom: bool,
 
     /// Level size in map units.
     pub level_size: MapSize,
 
-    // Elastic/follow-camera display interpolation buffer. It still
-    // lives beside the shared script camera until the legacy director
-    // pipeline is split from local presentation, but it is not part of
-    // deterministic save/replay state.
-    #[serde(skip)]
+    // Elastic/follow-camera state for the shared script camera. Both values
+    // affect the next view position and therefore participate in snapshots.
     pub displacement: MapVec,
-    #[serde(skip)]
     pub displacement_counter: u16,
 
     /// Snapshot of the followed element's screen-space position when
@@ -501,10 +505,10 @@ pub struct CameraState {
     /// consumes it to bias `view_to` so the pixel under the mouse stays
     /// anchored during the zoom: `mouse_vector = (screen_center -
     /// mouse_screen) / zoom` when the UI is not focused and the zoom
-    /// is not mechanized. `None` = treat as mechanized zoom (no mouse
-    /// recentering). Host-input transient state; excluded from sim
-    /// snapshots.
-    #[serde(skip)]
+    /// is not mechanized. `None` = no mouse recentering. The value is
+    /// consumed after the command boundary and therefore belongs to the
+    /// deterministic camera snapshot while pending.
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub pending_zoom_mouse_screen: Option<ScreenPoint>,
 }
 
@@ -2053,6 +2057,8 @@ pub struct SideEffects {
     /// drains this by writing the top-left into the active
     /// `PlayerProfile`'s `minimap_x` / `minimap_y` and persisting the
     /// profile.
+    #[serde(skip)]
+    #[state_hash(skip)]
     pub pending_minimap_position: Option<crate::coordinates::ScreenPoint>,
     /// Script/sequence-driven minimap show/hide requests produced this
     /// tick. The minimap itself is host-owned, so the game loop applies

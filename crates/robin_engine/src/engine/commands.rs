@@ -765,36 +765,33 @@ impl EngineInner {
                     .minimap
                     .set_widget_position(*base, *corner_size, sw, sh);
             }
-            MinimapMouseDown { click_pt } => {
+            MinimapMouseDown {
+                click_pt,
+                continuing_drag,
+            } => {
                 // Begin dragging on LEFTDOWN inside widget when the map
                 // is deployed.
                 if display.minimap.is_displayed() {
                     let screen = Self::director_camera_view_size();
                     let sw = screen.x;
                     let sh = screen.y;
-                    let was_dragging = display.minimap.drag_start();
                     display.minimap.manage_dragging(*click_pt, sw, sh);
-                    // Fire UiHasFocus on the second ManageDragging call
-                    // (the continuing-drag arm).  The first call only
-                    // records the anchor.
-                    if was_dragging {
-                        self.orders.messenger.send(crate::messenger::Message::new(
-                            crate::messenger::MessageType::Simple(
-                                crate::messenger::SimpleMessage::UiHasFocus,
-                            ),
-                        ));
-                        // The messenger broadcast is consumed on the
-                        // next tick; flipping `input.has_focus` to
-                        // false synchronously here suppresses every
-                        // mouse dispatch for the remainder of this
-                        // frame too.
-                        input.has_focus = false;
-                    }
+                }
+                // The host resolves this before dispatch. Do not infer an
+                // engine message from rollback-local minimap scratch.
+                if *continuing_drag {
+                    self.orders.messenger.send(crate::messenger::Message::new(
+                        crate::messenger::MessageType::Simple(
+                            crate::messenger::SimpleMessage::UiHasFocus,
+                        ),
+                    ));
+                    input.has_focus = false;
                 }
             }
             MinimapMouseMove {
                 mouse_pt,
                 left_mouse_down,
+                continuing_drag,
             } => {
                 // Hover state.
                 let over_widget = display.minimap.is_over_widget(*mouse_pt);
@@ -818,12 +815,11 @@ impl EngineInner {
                     let sw = screen.x;
                     let sh = screen.y;
                     display.minimap.manage_dragging(*mouse_pt, sw, sh);
-                    // Continuing-drag branch forwards UiHasFocus every
-                    // frame to suppress edge-scrolling and hide the
-                    // PC-info popup.  Both halves: enqueue for the tick
-                    // drain (hides the PC-info popup next tick) and
-                    // clear `input.has_focus` synchronously so the rest
-                    // of this frame's mouse events skip dispatch.
+                }
+                if *continuing_drag {
+                    // Continuing-drag focus is command-derived. The host
+                    // presentation mutation above may legitimately differ
+                    // on a rollback scratch display.
                     self.orders.messenger.send(crate::messenger::Message::new(
                         crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
@@ -833,8 +829,8 @@ impl EngineInner {
                 }
             }
             MinimapMouseUp {
-                click_pt,
                 on_minimap,
+                center_on,
             } => {
                 // Check the dragged flag, dead zone, and dispatch to
                 // open-map or center-on-click.
@@ -843,35 +839,35 @@ impl EngineInner {
                     if *on_minimap {
                         if !display.minimap.is_displayed() {
                             display.minimap.manage_click();
-                        } else {
-                            let usable = crate::minimap::usable_area(&display.minimap.map_box);
-                            let level_size = self.feedback.cutscene_camera.level_size;
-                            let world_pt = display.minimap.map_to_real(*click_pt, level_size);
-                            if usable.contains_point(*click_pt)
-                                && let Some(world_pt) = world_pt
-                            {
-                                // Gate the recenter on `is_zoom_possible`
-                                // and clear the gameplay locker via
-                                // `LockerOff` before centering — skip
-                                // both when a zoom is in flight so the
-                                // click can't jank the view.
-                                if self.is_zoom_possible(display) {
-                                    // Minimap recenter is host-driven UI;
-                                    // toggles the host seat's locker.
-                                    self.change_state(
-                                        display,
-                                        0,
-                                        crate::engine::EngineStateRequest::LockerOff,
-                                    );
-                                    self.center_on_point(0, world_pt);
-                                }
-                            }
                         }
                     }
                 } else {
                     display.minimap.dragged = false;
                 }
                 display.minimap.close_after_highlight = false;
+
+                if let Some(world_pt) = center_on {
+                    let level_size = self.feedback.cutscene_camera.level_size;
+                    assert!(
+                        world_pt.x.is_finite()
+                            && world_pt.y.is_finite()
+                            && world_pt.x >= 0.0
+                            && world_pt.y >= 0.0
+                            && world_pt.x <= level_size.x
+                            && world_pt.y <= level_size.y,
+                        "MinimapMouseUp center_on point ({}, {}) is outside required level bounds ({}, {})",
+                        world_pt.x,
+                        world_pt.y,
+                        level_size.x,
+                        level_size.y
+                    );
+                    // The zoom gate and locker state are both Engine-owned;
+                    // only the projected point crosses the command boundary.
+                    if self.is_camera_zoom_possible_for_seat(seat) {
+                        self.players.seats[seat].locker_active = false;
+                        self.center_on_point(seat, *world_pt);
+                    }
+                }
             }
             MinimapRightClick => {
                 // Unconditional close animation start (no

@@ -153,7 +153,10 @@ pub(super) fn handle_mouse_input(
                         // Minimap click — start drag if map is deployed.
                         // In the event-driven model, MouseDown on the
                         // minimap is inherently "entered nicely".
-                        let cmd = PlayerCommand::MinimapMouseDown { click_pt };
+                        let cmd = PlayerCommand::MinimapMouseDown {
+                            click_pt,
+                            continuing_drag: host.engine_display.minimap().drag_start(),
+                        };
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         // Don't start multi-selection when clicking minimap
                     } else if !host.input.ignore_next_drag
@@ -274,6 +277,8 @@ pub(super) fn handle_mouse_input(
                     let cmd = PlayerCommand::MinimapMouseMove {
                         mouse_pt,
                         left_mouse_down: host.input.left_mouse_down,
+                        continuing_drag: host.input.left_mouse_down
+                            && host.engine_display.minimap().drag_start(),
                     };
                     dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
 
@@ -359,9 +364,14 @@ pub(super) fn handle_mouse_input(
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
                     let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
                     if minimap_handled {
-                        let cmd = PlayerCommand::MinimapMouseUp {
+                        let center_on = host.engine_display.resolve_minimap_center(
                             click_pt,
                             on_minimap,
+                            host.viewport.level_size,
+                        );
+                        let cmd = PlayerCommand::MinimapMouseUp {
+                            on_minimap,
+                            center_on,
                         };
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         host.input.cancel_multi_selection();

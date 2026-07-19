@@ -54,11 +54,11 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 5 requires the complete campaign and
+/// On-disk replay schema version. Version 6 requires the complete campaign and
 /// [`crate::engine::SimConfig`] used for frame-0 construction, stores typed
-/// script effects in one global emission order, and includes synchronous
-/// sequence continuation state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 5;
+/// script effects in one global emission order, includes synchronous sequence
+/// continuation state, and records fully-resolved minimap command inputs.
+pub const REPLAY_SCHEMA_VERSION: u32 = 6;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic
 /// engine-state hash used for desync detection on replay.
@@ -535,6 +535,50 @@ mod tests {
         assert_eq!(f0.len(), 2);
         assert_eq!(f0[0].player_id, PlayerId(0));
         assert_eq!(f0[1].player_id, PlayerId(2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn current_replay_round_trips_resolved_minimap_inputs() {
+        let path = unique_replay_path("resolved_minimap_inputs");
+        let campaign = crate::campaign::Campaign::default();
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "minimap".into(),
+            99,
+            crate::engine::SimConfig::default(),
+            &campaign,
+        )
+        .expect("create replay recorder");
+        recorder.push(PlayerInput::host(PlayerCommand::MinimapMouseMove {
+            mouse_pt: crate::coordinates::ScreenPoint::new(11.0, 22.0),
+            left_mouse_down: true,
+            continuing_drag: true,
+        }));
+        recorder.push(PlayerInput::host(PlayerCommand::MinimapMouseUp {
+            on_minimap: true,
+            center_on: Some(crate::coordinates::MapPoint::new(333.0, 444.0)),
+        }));
+        recorder.end_frame();
+        drop(recorder);
+
+        let replay = ReplayData::from_file(&path).expect("load current replay");
+        let commands = replay.commands_for_frame(0);
+        assert!(matches!(
+            &commands[0].command,
+            PlayerCommand::MinimapMouseMove {
+                left_mouse_down: true,
+                continuing_drag: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &commands[1].command,
+            PlayerCommand::MinimapMouseUp {
+                on_minimap: true,
+                center_on: Some(point),
+            } if *point == crate::coordinates::MapPoint::new(333.0, 444.0)
+        ));
         let _ = std::fs::remove_file(&path);
     }
 

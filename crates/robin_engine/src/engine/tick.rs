@@ -804,8 +804,18 @@ impl EngineInner {
         self.advance_mission_clock();
 
         // ── Skip logic if engine is locked (zoom, sequence, etc) ─
-        if display.background_transform.zoom_to_up
-            || display.background_transform.zoom_to_down
+        if self
+            .feedback
+            .cutscene_camera
+            .display
+            .background_transform
+            .zoom_to_up
+            || self
+                .feedback
+                .cutscene_camera
+                .display
+                .background_transform
+                .zoom_to_down
             || self.engine_locked()
         {
             return Some(GameCode::LevelInProgress);

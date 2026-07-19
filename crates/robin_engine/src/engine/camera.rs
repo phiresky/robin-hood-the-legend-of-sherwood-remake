@@ -548,7 +548,7 @@ impl EngineInner {
             && !display.background_transform.zoom_to_down
     }
 
-    fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
+    pub(super) fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
         let display = self
             .feedback
             .cutscene_camera
