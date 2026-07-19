@@ -11,20 +11,17 @@ use crate::game::Game;
 use crate::hud_text::HudFonts;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
-use crate::key_config_store::KeyConfigStore;
 use crate::main_entry::{current_mission_id, picture_to_surface};
 use crate::markers::SelectionMarkRenderer;
 use crate::minimap::HitMask;
 use crate::mouse_trail::MouseTrailRenderer;
 use crate::player_command::PlayerCommand;
-use crate::player_profile::PlayerProfileManager;
 use crate::profiles::MissionLocation;
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_ids;
 use crate::resource_manager::ResourceManager;
 use crate::sbfile::SbFile;
 use crate::sound::{NUM_CHANNELS, SoundMode};
-use crate::sound_config::SoundConfig;
 use crate::titbit::SpriteRow;
 use crate::titbit_renderer::TitbitRenderer;
 use crate::ui_panel::{PortraitCache, load_localized_character_names};
@@ -247,7 +244,7 @@ pub(super) fn setup_mission_audio(
         match SbFile::read_all(fx_bank_path) {
             Ok(data) => match crate::sound_cache::parse_fx_bank(&data) {
                 Ok(elements) => {
-                    host.sound.sound_cache.initialize_fx_cache(&elements);
+                    host.audio.sound.sound_cache.initialize_fx_cache(&elements);
                     tracing::info!("Loaded FX bank: {} elements", elements.len());
                 }
                 Err(e) => tracing::warn!("Failed to parse FX bank: {}", e),
@@ -262,7 +259,7 @@ pub(super) fn setup_mission_audio(
         match SbFile::read_all(menu_bank_path) {
             Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => {
-                    host.sound.sound_cache.initialize_menu_cache(&entries);
+                    host.audio.sound.sound_cache.initialize_menu_cache(&entries);
                     tracing::info!("Loaded menu sound bank: {} entries", entries.len());
                 }
                 Err(e) => tracing::warn!("Failed to parse menu sound bank: {}", e),
@@ -370,7 +367,8 @@ pub(super) fn setup_mission_audio(
                     .collect();
 
                 total_exclamations += resolved.len();
-                host.sound
+                host.audio
+                    .sound
                     .sound_cache
                     .initialize_exclamations_for_profile(&resolved);
             }
@@ -389,7 +387,7 @@ pub(super) fn setup_mission_audio(
     let campaign = engine.campaign();
     if let Some(idx) = campaign.current_mission_idx {
         let prof = campaign.missions[idx].profile(profiles);
-        host.sound.sound_cache.initialize_music(
+        host.audio.sound.sound_cache.initialize_music(
             &prof.green_music,
             &prof.yellow_music,
             &prof.red_music,
@@ -399,10 +397,12 @@ pub(super) fn setup_mission_audio(
     // Populate the sound-source cache from the IDs collected during
     // proto-level loading, then finalize.  Without this the source
     // cache is empty and looped/ambient sources cannot play.
-    host.sound
+    host.audio
+        .sound
         .sound_cache
         .initialize_sound_source_cache(&assets.sound_source_required_ids);
-    host.sound
+    host.audio
+        .sound
         .sound_cache
         .finalize_sound_sources(&engine.sound_sim().sources);
     populate_sound_duration_tables(host, assets, profiles, &loader);
@@ -413,23 +413,20 @@ pub(super) fn setup_mission_audio(
     // sweep here because `add_entry` doesn't have a loader at insert
     // time. The resulting `data_check_succeeded` flag is consulted by
     // `SoundManager::activate` (fatal panic on miss).
-    let check = engine_api::GlobalOptions::global()
-        .as_ref()
-        .map(|o| o.check_sound_data)
-        .unwrap_or(false);
+    let check = host.application_context.options().check_sound_data;
     if check {
-        host.sound.sound_cache.validate_data(&loader);
+        host.audio.sound.sound_cache.validate_data(&loader);
     }
 
     if let Some(backend) = backend {
-        host.sound.activate(
+        host.audio.sound.activate(
             location == MissionLocation::Sherwood,
             &engine.sound_sim().sources,
         );
         // Switch from menu music to mission music during the final loading
         // stage. SetMode(Mission) halts the menu stream and
         // re-raises load_music so mission music starts from the pool.
-        host.sound.set_mode(SoundMode::Mission, backend);
+        host.audio.sound.set_mode(SoundMode::Mission, backend);
     }
 }
 
@@ -479,13 +476,13 @@ fn populate_sound_duration_tables(
     }
 
     let mut exclamation_durations = BTreeMap::new();
-    for (&group_id, group) in &host.sound.sound_cache.speech_cache.groups {
+    for (&group_id, group) in &host.audio.sound.sound_cache.speech_cache.groups {
         let profile_prefix = group_id & 0xFFFF_0000;
         let exclamation_id = (group_id & 0xFFFF) as u16;
         let duration_ms = group
             .entry_indices
             .iter()
-            .filter_map(|&idx| host.sound.sound_cache.speech_cache.entries.get(idx))
+            .filter_map(|&idx| host.audio.sound.sound_cache.speech_cache.entries.get(idx))
             .filter_map(|entry| loader(&entry.file_name).map(|(_, _, duration_ms)| duration_ms))
             .max();
         let Some(duration_ms) = duration_ms else {
@@ -503,7 +500,7 @@ fn populate_sound_duration_tables(
     }
 
     let mut source_durations = BTreeMap::new();
-    for (&sample_id, entry) in &host.sound.sound_cache.source_cache.entries {
+    for (&sample_id, entry) in &host.audio.sound.sound_cache.source_cache.entries {
         if let Some((_, _, duration_ms)) = loader(&entry.file_name) {
             source_durations.insert(sample_id, frames_from_ms(duration_ms));
         }
@@ -976,8 +973,8 @@ pub(super) fn load_mission_sprites(
     portrait_cache.generate_peasant_names(
         text_res,
         engine,
-        &mut host.engine_display,
-        &mut host.input,
+        &mut host.frontend.engine_display,
+        &mut host.frontend.input,
         assets,
     );
 
@@ -1218,9 +1215,7 @@ pub(super) fn load_level_and_sprite_bank(
     // (Campaign no longer owns its own copy).
     assets.profile_manager = std::sync::Arc::new(profiles.clone());
     let mut dev = engine_api::DevState::new();
-    if let Some(opts) = engine_api::GlobalOptions::global().as_ref() {
-        dev.debug.surface_display = opts.debug_surfaces;
-    }
+    dev.debug.surface_display = game.global_options.options().debug_surfaces;
 
     // Load sprite bank (robinhood.dic + robinhood.bks) — must happen
     // before entity sprite loading in initialize_for_mission.
@@ -1419,7 +1414,7 @@ pub(super) fn load_level_and_sprite_bank(
         );
     }
 
-    let rng_seed = match initial_rng_seed(args, host.mp_mission_seed) {
+    let rng_seed = match initial_rng_seed(args, host.transport.mission_seed) {
         Ok(seed) => seed,
         Err(message) => return Err(MissionLoadError::new(campaign, message)),
     };
@@ -1514,26 +1509,10 @@ pub(super) fn setup_input_and_camera(
     ));
     let mut input_translator = InputTranslator::new(window_width as f32, window_height as f32);
 
-    // Load key bindings from the active player profile.  Source of
-    // truth is the global KeyConfigStore; mirror into host's session
-    // cache so the in-game options menu can edit it directly without a
-    // store roundtrip every keystroke.
-    {
-        let ppm = PlayerProfileManager::global();
-        let store = KeyConfigStore::global();
-        if let Some(ref mgr) = *ppm
-            && let Some(profile) = mgr.get_active()
-            && let Some(ref s) = *store
-            && let Some(entry) = s.get(profile.id)
-        {
-            host.key_config = entry.active.clone();
-            host.custom_key_config = entry.custom.clone();
-            input_translator.load_bindings_from_keyconfig(&host.key_config);
-            tracing::info!("Loaded key bindings for profile {} from store", profile.id);
-        } else if !host.key_config.bindings.is_empty() {
-            input_translator.load_bindings_from_keyconfig(&host.key_config);
-        }
-    }
+    // Host construction snapshots the active profile's bindings from the
+    // ApplicationContext. The Original copies that active config at this
+    // exact input-translator boundary (`ReflectActiveKeyConfig`).
+    input_translator.load_bindings_from_keyconfig(&host.key_config);
 
     // The `DisplayMap` minimap accelerator is stored host-side on
     // `host.minimap_fast_key` — the game loop reads it out to emit a
@@ -1583,19 +1562,19 @@ pub(super) fn setup_input_and_camera(
     if !is_client {
         let nickname = args.mp_nickname.clone();
         engine.apply_command(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             assets,
             &PlayerCommand::ConnectSeat {
-                player_id: host.local_seat,
+                player_id: host.transport.local_seat,
                 nickname,
             },
         );
         tracing::info!(
-            seat = ?host.local_seat,
+            seat = ?host.transport.local_seat,
             "bootstrap ConnectSeat applied to local engine",
         );
-        if let Some(net) = host.net.as_ref() {
+        if let Some(net) = host.transport.net.as_ref() {
             match net.publish_initial_snapshot(0, engine) {
                 Ok(()) => {
                     net.send_ready_to_sim(0);
@@ -1634,26 +1613,25 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAud
             }
         };
     if let Some(backend) = audio_backend.as_mut() {
-        host.sound
+        host.audio
+            .sound
             .set_music_directory(&game.global_options.music_directory);
         // Read the active profile's 3D-sound preference and forward
         // it to the sound manager.  The backend grants the request
         // only when `can_3d_sound()` is true; the kira backend never
         // is, so this lands in 2D with a non-fatal warning.
-        let want_3d = {
-            let guard = PlayerProfileManager::global();
-            guard
-                .as_ref()
-                .and_then(|m| m.get_active())
-                .map(|p| p.sound_config.sound_3d)
-                .unwrap_or(false)
-        };
-        if let Err(e) = host.sound.initialize(backend, want_3d) {
+        let sound_config = host
+            .application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| panic!("audio setup requires an active profile: {error}"))
+            .sound_config;
+        let want_3d = sound_config.sound_3d;
+        if let Err(e) = host.audio.sound.initialize(backend, want_3d) {
             tracing::warn!("Sound manager init failed: {}", e);
         }
         // Apply volumes before set_mode(Menu) so menu music isn't silent.
-        host.sound.apply_volumes(&SoundConfig::default());
-        host.sound.set_mode(SoundMode::Menu, backend);
+        host.audio.sound.apply_volumes(&sound_config);
+        host.audio.sound.set_mode(SoundMode::Menu, backend);
     }
     audio_backend
 }

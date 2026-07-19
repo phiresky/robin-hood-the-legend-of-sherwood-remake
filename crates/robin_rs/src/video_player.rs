@@ -20,23 +20,23 @@
 //! `Ok(())` after logging.
 
 #[cfg(not(feature = "video"))]
-pub async fn play_video(_window: &mut crate::window::GameWindow, path: &str) -> Result<(), String> {
+pub async fn play_video(
+    _application_context: &crate::host::ApplicationContext,
+    _window: &mut crate::window::GameWindow,
+    path: &str,
+) -> Result<(), String> {
     tracing::warn!("video feature disabled, skipping cinematic {path}");
     Ok(())
 }
 
-/// Whole-playback gate on the global sound flag. When sound is disabled
+/// Whole-playback gate on the application sound flag. When sound is disabled
 /// (`-NOSOUND` launcher flag), Intro/Outro buttons become no-ops rather
 /// than playing the cinematic silently.
 #[cfg(feature = "video")]
-fn sound_enabled() -> bool {
-    engine_api::GlobalOptions::global()
-        .as_ref()
-        .is_none_or(|opts| opts.sound_enabled)
+fn sound_enabled(application_context: &crate::host::ApplicationContext) -> bool {
+    application_context.options().sound_enabled
 }
 
-#[cfg(feature = "video")]
-use robin_engine::engine as engine_api;
 use std::sync::{Arc, Once};
 
 #[cfg(feature = "video")]
@@ -53,8 +53,12 @@ static FFMPEG_INIT: Once = Once::new();
 /// frames through wgpu, and plays audio through a temporary kira
 /// `AudioManager`. ESC or mouse-click skips playback.
 #[cfg(feature = "video")]
-pub async fn play_video(window: &mut GameWindow, path: &str) -> Result<(), String> {
-    if !sound_enabled() {
+pub async fn play_video(
+    application_context: &crate::host::ApplicationContext,
+    window: &mut GameWindow,
+    path: &str,
+) -> Result<(), String> {
+    if !sound_enabled(application_context) {
         tracing::info!("sound disabled, skipping cinematic {path}");
         return Ok(());
     }

@@ -79,6 +79,7 @@ use crate::cursor::CursorRenderer;
 use crate::game::GameCallbacks;
 use crate::game_operation::GameCode;
 use crate::gfx_types::GameEvent;
+use crate::host::ApplicationContext;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::resources::{MT_MSG_LEAVE_MISSION_NOW, MT_MSG_REALLY_LOAD_QUICKSAVE};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
@@ -202,7 +203,7 @@ pub(super) fn install_pending_lua_session(
             "LuaSession installed for mission '{}'",
             session.mission_basename()
         );
-        host.lua_session = Some(session);
+        host.scripting.lua_session = Some(session);
     }
     Ok(())
 }
@@ -267,10 +268,11 @@ pub(crate) async fn run_session(
     window: &mut GameWindow,
     mut campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
+    application_context: &ApplicationContext,
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
 ) -> SessionOutcome {
-    let mut callbacks = RustCallbacks::new();
+    let mut callbacks = RustCallbacks::new(application_context.clone());
     callbacks.pending = initial_load;
 
     loop {
@@ -328,8 +330,12 @@ pub(crate) async fn run_session(
                     // Campaign just completed — play the outro cinematic
                     // and bump ARES to 10.
                     tracing::info!("Campaign complete — playing outro cinematic");
-                    if let Err(e) =
-                        crate::video_player::play_video(window, "Data/Cinematics/Outro.ogg").await
+                    if let Err(e) = crate::video_player::play_video(
+                        application_context,
+                        window,
+                        "Data/Cinematics/Outro.ogg",
+                    )
+                    .await
                     {
                         tracing::warn!("Outro video error: {e}");
                     }

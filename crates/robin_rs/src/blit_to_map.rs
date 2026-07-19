@@ -15,7 +15,7 @@ use robin_engine::engine::PendingBgBlitDecal;
 /// Drain queued `BlitToMap` / `RestoreBackground` requests into
 /// host-owned persistent background decals.
 pub fn drain_pending_bg_blits(host: &mut Host) {
-    let blits: Vec<PendingBgBlit> = std::mem::take(&mut host.pending_bg_blits);
+    let blits: Vec<PendingBgBlit> = std::mem::take(&mut host.effects.background_blits);
     if blits.is_empty() {
         return;
     }

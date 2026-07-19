@@ -22,11 +22,12 @@ use crate::campaign::Campaign;
 use crate::game::Game;
 use crate::game::GameCallbacks;
 use crate::game_operation::GameCode;
+use crate::host::ApplicationContext;
 use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
-use crate::main_entry::{RustCallbacks, current_mission_id, detect_demo_mode, resolve_loading_pak};
-use crate::player_profile::PlayerProfileManager;
+use crate::main_entry::{
+    RustCallbacks, current_mission_id, detect_demo_mode_with_context, resolve_loading_pak,
+};
 use crate::window::GameWindow;
-use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -171,7 +172,7 @@ impl MissionBootstrap {
     ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
         self.lifecycle
             .require(MissionBootstrapPhase::LevelInitialized);
-        if let Some(lua) = self.host.lua_session.as_ref() {
+        if let Some(lua) = self.host.scripting.lua_session.as_ref() {
             tracing::info!(
                 "Lua: firing Initialize for mission '{}' (seed={})",
                 lua.mission_basename(),
@@ -268,7 +269,7 @@ impl MissionBootstrap {
     ) -> InteractiveMission {
         assert_eq!(self.spec.frontend, MissionFrontendKind::Interactive);
         self.lifecycle.require(MissionBootstrapPhase::EntryPrepared);
-        let wait_for_multiplayer_start = self.host.net.is_some();
+        let wait_for_multiplayer_start = self.host.transport.net.is_some();
         InteractiveMission {
             runtime: self.finish_runtime(
                 args,
@@ -328,18 +329,18 @@ impl MissionBootstrap {
             self.spec.mission_idx,
             &mission_id,
             self.loaded.engine_rng_seed,
-            self.host.net.is_some(),
+            self.host.transport.net.is_some(),
         );
         let timeline = TimelineRuntime::new(
             replay,
             contract,
             wait_for_multiplayer_start,
-            self.host.local_seat == robin_engine::player_command::PlayerId::HOST,
+            self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
         let manager = robin_engine::engine_manager::EngineManager::new(
             self.loaded.engine,
-            self.host.local_seat,
+            self.host.transport.local_seat,
         );
         let control = MissionControl::new(
             timeline.initially_paused(),
@@ -371,6 +372,7 @@ impl MissionLoadingScreen {
         campaign: &Campaign,
         profiles: &ProfileManager,
         mission_idx: usize,
+        application_context: &ApplicationContext,
     ) -> Self {
         const LOADING_MAX_LEVEL: f32 = 22.0;
 
@@ -379,19 +381,30 @@ impl MissionLoadingScreen {
             .missions
             .get(mission_idx)
             .map(|mission| mission.profile(profiles).proto_level_filename.clone());
-        let loading_pak = resolve_loading_pak(proto_level_filename.as_deref(), None);
+        let loading_pak =
+            resolve_loading_pak(application_context, proto_level_filename.as_deref(), None);
+        let profile = application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| {
+                panic!("mission renderer setup requires an active profile: {error}")
+            });
         let renderer_config = MissionRendererConfig {
-            scale_mode: active_profile_scale_mode(),
-            shader_preset: active_profile_shader_preset(),
+            scale_mode: profile.graphic_config.scale_mode,
+            shader_preset: profile.graphic_config.shader_preset,
         };
         let renderer = loading_pak.and_then(|path| {
-            let datadir_kind = match detect_demo_mode().map(|(_, _, _, location)| location) {
+            let datadir_kind = match detect_demo_mode_with_context(application_context)
+                .map(|(_, _, _, location)| location)
+            {
                 Some(MissionLocation::Leicester) => LoadingDatadirKind::DemoI,
                 Some(MissionLocation::Lincoln) => LoadingDatadirKind::DemoII,
                 _ => LoadingDatadirKind::FullGame,
             };
             LoadingScreenRenderer::new(
                 window,
+                application_context.shipping().unwrap_or_else(|error| {
+                    panic!("loading screen lost its ApplicationContext: {error}")
+                }),
                 &path,
                 datadir_kind,
                 LOADING_MAX_LEVEL,
@@ -425,24 +438,6 @@ impl MissionLoadingScreen {
     }
 }
 
-fn active_profile_scale_mode() -> TextureScaleMode {
-    let profiles = PlayerProfileManager::global();
-    profiles
-        .as_ref()
-        .and_then(|manager| manager.get_active())
-        .map(|profile| profile.graphic_config.scale_mode)
-        .unwrap_or_default()
-}
-
-fn active_profile_shader_preset() -> String {
-    let profiles = PlayerProfileManager::global();
-    profiles
-        .as_ref()
-        .and_then(|manager| manager.get_active())
-        .map(|profile| profile.graphic_config.shader_preset.clone())
-        .unwrap_or_default()
-}
-
 /// Owns every process resource acquired before level construction.
 struct InteractiveLoadStage {
     loading: MissionLoadingScreen,
@@ -465,8 +460,18 @@ impl InteractiveLoadStage {
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
     ) -> Result<InteractiveLoadStart, String> {
-        let mut loading = MissionLoadingScreen::open(window, campaign, profiles, mission_idx);
-        let mut host = Host::new(window.width as f32, window.height as f32);
+        let mut loading = MissionLoadingScreen::open(
+            window,
+            campaign,
+            profiles,
+            mission_idx,
+            &args.global_options,
+        );
+        let mut host = Host::new(
+            args.global_options.clone(),
+            window.width as f32,
+            window.height as f32,
+        );
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         if let Err(error) = setup_multiplayer_session(&mut host, args) {
             tracing::error!("{error}; returning to main menu");
@@ -675,7 +680,7 @@ impl HeadlessLoadStage {
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
     ) -> Result<HeadlessLoadStart, String> {
-        let mut host = Host::new(1024.0, 768.0);
+        let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         if let Err(error) = setup_multiplayer_session(&mut host, args) {
             tracing::error!("{error}; aborting headless mission");

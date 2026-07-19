@@ -6,7 +6,7 @@
 //! management** and **transition logic** for those flows.
 
 use crate::Host;
-use crate::host::ApplicationContext;
+use crate::host::{ApplicationContext, HostSignal};
 use robin_engine::engine as engine_api;
 #[cfg(test)]
 use robin_engine::mission_stat as engine_mission_stat;
@@ -512,7 +512,6 @@ impl Game {
         console_displayed: bool,
         dummy_pause: bool,
     ) -> Option<GameCode> {
-        host.bind_application_context(&self.global_options);
         let mission_transitioning = !self.operation.is(GameCode::LevelInProgress);
 
         if !self.should_run_hourglass(console_displayed, mission_transitioning, dummy_pause) {
@@ -539,11 +538,16 @@ impl Game {
         if engine.any_selected_pc_drawing_selection_mark() {
             host.selection_mark.tick();
         }
-        host.trajectory_ground_mark.tick(
-            host.viewport.view_position.to_geo(),
-            host.viewport.zoom_factor,
-            host.viewport.screen_size.x as i32,
-            host.viewport.screen_size.y as i32,
+        let viewport = &host.frontend.viewport;
+        let view_position = viewport.view_position.to_geo();
+        let zoom_factor = viewport.zoom_factor;
+        let screen_width = viewport.screen_size.x as i32;
+        let screen_height = viewport.screen_size.y as i32;
+        host.frontend.trajectory_ground_mark.tick(
+            view_position,
+            zoom_factor,
+            screen_width,
+            screen_height,
             engine.frame_counter(),
         );
 
@@ -558,8 +562,7 @@ impl Game {
         // `apply_side_effects` (which can only see `Host`), so it parks
         // `pending_fps_cheat_promote` for us to apply here where both
         // halves are in scope.
-        if host.pending_fps_cheat_promote {
-            host.pending_fps_cheat_promote = false;
+        if host.effects.take_signal(HostSignal::PromoteFpsCheat) {
             host.info_displayed = dev.debug.fps_display;
             dev.debug.fps_display = false;
         }
@@ -569,8 +572,7 @@ impl Game {
         // `SideEffects`, the host drains it into
         // `pending_silent_win_widget_swap`, and we apply it here where
         // `&mut self` can mutate the widget-enable flags.
-        if host.pending_silent_win_widget_swap {
-            host.pending_silent_win_widget_swap = false;
+        if host.effects.take_signal(HostSignal::SilentWinWidgetSwap) {
             self.enable_start_mission(true);
             self.enable_quit_mission(false);
         }
@@ -581,8 +583,7 @@ impl Game {
         // `&mut crate::window::GameWindow` is in scope.  The host-side
         // `pending_mission_state_popup` flag stays set until the main
         // loop shows and dismisses the popup.
-        if host.pending_mission_state_notice {
-            host.pending_mission_state_notice = false;
+        if host.effects.take_signal(HostSignal::MissionStateNotice) {
             self.enable_quit_mission(false);
         }
 
@@ -1057,7 +1058,7 @@ mod tests {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let mut display = engine_api::HostDisplayState::default();
 
         // Normal state — engine should tick and return None (still in progress)
@@ -1080,7 +1081,7 @@ mod tests {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let mut display = engine_api::HostDisplayState::default();
 
         // Paused — engine should NOT tick
@@ -1102,7 +1103,7 @@ mod tests {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let mut display = engine_api::HostDisplayState::default();
 
         // Console displayed — engine should NOT tick
@@ -1124,7 +1125,7 @@ mod tests {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let mut display = engine_api::HostDisplayState::default();
         engine.test_set_mission_flags(true, false, false);
 
@@ -1146,7 +1147,7 @@ mod tests {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let mut display = engine_api::HostDisplayState::default();
         engine.test_set_mission_flags(false, true, false);
 

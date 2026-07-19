@@ -647,7 +647,7 @@ impl SoundManager {
     /// and music never re-kicks.
     ///
     /// Call this from `GameSaveFile::apply_to` immediately after
-    /// `host.sound = self.sound`. `sources` is the just-restored
+    /// `host.audio.sound = self.sound`. `sources` is the just-restored
     /// engine source list (`engine.sound_sim().sources`).
     ///
     /// The kira backend does not expose a byte-offset stream resume,

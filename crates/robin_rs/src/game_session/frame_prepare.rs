@@ -95,7 +95,7 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
     // fresh cursor.
-    if let Some(net) = host.net.as_ref() {
+    if let Some(net) = host.transport.net.as_ref() {
         net.publish_frame(manager.sim_frame);
     }
     let net_drain = drain_net_inputs(
@@ -126,8 +126,8 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
         *manual_pause = true;
     }
-    if host.net.is_some()
-        && host.local_seat != engine_player_command::PlayerId::HOST
+    if host.transport.net.is_some()
+        && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && let Some((clock_frame, ms_until_next_frame)) = net_drain.latest_host_clock_sample
     {
         accept_host_frame_schedule(
@@ -138,8 +138,8 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
         );
     }
     let mut mp_clock_pause = false;
-    if host.net.is_some()
-        && host.local_seat != engine_player_command::PlayerId::HOST
+    if host.transport.net.is_some()
+        && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && !runtime.mp_waiting_for_initial_snapshot
         && !runtime.mp_waiting_for_begin_sim
         && runtime.mp_start_gate.is_none()
@@ -166,15 +166,15 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
         }
     }
     let net_inputs = net_drain.inputs;
-    if host.net.is_some() {
+    if host.transport.net.is_some() {
         runtime
             .recent_timeline_history
             .checkpoint(manager.sim_frame, &manager.engine);
     }
     if !net_inputs.is_empty() {
         manager.engine.apply_commands(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             &assets,
             &net_inputs,
         );
@@ -313,12 +313,12 @@ fn drain_pre_tick_network(
     mp_clock_pause: &mut bool,
     rewind_active: bool,
 ) {
-    if host.net.is_none() || rewind_active {
+    if host.transport.net.is_none() || rewind_active {
         return;
     }
 
     runtime.trace(FrameContractStage::SecondNetworkDrain);
-    if let Some(net) = host.net.as_ref() {
+    if let Some(net) = host.transport.net.as_ref() {
         net.publish_frame(manager.sim_frame);
     }
     let drain = drain_net_inputs(
@@ -349,8 +349,8 @@ fn drain_pre_tick_network(
     if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
         *manual_pause = true;
     }
-    if host.net.is_some()
-        && host.local_seat != engine_player_command::PlayerId::HOST
+    if host.transport.net.is_some()
+        && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
     {
         accept_host_frame_schedule(
@@ -360,8 +360,8 @@ fn drain_pre_tick_network(
             manager.sim_frame,
         );
     }
-    if host.net.is_some()
-        && host.local_seat != engine_player_command::PlayerId::HOST
+    if host.transport.net.is_some()
+        && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && !runtime.mp_waiting_for_initial_snapshot
         && !runtime.mp_waiting_for_begin_sim
         && runtime.mp_start_gate.is_none()
@@ -387,15 +387,15 @@ fn drain_pre_tick_network(
             *mp_clock_pause = true;
         }
     }
-    if drain.rewrote_sim_state && host.net.is_some() {
+    if drain.rewrote_sim_state && host.transport.net.is_some() {
         runtime
             .recent_timeline_history
             .checkpoint(manager.sim_frame, &manager.engine);
     }
     if !drain.inputs.is_empty() {
         manager.engine.apply_commands(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             assets,
             &drain.inputs,
         );
@@ -410,14 +410,14 @@ fn process_pre_tick_state_hash(
     host: &Host,
     manager: &robin_engine::engine_manager::EngineManager,
 ) {
-    if host.net.is_none()
+    if host.transport.net.is_none()
         || !manager
             .sim_frame
             .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
     {
         return;
     }
-    if host.local_seat == engine_player_command::PlayerId::HOST
+    if host.transport.local_seat == engine_player_command::PlayerId::HOST
         && runtime.last_mp_state_hash_frame != Some(manager.sim_frame)
     {
         runtime.last_mp_state_hash_frame = Some(manager.sim_frame);
@@ -531,8 +531,8 @@ fn prepare_pre_tick_timeline(
         } else if frame.commands.commands.is_empty() {
             let recorded: Vec<PlayerInput> = recorded.to_vec();
             manager.engine.apply_commands(
-                &mut host.engine_display,
-                &mut host.input,
+                &mut host.frontend.engine_display,
+                &mut host.frontend.input,
                 assets,
                 &recorded,
             );
@@ -584,8 +584,10 @@ fn dispatch_pre_tick_pointer_commands(
         dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
     }
 
-    let bow_armed =
-        manager.engine.selected_action_for_seat(host.local_seat) == engine_profiles::Action::Bow;
+    let bow_armed = manager
+        .engine
+        .selected_action_for_seat(host.transport.local_seat)
+        == engine_profiles::Action::Bow;
     if host.time_no_mouse_move != 0 || bow_armed {
         let cmd = PlayerCommand::PerformOrientation { mouse_map };
         dispatch_local_command(host, &mut manager.engine, &mut frame.commands, assets, &cmd);
@@ -941,7 +943,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             // the mission-local Host is not dropped with queued effects.
             execute_app_effects(
                 &mut callbacks.app_effects,
-                &mut host.sound,
+                &mut host.audio.sound,
                 &mut input.threaded,
                 audio
                     .backend

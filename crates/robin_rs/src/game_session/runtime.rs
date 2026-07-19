@@ -144,8 +144,8 @@ impl MissionFrame {
             }
         }
         manager.engine.apply_commands(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             assets,
             &simulation_commands,
         );
@@ -268,14 +268,14 @@ impl MissionRuntime {
 
     /// Drain host RPC requests at the shared post-tick boundary.
     pub(super) fn drain_host_rpc(&mut self) {
-        let net = self.world.host.net.take();
+        let net = self.world.host.transport.net.take();
         crate::http_server::drain_global(
             &mut self.world.manager,
             &mut self.world.host,
             &self.world.assets,
             net.as_ref(),
         );
-        self.world.host.net = net;
+        self.world.host.transport.net = net;
         self.timeline
             .trace(FrameContractStage::HostRpcAndTimelineCommit);
     }

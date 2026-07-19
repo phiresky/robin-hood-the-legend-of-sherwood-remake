@@ -28,8 +28,11 @@ use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::sbfile::SbFile;
 
-fn shipping_loading_pak_pictures(pak_path: &str) -> Option<Vec<Picture>> {
-    let dd = assets_shipping_datadir::global()?;
+fn shipping_loading_pak_pictures(
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    pak_path: &str,
+) -> Option<Vec<Picture>> {
+    let dd = shipping?;
     let key = shipping_pak_key(pak_path);
     let encoded = dd.pak_files.get(&key)?;
     let mut pictures = Vec::with_capacity(encoded.len());
@@ -489,12 +492,13 @@ impl LoadingScreenRenderer {
     /// caller should simply skip the loading screen in that case).
     pub fn new(
         window: &crate::window::GameWindow,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
         pak_path: &str,
         datadir_kind: LoadingDatadirKind,
         max_level: f32,
         scale_mode: TextureScaleMode,
     ) -> Option<Self> {
-        if let Some(pictures) = shipping_loading_pak_pictures(pak_path) {
+        if let Some(pictures) = shipping_loading_pak_pictures(shipping, pak_path) {
             if pictures.len() >= 3 {
                 return Self::from_pictures(
                     window,

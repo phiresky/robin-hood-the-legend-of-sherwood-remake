@@ -8,7 +8,6 @@
 
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
-use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::coordinates::{
     MapPoint, MapSize, ScreenPoint, ScreenSize, ScreenVec, WorldPoint3D,
@@ -23,7 +22,7 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
-use robin_engine::player_profile::PlayerProfileManager;
+use robin_engine::player_profile::{PlayerProfile, PlayerProfileManager};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -97,7 +96,6 @@ impl ApplicationContext {
             .get_active()
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
-        let profile_id = active.id;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -105,7 +103,9 @@ impl ApplicationContext {
         // profile's bindings into the mission input translator. The Rust port
         // keeps the asset-layer key type in a parallel store keyed by the same
         // profile id.
-        key_configs.entry_or_default(profile_id);
+        for profile in &player_profiles.profiles {
+            key_configs.entry_or_default(profile.id);
+        }
 
         Ok(Self {
             sim_config: Arc::new(Mutex::new(engine_api::SimConfig::from_options(
@@ -142,92 +142,102 @@ impl ApplicationContext {
             .expect("ApplicationContext sim-config lock poisoned")
     }
 
-    pub fn shipping(&self) -> Result<Option<Arc<ShippingDatadir>>, String> {
+    pub fn shipping(&self) -> Result<Option<&ShippingDatadir>, String> {
+        Ok(self.required_services()?.shipping.as_deref())
+    }
+
+    pub fn shipping_arc(&self) -> Result<Option<Arc<ShippingDatadir>>, String> {
         Ok(self.required_services()?.shipping.clone())
+    }
+
+    pub fn player_profiles_snapshot(&self) -> Result<PlayerProfileManager, String> {
+        self.with_player_profiles(Clone::clone)
+    }
+
+    pub fn active_profile_snapshot(&self) -> Result<PlayerProfile, String> {
+        self.with_player_profiles(|profiles| profiles.get_active().cloned())?
+            .ok_or_else(|| "ApplicationContext has no active player profile".to_string())
+    }
+
+    pub(crate) fn with_player_profiles<R>(
+        &self,
+        read: impl FnOnce(&PlayerProfileManager) -> R,
+    ) -> Result<R, String> {
+        let profiles = self
+            .required_services()?
+            .player_profiles
+            .lock()
+            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+        Ok(read(&profiles))
     }
 
     pub(crate) fn with_player_profiles_mut<R>(
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let mut profiles = self
+        let (result, difficulty) = {
+            let mut profiles = self
+                .required_services()?
+                .player_profiles
+                .lock()
+                .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+            let result = update(&mut profiles);
+            // The original Select Player menu permits deleting the final
+            // profile (`RHMenuSelectPlayer::OnDelete`), temporarily leaving
+            // no active profile. Session/host construction still rejects
+            // that state through `active_profile_snapshot`/`host_snapshot`.
+            let difficulty = profiles.get_active().map(|profile| profile.difficulty);
+            (result, difficulty)
+        };
+        if let Some(difficulty) = difficulty {
+            *self
+                .sim_config
+                .lock()
+                .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? =
+                engine_api::SimConfig::from_options(&self.options, difficulty);
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn with_key_configs<R>(
+        &self,
+        read: impl FnOnce(&KeyConfigStore) -> R,
+    ) -> Result<R, String> {
+        let keys = self
             .required_services()?
-            .player_profiles
-            .lock()
-            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
-        Ok(update(&mut profiles))
-    }
-
-    /// Copy context-owned profile/key services for a synchronous legacy
-    /// boundary. Locks are taken separately and returned values are owned.
-    pub(crate) fn legacy_service_snapshots(
-        &self,
-    ) -> Result<(PlayerProfileManager, KeyConfigStore), String> {
-        let services = self.required_services()?;
-        let profiles = services
-            .player_profiles
-            .lock()
-            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?
-            .clone();
-        let keys = services
             .key_configs
             .lock()
-            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?
-            .clone();
-        Ok((profiles, keys))
+            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+        Ok(read(&keys))
     }
 
-    /// Adopt owned snapshots from a legacy menu not yet migrated to accept
-    /// `ApplicationContext` directly.
-    pub(crate) fn replace_legacy_service_snapshots(
+    pub(crate) fn with_key_configs_mut<R>(
         &self,
-        profiles: PlayerProfileManager,
-        keys: KeyConfigStore,
-    ) -> Result<(), String> {
-        let difficulty = profiles
-            .get_active()
-            .ok_or_else(|| "legacy profile snapshot has no active profile".to_string())?
-            .difficulty;
-        let services = self.required_services()?;
-        *services
-            .player_profiles
-            .lock()
-            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())? = profiles;
-        *services
+        update: impl FnOnce(&mut KeyConfigStore) -> R,
+    ) -> Result<R, String> {
+        let mut keys = self
+            .required_services()?
             .key_configs
             .lock()
-            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())? = keys;
+            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+        Ok(update(&mut keys))
+    }
 
-        let mut sim_config = self
-            .sim_config
-            .lock()
-            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
-        *sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
-        Ok(())
+    pub fn active_key_configs(&self) -> Result<(KeyConfig, KeyConfig), String> {
+        let profile_id = self.active_profile_snapshot()?.id;
+        self.with_key_configs(|key_configs| {
+            key_configs
+                .get(profile_id)
+                .map(|entry| (entry.active.clone(), entry.custom.clone()))
+        })?
+        .ok_or_else(|| {
+            format!("ApplicationContext has no key config for active profile {profile_id}")
+        })
     }
 
     fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
         let services = self.required_services()?;
-        let profile_id = {
-            let profiles = services
-                .player_profiles
-                .lock()
-                .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
-            profiles
-                .get_active()
-                .map(|profile| profile.id)
-                .ok_or_else(|| "ApplicationContext has no active player profile".to_string())?
-        };
-        let (key_config, custom_key_config) = {
-            let key_configs = services
-                .key_configs
-                .lock()
-                .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
-            let entry = key_configs.get(profile_id).ok_or_else(|| {
-                format!("ApplicationContext has no key config for active profile {profile_id}")
-            })?;
-            (entry.active.clone(), entry.custom.clone())
-        };
+        let (key_config, custom_key_config) = self.active_key_configs()?;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
             key_config,
@@ -430,14 +440,11 @@ impl Default for ViewportState {
     }
 }
 
-/// Rendering, input, audio, and transient per-frame state that does
-/// **not** participate in the deterministic simulation snapshot.
+/// Local rendering and interaction state. Kept behind the small [`Host`]
+/// facade so it can be borrowed independently from transport, audio, and
+/// ordered post-tick work.
 #[derive(Default)]
-pub struct Host {
-    /// Application services for the game context driving this host. Bound by
-    /// `Game::run_engine_tick` before side effects are applied.
-    pub application_context: Option<ApplicationContext>,
-
+pub struct HostFrontend {
     // ── Rendering / GPU surfaces ─────────────────────────────────
     pub map_surface: u32,
     pub minimap_corner_surfaces: Vec<u32>,
@@ -451,43 +458,6 @@ pub struct Host {
 
     // ── Input ────────────────────────────────────────────────────
     pub input: InputState,
-
-    /// Which seat in the simulation is driven by *this* process.
-    ///
-    /// Live input pipelines (mouse, keyboard, gamepad) stamp every
-    /// outgoing [`robin_engine::player_command::PlayerCommand`] with
-    /// this id before queueing it for replay/dispatch, so the seat
-    /// tag is data-driven rather than baked into a constant.
-    ///
-    /// - Single-player or headful host: `PlayerId::HOST` (= seat 0).
-    /// - Headless host: no input pipeline runs, so this is unused.
-    /// - Remote peer: the join-order id assigned by the host on
-    ///   connect (e.g. `PlayerId(2)` for the third-joined peer).
-    ///
-    /// Distinct from [`PlayerId::HOST`], which is the *seat* id seat 0
-    /// occupies in the sim — that's identical on every machine in
-    /// the session.  `local_seat` varies per machine and never
-    /// participates in serialization or rollback hashes.
-    pub local_seat: engine_player_command::PlayerId,
-
-    /// Multiplayer transport session (server or client).  `None` in
-    /// single-player; populated when `--server` / `--connect` is set.
-    /// The game loop drains `net.incoming` each frame to fold peer
-    /// inputs into the engine's command batch, and pushes locally-
-    /// produced inputs into `net.outgoing` for the server to stamp +
-    /// broadcast.  Never serialised — purely host transport state.
-    pub net: Option<crate::multiplayer::NetChannels>,
-
-    /// Multiplayer-negotiated mission RNG seed.  `Some` when this
-    /// process is part of an active multiplayer session — the server
-    /// picks the seed at session start and broadcasts it via the
-    /// `Welcome` handshake; the host uses its own picked seed.  After
-    /// `Engine::new` the mission code calls
-    /// [`robin_engine::engine::EngineInner::restore_rng_from_seed`]
-    /// with this value so every machine in the session simulates the
-    /// same sequence of rolls.  `None` in single-player keeps the
-    /// engine's hardcoded seed (currently 0).
-    pub mp_mission_seed: Option<u64>,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -572,8 +542,6 @@ pub struct Host {
     pub minimap_fast_key: Option<winit::keyboard::KeyCode>,
 
     // ── Host-side managers ───────────────────────────────────────
-    /// Audio playback manager (samples, music, listen point).
-    pub sound: SoundManager,
     /// Immediate-mode draw helper (line segments, ellipses, gauges).
     pub draw_manager: DrawManager,
     /// PC info hover popup (HP, equipment). Populated from sim's
@@ -601,84 +569,6 @@ pub struct Host {
     /// GPU pass when fast-forward mode wants to skip.
     pub skip_render: bool,
 
-    /// Sound-source indices the engine asked the host to (re)play this
-    /// tick. Drained by `host.sound.hourglass`.
-    pub pending_play_delayed_sources: Vec<usize>,
-
-    /// `(position, zoom)` set when a tick emitted a `ResumeAllSources`
-    /// command. Drained by game_session before the sound hourglass
-    /// runs, since it needs `&engine.sound_sim.sources`.
-    pub pending_resume_all_sources: Option<(MapPoint, f32)>,
-
-    /// Sound-source indices the engine asked the host to activate
-    /// this tick (from `SoundCommand::ActivateSource`). Drained by
-    /// game_session before the sound hourglass runs — needs
-    /// `&mut engine.sound_sim.sources`.
-    pub pending_activate_sources: Vec<usize>,
-
-    /// Actor ids whose current/queued exclamation should be stopped
-    /// before the sound hourglass starts new pending speech. Drained by
-    /// game session where the host audio backend is available.
-    pub pending_stop_exclamations: Vec<u32>,
-
-    /// Actor ids whose currently playing exclamation channel should be
-    /// stopped without deleting speech queued later in the same tick.
-    /// This preserves the StopExclamation-then-PlayExclamation
-    /// sequence: the old line is cut off, the new emergency/death
-    /// line still reaches the hourglass.
-    pub pending_stop_exclamation_channels: Vec<u32>,
-
-    /// Patch-effect `BlitToMap` / `RestoreBackground` requests handed
-    /// off by the last tick's `SideEffects`.  Drained in
-    /// `pre_render_engine_setup` where `&mut LevelAssets` + `&mut
-    /// Renderer` are available — see `robin_rs::blit_to_map`.
-    pub pending_bg_blits: Vec<PendingBgBlit>,
-
-    // ── Host-owned UI-request queues (drained at host UI sites) ──
-    /// Dialogue IDs pushed by `StartDialog` script commands.  Accumulated
-    /// from every tick's `SideEffects.pending_dialogues`.  Drained by
-    /// the game session when it's ready to display.
-    pub pending_dialogues: Vec<i32>,
-    /// Popup-scroll text IDs pushed by `DisplayPopupText` /
-    /// `DisplayAllPopupTexts`.  Accumulated from every tick.  Drained
-    /// by the game session through `RHMenuPopupScroll::DisplaySingle`.
-    pub pending_popup_texts: Vec<i32>,
-    /// Debriefing text IDs pushed by the `DisplayAllDebriefings` cheat.
-    pub pending_debriefings: Vec<engine_player_command::DebriefingTextId>,
-    /// Set when a tick fired `DisplaySherwoodReport`.
-    pub pending_sherwood_report: bool,
-    /// Set when a tick fired `DisplayConsole`.
-    pub pending_show_console: bool,
-    /// Set when a tick fired a silent win (ambush/tactical). Drained
-    /// in `Game::perform_hourglass_*` to flip the Sherwood
-    /// start/quit-mission widgets.
-    pub pending_silent_win_widget_swap: bool,
-    /// Set when a tick fired the first-time mission-won banner
-    /// trigger.  Host drains it in `Game::perform_hourglass_*`, flips
-    /// `quit_mission_enabled = false`, and defers the blocking popup
-    /// to the main loop via [`Self::pending_mission_state_popup`].
-    pub pending_mission_state_notice: bool,
-    /// Deferred blocking popup request for the first-time mission-won
-    /// banner.  The main game loop blocks on `show_mission_state_popup`
-    /// here, which requires `&mut crate::window::GameWindow` + `&mut Renderer` — neither
-    /// is in scope inside `apply_side_effects`, so we park the flag and
-    /// drive the popup from the same site that drives the end-of-mission
-    /// debriefing popup.
-    pub pending_mission_state_popup: bool,
-    /// Set when a tick consumed `SimpleMessage::ResetInput`. Drained
-    /// before the next input-translation pass so the input-translator's
-    /// pressed-key cache and UI modifier latches are reset and the
-    /// cursor is resynced — dropping any key-down edges queued while a
-    /// modal was displaying.
-    pub pending_reset_input: bool,
-    /// Set in the `reset_input` branch of [`Self::apply_side_effects`];
-    /// the caller drains it in the next pass through the game loop
-    /// where [`robin_engine::engine::DevState`] is in scope, and
-    /// applies the swap `info_displayed = fps_cheat; fps_cheat =
-    /// false`. The FPS-cheat flag lives on `DevState::debug.fps_display`
-    /// (game-session owned), which is unreachable from
-    /// `apply_side_effects` itself — hence this two-stage hand-off.
-    pub pending_fps_cheat_promote: bool,
     /// Set when the PrintScreen keybind fires.  Drained in the render
     /// loop after `render_frame` (before `present()`) which reads back
     /// the composited frame and writes it to disk as `screen%03u.png`
@@ -726,63 +616,253 @@ pub struct Host {
     /// Stable draw order for [`Self::background_decals`], preserving the
     /// order in which patch effects became permanent.
     pub background_decal_order: Vec<EntityId>,
+}
 
-    /// Lua interpreter for custom Spellforge missions, populated when
-    /// the player launches a mod that ships a `.lua` script. `None`
-    /// for vanilla campaigns and for Vanilla-tagged mods — the
-    /// engine's `.scb` mission script still runs normally either way.
-    /// Drained by the game-session frame loop to fire `Timer`,
-    /// `CheckVictoryCondition`, etc. on the script.
+#[derive(Default)]
+pub struct HostTransport {
+    pub local_seat: engine_player_command::PlayerId,
+    pub net: Option<crate::multiplayer::NetChannels>,
+    pub mission_seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeferredAudioRequest {
+    PlayDelayedSource(usize),
+    ResumeAllSources,
+    ActivateSource(usize),
+    StopExclamation(u32),
+    StopExclamationChannel(u32),
+}
+
+#[derive(Default)]
+pub struct HostAudio {
+    pub sound: SoundManager,
+    pub deferred: Vec<DeferredAudioRequest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostModalRequest {
+    Dialogue(i32),
+    PopupText(i32),
+    Debriefing(engine_player_command::DebriefingTextId),
+    SherwoodReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostSignal {
+    ShowConsole,
+    SilentWinWidgetSwap,
+    MissionStateNotice,
+    MissionStatePopup,
+    ResetInput,
+    PromoteFpsCheat,
+}
+
+/// Ordered, typed work emitted at the post-tick boundary. Variant-specific
+/// drains preserve the existing host phase priority and simulation timing.
+#[derive(Default)]
+pub struct HostEffectBatches {
+    modals: Vec<HostModalRequest>,
+    signals: Vec<HostSignal>,
+    pub background_blits: Vec<PendingBgBlit>,
+}
+
+impl HostEffectBatches {
+    pub fn extend_dialogues(&mut self, ids: impl IntoIterator<Item = i32>) {
+        self.modals
+            .extend(ids.into_iter().map(HostModalRequest::Dialogue));
+    }
+
+    pub fn extend_popup_texts(&mut self, ids: impl IntoIterator<Item = i32>) {
+        self.modals
+            .extend(ids.into_iter().map(HostModalRequest::PopupText));
+    }
+
+    pub fn extend_debriefings(
+        &mut self,
+        ids: impl IntoIterator<Item = engine_player_command::DebriefingTextId>,
+    ) {
+        self.modals
+            .extend(ids.into_iter().map(HostModalRequest::Debriefing));
+    }
+
+    pub fn request_sherwood_report(&mut self) {
+        if !self.has_sherwood_report() {
+            self.modals.push(HostModalRequest::SherwoodReport);
+        }
+    }
+
+    pub fn has_sherwood_report(&self) -> bool {
+        self.modals.contains(&HostModalRequest::SherwoodReport)
+    }
+
+    pub fn take_sherwood_report(&mut self) -> bool {
+        let Some(index) = self
+            .modals
+            .iter()
+            .position(|request| *request == HostModalRequest::SherwoodReport)
+        else {
+            return false;
+        };
+        self.modals.remove(index);
+        true
+    }
+
+    pub fn dialogue_count(&self) -> usize {
+        self.modals
+            .iter()
+            .filter(|request| matches!(request, HostModalRequest::Dialogue(_)))
+            .count()
+    }
+
+    pub fn popup_text_count(&self) -> usize {
+        self.modals
+            .iter()
+            .filter(|request| matches!(request, HostModalRequest::PopupText(_)))
+            .count()
+    }
+
+    pub fn debriefing_count(&self) -> usize {
+        self.modals
+            .iter()
+            .filter(|request| matches!(request, HostModalRequest::Debriefing(_)))
+            .count()
+    }
+
+    pub fn take_dialogues(&mut self) -> Vec<i32> {
+        take_modal_payloads(&mut self.modals, |request| match request {
+            HostModalRequest::Dialogue(id) => Some(id),
+            _ => None,
+        })
+    }
+
+    pub fn take_popup_texts(&mut self) -> Vec<i32> {
+        take_modal_payloads(&mut self.modals, |request| match request {
+            HostModalRequest::PopupText(id) => Some(id),
+            _ => None,
+        })
+    }
+
+    pub fn take_debriefings(&mut self) -> Vec<engine_player_command::DebriefingTextId> {
+        take_modal_payloads(&mut self.modals, |request| match request {
+            HostModalRequest::Debriefing(id) => Some(id),
+            _ => None,
+        })
+    }
+
+    pub fn request_signal(&mut self, signal: HostSignal) {
+        if !self.signals.contains(&signal) {
+            self.signals.push(signal);
+        }
+    }
+
+    pub fn has_signal(&self, signal: HostSignal) -> bool {
+        self.signals.contains(&signal)
+    }
+
+    pub fn take_signal(&mut self, signal: HostSignal) -> bool {
+        let Some(index) = self.signals.iter().position(|queued| *queued == signal) else {
+            return false;
+        };
+        self.signals.remove(index);
+        true
+    }
+
+    pub fn clear(&mut self) {
+        self.modals.clear();
+        self.signals.clear();
+        self.background_blits.clear();
+    }
+}
+
+fn take_modal_payloads<T>(
+    requests: &mut Vec<HostModalRequest>,
+    take: impl Fn(HostModalRequest) -> Option<T>,
+) -> Vec<T> {
+    let mut payloads = Vec::new();
+    requests.retain(|request| {
+        if let Some(payload) = take(*request) {
+            payloads.push(payload);
+            false
+        } else {
+            true
+        }
+    });
+    payloads
+}
+
+#[derive(Default)]
+pub struct HostScripting {
     pub lua_session: Option<crate::lua_session::LuaSession>,
 }
 
+/// Small process-host facade. Deterministic state remains in `Engine`; these
+/// owners can be borrowed independently at the existing async/tick barriers.
+#[derive(Default)]
+pub struct Host {
+    pub application_context: ApplicationContext,
+    pub frontend: HostFrontend,
+    pub transport: HostTransport,
+    pub audio: HostAudio,
+    pub effects: HostEffectBatches,
+    pub scripting: HostScripting,
+}
+
+impl std::ops::Deref for Host {
+    type Target = HostFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frontend
+    }
+}
+
+impl std::ops::DerefMut for Host {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.frontend
+    }
+}
+
 impl Host {
-    pub fn new(screen_width: f32, screen_height: f32) -> Self {
+    pub fn new(
+        application_context: ApplicationContext,
+        screen_width: f32,
+        screen_height: f32,
+    ) -> Self {
+        let snapshot = application_context.host_snapshot().unwrap_or_else(|error| {
+            panic!("Host construction requires a complete context: {error}")
+        });
         Self {
-            viewport: ViewportState::new(screen_width, screen_height),
-            input: InputState {
-                has_focus: true,
+            application_context,
+            frontend: HostFrontend {
+                viewport: ViewportState::new(screen_width, screen_height),
+                input: InputState {
+                    has_focus: true,
+                    ..Default::default()
+                },
+                shipping: snapshot.shipping,
+                key_config: snapshot.key_config,
+                custom_key_config: snapshot.custom_key_config,
                 ..Default::default()
             },
-            // Pick up the shipping datadir the entry-point installed in
-            // `robin_assets::shipping_datadir::install_global`.  Every
-            // `host.shipping.as_deref()` caller (text/cursor resource
-            // attach, script/level loaders, mission-script lookup,
-            // etc.) relies on this being populated — without it, a
-            // wasm build with a shipping datadir still ends up going
-            // through the disk-I/O fallback, which fails because no
-            // filesystem is visible inside the worker.
-            // PARITY TODO(app-context): the excluded `game_session` setup
-            // must pass `ApplicationContext` into this constructor before
-            // this final bootstrap-global shipping read can be removed.
-            shipping: assets_shipping_datadir::global().cloned(),
             ..Default::default()
         }
     }
 
-    /// Bind an explicit application context and refresh host-owned resource
-    /// snapshots. Locks are acquired one at a time inside `host_snapshot` and
-    /// are gone before this method returns to the async frame loop.
-    pub fn bind_application_context(&mut self, context: &ApplicationContext) {
-        if self.application_context.as_ref().is_some_and(|bound| {
-            match (&bound.services, &context.services) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b) && bound.options == context.options,
-                (None, None) => bound.options == context.options,
-                _ => false,
-            }
-        }) {
-            return;
+    /// Construct a host for deterministic replay/test paths which never read
+    /// application persistence or shipping resources.
+    pub fn scratch(screen_width: f32, screen_height: f32) -> Self {
+        Self {
+            application_context: ApplicationContext::default(),
+            frontend: HostFrontend {
+                viewport: ViewportState::new(screen_width, screen_height),
+                input: InputState {
+                    has_focus: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
         }
-
-        if context.services.is_some() {
-            let snapshot = context.host_snapshot().unwrap_or_else(|error| {
-                panic!("failed to bind ApplicationContext to Host: {error}")
-            });
-            self.shipping = snapshot.shipping;
-            self.key_config = snapshot.key_config;
-            self.custom_key_config = snapshot.custom_key_config;
-        }
-        self.application_context = Some(context.clone());
     }
 
     /// Mutable access to the frame holder during loading.
@@ -827,17 +907,8 @@ impl Host {
         // Drop any UI-request queues that were in flight before the
         // load.  They live host-side now — accumulated from per-tick
         // `SideEffects.pending_*` by `Host::apply_side_effects`.
-        self.pending_dialogues.clear();
-        self.pending_popup_texts.clear();
-        self.pending_debriefings.clear();
-        self.pending_sherwood_report = false;
-        self.pending_show_console = false;
-        self.pending_silent_win_widget_swap = false;
-        self.pending_mission_state_notice = false;
-        self.pending_mission_state_popup = false;
+        self.effects.clear();
         self.pending_console_output.clear();
-        self.pending_reset_input = false;
-        self.pending_fps_cheat_promote = false;
         self.pending_print_screen = None;
     }
 
@@ -887,9 +958,9 @@ impl Host {
             // cheat arms the next reset to leave the debug-info
             // overlay visible.  The cheat flag lives on
             // `DevState::debug.fps_display`, which is not reachable
-            // from here — hand off via `pending_fps_cheat_promote` for
+            // from here — hand off via a typed host signal for
             // the game-loop site that owns `&mut DevState` to apply.
-            self.pending_fps_cheat_promote = true;
+            self.effects.request_signal(HostSignal::PromoteFpsCheat);
             self.ui_focus = false;
             self.mouse_way.clear();
             // Zero the no-mouse-move accumulator so the
@@ -908,10 +979,7 @@ impl Host {
             // profile on every accepted move. Persist through this host's
             // explicit application context and save to disk; failures are
             // logged after the sim has already accepted the new position.
-            let context = self
-                .application_context
-                .as_ref()
-                .expect("minimap persistence requires Host to be bound to an ApplicationContext");
+            let context = self.application_context.clone();
             context
                 .with_player_profiles_mut(|mgr| {
                     let profile = mgr
@@ -942,7 +1010,9 @@ impl Host {
         for cmd in fx.sounds {
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
-                    self.pending_stop_exclamations.push(actor_id.index());
+                    self.audio
+                        .deferred
+                        .push(DeferredAudioRequest::StopExclamation(actor_id.index()));
                 }
                 SoundCommand::Exclamation {
                     group,
@@ -953,17 +1023,22 @@ impl Host {
                     actor_id,
                 } => {
                     if let Some(actor_id) = actor_id {
-                        let had_deferred_stop =
-                            self.pending_stop_exclamations.contains(&actor_id.index());
+                        let had_deferred_stop = self.audio.deferred.iter().any(|request| {
+                            *request == DeferredAudioRequest::StopExclamation(actor_id.index())
+                        });
                         if had_deferred_stop {
-                            self.pending_stop_exclamations
-                                .retain(|id| *id != actor_id.index());
-                            self.sound.drop_pending_exclamations(actor_id.index());
-                            self.pending_stop_exclamation_channels
-                                .push(actor_id.index());
+                            self.audio.deferred.retain(|request| {
+                                *request != DeferredAudioRequest::StopExclamation(actor_id.index())
+                            });
+                            self.audio.sound.drop_pending_exclamations(actor_id.index());
+                            self.audio
+                                .deferred
+                                .push(DeferredAudioRequest::StopExclamationChannel(
+                                    actor_id.index(),
+                                ));
                         }
                     }
-                    self.sound.play_exclamation(
+                    self.audio.sound.play_exclamation(
                         group,
                         profile_id,
                         exclamation_id,
@@ -977,7 +1052,7 @@ impl Host {
                     position,
                     material,
                 } => {
-                    self.sound.queue_fx(fx_id, position, material);
+                    self.audio.sound.queue_fx(fx_id, position, material);
                 }
                 SoundCommand::StrikeFx {
                     strike_kind,
@@ -985,7 +1060,8 @@ impl Host {
                     weapon2,
                     position,
                 } => {
-                    self.sound
+                    self.audio
+                        .sound
                         .queue_strike_fx(strike_kind, weapon1, weapon2, position);
                 }
                 SoundCommand::ImpactFx {
@@ -994,17 +1070,18 @@ impl Host {
                     armor,
                     position,
                 } => {
-                    self.sound
+                    self.audio
+                        .sound
                         .queue_impact_fx(impact_kind, weapon, armor, position);
                 }
                 SoundCommand::Jingle(jingle) => {
-                    self.sound.queue_jingle(jingle);
+                    self.audio.sound.queue_jingle(jingle);
                 }
                 SoundCommand::SetMusicMode(mode) => {
-                    self.sound.set_music_mode(mode);
+                    self.audio.sound.set_music_mode(mode);
                 }
                 SoundCommand::ForceMusicMode(mode) => {
-                    self.sound.force_music_mode(mode);
+                    self.audio.sound.force_music_mode(mode);
                 }
                 SoundCommand::SetListenPoint { .. } => {
                     // Local viewport state lives on Host now. The engine's
@@ -1014,29 +1091,49 @@ impl Host {
                     self.sync_sound_listener();
                 }
                 SoundCommand::PlayDelayedSource(idx) => {
-                    self.pending_play_delayed_sources.push(idx);
+                    self.audio
+                        .deferred
+                        .push(DeferredAudioRequest::PlayDelayedSource(idx));
                 }
-                SoundCommand::ResumeAllSources { position, zoom } => {
-                    self.pending_resume_all_sources = Some((position, zoom));
+                SoundCommand::ResumeAllSources { .. } => {
+                    if !self
+                        .audio
+                        .deferred
+                        .contains(&DeferredAudioRequest::ResumeAllSources)
+                    {
+                        self.audio
+                            .deferred
+                            .push(DeferredAudioRequest::ResumeAllSources);
+                    }
                 }
                 SoundCommand::ActivateSource(idx) => {
-                    self.pending_activate_sources.push(idx);
+                    self.audio
+                        .deferred
+                        .push(DeferredAudioRequest::ActivateSource(idx));
                 }
             }
         }
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
-        self.pending_dialogues.extend(fx.pending_dialogues);
-        self.pending_popup_texts.extend(fx.pending_popup_texts);
-        self.pending_debriefings.extend(fx.pending_debriefings);
-        self.pending_sherwood_report |= fx.pending_sherwood_report;
-        self.pending_show_console |= fx.pending_show_console;
-        self.pending_silent_win_widget_swap |= fx.pending_silent_win_widget_swap;
-        if fx.pending_mission_state_notice {
-            self.pending_mission_state_notice = true;
-            self.pending_mission_state_popup = true;
+        self.effects.extend_dialogues(fx.pending_dialogues);
+        self.effects.extend_popup_texts(fx.pending_popup_texts);
+        self.effects.extend_debriefings(fx.pending_debriefings);
+        if fx.pending_sherwood_report {
+            self.effects.request_sherwood_report();
         }
-        self.pending_reset_input |= fx.pending_reset_input;
+        if fx.pending_show_console {
+            self.effects.request_signal(HostSignal::ShowConsole);
+        }
+        if fx.pending_silent_win_widget_swap {
+            self.effects.request_signal(HostSignal::SilentWinWidgetSwap);
+        }
+        if fx.pending_mission_state_notice {
+            self.effects.request_signal(HostSignal::MissionStateNotice);
+            self.effects.request_signal(HostSignal::MissionStatePopup);
+        }
+        if fx.pending_reset_input {
+            self.effects.request_signal(HostSignal::ResetInput);
+        }
         self.ui_focus |= fx.ui_has_focus;
         // Per-frame mark requests from sim-side Mark() calls (currently
         // `RHScript::AddPCToMissionTeam` → `EngineCommand::MarkPc`).
@@ -1046,12 +1143,12 @@ impl Host {
         self.input.marked_pc_ids.extend(fx.pending_mark_pc_ids);
         // Patch-effect background decal changes are accumulated across
         // frames until the next render pass drains them.
-        self.pending_bg_blits.extend(fx.bg_blits);
+        self.effects.background_blits.extend(fx.bg_blits);
         fx.code
     }
 
     pub fn sync_sound_listener(&mut self) {
-        self.sound.set_listen_point(
+        self.audio.sound.set_listen_point(
             self.viewport.sound_listen_point(),
             self.viewport.zoom_factor,
         );
@@ -1107,10 +1204,8 @@ mod application_context_tests {
         let easy = context(0, DifficultyLevel::Easy, KeyCode::F2, "easy.marker");
         let hard = context(0, DifficultyLevel::Hard, KeyCode::F3, "hard.marker");
 
-        let mut easy_host = Host::default();
-        let mut hard_host = Host::default();
-        easy_host.bind_application_context(&easy);
-        hard_host.bind_application_context(&hard);
+        let easy_host = Host::new(easy.clone(), 1024.0, 768.0);
+        let hard_host = Host::new(hard.clone(), 1024.0, 768.0);
 
         assert_eq!(easy.sim_config().difficulty, DifficultyLevel::Easy);
         assert_eq!(hard.sim_config().difficulty, DifficultyLevel::Hard);
@@ -1164,10 +1259,10 @@ mod application_context_tests {
             .unwrap();
         assert_eq!(hard_x, 65536.0);
 
-        let (mut easy_profiles, easy_keys) = easy.legacy_service_snapshots().unwrap();
-        easy_profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Medium;
-        easy.replace_legacy_service_snapshots(easy_profiles, easy_keys)
-            .unwrap();
+        easy.with_player_profiles_mut(|profiles| {
+            profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Medium;
+        })
+        .unwrap();
         assert_eq!(easy.sim_config().difficulty, DifficultyLevel::Medium);
         assert_eq!(hard.sim_config().difficulty, DifficultyLevel::Hard);
     }
@@ -1192,5 +1287,26 @@ mod application_context_tests {
                 Some(KeyCode::F4)
             );
         });
+    }
+
+    #[test]
+    fn effect_batches_preserve_domain_order_and_coalesce_signals() {
+        let mut effects = HostEffectBatches::default();
+        effects.extend_dialogues([7]);
+        effects.extend_popup_texts([11]);
+        effects.extend_dialogues([8, 9]);
+        effects.request_sherwood_report();
+        effects.request_sherwood_report();
+        effects.request_signal(HostSignal::ResetInput);
+        effects.request_signal(HostSignal::ShowConsole);
+        effects.request_signal(HostSignal::ResetInput);
+
+        assert_eq!(effects.take_dialogues(), vec![7, 8, 9]);
+        assert_eq!(effects.take_popup_texts(), vec![11]);
+        assert!(effects.take_sherwood_report());
+        assert!(!effects.take_sherwood_report());
+        assert!(effects.take_signal(HostSignal::ResetInput));
+        assert!(!effects.take_signal(HostSignal::ResetInput));
+        assert!(effects.take_signal(HostSignal::ShowConsole));
     }
 }

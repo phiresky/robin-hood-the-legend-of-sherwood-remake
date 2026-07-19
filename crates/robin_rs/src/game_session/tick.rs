@@ -8,6 +8,7 @@ use crate::ai::AlertLevel;
 use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
 use crate::game_render::clear_status_bar_flags;
+use crate::host::{DeferredAudioRequest, HostSignal};
 use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::replay::ReplayPlayer;
 use crate::rewind::RewindBuffer;
@@ -38,32 +39,53 @@ pub(super) fn tick_audio(
         AlertLevel::Yellow => AlertStatus::Yellow,
         AlertLevel::Red => AlertStatus::Red,
     };
-    // Disjoint-borrow split: `host.sound` and the side-effect queues
-    // on host are separate fields.
-    let mut pending_play_delayed_sources = std::mem::take(&mut host.pending_play_delayed_sources);
+    let deferred = std::mem::take(&mut host.audio.deferred);
+    let mut pending_play_delayed_sources = Vec::new();
+    let mut resume_all_sources = false;
+    let mut activate_sources = Vec::new();
+    let mut stop_exclamations = Vec::new();
+    let mut stop_exclamation_channels = Vec::new();
+    for request in deferred {
+        match request {
+            DeferredAudioRequest::PlayDelayedSource(index) => {
+                pending_play_delayed_sources.push(index);
+            }
+            DeferredAudioRequest::ResumeAllSources => resume_all_sources = true,
+            DeferredAudioRequest::ActivateSource(index) => activate_sources.push(index),
+            DeferredAudioRequest::StopExclamation(actor_id) => {
+                stop_exclamations.push(actor_id);
+            }
+            DeferredAudioRequest::StopExclamationChannel(actor_id) => {
+                stop_exclamation_channels.push(actor_id);
+            }
+        }
+    }
     // Drain sim-emitted sound commands that need access to
     // `engine.sound_sim.sources` (stashed on host by `apply_side_effects`).
     host.sync_sound_listener();
-    if host.pending_resume_all_sources.take().is_some() {
-        host.sound.resume_all_sound_sources(
+    if resume_all_sources {
+        host.audio.sound.resume_all_sound_sources(
             &manager.engine.sound_sim().sources,
             host.viewport.sound_listen_point(),
             host.viewport.zoom_factor,
         );
     }
-    for idx in std::mem::take(&mut host.pending_activate_sources) {
+    for idx in activate_sources {
         // Sim already flipped `src.active = true` inside
         // `perform_hourglass`; host only starts the audio channel.
-        host.sound
+        host.audio
+            .sound
             .activate_sound_source(&manager.engine.sound_sim().sources, idx);
     }
-    for actor_id in std::mem::take(&mut host.pending_stop_exclamation_channels) {
-        host.sound.stop_exclamation_channel_only(actor_id, backend);
+    for actor_id in stop_exclamation_channels {
+        host.audio
+            .sound
+            .stop_exclamation_channel_only(actor_id, backend);
     }
-    for actor_id in std::mem::take(&mut host.pending_stop_exclamations) {
-        host.sound.stop_exclamation(actor_id, backend);
+    for actor_id in stop_exclamations {
+        host.audio.sound.stop_exclamation(actor_id, backend);
     }
-    host.sound.hourglass(
+    host.audio.sound.hourglass(
         backend,
         sample_loader,
         &mut |n| sound_rng.u32(0..n),
@@ -73,7 +95,11 @@ pub(super) fn tick_audio(
     );
     // The hourglass drains the queue; whatever it left behind
     // (nothing today, but defensive) goes back on host for next frame.
-    host.pending_play_delayed_sources = pending_play_delayed_sources;
+    host.audio.deferred.extend(
+        pending_play_delayed_sources
+            .into_iter()
+            .map(DeferredAudioRequest::PlayDelayedSource),
+    );
 }
 
 /// Apply every pending engine mutation that conceptually belongs with
@@ -133,8 +159,8 @@ pub(super) fn post_render_engine_cleanup(
 ) {
     clear_status_bar_flags(
         &mut manager.engine,
-        &mut host.engine_display,
-        &mut host.input,
+        &mut host.frontend.engine_display,
+        &mut host.frontend.input,
         assets,
     );
 }
@@ -382,8 +408,8 @@ pub(super) fn run_forward_ticks(
             frame_cmds.clone_from(buffered_cmds);
         }
         engine.apply_commands(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             assets,
             &frame_cmds,
         );
@@ -459,11 +485,11 @@ pub(super) fn rewind_to_frame(
 /// pending).  The HTTP stepping path uses `dismiss_pending_modals`
 /// instead — scripted drivers want the sim to keep advancing.
 pub(super) fn modal_state_pending(host: &Host) -> bool {
-    !host.pending_dialogues.is_empty()
-        || !host.pending_popup_texts.is_empty()
-        || !host.pending_debriefings.is_empty()
-        || host.pending_sherwood_report
-        || host.pending_mission_state_popup
+    host.effects.dialogue_count() != 0
+        || host.effects.popup_text_count() != 0
+        || host.effects.debriefing_count() != 0
+        || host.effects.has_sherwood_report()
+        || host.effects.has_signal(HostSignal::MissionStatePopup)
 }
 
 /// Silently drop every queued modal on `host`.  Used by the HTTP
@@ -474,28 +500,28 @@ pub(super) fn modal_state_pending(host: &Host) -> bool {
 /// it (mostly for debuggability: "why did my scripted driver miss the
 /// briefing?" — because it was dismissed, here's the count).
 pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
-    let n = host.pending_dialogues.len()
-        + host.pending_popup_texts.len()
-        + host.pending_debriefings.len()
-        + host.pending_sherwood_report as usize
-        + host.pending_mission_state_popup as usize;
+    let n = host.effects.dialogue_count()
+        + host.effects.popup_text_count()
+        + host.effects.debriefing_count()
+        + host.effects.has_sherwood_report() as usize
+        + host.effects.has_signal(HostSignal::MissionStatePopup) as usize;
     if n > 0 {
         tracing::debug!(
             "HTTP step: dismissing {} pending modal(s) \
              (dialogues={}, popups={}, debriefings={}, sherwood_report={}, mission_state={})",
             n,
-            host.pending_dialogues.len(),
-            host.pending_popup_texts.len(),
-            host.pending_debriefings.len(),
-            host.pending_sherwood_report,
-            host.pending_mission_state_popup,
+            host.effects.dialogue_count(),
+            host.effects.popup_text_count(),
+            host.effects.debriefing_count(),
+            host.effects.has_sherwood_report(),
+            host.effects.has_signal(HostSignal::MissionStatePopup),
         );
     }
-    host.pending_dialogues.clear();
-    host.pending_popup_texts.clear();
-    host.pending_debriefings.clear();
-    host.pending_sherwood_report = false;
-    host.pending_mission_state_popup = false;
+    drop(host.effects.take_dialogues());
+    drop(host.effects.take_popup_texts());
+    drop(host.effects.take_debriefings());
+    host.effects.take_sherwood_report();
+    host.effects.take_signal(HostSignal::MissionStatePopup);
     n
 }
 

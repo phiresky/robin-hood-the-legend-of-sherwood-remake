@@ -125,8 +125,8 @@ impl InteractiveMission {
         if let Some(output_path) = args.mission_start_map_output.as_deref() {
             if args.mission_start_reveal_all {
                 manager.engine.apply_commands(
-                    &mut host.engine_display,
-                    &mut host.input,
+                    &mut host.frontend.engine_display,
+                    &mut host.frontend.input,
                     &assets,
                     &[engine_player_command::PlayerCommand::RevealAllBlips.into()],
                 );
@@ -483,7 +483,7 @@ fn finish_interactive_audio(
 ) {
     execute_app_effects(
         &mut callbacks.app_effects,
-        &mut world.host.sound,
+        &mut world.host.audio.sound,
         &mut frontend.input.threaded,
         frontend
             .audio
@@ -517,8 +517,8 @@ fn run_interactive_post_initialize(
     });
     host.engine_display = display;
     if post_initialized
-        && let Some(net) = host.net.as_ref()
-        && host.local_seat == engine_player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net.as_ref()
+        && host.transport.local_seat == engine_player_command::PlayerId::HOST
     {
         net.set_initial_snapshot(manager.sim_frame, &manager.engine);
     }
@@ -553,8 +553,8 @@ async fn pace_interactive_frame(
         engine_api::FRAME_TIME_MS
     };
     let normal_sleep_ms = target.saturating_sub(elapsed);
-    let host_deadline_ms = if host.net.is_some()
-        && host.local_seat != engine_player_command::PlayerId::HOST
+    let host_deadline_ms = if host.transport.net.is_some()
+        && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && !args.fast_forward
     {
         host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
@@ -595,8 +595,8 @@ async fn pace_interactive_frame(
         }
     }
     if let Some((hash_frame, hash)) = runtime.pending_mp_state_hash
-        && let Some(net) = host.net.as_ref()
-        && host.local_seat == engine_player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net.as_ref()
+        && host.transport.local_seat == engine_player_command::PlayerId::HOST
     {
         net.publish_frame(manager.sim_frame);
         tracing::info!(

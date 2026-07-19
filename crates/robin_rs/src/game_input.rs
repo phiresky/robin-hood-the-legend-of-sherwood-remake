@@ -39,7 +39,7 @@ pub fn resolve_left_click(
     ctrl_held: bool,
     is_double: bool,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     let selected = engine.seat_selection(local_seat);
     let num_selected = selected.len();
 
@@ -929,7 +929,7 @@ pub fn resolve_action_drag(
     assets: &LevelAssets,
     map_pt: MapPoint,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     if host.input.ignore_next_drag {
         return vec![];
     }
@@ -1376,7 +1376,7 @@ pub fn resolve_swordfight(
     map_pt: MapPoint,
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     if !engine.is_seat_selection_swordfighting(local_seat) {
         return vec![];
     }

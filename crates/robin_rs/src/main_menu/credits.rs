@@ -11,11 +11,10 @@
 //! for the duration of `show_credits`, so nothing draws over the scroll.
 
 use crate::gfx_types::Keycode;
-use robin_assets::shipping_datadir as assets_shipping_datadir;
-use robin_engine::engine::GlobalOptions;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
+use crate::host::ApplicationContext;
 use crate::main_entry::picture_to_surface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids;
@@ -23,22 +22,22 @@ use crate::resource_manager::ResourceManager;
 
 /// Show the credits scroll.  Returns once the player dismisses it.
 pub(crate) async fn show_credits(
+    application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) {
     // The original wraps the entire credits flow in a `sound_enabled`
     // guard — the sound-manager suspend/resume hooks around the roll
     // were removed from the shipping build but the guard stayed.
     // Faithfully reproduce it: `-NOSOUND` skips credits entirely.
-    if !GlobalOptions::global()
-        .as_ref()
-        .is_none_or(|opts| opts.sound_enabled)
-    {
+    if !application_context.options().sound_enabled {
         tracing::debug!("Credits: sound_enabled is false (-NOSOUND) — skipping credits roll");
         return;
     }
 
+    let shipping = application_context
+        .shipping()
+        .unwrap_or_else(|error| panic!("Credits lost its ApplicationContext: {error}"));
     let mut res = ResourceManager::new();
     if let Err(e) = res.attach_or_from_shipping("Data/Interface/DEFAULT.RES", shipping) {
         tracing::warn!("Credits: DEFAULT.RES unavailable ({e}) — skipping");

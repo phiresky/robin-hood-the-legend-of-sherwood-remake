@@ -7,13 +7,13 @@ use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
+use crate::host::HostSignal;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, BatchDialogue, DebriefingModalState, DebriefingOutcome, DialogueModalState,
     DialogueSentence, IngameMenuResources, MenuSurface, MissionStatePopupState, ModalNet,
     PopupScrollModalState, layout::TextAlign,
 };
-use crate::player_profile::PlayerProfileManager;
 use crate::renderer::Renderer;
 use crate::replay::ReplayRecorder;
 use crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE;
@@ -170,8 +170,7 @@ pub(super) fn drain_pending_console_display(host: &mut Host, console_overlay: &m
     // ── Drain pending console-display request ──
     // Script native `DisplayConsole` (and the forthcoming cheat key)
     // sets `pending_show_console`.
-    if host.pending_show_console {
-        host.pending_show_console = false;
+    if host.effects.take_signal(HostSignal::ShowConsole) {
         if !console_overlay.is_visible() {
             let now_visible = console_overlay.toggle();
             if now_visible {
@@ -199,19 +198,19 @@ pub(super) fn start_active_dialogue_batch(
     level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActiveDialogueBatch> {
-    if host.pending_dialogues.is_empty() {
+    if host.effects.dialogue_count() == 0 {
         return None;
     }
     let Some(descriptors) = level_descriptors else {
         tracing::warn!(
             "DisplayDialog: level descriptors unavailable — dropping {} dialogue(s)",
-            host.pending_dialogues.len()
+            host.effects.dialogue_count()
         );
-        host.pending_dialogues.clear();
+        drop(host.effects.take_dialogues());
         return None;
     };
 
-    let dialog_ids: Vec<i32> = std::mem::take(&mut host.pending_dialogues);
+    let dialog_ids: Vec<i32> = host.effects.take_dialogues();
     let mut pending = VecDeque::with_capacity(dialog_ids.len());
     for dialog_id in dialog_ids {
         let sentences = build_dialogue_sentences(
@@ -281,6 +280,7 @@ fn tick_active_dialogue_batch(
     let sound_cfg = SoundConfig::default();
     let sound_enabled = audio_backend.is_some();
     let modal_net = host
+        .transport
         .net
         .as_ref()
         .map(|net| ModalNet::new(net, kind.clone()));
@@ -289,7 +289,7 @@ fn tick_active_dialogue_batch(
         event_pump,
         renderer,
         resources,
-        &mut host.sound,
+        &mut host.audio.sound,
         &sound_cfg,
         audio_backend
             .as_mut()
@@ -336,8 +336,8 @@ pub(super) async fn drain_pending_dialogues(
     // `show_dialogue`, which short-circuits its event loop. During
     // recording, the interactive result is appended to the recorder
     // so future replays of this file can reproduce the dismissal.
-    if !host.pending_dialogues.is_empty() {
-        let dialog_ids: Vec<i32> = std::mem::take(&mut host.pending_dialogues);
+    if host.effects.dialogue_count() != 0 {
+        let dialog_ids: Vec<i32> = host.effects.take_dialogues();
         if headless {
             tracing::debug!(
                 count = dialog_ids.len(),
@@ -384,6 +384,7 @@ pub(super) async fn drain_pending_dialogues(
                     };
                     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                     let modal_net = host
+                        .transport
                         .net
                         .as_ref()
                         .map(|net| ModalNet::new(net, kind.clone()));
@@ -400,7 +401,7 @@ pub(super) async fn drain_pending_dialogues(
                 event_pump,
                 renderer,
                 resources,
-                &mut host.sound,
+                &mut host.audio.sound,
                 &sound_cfg,
                 audio_backend
                     .as_mut()
@@ -435,10 +436,10 @@ pub(super) fn start_active_popup_scroll_batch(
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     universal_frame: u32,
 ) -> Option<ActivePopupScrollBatch> {
-    if host.pending_popup_texts.is_empty() {
+    if host.effects.popup_text_count() == 0 {
         return None;
     }
-    let text_ids: Vec<i32> = std::mem::take(&mut host.pending_popup_texts);
+    let text_ids: Vec<i32> = host.effects.take_popup_texts();
     let Some(resources) = menu_resources.as_mut() else {
         tracing::warn!(
             "DisplayPopupText: menu resources unavailable — dropping {} popup(s)",
@@ -501,10 +502,9 @@ pub(super) fn start_active_sherwood_report(
     menu_resources: &mut Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActivePopupScrollBatch> {
-    if !host.pending_sherwood_report {
+    if !host.effects.take_sherwood_report() {
         return None;
     }
-    host.pending_sherwood_report = false;
     let Some(resources) = menu_resources.as_mut() else {
         tracing::warn!("DisplaySherwoodReport: menu resources unavailable — skipped");
         return None;
@@ -512,19 +512,14 @@ pub(super) fn start_active_sherwood_report(
     let campaign = engine.campaign();
 
     let sherwood = SherwoodStat;
-    let score_info = {
-        let ppm = PlayerProfileManager::global();
-        if let Some(mgr) = ppm.as_ref()
-            && let Some(profile) = mgr.get_active()
-        {
-            ScoreInfo {
-                score: profile.score as i32,
-                preserved_lives: profile.preserved_lives as i32,
-                play_time_seconds: profile.play_time,
-            }
-        } else {
-            ScoreInfo::default()
-        }
+    let profile = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("Sherwood report requires an active profile: {error}"));
+    let score_info = ScoreInfo {
+        score: profile.score as i32,
+        preserved_lives: profile.preserved_lives as i32,
+        play_time_seconds: profile.play_time,
     };
     let text = sherwood.get_text(
         &campaign.production_sectors,
@@ -559,10 +554,10 @@ pub(super) fn start_active_debriefing_batch(
     menu_resources: &Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActiveDebriefingBatch> {
-    if host.pending_debriefings.is_empty() {
+    if host.effects.debriefing_count() == 0 {
         return None;
     }
-    let ids: Vec<DebriefingTextId> = std::mem::take(&mut host.pending_debriefings);
+    let ids: Vec<DebriefingTextId> = host.effects.take_debriefings();
     let (Some(descriptors), Some(_resources)) = (level_descriptors, menu_resources) else {
         tracing::warn!(
             "DisplayDebriefing: level descriptors or menu resources unavailable — \
@@ -672,6 +667,7 @@ fn tick_active_popup_scroll_batch(
     };
 
     let modal_net = host
+        .transport
         .net
         .as_ref()
         .map(|net| ModalNet::new(net, kind.clone()));
@@ -680,7 +676,7 @@ fn tick_active_popup_scroll_batch(
         event_pump,
         renderer,
         resources,
-        &mut host.sound,
+        &mut host.audio.sound,
         audio_backend
             .as_mut()
             .map(|b| b as &mut dyn crate::sound::AudioBackend),
@@ -913,8 +909,8 @@ pub(super) async fn drain_pending_popup_scroll(
     // ── Drain pending popup-scroll texts ──
     // Script natives `DisplayPopupText` and the `DisplayAllPopupTexts`
     // cheat push text IDs onto `pending_popup_texts`.
-    if !host.pending_popup_texts.is_empty() {
-        let text_ids: Vec<i32> = std::mem::take(&mut host.pending_popup_texts);
+    if host.effects.popup_text_count() != 0 {
+        let text_ids: Vec<i32> = host.effects.take_popup_texts();
         let Some(resources) = menu_resources.as_mut() else {
             // Without `IngameMenuResources` the parchment background, OK
             // button sprite, and font cache are all unavailable — we
@@ -974,6 +970,7 @@ pub(super) async fn drain_pending_popup_scroll(
             let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
+                .transport
                 .net
                 .as_ref()
                 .map(|net| ModalNet::new(net, kind.clone()));
@@ -982,7 +979,7 @@ pub(super) async fn drain_pending_popup_scroll(
                 event_pump,
                 renderer,
                 resources,
-                &mut host.sound,
+                &mut host.audio.sound,
                 &sound_cfg,
                 audio_backend
                     .as_mut()
@@ -1028,26 +1025,22 @@ pub(super) async fn drain_pending_sherwood_stat(
     // ── Drain pending Sherwood stat report ──
     // Script native `DisplaySherwoodReport` sets
     // `pending_sherwood_report`.
-    if host.pending_sherwood_report {
-        host.pending_sherwood_report = false;
+    if host.effects.take_sherwood_report() {
         if let Some(resources) = menu_resources.as_mut() {
             let campaign = engine.campaign();
             let sherwood = SherwoodStat;
             // The Sherwood stat panel pulls score / preserved lives
             // / play time from the active player profile.
-            let score_info = {
-                let ppm = PlayerProfileManager::global();
-                if let Some(mgr) = ppm.as_ref()
-                    && let Some(profile) = mgr.get_active()
-                {
-                    ScoreInfo {
-                        score: profile.score as i32,
-                        preserved_lives: profile.preserved_lives as i32,
-                        play_time_seconds: profile.play_time,
-                    }
-                } else {
-                    ScoreInfo::default()
-                }
+            let profile = host
+                .application_context
+                .active_profile_snapshot()
+                .unwrap_or_else(|error| {
+                    panic!("Sherwood report requires an active profile: {error}")
+                });
+            let score_info = ScoreInfo {
+                score: profile.score as i32,
+                preserved_lives: profile.preserved_lives as i32,
+                play_time_seconds: profile.play_time,
             };
             let text = sherwood.get_text(
                 &campaign.production_sectors,
@@ -1061,6 +1054,7 @@ pub(super) async fn drain_pending_sherwood_stat(
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
+                .transport
                 .net
                 .as_ref()
                 .map(|net| ModalNet::new(net, kind.clone()));
@@ -1071,7 +1065,7 @@ pub(super) async fn drain_pending_sherwood_stat(
                 event_pump,
                 renderer,
                 resources,
-                &mut host.sound,
+                &mut host.audio.sound,
                 &sound_cfg,
                 audio_backend
                     .as_mut()
@@ -1124,8 +1118,8 @@ pub(super) async fn drain_pending_debriefings(
     // still runs.  We replicate that by partitioning the typed queue
     // into a lose phase and a win phase and iterating each
     // independently.
-    if !host.pending_debriefings.is_empty() {
-        let ids: Vec<DebriefingTextId> = std::mem::take(&mut host.pending_debriefings);
+    if host.effects.debriefing_count() != 0 {
+        let ids: Vec<DebriefingTextId> = host.effects.take_debriefings();
         if let (Some(descriptors), Some(resources)) = (&level_descriptors, &menu_resources) {
             let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
                 .into_iter()

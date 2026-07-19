@@ -146,8 +146,12 @@ impl SaveGameManager {
     /// Create a manager rooted at the active profile's save subdirectory
     /// (`<root>/Profile_NNN/`). Loads the existing slot index from
     /// `saves.json` if present; otherwise starts empty.
-    pub fn open_default() -> Self {
-        let dir = save_file::save_directory_for_active_profile();
+    pub fn open_for_context(application_context: &crate::host::ApplicationContext) -> Self {
+        let profile_id = application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| panic!("save manager requires an active profile: {error}"))
+            .id;
+        let dir = save_file::save_directory_for_profile(profile_id);
         let dir_str = dir.to_string_lossy().into_owned();
         match Self::load_index(&dir_str) {
             Ok(mgr) => mgr,
@@ -809,7 +813,7 @@ mod tests {
 
         // Build a live engine with some distinctive state.
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let game = Game::default();
         engine.test_set_frame_counter(42);
         engine.test_set_engine_scalars(0xAA55_AA55, 2.0, 0, false, false, Vec::new());
@@ -836,7 +840,7 @@ mod tests {
 
         // Load into a fresh engine.
         let mut engine2 = fresh_engine().0;
-        let mut host2 = Host::new(800.0, 600.0);
+        let mut host2 = Host::scratch(800.0, 600.0);
         let mut game2 = Game::default();
         mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
@@ -851,7 +855,7 @@ mod tests {
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let game = Game::default();
 
         engine.test_set_frame_counter(1);
@@ -867,14 +871,14 @@ mod tests {
         assert!(mgr.slot_file_exists(ex_idx));
 
         let mut engine_q = fresh_engine().0;
-        let mut host_q = Host::new(800.0, 600.0);
+        let mut host_q = Host::scratch(800.0, 600.0);
         let mut game_q = Game::default();
         mgr.load_save_into_engine(quick_idx, &mut engine_q, &mut host_q, &mut game_q, &assets)
             .unwrap();
         assert_eq!(engine_q.frame_counter(), 2);
 
         let mut engine_e = fresh_engine().0;
-        let mut host_e = Host::new(800.0, 600.0);
+        let mut host_e = Host::scratch(800.0, 600.0);
         let mut game_e = Game::default();
         mgr.load_save_into_engine(ex_idx, &mut engine_e, &mut host_e, &mut game_e, &assets)
             .unwrap();
@@ -903,7 +907,7 @@ mod tests {
         let mut mgr1 = SaveGameManager::new(p1_dir.to_string_lossy().into_owned());
 
         let (mut engine, assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
+        let mut host = Host::scratch(800.0, 600.0);
         let game = Game::default();
 
         // Profile 0 saves frame=100 into QuickSave.
@@ -931,14 +935,14 @@ mod tests {
 
         // Each profile loads its own snapshot back independently.
         let mut engine_a = fresh_engine().0;
-        let mut host_a = Host::new(800.0, 600.0);
+        let mut host_a = Host::scratch(800.0, 600.0);
         let mut game_a = Game::default();
         mgr0.load_save_into_engine(q0, &mut engine_a, &mut host_a, &mut game_a, &assets)
             .unwrap();
         assert_eq!(engine_a.frame_counter(), 100);
 
         let mut engine_b = fresh_engine().0;
-        let mut host_b = Host::new(800.0, 600.0);
+        let mut host_b = Host::scratch(800.0, 600.0);
         let mut game_b = Game::default();
         mgr1.load_save_into_engine(q1, &mut engine_b, &mut host_b, &mut game_b, &assets)
             .unwrap();

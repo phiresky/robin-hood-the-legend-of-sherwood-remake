@@ -19,9 +19,8 @@ use robin_engine::coordinates::{MapPoint, MinimapSize};
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
-use robin_engine::engine::{Ambiance, Engine, GlobalOptions, PANNEL_HEIGHT};
+use robin_engine::engine::{Ambiance, Engine, PANNEL_HEIGHT};
 use robin_engine::minimap as engine_minimap;
-use robin_engine::player_profile::PlayerProfileManager;
 use robin_engine::sbfile;
 use robin_engine::sprite::BBox;
 use robin_engine::sprite_variant::SpriteVariant;
@@ -31,16 +30,13 @@ use robin_engine::sprite_variant::SpriteVariant;
 /// `FrameHolder`.  Lives host-side because the engine crate no longer
 /// references `FrameHolder`.
 pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
+    let bypass_fog_sprites_crash = host.application_context.options().bypass_fog_sprites_crash;
     let fh = host.frame_holder_mut();
     // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
     // Night and Fog dictionaries regardless of ambiance and skip the
     // shadow-value set — the renderer then falls back to
     // `SpriteVariant::Day` via `EngineInner::default_variant`.
-    if GlobalOptions::global()
-        .as_ref()
-        .map(|o| o.bypass_fog_sprites_crash)
-        .unwrap_or(false)
-    {
+    if bypass_fog_sprites_crash {
         fh.drop_variant_dictionaries(SpriteVariant::Night);
         fh.drop_variant_dictionaries(SpriteVariant::Fog);
         return;
@@ -317,8 +313,8 @@ pub fn pre_decode_minimap(
 /// function — runs *before* `Engine::new`; screen dimensions come
 /// from the host's `Window` instead of the not-yet-constructed engine.
 ///
-/// Reads the saved minimap top-left from the active player profile
-/// (`PlayerProfileManager::global`) and forwards it to the engine so
+/// Reads the saved minimap top-left from the active player profile in the
+/// [`crate::host::ApplicationContext`] and forwards it to the engine so
 /// `setup_minimap_map` can validate against the current screen and
 /// snap to the default corner if the saved point is the
 /// `(65536, 65536)` sentinel or fully off-screen.
@@ -345,14 +341,11 @@ pub fn apply_minimap(
     // The sentinel `(65536, 65536)` is the per-profile "never written"
     // default (`PlayerProfile::new` initializes both fields to that
     // value).
-    let saved_position = {
-        let guard = PlayerProfileManager::global();
-        guard
-            .as_ref()
-            .and_then(|m| m.get_active())
-            .map(|p| engine_coordinates::ScreenPoint::new(p.minimap_x, p.minimap_y))
-            .unwrap_or_else(|| engine_coordinates::ScreenPoint::new(65536.0, 65536.0))
-    };
+    let profile = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("minimap setup requires an active profile: {error}"));
+    let saved_position = engine_coordinates::ScreenPoint::new(profile.minimap_x, profile.minimap_y);
 
     tracing::info!(
         "Minimap loaded: {}x{} pixels, surface ID {}, saved position ({:.0}, {:.0})",

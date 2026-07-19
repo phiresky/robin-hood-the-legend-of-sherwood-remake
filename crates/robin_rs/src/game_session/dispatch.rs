@@ -9,7 +9,7 @@ use robin_engine::engine::{Engine, LevelAssets};
 
 /// Apply a batch of locally-produced [`PlayerCommand`]s.
 ///
-/// In single-player (`host.net.is_none()`), commands are applied
+/// In single-player (`host.transport.net.is_none()`), commands are applied
 /// directly to the engine — same behaviour as the old
 /// `engine.apply_local_commands` call.
 ///
@@ -29,12 +29,17 @@ pub(crate) fn dispatch_local_commands(
     assets: &LevelAssets,
     cmds: &[PlayerCommand],
 ) {
-    if let Some(net) = host.net.as_ref() {
+    if let Some(net) = host.transport.net.as_ref() {
         for cmd in cmds {
             net.send_input(cmd.clone());
         }
     } else {
-        engine.apply_local_commands(&mut host.engine_display, &mut host.input, assets, cmds);
+        engine.apply_local_commands(
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
+            assets,
+            cmds,
+        );
     }
 }
 
@@ -58,13 +63,13 @@ pub(crate) fn dispatch_local_command(
     assets: &LevelAssets,
     cmd: &PlayerCommand,
 ) {
-    if let Some(net) = host.net.as_ref() {
+    if let Some(net) = host.transport.net.as_ref() {
         net.send_input(cmd.clone());
     } else {
         frame_cmds.push(cmd.clone());
         engine.apply_local_commands(
-            &mut host.engine_display,
-            &mut host.input,
+            &mut host.frontend.engine_display,
+            &mut host.frontend.input,
             assets,
             std::slice::from_ref(cmd),
         );

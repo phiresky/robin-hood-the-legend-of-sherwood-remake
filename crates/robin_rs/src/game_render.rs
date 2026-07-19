@@ -16,7 +16,6 @@ use crate::ingame_menu::layout;
 use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
 use crate::minimap::UIState;
 use crate::player_command::PlayerCommand;
-use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
@@ -137,7 +136,7 @@ pub(crate) fn render_door_overlays(
     };
 
     // ── 1. Selected PCs inside buildings (runs unconditionally) ──
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     for &pc_id in engine.seat_selection(local_seat) {
         let Some(entity) = engine.get_entity(pc_id) else {
             continue;
@@ -1049,16 +1048,13 @@ pub(crate) fn render_entities_gpu(
     // not render.  The flag defaults to `true` so the live datadir is
     // unaffected; it only bites when the user toggles it off in the
     // options menu.
-    let (display_anim, apply_fog_to_all_sprites) = PlayerProfileManager::global()
-        .as_ref()
-        .and_then(|mgr| mgr.get_active())
-        .map(|p| {
-            (
-                p.graphic_config.display_anim,
-                p.graphic_config.apply_fog_to_all_sprites,
-            )
-        })
-        .unwrap_or((true, false));
+    let graphic_config = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("entity rendering requires an active profile: {error}"))
+        .graphic_config;
+    let display_anim = graphic_config.display_anim;
+    let apply_fog_to_all_sprites = graphic_config.apply_fog_to_all_sprites;
 
     // Clone ids (cheap: `Vec<EntityId>` of u32s) so the iteration borrow
     // doesn't conflict with the `&mut host` we hand to `render_up_to`.
@@ -1596,11 +1592,12 @@ pub(crate) fn render_selection_outlines_gpu(
     let screen_h = host.viewport.screen_size.y as i32;
     let shadow_color = engine.weather().night_color;
     let shadow_level = host.frame_holder.global_shadow();
-    let apply_fog_to_all_sprites = PlayerProfileManager::global()
-        .as_ref()
-        .and_then(|mgr| mgr.get_active())
-        .map(|p| p.graphic_config.apply_fog_to_all_sprites)
-        .unwrap_or(false);
+    let apply_fog_to_all_sprites = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("outline rendering requires an active profile: {error}"))
+        .graphic_config
+        .apply_fog_to_all_sprites;
 
     // Clone ids (cheap) to sidestep borrow conflict with `&mut host`.
     let draw_order_ids = host.draw_order.ids.clone();
@@ -1754,7 +1751,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
     }
 
     // Each selected PC currently swordfighting — bars for PC + all opponents.
-    for &pc_id in engine.seat_selection(host.local_seat) {
+    for &pc_id in engine.seat_selection(host.transport.local_seat) {
         let Some(pc) = engine.get_entity(pc_id) else {
             continue;
         };
@@ -2218,16 +2215,15 @@ where
     // unless `force_display` or `patch_index` overrides.  See
     // `render_entities_gpu` for the full gate; identical logic via
     // `Entity::is_to_be_displayed`.
-    let (display_anim, apply_fog_to_all_sprites) = PlayerProfileManager::global()
-        .as_ref()
-        .and_then(|mgr| mgr.get_active())
-        .map(|p| {
-            (
-                p.graphic_config.display_anim,
-                p.graphic_config.apply_fog_to_all_sprites,
-            )
+    let graphic_config = host
+        .application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| {
+            panic!("background animation rendering requires an active profile: {error}")
         })
-        .unwrap_or((true, false));
+        .graphic_config;
+    let display_anim = graphic_config.display_anim;
+    let apply_fog_to_all_sprites = graphic_config.apply_fog_to_all_sprites;
 
     for entity_id in entity_ids {
         let entity = match engine.get_entity(entity_id) {
@@ -2745,7 +2741,10 @@ fn selected_surface(
     engine: &Engine,
     graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
-    let pc_id = engine.seat_selection(host.local_seat).first().copied()?;
+    let pc_id = engine
+        .seat_selection(host.transport.local_seat)
+        .first()
+        .copied()?;
     let entity = engine.get_entity(pc_id)?;
     let ed = entity.element_data();
     let layer = ed.layer() as usize;
@@ -2822,7 +2821,10 @@ pub(crate) fn render_debug_surfaces_outline(
     let graph = assets.pathfinder_graph.as_ref();
     let move_layers = &graph.static_data.move_layers;
     let selected_layer_area = selected_surface(host, engine, graph);
-    let selected_id = engine.seat_selection(host.local_seat).first().copied();
+    let selected_id = engine
+        .seat_selection(host.transport.local_seat)
+        .first()
+        .copied();
 
     // Pass 1: outline every walkable area, plus active obstacles within.
     for (layer_idx, areas) in move_layers.iter().enumerate() {
@@ -3131,9 +3133,7 @@ pub(crate) fn render_debug_animation_lines(
 /// world→screen transform and let the framebuffer clip.  Empty rects
 /// are skipped.
 pub(crate) fn render_debug_whatsup_overlay(host: &Host, engine: &Engine, renderer: &mut Renderer) {
-    let enabled = engine_api::GlobalOptions::global()
-        .as_ref()
-        .is_some_and(|o| o.whatsup);
+    let enabled = host.application_context.options().whatsup;
     if !enabled {
         return;
     }
@@ -3345,7 +3345,7 @@ fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str
 /// * When latched, paint the four edges in the select/unselect color.
 pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
     // ── Swordfighting cancel ──
-    if engine.is_seat_selection_swordfighting(host.local_seat) {
+    if engine.is_seat_selection_swordfighting(host.transport.local_seat) {
         host.input.multi_selection_active = false;
         host.input.multi_unselection_active = false;
         return;

@@ -8,7 +8,6 @@
 //! [`PlayerProfile`]'s stats via [`render_text_virt`].
 
 use crate::gfx_types::Keycode;
-use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles as engine_profiles;
@@ -20,6 +19,7 @@ use crate::cursor::CursorRenderer;
 
 use crate::audio_backend::{self, KiraAudioBackend};
 use crate::gfx_types::GameEvent;
+use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuTransform, align_bottom_right, button_sprite_state,
@@ -41,7 +41,7 @@ use crate::sound_config::SoundConfig;
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use crate::window::GameWindow;
-use robin_engine::player_profile::{DifficultyLevel, PlayerProfile, PlayerProfileManager};
+use robin_engine::player_profile::{DifficultyLevel, PlayerProfile};
 
 pub(crate) mod credits;
 pub(crate) mod custom_missions;
@@ -125,11 +125,11 @@ struct MainMenuAudio {
 }
 
 impl MainMenuAudio {
-    fn new() -> Option<Self> {
-        // Main menu starts before a `Game` exists, so it cannot see
-        // command-line sound-directory overrides yet. Keep this in
-        // lockstep with the existing main-menu options bootstrap.
-        let sound_dir = std::path::PathBuf::from("Data/Sounds");
+    fn new(application_context: &ApplicationContext) -> Option<Self> {
+        if !application_context.options().sound_enabled {
+            return None;
+        }
+        let sound_dir = std::path::PathBuf::from(&application_context.options().sound_directory);
         let mut backend = match KiraAudioBackend::new(&sound_dir, crate::sound::NUM_CHANNELS) {
             Ok(backend) => backend,
             Err(e) => {
@@ -191,8 +191,9 @@ pub(crate) async fn show_main_menu(
     window: &mut GameWindow,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    application_context: &ApplicationContext,
 ) -> Result<MainMenuChoice, String> {
+    let shipping = application_context.shipping()?;
     window.set_logical_size(MENU_W as u32, MENU_H as u32);
 
     // Main menu runs before a profile is loaded, so fall back to the
@@ -220,12 +221,12 @@ pub(crate) async fn show_main_menu(
             "Main menu: RHID_MENU_BACKGROUND_1 missing from DEFAULT.RES — rendering with no background"
         );
     }
-    let mut menu_audio = MainMenuAudio::new();
+    let mut menu_audio = MainMenuAudio::new(application_context);
 
     // Local save manager for browsing/loading at the main menu.  The
     // session layer builds its own in `RustCallbacks::new`; both read
     // the same on-disk save directory so the slot indices match.
-    let mut save_manager = SaveGameManager::open_default();
+    let mut save_manager = SaveGameManager::open_for_context(application_context);
 
     // Cursor — hide the OS cursor and render the in-game arrow sprite
     // (the default cursor is set at start-up, before the menu comes up).
@@ -335,6 +336,7 @@ pub(crate) async fn show_main_menu(
         renderer.present();
     }
     prompt_first_launch_new_player(
+        application_context,
         &mut *window,
         &mut renderer,
         &menu_resources,
@@ -430,7 +432,7 @@ pub(crate) async fn show_main_menu(
                 &mut cursor_renderer,
                 campaign,
                 profiles,
-                shipping,
+                application_context,
             )
             .await
             {
@@ -444,12 +446,14 @@ pub(crate) async fn show_main_menu(
                 // Persist the profile manager right before closing so
                 // unsaved profile-level changes (active selection,
                 // renames, etc.) survive the exit.
-                let guard = PlayerProfileManager::global();
-                if let Some(mgr) = guard.as_ref()
-                    && let Err(err) = mgr.save()
-                {
-                    tracing::error!("Main menu Exit: failed to save profile manager: {err:#}");
-                }
+                application_context
+                    .with_player_profiles(|mgr| mgr.save())
+                    .unwrap_or_else(|error| {
+                        panic!("Main menu Exit lost its ApplicationContext: {error}")
+                    })
+                    .unwrap_or_else(|err| {
+                        tracing::error!("Main menu Exit: failed to save profile manager: {err:#}")
+                    });
                 return Ok(MainMenuChoice::Exit);
             }
             // Cancelled — stay in the menu and redraw next frame.
@@ -499,7 +503,13 @@ pub(crate) async fn show_main_menu(
         // Text layer (profile info + button labels). Places button text
         // on the sprite at `(btn_h - font_height) / 2`, but emits atlas
         // glyph quads instead of drawing into a software surface.
-        render_text_layer(&mut renderer, &menu_resources, &frame, keyboard_selection);
+        render_text_layer(
+            application_context,
+            &mut renderer,
+            &menu_resources,
+            &frame,
+            keyboard_selection,
+        );
 
         // Custom cursor on top — the OS cursor is hidden, so skip this
         // and the mouse appears to vanish.
@@ -524,15 +534,15 @@ pub(crate) async fn show_main_menu(
 /// repeats.  On OK, delete the placeholder (profile 0) and install the
 /// user's new profile.  On cancel, keep the placeholder as-is.
 async fn prompt_first_launch_new_player(
+    application_context: &ApplicationContext,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     cursor_renderer: &mut CursorRenderer,
 ) {
-    let needs_prompt = {
-        let guard = PlayerProfileManager::global();
-        guard.as_ref().is_some_and(|mgr| mgr.default_profiles)
-    };
+    let needs_prompt = application_context
+        .with_player_profiles(|mgr| mgr.default_profiles)
+        .unwrap_or_else(|error| panic!("first-launch prompt lost its ApplicationContext: {error}"));
     if !needs_prompt {
         return;
     }
@@ -540,14 +550,10 @@ async fn prompt_first_launch_new_player(
     // Use the placeholder's name as the modal's initial value — the
     // autogenerated "Robin" default plays the role of the original's
     // anonymous fallback.
-    let initial_name = {
-        let guard = PlayerProfileManager::global();
-        guard
-            .as_ref()
-            .and_then(|mgr| mgr.get_active())
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "Robin".to_string())
-    };
+    let initial_name = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("first-launch prompt requires an active profile: {error}"))
+        .name;
 
     let outcome = player_select::show_new_player_prompt(
         event_pump,
@@ -558,37 +564,30 @@ async fn prompt_first_launch_new_player(
     )
     .await;
 
-    let mut guard = PlayerProfileManager::global();
-    let Some(mgr) = guard.as_mut() else {
-        return;
-    };
-    // Clear the flag unconditionally so the prompt doesn't fire again
-    // on the next menu entry even if the user cancelled.
-    mgr.default_profiles = false;
+    application_context
+        .with_player_profiles_mut(|mgr| {
+            // Clear the flag unconditionally so the prompt doesn't fire again
+            // on the next menu entry even if the user cancelled.
+            mgr.default_profiles = false;
 
-    if let Some((name, difficulty)) = outcome {
-        // Replace the auto-created placeholder (index 0) with the
-        // user-provided profile: delete profile 0, add the new one,
-        // promote it to active, and save.
-        if !mgr.profiles.is_empty() {
-            mgr.delete_profile(0);
-        }
-        // The window is already open at this point; pass its dimensions so
-        // the new profile inherits live screen size rather than the 800×600
-        // fallback (the "screen open" arm of profile creation).
-        let screen_dims = Some((
-            renderer.screen_width() as u32,
-            renderer.screen_height() as u32,
-        ));
-        let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
-        mgr.set_active(idx);
-        // Save only inside the OK branch — on cancel the on-disk
-        // `default_profiles = true` flag stays armed so the prompt
-        // re-fires on the next launch.
-        if let Err(err) = mgr.save() {
-            tracing::error!("Main menu first-launch: failed to persist profile manager: {err:#}");
-        }
-    }
+            if let Some((name, difficulty)) = outcome {
+                if !mgr.profiles.is_empty() {
+                    mgr.delete_profile(0);
+                }
+                let screen_dims = Some((
+                    renderer.screen_width() as u32,
+                    renderer.screen_height() as u32,
+                ));
+                let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
+                mgr.set_active(idx);
+                if let Err(err) = mgr.save() {
+                    tracing::error!(
+                        "Main menu first-launch: failed to persist profile manager: {err:#}"
+                    );
+                }
+            }
+        })
+        .unwrap_or_else(|error| panic!("first-launch profile update failed: {error}"));
 }
 
 fn move_keyboard_selection(frame: &FrameWnd, selection: &mut u32, direction: i32) {
@@ -621,7 +620,7 @@ async fn dispatch_click(
     cursor_renderer: &mut CursorRenderer,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    application_context: &ApplicationContext,
 ) -> Option<MainMenuChoice> {
     match action {
         ClickAction::Return(c) => Some(c),
@@ -642,11 +641,13 @@ async fn dispatch_click(
             cursor_renderer,
             campaign,
             profiles,
+            application_context,
         )
         .await
         .map(MainMenuChoice::Multiplayer),
         ClickAction::SelectPlayer => {
             player_select::show_select_player(
+                application_context,
                 event_pump,
                 renderer,
                 menu_resources,
@@ -656,7 +657,7 @@ async fn dispatch_click(
             // Active profile may have changed — reopen the save manager so
             // subsequent "Load Game" clicks read the new profile's
             // `Profile_NNN/saves.json` index rather than the prior one.
-            *save_manager = SaveGameManager::open_default();
+            *save_manager = SaveGameManager::open_for_context(application_context);
             // If the new active profile carries a different resolution,
             // resize so the surrounding menu re-lays out at the new size
             // on the next frame. `MenuTransform::centered` picks up the
@@ -675,15 +676,15 @@ async fn dispatch_click(
             // would require a top-level main-menu `SoundManager` first;
             // that is a structural change beyond the scope of this arm.
             // See parity-audit/RHMenuIntro-03.md (`OnSelectPlayer` entry).
-            let active_res = {
-                let guard = PlayerProfileManager::global();
-                guard.as_ref().and_then(|mgr| mgr.get_active()).map(|p| {
-                    (
-                        p.graphic_config.resolution_x.round() as u16,
-                        p.graphic_config.resolution_y.round() as u16,
-                    )
-                })
-            };
+            let profile = application_context
+                .active_profile_snapshot()
+                .unwrap_or_else(|error| {
+                    panic!("Select Player removed the active profile: {error}")
+                });
+            let active_res = Some((
+                profile.graphic_config.resolution_x.round() as u16,
+                profile.graphic_config.resolution_y.round() as u16,
+            ));
             if let Some((w, h)) = active_res
                 && (renderer.screen_width() != w || renderer.screen_height() != h)
             {
@@ -693,8 +694,14 @@ async fn dispatch_click(
             None
         }
         ClickAction::Options => {
-            options::show_main_menu_options(event_pump, renderer, menu_resources, cursor_renderer)
-                .await;
+            options::show_main_menu_options(
+                application_context,
+                event_pump,
+                renderer,
+                menu_resources,
+                cursor_renderer,
+            )
+            .await;
             event_pump.set_logical_size(
                 renderer.screen_width() as u32,
                 renderer.screen_height() as u32,
@@ -702,11 +709,11 @@ async fn dispatch_click(
             None
         }
         ClickAction::ShowCredits => {
-            credits::show_credits(event_pump, renderer, shipping).await;
+            credits::show_credits(application_context, event_pump, renderer).await;
             None
         }
         ClickAction::ShowMovies => {
-            movies::show_movies(event_pump, renderer, menu_resources).await;
+            movies::show_movies(application_context, event_pump, renderer, menu_resources).await;
             None
         }
         ClickAction::CustomMissions => {
@@ -727,19 +734,18 @@ async fn dispatch_click(
 /// Render every piece of text in the main menu (profile info block on
 /// the left, button labels on the right).
 fn render_text_layer(
+    application_context: &ApplicationContext,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     frame: &FrameWnd,
     keyboard_selection: u32,
 ) {
-    // Build the text-block lines up-front so we don't hold references
-    // into the global profile manager while the surface is locked.
-    let profile_guard = PlayerProfileManager::global();
-    let profile = profile_guard.as_ref().and_then(|mgr| mgr.get_active());
-    let profile_name = profile.map(|p| p.name.clone());
-    let profile_info_lines = profile
-        .map(|p| build_profile_info_lines(resources, p))
-        .unwrap_or_default();
+    // Clone before rendering so the profile lock never reaches the GPU path.
+    let profile = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("main-menu rendering requires an active profile: {error}"));
+    let profile_name = Some(profile.name.clone());
+    let profile_info_lines = build_profile_info_lines(resources, &profile);
 
     let name_font = resources
         .edit_field_font()

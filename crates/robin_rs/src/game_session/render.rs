@@ -463,15 +463,11 @@ fn render_display_info_overlay(
         });
     };
 
-    let version = engine_api::GlobalOptions::global()
-        .as_ref()
-        .map(|opts| {
-            format!(
-                "v{}.{}.{:03} ({})",
-                opts.major_version, opts.minor_version, opts.build_number, opts.release_name
-            )
-        })
-        .unwrap_or_else(|| "v?.?.??? (unknown)".to_string());
+    let opts = host.application_context.options();
+    let version = format!(
+        "v{}.{}.{:03} ({})",
+        opts.major_version, opts.minor_version, opts.build_number, opts.release_name
+    );
     text(renderer, &version, (sw - 150).max(0), (sh - 32).max(0));
 
     let minutes = elapsed_secs / 60;
@@ -494,17 +490,17 @@ fn render_display_info_overlay(
     text(renderer, "Music mode", left, top - 12);
     renderer.draw_rect_outline_screen(left, top, left + 129, top + 33, 0xffff);
 
-    let quiet = host.sound.quiet_mode_weight().min(256);
-    let alert = host.sound.alert_mode_weight().min(256);
-    let fight = host.sound.fight_mode_weight().min(256);
+    let quiet = host.audio.sound.quiet_mode_weight().min(256);
+    let alert = host.audio.sound.alert_mode_weight().min(256);
+    let fight = host.audio.sound.fight_mode_weight().min(256);
     fill_display_bar(renderer, left + 1, top + 3, quiet, 0x97cc);
     fill_display_bar(renderer, left + 1, top + 13, alert, 0xfe40);
     fill_display_bar(renderer, left + 1, top + 23, fight, 0xfa80);
 
-    let mode_color = if host.sound.is_new_music_starting() {
+    let mode_color = if host.audio.sound.is_new_music_starting() {
         0x03ef
     } else {
-        match host.sound.music_mode() {
+        match host.audio.sound.music_mode() {
             MusicMode::Quiet => 0x07ef,
             MusicMode::Alert => 0xfbe0,
             MusicMode::Fight => 0xf80f,
@@ -512,7 +508,7 @@ fn render_display_info_overlay(
     };
     text(
         renderer,
-        &format!("{}%", host.sound.stream_relative_position()),
+        &format!("{}%", host.audio.sound.stream_relative_position()),
         left + 96,
         top - 12,
     );
@@ -520,20 +516,20 @@ fn render_display_info_overlay(
 
     host.display_info_max_pending_sounds = host
         .display_info_max_pending_sounds
-        .max(host.sound.num_pending_sounds());
+        .max(host.audio.sound.num_pending_sounds());
     fill_rect(renderer, left - 24, top + 48, 180, 12, 0x2408);
     text(
         renderer,
         &format!(
             "PS: {:4} MAX: {:4}",
-            host.sound.num_pending_sounds(),
+            host.audio.sound.num_pending_sounds(),
             host.display_info_max_pending_sounds
         ),
         left - 24,
         top + 48,
     );
 
-    let stats = host.sound.sound_cache.get_cache_stats();
+    let stats = host.audio.sound.sound_cache.get_cache_stats();
     fill_rect(renderer, left - 24, top + 88, 190, 42, 0x7bd4);
     for (idx, label) in ["FX", "SR", "SP", "GL"].iter().enumerate() {
         let stat = &stats[idx];
@@ -619,7 +615,7 @@ pub(super) fn update_mouse_and_cursor(
     // computed by `update_mouse` (which queries `find_focusable_*`
     // against the world `mouse_map`) so the cursor reflects whether
     // the portrait's PC is a valid target.
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     let armed = manager.engine.selected_action_for_seat(local_seat);
     if matches!(
         armed,
@@ -816,7 +812,7 @@ pub(super) fn render_frame(
     let rewind_active = ctx.rewind_active;
     let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
     let draw_hud = ctx.draw_hud;
-    let local_seat = host.local_seat;
+    let local_seat = host.transport.local_seat;
     // Queue the GPU background texture for the current camera view.
     // Engine-mutating pre-render bookkeeping (bg blits, SortDisplayOrder)
     // is hoisted to the main loop so `render_frame` itself observes an
