@@ -7403,33 +7403,27 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-            for &(npc_id, path_idx, wp_idx) in &requests {
-                let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
-                match script.call_waypoint_function(
-                    path_idx,
-                    wp_idx,
-                    "ReachPoint",
-                    &[actor_handle],
-                    script_domains,
-                    capabilities,
-                ) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!(
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                        // Debug assert — `ReachPoint` is part of the
-                        // `IWaypointScript` contract, so a bound
-                        // instance failing the call is a bug.
-                        debug_assert!(
-                            false,
-                            "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {e}"
-                        );
-                    }
+        for &(npc_id, path_idx, wp_idx) in &requests {
+            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+            match self.call_script_vm(
+                assets,
+                ScriptVmKey::Waypoint(path_idx, wp_idx),
+                "ReachPoint",
+                &[actor_handle],
+                crate::natives::ScriptCallFrame::default(),
+            ) {
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
+                    debug_assert!(
+                        false,
+                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+                    );
                 }
             }
-        });
+        }
 
         // ── Phase 2: synchronous Think(EventAfterScriptGoOn) ──
         // `think(EVENT_AFTER_SCRIPT_GO_ON)` fires immediately after

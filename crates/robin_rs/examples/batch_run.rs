@@ -91,7 +91,7 @@ fn main() {
                     robin_engine::interp::StopReason::StepLimit => "LIMIT",
                     robin_engine::interp::StopReason::HitEmpty => "EMPTY",
                     robin_engine::interp::StopReason::Unimplemented(_) => "UNIMPL",
-                    robin_engine::interp::StopReason::PendingNestedCall(_) => "NESTED",
+                    robin_engine::interp::StopReason::Yield(_) => "YIELD",
                 };
 
                 let final_ip = vm_state.vm.ip as usize;
@@ -102,7 +102,7 @@ fn main() {
                 results.push((
                     format!("{}::{}", class.class_name, func.name),
                     stop_str,
-                    host.script_effects().engine.commands.len(),
+                    host.script_effects().engine_commands().len(),
                     final_ip,
                 ));
                 found = true;

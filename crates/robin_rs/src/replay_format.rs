@@ -4,8 +4,7 @@
 //! URL / bug-report paste: the engine's `ReplayData` is flattened into
 //! a [`ReplayFile`], bitcode-serialized, zstd-compressed, then
 //! base64-encoded (URL-safe, no padding). A short engine git hash is
-//! prepended so the loader can warn when a replay was produced on a
-//! different build.
+//! prepended so the loader rejects replays produced by a different build.
 //!
 //! The canonical recording format on disk is still JSONL (see
 //! [`robin_engine::replay`]) — that streams incrementally and is
@@ -21,10 +20,8 @@
 //!    string (any extension; convenient for shell redirection).
 //! 3. A filesystem path to a legacy `*.rhrec.jsonl` file.
 //!
-//! The version hash is checked on decode; mismatches log a warning and
-//! playback proceeds anyway (the user explicitly asked for this — a
-//! stale hash is often recoverable, and refusing to load is worse
-//! than an occasional desync during debugging).
+//! The version hash is checked before playback. A mismatch is rejected because
+//! simulation compatibility is not promised across engine revisions.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
@@ -65,6 +62,11 @@ pub enum FormatError {
         "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
     )]
     UnsupportedVersion { version: u32 },
+    #[error("replay engine version `{recorded}` does not match this build `{current}`")]
+    EngineVersionMismatch {
+        recorded: String,
+        current: &'static str,
+    },
 }
 
 /// Encode an in-memory [`ReplayData`] as a `rhrec-{hash}-{base64}`
@@ -79,8 +81,8 @@ pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatErr
 }
 
 /// Parse a `rhrec-{hash}-{base64}` string back into a [`ReplayData`],
-/// returning the embedded version hash so the caller can compare it
-/// against [`ENGINE_VERSION_HASH`] and warn on mismatch.
+/// returning the embedded version hash so callers can inspect it. Playback
+/// entry points reject a mismatch via [`validate_engine_hash`].
 pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
     let rest = text
         .trim()
@@ -111,17 +113,15 @@ pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
 /// Load a replay from either the compact inline format, a file
 /// containing the compact format, or a `*.rhrec.jsonl` file.
 ///
-/// On version-hash mismatch: logs a warning at `warn!` level and
-/// continues with the load. This is deliberate — users debugging an
-/// old replay often want playback to proceed on a best-effort basis,
-/// and a refusal would break the workflow the flag exists to support.
+/// Compact replay hashes are an exact compatibility gate. JSONL recordings do
+/// not embed the build hash and remain governed by their replay schema.
 pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     // Inline `rhrec-…` wins first so `--replay rhrec-…` works without
     // shell escaping headaches on a token that might also look like a
     // relative path.
     if spec.trim_start().starts_with(COMPACT_PREFIX) {
         let (hash, data) = decode_compact(spec)?;
-        warn_on_mismatch(&hash);
+        validate_engine_hash(&hash)?;
         return Ok(data);
     }
     // Otherwise read the file. If its contents start with `rhrec-`,
@@ -130,7 +130,7 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     let trimmed = contents.trim_start();
     if trimmed.starts_with(COMPACT_PREFIX) {
         let (hash, data) = decode_compact(trimmed)?;
-        warn_on_mismatch(&hash);
+        validate_engine_hash(&hash)?;
         Ok(data)
     } else {
         let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
@@ -139,13 +139,14 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
     }
 }
 
-fn warn_on_mismatch(hash: &str) {
+fn validate_engine_hash(hash: &str) -> Result<(), FormatError> {
     if hash != ENGINE_VERSION_HASH {
-        tracing::warn!(
-            "Replay was recorded on engine version `{hash}`, but this build is `{ENGINE_VERSION_HASH}` — \
-             proceeding anyway; expect desyncs if the sim behaviour drifted."
-        );
+        return Err(FormatError::EngineVersionMismatch {
+            recorded: hash.to_owned(),
+            current: ENGINE_VERSION_HASH,
+        });
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -209,5 +210,21 @@ mod tests {
         let s = encode_compact(&data, ENGINE_VERSION_HASH).unwrap();
         let back = load_replay_spec(&s).unwrap();
         assert_eq!(back.header.mission_id, "Dem_Lei_MP");
+    }
+
+    #[test]
+    fn load_spec_rejects_a_different_engine_hash() {
+        let data = sample_data();
+        let mismatched = if ENGINE_VERSION_HASH == "different" {
+            "another"
+        } else {
+            "different"
+        };
+        let encoded = encode_compact(&data, mismatched).unwrap();
+        assert!(matches!(
+            load_replay_spec(&encoded),
+            Err(FormatError::EngineVersionMismatch { recorded, current })
+                if recorded == mismatched && current == ENGINE_VERSION_HASH
+        ));
     }
 }

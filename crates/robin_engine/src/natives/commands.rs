@@ -8,8 +8,8 @@
 //!
 //! - `EngineCommand` — camera, dialog, map, fade, minimap, outline, …
 //! - `SoundCommand`  — sound source activate / suspend / destroy.
-//! - `DeferredCommand` — game-logic actions that need sequence manager
-//!   or global engine state (SendMessage, SelectPC, StopActor, FreezeAll).
+//! - `DeferredCommand` — wider-context game-logic follow-ups such as SelectPC,
+//!   StopActor, FreezeAll, and patch application.
 
 /// Ordered engine-bound commands queued by native functions for processing
 /// after script execution. [`EngineCommand::domain`] distinguishes genuine
@@ -173,15 +173,6 @@ pub enum SoundCommand {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum DeferredCommand {
-    /// SendMessage / SendMessageWithArguments. The engine must turn this
-    /// into a one-element `Command::SendMessage` sequence; it is not a
-    /// direct `ProcessMessage` callback request.
-    SendMessage {
-        actor: i32,
-        message: i32,
-        arg1: i32,
-        arg2: i32,
-    },
     /// Finish SelectActorPC(actor, select) after the native has already
     /// updated the canonical selection synchronously. `actor == 0` means
     /// "all PCs". The engine-side barrier performs action/sequence and
@@ -196,9 +187,6 @@ pub enum DeferredCommand {
     /// `MSG_DISABLE_CHARACTER`. The engine should update the portrait
     /// bar when processing this command.
     SetPlayable { actor: i32, playable: bool },
-    /// Handle death for an actor whose life points reached 0.
-    /// EngineInner should set death posture, quit swordfight, play dying animation.
-    HandleDeath { actor: i32 },
     /// Quit any active swordfight for the actor. Used when teleporting
     /// an actor to "honolulu" (SetActorLocation with null location).
     QuitSwordfight { actor: i32 },
@@ -226,68 +214,9 @@ pub enum DeferredCommand {
     /// `NUMBER_OF_QA_MEMORY` slots, call `SetQuickActionSequence(0, 0,
     /// i, 0xFFFFFFFF)` on each (deletes sequence, titbits, QUICKITOS),
     /// and `RemoveQuickActionTitbitsFor`.  The per-slot logic lives in
-    /// engine/commands.rs; we iterate here so the native keeps to
+    /// the engine command path; we iterate here so the native keeps to
     /// entity-state writes.
     ClearAllQuickActionSlots { actor: i32 },
-    /// Launch a low-priority `RHCOMMAND_WAIT` sequence element on the
-    /// actor: build a fresh wait at `RHPRIORITY_WAIT` and feed it into
-    /// the sequence manager so the instruct arbitration kicks the
-    /// actor out of any already-running sequence at lower-or-equal
-    /// priority.  Used by every `Set*` posture/action-state script
-    /// native (which calls `Wait()` after stamping the new state) so
-    /// the actor doesn't continue executing whatever command was
-    /// running before the script poked at it.
-    LaunchWait { actor: i32 },
-    /// Apply a scripted life-points write through the full
-    /// `combat::set_life_points` pipeline.  Clamps negative values to
-    /// zero, ignores already-dead actors, blocks Sherwood-PC damage,
-    /// stores max life for invulnerable actors, and runs the death
-    /// pipeline (`Kill`) when the actor reaches zero.  The PC override
-    /// fires HERO_DIE / HERO_HURT cues on a drop.  No damage titbit is
-    /// emitted on the script call site.
-    SetScriptedLifePoints { actor: i32, amount: i32 },
-    /// Apply a scripted concussion write through the full
-    /// `EngineInner::apply_concussion` pipeline.  Clamps to
-    /// `[0, CONCUSSION_MAX]`, honours invulnerability/Sherwood guards,
-    /// preserves wakeup threshold for tied/carried (script-locked is
-    /// bypassed because `force_value` is `true`), toggles unconscious
-    /// state, quits swordfight on KO, adds unconscious-stars titbit,
-    /// and dispatches `EVENT_FITAGAIN` on wakeup.
-    SetScriptedConcussion {
-        actor: i32,
-        amount: i32,
-        force_value: bool,
-    },
-    /// Stop the actor's current and pending sequence elements at a
-    /// caller-specified priority, used outside the script-level
-    /// `StopActor` flow — currently used by `SetActorPosture`'s `ID_KO`
-    /// arm which calls `Stop(RHPRIORITY_INJURY)` before stamping the
-    /// lying posture so any in-flight preference/normal-priority
-    /// sequence is torn down at the correct level.
-    StopActorAtPriority {
-        actor: i32,
-        priority: crate::sequence::SequencePriority,
-    },
-    /// NPC-only AI broadcast that fires when an NPC is forced into KO
-    /// or tied posture from script.  Queues a
-    /// `StimulusType::EventLoseConsciousness` on the NPC's own AI
-    /// brain (`pending_stimuli`) and broadcasts the body as a
-    /// DETECTABLE_BODY to every other NPC via
-    /// `broadcast_body_detectable`.  Handler is a no-op for non-NPC
-    /// actors so the native can enqueue without re-checking.
-    BroadcastLoseConsciousness { actor: i32 },
-    /// NPC-only AI broadcast that fires when an NPC is brought back
-    /// to upright from a LYING posture via script.  Walks every other
-    /// NPC and removes the resurrected NPC from their
-    /// `DETECTABLE_BODY` list so allies stop reacting to a "downed"
-    /// friend.
-    BroadcastResurrection { actor: i32 },
-    /// Add a HIDDEN titbit attached to the given actor.  The
-    /// script-level posture stamp on the `ID_ANONYMOUS_ARCHER` arm
-    /// does not go through the stealth-command transition that
-    /// normally adds the HIDDEN titbit, so this restores the visual
-    /// "disguise" indicator above the actor.
-    AddHiddenTitbitForActor { actor: i32 },
     /// Re-issue the in-flight `GoTo` for a patrolling NPC so a
     /// just-changed `default_path_walking_flags` (e.g. RUN ↔ WALK from
     /// `SetPathWalkingStyle`) takes effect mid-segment instead of

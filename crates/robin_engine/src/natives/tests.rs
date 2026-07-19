@@ -271,6 +271,8 @@ struct BoundScriptEffects {
     frame: u32,
     short_briefings: crate::short_briefings::ShortBriefings,
     standard_view_radius: u16,
+    campaign: crate::campaign::Campaign,
+    mission_stat: crate::mission_stat::MissionStat,
 }
 
 impl BoundScriptEffects {
@@ -290,6 +292,8 @@ impl BoundScriptEffects {
             frame: 0,
             short_briefings: crate::short_briefings::ShortBriefings::default(),
             standard_view_radius: crate::ai_vision::DEFAULT_VIEW_RADIUS,
+            campaign: crate::campaign::Campaign::default(),
+            mission_stat: crate::mission_stat::MissionStat::default(),
         }
     }
 
@@ -357,7 +361,8 @@ impl HostFunctions for BoundScriptEffects {
             &self.frame,
         )
         .with_short_briefings(&mut self.short_briefings)
-        .with_standard_view_radius(&mut self.standard_view_radius);
+        .with_standard_view_radius(&mut self.standard_view_radius)
+        .with_campaign(&mut self.campaign, &mut self.mission_stat);
         NativeContext::with_bindings(
             &mut self.host,
             &mut self.state,
@@ -369,43 +374,118 @@ impl HostFunctions for BoundScriptEffects {
     }
 }
 
+#[test]
+fn nested_sequence_immediates_finish_before_parent_continuation() {
+    let mut host = BoundScriptEffects::new();
+    let mut soldier = native_test_soldier();
+    soldier.element_data_mut().blipped = true;
+    host.entities.push(Some(soldier));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+
+    assert_eq!(
+        HostFunctions::call(
+            &mut host,
+            NativeFn::Start as u32,
+            &mut NativeStack::default(),
+        )
+        .expect_return("Start"),
+        1
+    );
+    let mut message = NativeStack::default();
+    message.push_i32(actor);
+    message.push_i32(77);
+    assert_eq!(
+        HostFunctions::call(&mut host, NativeFn::RecordSendMessage as u32, &mut message)
+            .expect_return("RecordSendMessage"),
+        1
+    );
+    let mut unblip = NativeStack::default();
+    unblip.push_i32(actor);
+    assert_eq!(
+        HostFunctions::call(&mut host, NativeFn::RecordUnBlip as u32, &mut unblip)
+            .expect_return("RecordUnBlip"),
+        1
+    );
+    let outer = HostFunctions::call(
+        &mut host,
+        NativeFn::Thanx as u32,
+        &mut NativeStack::default(),
+    );
+    let NativeCallOutcome::Yield(crate::interp::NativeYield {
+        operation:
+            crate::interp::NativeOperation::SequenceAction(
+                crate::interp::SynchronousSequenceOperation { continuation, .. },
+            ),
+        ..
+    }) = outer
+    else {
+        panic!("outer Thanx must yield its recorded SendMessage action");
+    };
+    assert!(host.entity_at_legacy_slot(0).element_data().blipped);
+    assert_eq!(continuation.len(), 1, "parent Unblip tail must be detached");
+    assert!(
+        !host.sequence_manager.has_pending_immediate_actions(),
+        "detached parent siblings must be invisible to a nested callback"
+    );
+}
+
 /// Run a native and return the queued deferred commands for inspection.
 fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCommand>) {
     let prog = call_native_return(index, args);
     let mut vm = Vm::new().with_host(BoundScriptEffects::new());
     let stop = vm.run(&prog);
-    let mut host = vm.take_host();
-    (stop, std::mem::take(&mut host.simulation_barriers.commands))
+    let host = vm.take_host();
+    (stop, host.simulation_barriers())
 }
 
 #[test]
-fn send_message_native_queues_sequence_launch_payload() {
+fn send_message_native_launches_and_yields_inline() {
     let (stop, commands) = run_native_deferred(NativeFn::SendMessage as u32, &[0, 1234]);
-    assert_eq!(stop, StopReason::ReturnedValue(0));
     assert!(matches!(
-        commands.as_slice(),
-        [DeferredCommand::SendMessage {
-            actor: 0,
-            message: 1234,
-            arg1: 0,
-            arg2: 0,
-        }]
+        stop,
+        StopReason::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::SequenceAction(_),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        })
     ));
+    assert!(commands.is_empty());
 
     let (stop, commands) = run_native_deferred(
         NativeFn::SendMessageWithArguments as u32,
         &[0, 2345, -11, 22],
     );
-    assert_eq!(stop, StopReason::ReturnedValue(0));
     assert!(matches!(
-        commands.as_slice(),
-        [DeferredCommand::SendMessage {
-            actor: 0,
-            message: 2345,
-            arg1: -11,
-            arg2: 22,
-        }]
+        stop,
+        StopReason::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::SequenceAction(_),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        })
     ));
+    assert!(commands.is_empty());
+}
+
+#[test]
+fn thanx_returns_true_for_an_empty_active_recording() {
+    let mut host = BoundScriptEffects::new();
+    assert_eq!(
+        HostFunctions::call(
+            &mut host,
+            NativeFn::Start as u32,
+            &mut NativeStack::default(),
+        )
+        .expect_return("Start"),
+        1
+    );
+    assert_eq!(
+        HostFunctions::call(
+            &mut host,
+            NativeFn::Thanx as u32,
+            &mut NativeStack::default(),
+        )
+        .expect_return("empty Thanx"),
+        1
+    );
+    assert_eq!(host.sequence_manager.sequences_iter().count(), 0);
 }
 
 #[test]
@@ -588,7 +668,7 @@ fn patch_mutation_is_visible_to_later_native_in_same_callback() {
         1
     );
     assert!(matches!(
-        host.simulation_barriers.commands.as_slice(),
+        host.simulation_barriers().as_slice(),
         [DeferredCommand::ProcessPatchEffects { patch_index, .. }]
             if usize::from(*patch_index) == 0
     ));
@@ -614,7 +694,7 @@ fn mission_ui_mutations_are_visible_in_same_callback() {
     );
     assert!(host.script_domains.mission_ui.outline_display);
     assert!(matches!(
-        host.engine.commands.as_slice(),
+        host.engine_commands().as_slice(),
         [EngineCommand::SetOutlineDisplay { display: true }]
     ));
 
@@ -746,7 +826,7 @@ fn generic_mobile_activation_propagates_to_all_children() {
             .all(|(_, entity)| !entity.is_active())
     );
     assert!(matches!(
-        host.engine.commands.as_slice(),
+        host.engine_commands().as_slice(),
         [EngineCommand::SetMobileActive {
             mobile_index: 0,
             active: false
@@ -1167,31 +1247,107 @@ fn are_all_pcs_inside_not_all() {
 
 #[test]
 fn register_production_sector() {
-    let host = BoundScriptEffects::new();
-    // RegisterAsProductionSector(type=0, loc=3, speed=10)
-    let prog = call_native_return(199, &[0, 3, 10]);
-    let mut vm = Vm::new().with_host(Box::new(host));
-    assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
-    let mut host = vm.take_host();
+    let mut host = BoundScriptEffects::new();
+    host.bindings.script_point_count = 1;
+    host.bindings.script_location_count = 2;
+    host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0), (20.0, 40.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![2, 2]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![7, 7]);
+    host.script_domains
+        .zones
+        .scripts
+        .push(crate::sector::ScriptSectorData::default());
+
+    let point_handle = ScriptHandleCodec::location_handle_from_index(0);
+    let sector_handle = ScriptHandleCodec::location_handle_from_index(1);
+
+    let mut registration = NativeStack::default();
+    registration.push_i32(0);
+    registration.push_i32(sector_handle);
+    registration.push_i32(10);
     assert_eq!(
-        host.script_domains.production_initialization.sectors,
-        [(0, 3, 10)]
+        call_host_native(
+            &mut host,
+            NativeFn::RegisterAsProductionSector,
+            &mut registration,
+        ),
+        0
     );
+    assert_eq!(
+        host.script_domains.zones.scripts[0].production_sector_type,
+        crate::sector_production::Type::MakeArrow
+    );
+    assert_eq!(host.campaign.production_sectors[0].speed, 10);
+    assert_eq!(host.campaign.production_sectors[0].script_zone, Some(0));
 
     let mut point = NativeStack::default();
     point.push_i32(0);
-    point.push_i32(2);
+    point.push_i32(point_handle);
     assert_eq!(
         call_host_native(&mut host, NativeFn::AddProductionPoint, &mut point),
         0
     );
     assert_eq!(
-        host.script_domains.production_initialization.points,
-        [(0, 2)]
+        host.campaign.production_sectors[0].production_points.len(),
+        1
     );
-    assert!(host.engine.commands.is_empty());
-    assert!(host.external.sound.is_empty());
-    assert!(host.simulation_barriers.commands.is_empty());
+    let saved = &host.campaign.production_sectors[0].production_points[0];
+    assert_eq!(
+        (saved.x, saved.y, saved.layer, saved.sector),
+        (12.0, 34.0, 2, 7)
+    );
+    assert_eq!(saved.obstacle, 0xFFFF);
+    assert!(host.engine_commands().is_empty());
+    assert!(host.sound_commands().is_empty());
+    assert!(host.simulation_barriers().is_empty());
+}
+
+#[test]
+#[should_panic(expected = "is already attached")]
+fn production_sector_rejects_duplicate_attachment() {
+    let mut host = BoundScriptEffects::new();
+    host.bindings.script_location_count = 1;
+    host.script_domains
+        .zones
+        .scripts
+        .push(crate::sector::ScriptSectorData::default());
+    let sector = ScriptHandleCodec::location_handle_from_index(0);
+    for _ in 0..1 {
+        let mut registration = NativeStack::default();
+        registration.push_i32(0);
+        registration.push_i32(sector);
+        registration.push_i32(10);
+        call_host_native(
+            &mut host,
+            NativeFn::RegisterAsProductionSector,
+            &mut registration,
+        );
+    }
+    let mut registration = NativeStack::default();
+    registration.push_i32(0);
+    registration.push_i32(sector);
+    registration.push_i32(11);
+    call_host_native(
+        &mut host,
+        NativeFn::RegisterAsProductionSector,
+        &mut registration,
+    );
+}
+
+#[test]
+#[should_panic(expected = "has no attached script sector")]
+fn production_point_requires_registered_sector() {
+    let mut host = BoundScriptEffects::new();
+    host.bindings.script_point_count = 1;
+    host.bindings.script_location_count = 1;
+    host.bindings.location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![2]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![7]);
+    let point_handle = ScriptHandleCodec::location_handle_from_index(0);
+    let mut point = NativeStack::default();
+    point.push_i32(0);
+    point.push_i32(point_handle);
+    call_host_native(&mut host, NativeFn::AddProductionPoint, &mut point);
 }
 
 // --- Custom campaign values ---
@@ -1339,6 +1495,57 @@ fn custom_values_are_isolated_between_script_hosts() {
 }
 
 #[test]
+fn ordered_script_effect_stream_round_trips_and_hashes_in_order() {
+    let mut effects = ScriptEffects::new();
+    effects.emit_engine(EngineCommand::DisplayMap { show: true });
+    effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
+    effects.emit_engine(EngineCommand::ChooseVictoryDefeatText { id: 7 });
+    effects.emit_barrier(DeferredCommand::SetPlayable {
+        actor: 17,
+        playable: false,
+    });
+    assert!(matches!(
+        effects.ordered.as_slices().0,
+        [
+            ScriptEffect::Presentation(EngineCommand::DisplayMap { show: true }),
+            ScriptEffect::ExternalSound(crate::natives::SoundCommand::SuspendAll),
+            ScriptEffect::Simulation(SimulationEffect::Engine(
+                EngineCommand::ChooseVictoryDefeatText { id: 7 },
+            )),
+            ScriptEffect::Simulation(SimulationEffect::Deferred(DeferredCommand::SetPlayable {
+                actor: 17,
+                playable: false,
+            },)),
+        ]
+    ));
+
+    let json = serde_json::to_string(&effects).expect("serialize ordered effects");
+    let decoded: ScriptEffects = serde_json::from_str(&json).expect("deserialize ordered effects");
+    assert_eq!(
+        serde_json::to_value(&decoded).expect("ordered JSON value"),
+        serde_json::to_value(&effects).expect("source JSON value")
+    );
+    assert_eq!(
+        robin_util::state_hash::compute(&decoded),
+        robin_util::state_hash::compute(&effects)
+    );
+
+    let mut reordered = ScriptEffects::new();
+    reordered.emit_sound(crate::natives::SoundCommand::SuspendAll);
+    reordered.emit_engine(EngineCommand::DisplayMap { show: true });
+    reordered.emit_engine(EngineCommand::ChooseVictoryDefeatText { id: 7 });
+    reordered.emit_barrier(DeferredCommand::SetPlayable {
+        actor: 17,
+        playable: false,
+    });
+    assert_ne!(
+        robin_util::state_hash::compute(&reordered),
+        robin_util::state_hash::compute(&effects),
+        "cross-domain emission order participates in deterministic state"
+    );
+}
+
+#[test]
 fn selection_mutates_canonical_state_before_a_later_native_in_the_same_callback() {
     let mut host = BoundScriptEffects::new();
     host.entities
@@ -1391,7 +1598,7 @@ fn selection_mutates_canonical_state_before_a_later_native_in_the_same_callback(
         "Original MSG_SELECT_CHARACTER replaces the old selection"
     );
     assert!(matches!(
-        host.simulation_barriers.commands.as_slice(),
+        host.simulation_barriers().as_slice(),
         [DeferredCommand::SelectPC {
             actor: queued_actor,
             select: true,
@@ -1468,7 +1675,7 @@ fn ai_lock_and_unlock_mutate_canonical_state_in_native_call_order() {
         !ai.script_locked,
         "same-callback UnlockAI must observe and clear the preceding LockAI"
     );
-    assert!(context.simulation_barriers.commands.is_empty());
+    assert!(context.script_effects().simulation_barriers().is_empty());
 }
 
 #[test]
@@ -1520,12 +1727,13 @@ fn thanx_launches_into_the_live_sequence_manager_before_returning() {
         0,
         "recording alone must not launch"
     );
-    assert_eq!(
-        context
-            .call(NativeFn::Thanx as u32, &mut NativeStack::default())
-            .expect_return("Thanx is synchronous"),
-        1
-    );
+    assert!(matches!(
+        context.call(NativeFn::Thanx as u32, &mut NativeStack::default()),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::SequenceAction(_),
+            resume: crate::interp::ResumePolicy::Fixed(1),
+        })
+    ));
     let sequence = context
         .sequence_manager
         .as_ref()
@@ -1579,7 +1787,7 @@ fn set_view_radius_updates_live_ai_and_every_npc_before_returning() {
     assert_eq!(npc.view_radius_base, 275);
     assert_eq!(npc.view_radius_goal, 275);
     assert!(
-        context.engine.commands.is_empty(),
+        context.script_effects().engine_commands().is_empty(),
         "SetViewRadius has no host presentation effect"
     );
 }
@@ -1633,11 +1841,11 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
     assert_eq!(briefings.is_entry_done(true, 0), Some(true));
     assert_eq!(briefings.get_id(false, 0), Some(11));
     assert_eq!(briefings.is_entry_done(false, 0), Some(true));
-    assert!(context.engine.commands.is_empty());
+    assert!(context.script_effects().engine_commands().is_empty());
 }
 
 #[test]
-fn honolulu_ai_lock_is_visible_to_same_callback_unlock() {
+fn honolulu_location_native_yields_canonical_engine_action() {
     let mut host = BoundScriptEffects::new();
     host.entities.push(Some(native_test_soldier()));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
@@ -1664,48 +1872,107 @@ fn honolulu_ai_lock_is_visible_to_same_callback_unlock() {
     let mut set_location = NativeStack::default();
     set_location.push_i32(actor);
     set_location.push_i32(0);
-    assert_eq!(
+    assert!(matches!(
         <NativeContext<'_, '_> as HostFunctions>::call(
             &mut context,
             NativeFn::SetActorLocation as u32,
             &mut set_location,
-        )
-        .expect_return("SetActorLocation is synchronous"),
+        ),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::SetActorLocation {
+                    actor: yielded_actor,
+                    location: 0,
+                    ..
+                }
+            ),
+            resume: crate::interp::ResumePolicy::OperationResult,
+        }) if yielded_actor == actor
+    ));
+}
+
+#[test]
+fn location_yield_precedes_later_presentation_effect() {
+    let mut host = BoundScriptEffects::new();
+    host.entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let building = ScriptHandleCodec::building_handle_from_index(0);
+
+    let mut teleport = NativeStack::default();
+    teleport.push_i32(actor);
+    teleport.push_i32(0);
+    assert!(matches!(
+        HostFunctions::call(&mut host, NativeFn::SetActorLocation as u32, &mut teleport),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::SetActorLocation { .. }
+            ),
+            ..
+        })
+    ));
+    let mut put = NativeStack::default();
+    put.push_i32(actor);
+    put.push_i32(building);
+    assert_eq!(
+        HostFunctions::call(&mut host, NativeFn::PutActorInBuilding as u32, &mut put)
+            .expect_return("PutActorInBuilding"),
         0
-    );
-    assert!(
-        context
-            .entities
-            .get_legacy_slot(0)
-            .expect("test NPC")
-            .1
-            .ai_controller()
-            .expect("test NPC AI")
-            .script_locked,
-        "SetActorLocation(NULL) must lock an unlocked NPC before returning"
     );
 
-    let mut unlock = NativeStack::default();
-    unlock.push_i32(actor);
+    assert!(matches!(
+        host.ordered.as_slices().0,
+        [ScriptEffect::Simulation(SimulationEffect::Deferred(
+            DeferredCommand::PutActorInBuilding {
+                actor: building_actor,
+                building: queued_building,
+            },
+        ))] if *building_actor == actor
+            && *queued_building == building
+    ));
+}
+
+#[test]
+fn set_actor_posture_ko_yields_one_canonical_engine_action() {
+    let mut host = BoundScriptEffects::new();
+    let mut soldier = native_test_soldier();
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!()
+    };
+    soldier_data.npc.life_points = 100;
+    host.entities.push(Some(soldier));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let owner = host.entities.get_legacy_slot(0).unwrap().0;
+
+    let mut active = SequenceElement::new(1, Command::Move, Some(owner));
+    active.priority = crate::sequence::SequencePriority::Normal;
+    let active_id = host.sequence_manager.launch_element(active);
+    host.sequence_manager.take_pending_synchronous_actions();
+    host.sequence_manager.element_in_progress(active_id, 0);
+
+    let mut posture = NativeStack::default();
+    posture.push_i32(actor);
+    posture.push_i32(17); // ID_KO
+    assert!(matches!(
+        HostFunctions::call(&mut host, NativeFn::SetActorPosture as u32, &mut posture),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::SetActorPosture {
+                    actor: yielded_actor,
+                    posture: 17,
+                    ..
+                }
+            ),
+            ..
+        }) if yielded_actor == actor
+    ));
     assert_eq!(
-        <NativeContext<'_, '_> as HostFunctions>::call(
-            &mut context,
-            NativeFn::UnlockAI as u32,
-            &mut unlock,
-        )
-        .expect_return("UnlockAI is synchronous"),
-        0
-    );
-    assert!(
-        !context
-            .entities
-            .get_legacy_slot(0)
-            .expect("test NPC")
-            .1
-            .ai_controller()
-            .expect("test NPC AI")
-            .script_locked,
-        "same-callback UnlockAI must observe the Honolulu lock"
+        host.sequence_manager
+            .get_element(active_id, 0)
+            .expect("old active element")
+            .state,
+        crate::sequence::SequenceState::InProgress,
+        "the native adapter must not duplicate the engine posture pipeline"
     );
 }
 
@@ -1738,7 +2005,7 @@ fn scroll_status_mutates_canonical_state_before_a_later_native_in_the_same_callb
     );
     assert_eq!(host.script_domains.scrolls.status.get(&scroll), Some(&3));
     assert!(matches!(
-        host.engine.commands.as_slice(),
+        host.engine_commands().as_slice(),
         [EngineCommand::SetScrollStatus {
             scroll_handle,
             status: 3,
@@ -1785,7 +2052,7 @@ fn sound_destruction_mutates_the_live_source_manager_before_returning() {
         "same-callback lookup must read the canonical destroyed slot"
     );
     assert!(matches!(
-        host.external.sound.as_slice(),
+        host.sound_commands().as_slice(),
         [SoundCommand::Destroy(queued)] if *queued == handle
     ));
 }
@@ -2106,8 +2373,7 @@ fn direct_owner_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
     );
     assert_eq!(mission_stat.collected_money, 250);
     let jingle_count = host
-        .external
-        .sound
+        .sound_commands()
         .iter()
         .filter(|c| matches!(c, SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)))
         .count();
@@ -2131,8 +2397,8 @@ fn direct_owner_set_campaign_value_ransom_jingle_only_when_growing() {
             context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 50);
         },
     );
-    assert!(host.engine.commands.is_empty());
-    assert!(host.external.sound.is_empty());
+    assert!(host.engine_commands().is_empty());
+    assert!(host.sound_commands().is_empty());
 
     // Raising: jingle queued.
     with_campaign_context(
@@ -2145,8 +2411,7 @@ fn direct_owner_set_campaign_value_ransom_jingle_only_when_growing() {
         },
     );
     let jingle_count = host
-        .external
-        .sound
+        .sound_commands()
         .iter()
         .filter(|c| matches!(c, SoundCommand::PlayJingle(crate::sound::Jingle::CashWon)))
         .count();
@@ -2223,7 +2488,7 @@ fn direct_owner_add_campaign_value_score_credits_added_score_silently() {
     );
 
     assert_eq!(mission_stat.added_score, 750);
-    assert!(host.engine.commands.is_empty());
+    assert!(host.engine_commands().is_empty());
 }
 
 fn native_test_soldier() -> Entity {
@@ -2373,6 +2638,82 @@ fn call_get_persistent_property_with_campaign(
             .call(NativeFn::GetPersistentProperty as u32, &mut stack)
             .expect_return("non-nested persistent-property test")
     })
+}
+
+fn set_then_get_persistent_program(
+    actor: i32,
+    property: i32,
+    amount: i32,
+) -> Vec<crate::vm::Instruction> {
+    vec![
+        BeginFunction {
+            volatile_count: 0,
+            temp_count: 4,
+        },
+        Aff0IConstant {
+            dst: TMP0,
+            constant: actor,
+        },
+        Aff0IConstant {
+            dst: TMP4,
+            constant: property,
+        },
+        Aff0IConstant {
+            dst: TMP8,
+            constant: amount,
+        },
+        NativeParam { sym: TMP0 },
+        NativeParam { sym: TMP4 },
+        NativeParam { sym: TMP8 },
+        NativeCall {
+            index: NativeFn::SetPersistentProperty as u32,
+        },
+        NativeParam { sym: TMP0 },
+        NativeParam { sym: TMP4 },
+        NativeCall {
+            index: NativeFn::GetPersistentProperty as u32,
+        },
+        Aff1NativeGetReturn { sym: TMP12 },
+        ReturnVal { sym: TMP12 },
+    ]
+}
+
+#[test]
+fn persistent_life_and_concussion_use_typed_engine_yields() {
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+
+    let mut life_host = BoundScriptEffects::new();
+    let mut pc = native_test_pc(Vec::new(), Vec::new());
+    let Entity::Pc(pc_data) = &mut pc else {
+        unreachable!()
+    };
+    pc_data.pc.life_points = 100;
+    life_host.entities.push(Some(pc));
+    let mut life_vm = Vm::new().with_host(Box::new(life_host));
+    assert!(matches!(
+        life_vm.run(&set_then_get_persistent_program(actor, 2, 37)),
+        StopReason::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::SetPersistentLifePoints { .. }
+            ),
+            ..
+        })
+    ));
+
+    let mut concussion_host = BoundScriptEffects::new();
+    concussion_host
+        .entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let mut concussion_vm = Vm::new().with_host(Box::new(concussion_host));
+    assert!(matches!(
+        concussion_vm.run(&set_then_get_persistent_program(actor, 3, 123)),
+        StopReason::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::SetPersistentConcussion { .. }
+            ),
+            ..
+        })
+    ));
 }
 
 #[test]

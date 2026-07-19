@@ -3349,7 +3349,10 @@ impl EngineInner {
     /// single-player only (see `docs/lua.md`) and never run during
     /// rollback resimulation.
     pub fn mission_script_effects_mut(&mut self) -> Option<&mut crate::natives::ScriptEffects> {
-        self.scripts.mission.as_mut()?.script_effects_mut()
+        self.scripts
+            .mission
+            .as_mut()
+            .map(MissionScript::script_effects_mut)
     }
 
     /// True iff men-to-blazon conversion mode is active. Read by titbit
@@ -3395,10 +3398,7 @@ impl EngineInner {
     /// refreshes its side of the information-bar UI.
     pub fn queue_update_information_bars(&mut self) {
         if let Some(effects) = self.mission_script_effects_mut() {
-            effects
-                .engine
-                .commands
-                .push(crate::natives::EngineCommand::UpdateInformationBars);
+            effects.emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
         }
     }
 
@@ -3423,10 +3423,14 @@ impl EngineInner {
         script.post_initialized = true;
 
         let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
-                script.post_initialize(script_domains, capabilities)
-            })
-            .expect("PostInitialize mission script disappeared before dispatch");
+            .call_script_vm(
+                assets,
+                ScriptVmKey::Global,
+                "PostInitialize",
+                &[],
+                crate::natives::ScriptCallFrame::default(),
+            )
+            .map(|_| ());
 
         if let Err(e) = result {
             tracing::warn!("Script PostInitialize failed: {e}");

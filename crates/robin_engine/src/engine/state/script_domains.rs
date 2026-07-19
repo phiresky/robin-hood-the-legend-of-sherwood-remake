@@ -75,18 +75,6 @@ pub(crate) struct ScrollState {
     pub(crate) attachment_dirty: BTreeSet<i32>,
 }
 
-/// Initialization-only production registrations emitted by mission scripts.
-///
-/// The Original applies these after the complete Initialize callback batch,
-/// before initial zone occupants are populated. Keeping the ordered buffer on
-/// the canonical script domain preserves that boundary without treating the
-/// requests as host or presentation effects.
-#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub(crate) struct ProductionInitialization {
-    pub(crate) sectors: Vec<(i32, i32, i32)>,
-    pub(crate) points: Vec<(i32, i32)>,
-}
-
 /// Engine-owned deterministic state shared with mission-script natives.
 ///
 /// `EngineInner` lends each native resume a typed mutable borrow. It is never
@@ -101,9 +89,7 @@ pub(crate) struct ProductionInitialization {
 pub struct ScriptDomains {
     pub(crate) buildings: BuildingState,
     pub(crate) interactables: InteractableState,
-    #[serde(default)]
     pub(crate) mission_ui: MissionUiState,
-    pub(crate) production_initialization: ProductionInitialization,
     pub(crate) scrolls: ScrollState,
     pub(crate) zones: ZoneState,
 }

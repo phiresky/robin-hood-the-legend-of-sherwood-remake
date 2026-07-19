@@ -985,10 +985,6 @@ struct ScriptCallStack {
 }
 
 impl ScriptCallStack {
-    fn current(&self) -> crate::natives::ScriptCallFrame {
-        self.frames.last().copied().unwrap_or_default()
-    }
-
     fn push(&mut self, frame: crate::natives::ScriptCallFrame) {
         self.frames.push(frame);
     }
@@ -999,6 +995,7 @@ impl ScriptCallStack {
             .expect("script call-frame stack underflow")
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.frames.len()
     }
@@ -1022,7 +1019,7 @@ pub struct MissionScript {
     /// Mission base filename used to reattach immutable bytecode from
     /// [`LevelAssets`] after snapshot deserialization.
     pub script_name: String,
-    pub manager: ScriptManager,
+    pub(super) manager: ScriptManager,
     /// Persistent state belonging to the script subsystem. This is separate
     /// from the ordered output effects emitted by native calls.
     pub state: ScriptState,
@@ -1040,35 +1037,35 @@ pub struct MissionScript {
     /// serialization and hashing; snapshots are rejected while it is nonempty.
     #[state_hash(skip)]
     call_stack: ScriptCallStack,
-    pub instance: ScriptInstance,
+    pub(super) instance: ScriptInstance,
     /// Per-actor script instances, keyed by actor script handle.
     ///
     /// Each actor with a `script_class` gets a persistent `ScriptInstance`
     /// whose heap survives across calls. The effect buffer is NOT stored
     /// on these — it lives on the global `instance` and is transferred
     /// in/out for each per-actor call.
-    pub actor_instances: BTreeMap<i32, ScriptInstance>,
+    pub(super) actor_instances: BTreeMap<i32, ScriptInstance>,
     /// Per-zone script instances, keyed by zone index (0-based index into
     /// `EngineInner::script_zone_grid_indices`).
     ///
     /// Zones with a `script_class` get a persistent `ScriptInstance` for
     /// `Initialize`, `EnterZone(actor)`, and `ExitZone(actor)` callbacks.
-    pub zone_instances: BTreeMap<usize, ScriptInstance>,
+    pub(super) zone_instances: BTreeMap<usize, ScriptInstance>,
     /// Per-target script instances, keyed by target actor script handle.
     ///
     /// FX targets with a non-empty `script_class` get a persistent
-    /// `ScriptInstance` whose heap survives across calls.  Each target
+    /// `ScriptInstance` whose heap survives across calls. Each target
     /// is its own VM, with named functions like `ActivatedByListenable`,
-    /// `ActivatedByApple`, `ActivatedByArrow`, etc.  Calls go through
-    /// [`MissionScript::call_target_function`].
-    pub target_instances: BTreeMap<i32, ScriptInstance>,
+    /// `ActivatedByApple`, and `ActivatedByArrow`, dispatched by the sole
+    /// `EngineInner` script driver.
+    pub(super) target_instances: BTreeMap<i32, ScriptInstance>,
     /// Per-scroll script instances, keyed by scroll actor script handle.
     ///
     /// Scrolls with a non-empty `script_class` bind their class during
     /// scroll mission-stream init and then run their script's
     /// `Initialize()` in `initialize_all_scrolls`. `IsTaken(pc)` is
     /// dispatched later when a PC picks up the scroll.
-    pub scroll_instances: BTreeMap<i32, ScriptInstance>,
+    pub(super) scroll_instances: BTreeMap<i32, ScriptInstance>,
     /// Per-waypoint script instances, keyed by `(hiking_path_index,
     /// waypoint_index)`.
     ///
@@ -1078,7 +1075,7 @@ pub struct MissionScript {
     /// waypoint (dispatched from `execute_waypoint_script`). Each
     /// waypoint is its own VM instance so the heap persists across
     /// traversals.
-    pub waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
+    pub(super) waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
 
     /// Has the script's `PostInitialize` entry point run yet?  The host's
     /// first post-refresh stage flips this after rendering and sound.
@@ -1182,6 +1179,21 @@ pub enum ScriptBindKind {
     Scroll,
 }
 
+/// Identity of one persistent mission-script VM.
+///
+/// The engine's synchronous callback driver uses this enum for every script
+/// flavour, so a VM yield cannot accidentally be supported only for actor
+/// callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptVmKey {
+    Global,
+    Actor(i32),
+    Zone(usize),
+    Target(i32),
+    Scroll(i32),
+    Waypoint(crate::ai::PathId, u8),
+}
+
 impl std::fmt::Debug for MissionScript {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MissionScript")
@@ -1192,14 +1204,142 @@ impl std::fmt::Debug for MissionScript {
     }
 }
 
-fn nested_actor_function_default(fn_name: &str) -> i32 {
-    match fn_name {
-        "FilterAIEvent" => 1,
-        _ => 0,
-    }
-}
-
 impl MissionScript {
+    /// Immutable bytecode metadata for diagnostics. Execution remains owned
+    /// by the engine driver; callers cannot reach a `ScriptInstance` here.
+    pub fn scb(&self) -> &crate::scb::ScbFile {
+        self.manager.scb()
+    }
+
+    /// Counts exposed to the HTTP diagnostics without publishing live VMs.
+    pub fn instance_counts(&self) -> ScriptInstanceCounts {
+        ScriptInstanceCounts {
+            actors: self.actor_instances.len(),
+            zones: self.zone_instances.len(),
+            targets: self.target_instances.len(),
+            scrolls: self.scroll_instances.len(),
+            waypoints: self.waypoint_instances.len(),
+        }
+    }
+
+    fn script_instance(&self, key: ScriptVmKey) -> Option<&ScriptInstance> {
+        match key {
+            ScriptVmKey::Global => Some(&self.instance),
+            ScriptVmKey::Actor(handle) => self.actor_instances.get(&handle),
+            ScriptVmKey::Zone(index) => self.zone_instances.get(&index),
+            ScriptVmKey::Target(handle) => self.target_instances.get(&handle),
+            ScriptVmKey::Scroll(handle) => self.scroll_instances.get(&handle),
+            ScriptVmKey::Waypoint(path, waypoint) => self.waypoint_instances.get(&(path, waypoint)),
+        }
+    }
+
+    pub(crate) fn script_vm_has_function(&self, key: ScriptVmKey, fn_name: &str) -> bool {
+        self.script_instance(key)
+            .is_some_and(|instance| instance.has_function(&self.manager, fn_name))
+    }
+
+    pub(crate) fn has_script_vm(&self, key: ScriptVmKey) -> bool {
+        self.script_instance(key).is_some()
+    }
+
+    /// Start a callback without executing its first opcode. The matching
+    /// `resume_script_vm` calls are owned by `EngineInner`, which can service
+    /// typed synchronous yields before allowing the VM to continue.
+    pub(crate) fn begin_script_vm(
+        &mut self,
+        key: ScriptVmKey,
+        fn_name: &str,
+        params: &[i32],
+    ) -> Result<crate::interp::VmActivationState, String> {
+        if !self.script_vm_has_function(key, fn_name) {
+            return Err(format!(
+                "cannot begin required {key:?}.{fn_name}: method is not bound"
+            ));
+        }
+        let MissionScript {
+            manager,
+            instance,
+            actor_instances,
+            zone_instances,
+            target_instances,
+            scroll_instances,
+            waypoint_instances,
+            ..
+        } = self;
+        let instance = match key {
+            ScriptVmKey::Global => instance,
+            ScriptVmKey::Actor(handle) => actor_instances
+                .get_mut(&handle)
+                .expect("validated actor script VM vanished"),
+            ScriptVmKey::Zone(index) => zone_instances
+                .get_mut(&index)
+                .expect("validated zone script VM vanished"),
+            ScriptVmKey::Target(handle) => target_instances
+                .get_mut(&handle)
+                .expect("validated target script VM vanished"),
+            ScriptVmKey::Scroll(handle) => scroll_instances
+                .get_mut(&handle)
+                .expect("validated scroll script VM vanished"),
+            ScriptVmKey::Waypoint(path, waypoint) => waypoint_instances
+                .get_mut(&(path, waypoint))
+                .expect("validated waypoint script VM vanished"),
+        };
+        instance
+            .begin_activation(manager, fn_name, params)
+            .map_err(|error| format!("{key:?} script {fn_name} failed to start: {error}"))
+    }
+
+    pub(crate) fn resume_script_vm(
+        &mut self,
+        key: ScriptVmKey,
+        fn_name: &str,
+        frame: crate::natives::ScriptCallFrame,
+        activation: &mut crate::interp::VmActivationState,
+        script_domains: &mut super::ScriptDomains,
+        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
+    ) -> crate::interp::StopReason {
+        let MissionScript {
+            manager,
+            state,
+            bindings,
+            script_effects,
+            instance,
+            actor_instances,
+            zone_instances,
+            target_instances,
+            scroll_instances,
+            waypoint_instances,
+            ..
+        } = self;
+        let instance = match key {
+            ScriptVmKey::Global => instance,
+            ScriptVmKey::Actor(handle) => actor_instances
+                .get_mut(&handle)
+                .expect("actor script VM vanished while suspended"),
+            ScriptVmKey::Zone(index) => zone_instances
+                .get_mut(&index)
+                .expect("zone script VM vanished while suspended"),
+            ScriptVmKey::Target(handle) => target_instances
+                .get_mut(&handle)
+                .expect("target script VM vanished while suspended"),
+            ScriptVmKey::Scroll(handle) => scroll_instances
+                .get_mut(&handle)
+                .expect("scroll script VM vanished while suspended"),
+            ScriptVmKey::Waypoint(path, waypoint) => waypoint_instances
+                .get_mut(&(path, waypoint))
+                .expect("waypoint script VM vanished while suspended"),
+        };
+        let mut context = NativeContext::with_call_frame(
+            script_effects,
+            state,
+            script_domains,
+            bindings,
+            capabilities,
+            frame,
+        );
+        instance.poll_activation_with_host(manager, activation, 10_000_000, fn_name, &mut context)
+    }
+
     /// Build a [`MissionScript`] from an already-parsed `.scb` payload.
     pub fn from_scb(scb: crate::scb::ScbFile) -> Result<Self, String> {
         Self::from_manager(String::new(), ScriptManager::new(scb))
@@ -1246,31 +1386,13 @@ impl MissionScript {
         self.bindings = bindings;
     }
 
-    fn current_call_frame(&self) -> crate::natives::ScriptCallFrame {
-        self.call_stack.current()
+    pub(super) fn push_active_driver_frame(&mut self, frame: crate::natives::ScriptCallFrame) {
+        self.call_stack.push(frame);
     }
 
-    /// Push one callback frame, run `f`, and restore the previous frame on
-    /// success, error returns, and panic unwinds.
-    pub(crate) fn with_call_frame<R>(
-        &mut self,
-        frame: crate::natives::ScriptCallFrame,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let previous_depth = self.call_stack.len();
-        self.call_stack.push(frame);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+    pub(super) fn pop_active_driver_frame(&mut self, expected: crate::natives::ScriptCallFrame) {
         let popped = self.call_stack.pop();
-        assert_eq!(popped, frame, "script call-frame stack order changed");
-        assert_eq!(
-            self.call_stack.len(),
-            previous_depth,
-            "script call-frame stack depth was not restored"
-        );
-        match result {
-            Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
-        }
+        assert_eq!(popped, expected, "script call-frame stack order changed");
     }
 
     #[cfg(test)]
@@ -1285,36 +1407,15 @@ impl MissionScript {
         );
     }
 
-    pub(crate) fn with_script_effects_attached<R>(
-        script_effects: &mut ScriptEffects,
-        state: &mut ScriptState,
-        script_domains: &mut super::ScriptDomains,
-        bindings: &crate::natives::AttachedScriptBindings,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-        call_frame: crate::natives::ScriptCallFrame,
-        inst: &mut ScriptInstance,
-        f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_, '_>) -> R,
-    ) -> R {
-        let mut context = NativeContext::with_call_frame(
-            script_effects,
-            state,
-            script_domains,
-            bindings,
-            capabilities,
-            call_frame,
-        );
-        f(inst, &mut context)
-    }
-
     /// Bind a script class to an entity handle, creating a persistent
-    /// `ScriptInstance` and running its `Initialize()` function.
+    /// `ScriptInstance`. `EngineInner` invokes `Initialize()` through the
+    /// sole shared callback driver after all instances are inserted.
     ///
     /// The resulting instance is inserted into `actor_instances` keyed by
-    /// `handle`, so later per-actor event dispatches
-    /// ([`MissionScript::call_actor_function`]) find it.
+    /// `handle`, so the Engine-owned [`ScriptVmKey::Actor`] driver finds it.
     ///
     /// Returns `true` when the class was found and the instance was
-    /// stored. Missing classes log at debug level and return `false`.
+    /// stored. A referenced missing class is structural level corruption.
     pub(crate) fn bind_actor(
         &mut self,
         handle: i32,
@@ -1332,7 +1433,7 @@ impl MissionScript {
     }
 
     /// Target analogue of [`bind_actor`]. Stores the created instance in
-    /// `target_instances`.
+    /// `target_instances`; initialization is driven by `EngineInner`.
     pub(crate) fn bind_target(
         &mut self,
         handle: i32,
@@ -1350,7 +1451,7 @@ impl MissionScript {
     }
 
     /// Scroll analogue of [`bind_actor`]. Stores the created instance in
-    /// `scroll_instances` and runs `Initialize()` on the bound class.
+    /// `scroll_instances`; initialization is driven by `EngineInner`.
     pub(crate) fn bind_scroll(
         &mut self,
         handle: i32,
@@ -1368,78 +1469,23 @@ impl MissionScript {
     }
 
     /// Shared implementation for [`bind_actor`], [`bind_target`], and
-    /// [`bind_scroll`]: look up the class, create an instance, transfer
-    /// the game host in, call `Initialize()` if present, transfer the
-    /// host back, and insert the instance into the appropriate map.
+    /// [`bind_scroll`]: look up the class, create an instance, and insert it
+    /// into the appropriate map.
     fn bind_and_init(
         &mut self,
         handle: i32,
         class_name: &str,
         kind: ScriptBindKind,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
+        _script_domains: &mut super::ScriptDomains,
+        _capabilities: &crate::natives::NativeSessionCapabilities<'_>,
     ) -> bool {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
             None => {
-                // The original engine treats a missing script class as
-                // a fatal error on the shipping build; log at `error!`
-                // so corrupt datadirs surface loudly while still
-                // allowing the headless / replay harness to continue
-                // past a missing script class.
-                tracing::error!(
-                    "{:?} script class '{class_name}' not found in SCB — skipping (handle {handle})",
-                    kind
-                );
-                return false;
+                panic!("{kind:?} script class '{class_name}' not found in SCB (handle {handle})")
             }
         };
-        let mut inst = self.manager.create_instance_idx(class_idx);
-
-        let mut frame = self.current_call_frame().with_script_this(handle);
-        if kind == ScriptBindKind::Scroll {
-            frame = frame.with_current_scroll(handle);
-        }
-        self.with_call_frame(frame, |script| {
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                &mut inst,
-                |inst, host| {
-                    if inst.has_function(&script.manager, "Initialize") {
-                        match inst.call_function_limited_with_host(
-                            &mut script.manager,
-                            "Initialize",
-                            10_000,
-                            host,
-                        ) {
-                            Ok(ret) => {
-                                tracing::debug!(
-                                    "{:?} Init {class_name} (handle {handle}) → {ret}",
-                                    kind
-                                )
-                            }
-                            Err(crate::script_manager::ScriptError::Vm(
-                                crate::interp::StopReason::StepLimit,
-                            )) => tracing::debug!(
-                                "{:?} Init {class_name} (handle {handle}) hit step limit",
-                                kind
-                            ),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "{:?} Init {class_name} (handle {handle}) failed: {e}",
-                                    kind
-                                )
-                            }
-                        }
-                    }
-                },
-            );
-        });
+        let inst = self.manager.create_instance_idx(class_idx);
 
         match kind {
             ScriptBindKind::Actor => {
@@ -1457,11 +1503,10 @@ impl MissionScript {
 
     /// True if `handle` has a bound actor script that defines `fn_name`.
     ///
-    /// Distinguishes the two Ok(0) returns from [`call_actor_function`]:
-    /// "no instance or no override" (this returns false) vs "script ran
-    /// and returned 0" (this returns true).  Used by `filter_stimulus`
-    /// to avoid treating a missing `FilterAIEvent` override as a block
-    /// — the base-class `FilterAIEvent` returns 1 (allow).
+    /// Used by `filter_stimulus` to distinguish a missing `FilterAIEvent`
+    /// override from a script-authored zero return. The shared engine driver
+    /// applies the original base-class default of one only to a missing method;
+    /// a missing required actor VM remains an error.
     pub fn actor_has_function(&self, handle: i32, fn_name: &str) -> bool {
         self.actor_instances
             .get(&handle)
@@ -1469,663 +1514,29 @@ impl MissionScript {
             .unwrap_or(false)
     }
 
-    /// Call a named function on a per-actor script instance.
-    ///
-    /// Runs the actor instance with the shared script-effect buffer, pushes a frame
-    /// binding `ThisActor` to the actor, and restores the caller frame
-    /// afterwards.
-    ///
-    /// If the running script invokes a native that requests a nested
-    /// script call (currently only `PrototypeFilterEvent`), the VM
-    /// yields with [`StopReason::PendingNestedCall`].  We dispatch the
-    /// requested call recursively, patch
-    /// the result into `vm.native_return_value`, and resume — so the
-    /// outer caller sees a single transparent `Ok(i32)`.
-    ///
-    /// Returns `Ok(return_value)` or `Ok(0)` if the actor has no script
-    /// instance or the function doesn't exist on the class.
-    pub fn call_actor_function(
-        &mut self,
-        handle: i32,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        self.call_actor_function_with_script_this(
-            handle,
-            fn_name,
-            params,
-            crate::interp::NestedCallScriptThis::TargetActor,
-            script_domains,
-            capabilities,
-        )
-    }
-
-    fn call_actor_function_with_script_this(
-        &mut self,
-        handle: i32,
-        fn_name: &str,
-        params: &[i32],
-        script_this: crate::interp::NestedCallScriptThis,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        let actor_inst = match self.actor_instances.get_mut(&handle) {
-            Some(inst) => inst,
-            None => return Ok(0),
-        };
-
-        if !actor_inst.has_function(&self.manager, fn_name) {
-            return Ok(0);
-        }
-
-        // Ordinary actor calls bind to their target. PrototypeFilterEvent
-        // explicitly inherits its caller frame, matching RHScript.cpp:6508-6535.
-        let mut frame = self.current_call_frame();
-        if script_this == crate::interp::NestedCallScriptThis::TargetActor {
-            frame = frame.with_script_this(handle);
-        }
-
-        self.with_call_frame(frame, |script| {
-            script.call_actor_function_in_current_frame(
-                handle,
-                fn_name,
-                params,
-                script_domains,
-                capabilities,
-            )
-        })
-    }
-
-    fn call_actor_function_in_current_frame(
-        &mut self,
-        handle: i32,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        let actor_inst = self
-            .actor_instances
-            .get_mut(&handle)
-            .expect("validated actor instance vanished before dispatch");
-
-        // Push parameters.
-        for &p in params {
-            actor_inst.push_param(p);
-        }
-
-        // Set up frames + IP without yet running.
-        if let Err(e) = actor_inst.begin_call(&self.manager, fn_name) {
-            return Err(format!(
-                "Actor script {fn_name} (handle {handle}) failed: {e}"
-            ));
-        }
-
-        // Drive the VM, dispatching any nested-script-call yields by
-        // recursing into this same function.  The `resolve_nested_call`
-        // helper takes ownership of the borrow on `actor_instances` so
-        // we can call back into `&mut self`.
-        self.run_actor_with_nested_resume(handle, fn_name, script_domains, capabilities)
-    }
-
-    /// Drive `actor_instances[handle]`'s VM until it returns or hits a
-    /// non-recoverable stop.  On [`StopReason::PendingNestedCall`],
-    /// dispatches the queued call (recursively through
-    /// [`MissionScript::call_actor_function`]) and resumes. The surrounding
-    /// call-frame scope owns receiver restoration.
-    fn run_actor_with_nested_resume(
-        &mut self,
-        handle: i32,
-        outer_fn_name: &str,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        loop {
-            let stop = {
-                let actor_inst = self
-                    .actor_instances
-                    .get_mut(&handle)
-                    .expect("actor instance vanished mid-run");
-                let mut context = NativeContext::with_call_frame(
-                    &mut self.script_effects,
-                    &mut self.state,
-                    script_domains,
-                    &self.bindings,
-                    capabilities,
-                    self.call_stack.current(),
-                );
-                actor_inst.resume_run_with_host(
-                    &mut self.manager,
-                    10_000_000,
-                    outer_fn_name,
-                    &mut context,
-                )
-            };
-            match stop {
-                crate::interp::StopReason::ReturnedValue(v) => return Ok(v),
-                crate::interp::StopReason::Returned => return Ok(0),
-                crate::interp::StopReason::PendingNestedCall(call) => {
-                    self.dispatch_nested_call_from_actor(
-                        handle,
-                        outer_fn_name,
-                        call,
-                        script_domains,
-                        capabilities,
-                    );
-                    // Loop and resume the outer VM.
-                }
-                crate::interp::StopReason::StepLimit => {
-                    tracing::debug!(
-                        "Actor script {outer_fn_name} (handle {handle}) hit step limit"
-                    );
-                    return Ok(0);
-                }
-                other => {
-                    return Err(format!(
-                        "Actor script {outer_fn_name} (handle {handle}) failed: VM stopped abnormally: {other:?}"
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Resolve a `PendingNestedCall` queued by the actor at
-    /// `outer_handle`, recurses through `call_actor_function`, then
-    /// writes the resolved result into `native_return_value` so the
-    /// next opcode picks it up.
-    fn dispatch_nested_call_from_actor(
-        &mut self,
-        outer_handle: i32,
-        outer_fn_name: &str,
-        pc: crate::interp::PendingNestedCall,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) {
-        // The outer callback occupies the first stack slot, so the current
-        // length is exactly the prospective nested-call depth.
-        let depth = u8::try_from(self.call_stack.len()).unwrap_or(u8::MAX);
-
-        let result = if depth > crate::natives::MAX_NESTED_CALL_DEPTH {
-            // Cycle / runaway recursion — return the base-class default
-            // so the caller proceeds without blowing the stack.
-            // `FilterAIEvent`'s base default is 1 (allow); other
-            // future nested functions get 0 ("don't" / safe).
-            tracing::warn!(
-                target: "filter_ai_event_divergence",
-                outer_handle,
-                outer_fn = outer_fn_name,
-                target_handle = pc.actor_handle,
-                target_fn = %pc.fn_name,
-                depth,
-                "nested script call depth limit ({}) exceeded; returning base-class default",
-                crate::natives::MAX_NESTED_CALL_DEPTH,
-            );
-            nested_actor_function_default(&pc.fn_name)
-        } else if !self.actor_has_function(pc.actor_handle, &pc.fn_name) {
-            // ActorScript's inherited FilterAIEvent body returns one. A
-            // missing Rust instance/override represents that inherited body,
-            // not a script-authored zero result.
-            nested_actor_function_default(&pc.fn_name)
-        } else {
-            match self.call_actor_function_with_script_this(
-                pc.actor_handle,
-                &pc.fn_name,
-                &pc.params,
-                pc.script_this,
-                script_domains,
-                capabilities,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "filter_ai_event_divergence",
-                        outer_handle,
-                        outer_fn = outer_fn_name,
-                        target_handle = pc.actor_handle,
-                        target_fn = %pc.fn_name,
-                        error = %e,
-                        "nested script call failed; returning base-class default (1 for FilterAIEvent, 0 otherwise)",
-                    );
-                    nested_actor_function_default(&pc.fn_name)
-                }
-            }
-        };
-
-        // Write the resolved return value into `native_return_value`
-        // so the outer VM's next instruction (typically
-        // `Aff1NativeGetReturn` for the original
-        // `PrototypeFilterEvent` call site) reads the real result
-        // instead of the placeholder `0`.
-        let outer_inst = self
-            .actor_instances
-            .get_mut(&outer_handle)
-            .expect("outer actor instance vanished during nested call");
-        outer_inst.vm.native_return_value = result;
-    }
-
-    /// Call a named function on a per-zone script instance.
-    ///
-    /// Same host-transfer pattern as `call_actor_function`, but for zones.
-    /// Returns `Ok(0)` if the zone has no script instance or the function
-    /// doesn't exist.
-    pub fn call_zone_function(
-        &mut self,
-        zone_idx: usize,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        if !self
-            .zone_instances
-            .get(&zone_idx)
-            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
-        {
-            return Ok(0);
-        }
-        let frame = self.current_call_frame();
-        let result = self.with_call_frame(frame, |script| {
-            let zone_inst = script
-                .zone_instances
-                .get_mut(&zone_idx)
-                .expect("validated zone instance vanished before dispatch");
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                zone_inst,
-                |zone_inst, host| {
-                    for &p in params {
-                        zone_inst.push_param(p);
-                    }
-                    zone_inst.call_function_with_host(&mut script.manager, fn_name, host)
-                },
-            )
-        });
-
-        match result {
-            Ok(v) => Ok(v),
-            Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
-                tracing::debug!("Zone script {fn_name} (zone {zone_idx}) hit step limit");
-                Ok(0)
-            }
-            Err(e) => Err(format!(
-                "Zone script {fn_name} (zone {zone_idx}) failed: {e}"
-            )),
-        }
-    }
-
-    /// Call a named function on a per-target script instance.
-    ///
-    /// Same host-transfer pattern as `call_actor_function`, applied to
-    /// FX targets with a non-empty `script_class`. Each target has its
-    /// own VM, with `ActivatedBy*(pc)` style named dispatches.
-    /// Returns `Ok(0)` when the target has no script instance or the
-    /// function doesn't exist on its class.
-    pub fn call_target_function(
-        &mut self,
-        target_handle: i32,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        if !self
-            .target_instances
-            .get(&target_handle)
-            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
-        {
-            return Ok(0);
-        }
-        let frame = self.current_call_frame().with_script_this(target_handle);
-        let result = self.with_call_frame(frame, |script| {
-            let target_inst = script
-                .target_instances
-                .get_mut(&target_handle)
-                .expect("validated target instance vanished before dispatch");
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                target_inst,
-                |target_inst, host| {
-                    for &p in params {
-                        target_inst.push_param(p);
-                    }
-                    target_inst.call_function_with_host(&mut script.manager, fn_name, host)
-                },
-            )
-        });
-        match result {
-            Ok(v) => Ok(v),
-            Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
-                tracing::debug!("Target script {fn_name} (handle {target_handle}) hit step limit");
-                Ok(0)
-            }
-            Err(e) => Err(format!(
-                "Target script {fn_name} (handle {target_handle}) failed: {e}"
-            )),
-        }
-    }
-
-    /// Call a named function on a per-scroll script instance.
-    ///
-    /// Pushes an executing-scroll frame around every scroll-script dispatch.
-    /// `ThisActor` and `ThisScroll` read that frame for every VM resume, and
-    /// the previous frame is restored structurally afterwards.
-    ///
-    /// Returns `Ok(0)` when the scroll has no bound script or the
-    /// function doesn't exist on its class.
-    pub fn call_scroll_function(
-        &mut self,
-        scroll_handle: i32,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        if !self
-            .scroll_instances
-            .get(&scroll_handle)
-            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
-        {
-            return Ok(0);
-        }
-        let frame = self
-            .current_call_frame()
-            .with_script_this(scroll_handle)
-            .with_current_scroll(scroll_handle);
-        let result = self.with_call_frame(frame, |script| {
-            let scroll_inst = script
-                .scroll_instances
-                .get_mut(&scroll_handle)
-                .expect("validated scroll instance vanished before dispatch");
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                scroll_inst,
-                |scroll_inst, host| {
-                    for &p in params {
-                        scroll_inst.push_param(p);
-                    }
-                    scroll_inst.call_function_with_host(&mut script.manager, fn_name, host)
-                },
-            )
-        });
-        match result {
-            Ok(v) => Ok(v),
-            Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
-                tracing::debug!("Scroll script {fn_name} (handle {scroll_handle}) hit step limit");
-                Ok(0)
-            }
-            Err(e) => Err(format!(
-                "Scroll script {fn_name} (handle {scroll_handle}) failed: {e}"
-            )),
-        }
-    }
-
     /// Bind a waypoint-script class to a given `(path_idx, wp_idx)`
-    /// pair, creating a persistent `ScriptInstance` and running
-    /// `Initialize()`. Each waypoint binds its class during path-load.
+    /// pair, creating a persistent `ScriptInstance`. `EngineInner` invokes
+    /// `Initialize()` through the shared driver.
     ///
-    /// Returns `true` when the class was found and the instance stored;
-    /// missing classes log a warning and return `false`.
+    /// Returns `true` when the instance is stored; missing referenced classes
+    /// are structural level errors.
     pub(crate) fn bind_waypoint(
         &mut self,
         path_idx: crate::ai::PathId,
         wp_idx: u8,
         class_name: &str,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
+        _script_domains: &mut super::ScriptDomains,
+        _capabilities: &crate::natives::NativeSessionCapabilities<'_>,
     ) -> bool {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
-            None => {
-                tracing::warn!(
-                    "Waypoint script class '{class_name}' \
-                     (path {path_idx}, wp {wp_idx}) not found in SCB"
-                );
-                return false;
-            }
+            None => panic!(
+                "Waypoint script class '{class_name}' (path {path_idx}, wp {wp_idx}) not found in SCB"
+            ),
         };
-        let mut inst = self.manager.create_instance_idx(class_idx);
-
-        // Waypoints aren't entities so no `script_this` is installed;
-        // Initialize doesn't push an actor either (only ReachPoint does).
-        let frame = self.current_call_frame();
-        self.with_call_frame(frame, |script| {
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                &mut inst,
-                |inst, host| {
-                if inst.has_function(&script.manager, "Initialize") {
-                    match inst.call_function_limited_with_host(
-                        &mut script.manager,
-                        "Initialize",
-                        10_000,
-                        host,
-                    ) {
-                        Ok(ret) => tracing::debug!(
-                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) → {ret}"
-                        ),
-                        Err(crate::script_manager::ScriptError::Vm(
-                            crate::interp::StopReason::StepLimit,
-                        )) => tracing::debug!(
-                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) hit step limit"
-                        ),
-                        Err(e) => {
-                            tracing::warn!(
-                                "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
-                            );
-                            // A bound waypoint class failing its own
-                            // `Initialize` is a logic bug.
-                            debug_assert!(
-                                false,
-                                "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
-                            );
-                        }
-                    }
-                }
-                },
-            );
-        });
+        let inst = self.manager.create_instance_idx(class_idx);
         self.waypoint_instances.insert((path_idx, wp_idx), inst);
         true
-    }
-
-    /// Call a named function on a per-waypoint script instance.
-    ///
-    /// Same host-transfer pattern as [`call_actor_function`], keyed by
-    /// `(path_idx, wp_idx)`. Waypoints have no entity handle so
-    /// `script_this` is left at 0 — `ReachPoint(actor)` dispatches
-    /// without a script-this assignment, and the actor is pushed as a
-    /// parameter instead.
-    ///
-    /// Returns `Ok(0)` when no instance is bound for this waypoint or
-    /// the function is absent.
-    pub fn call_waypoint_function(
-        &mut self,
-        path_idx: crate::ai::PathId,
-        wp_idx: u8,
-        fn_name: &str,
-        params: &[i32],
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        let key = (path_idx, wp_idx);
-        if !self
-            .waypoint_instances
-            .get(&key)
-            .is_some_and(|inst| inst.has_function(&self.manager, fn_name))
-        {
-            return Ok(0);
-        }
-        let frame = self.current_call_frame();
-        let result = self.with_call_frame(frame, |script| {
-            let wp_inst = script
-                .waypoint_instances
-                .get_mut(&key)
-                .expect("validated waypoint instance vanished before dispatch");
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                wp_inst,
-                |wp_inst, host| {
-                    for &p in params {
-                        wp_inst.push_param(p);
-                    }
-                    wp_inst.call_function_with_host(&mut script.manager, fn_name, host)
-                },
-            )
-        });
-        match result {
-            Ok(v) => Ok(v),
-            Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
-                tracing::debug!(
-                    "Waypoint script {fn_name} (path {path_idx}, wp {wp_idx}) hit step limit"
-                );
-                Ok(0)
-            }
-            Err(e) => Err(format!(
-                "Waypoint script {fn_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
-            )),
-        }
-    }
-
-    /// Call the script's `Hourglass` function (once per game-second).
-    pub(crate) fn hourglass(
-        &mut self,
-        game_seconds: u32,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        let frame = crate::natives::ScriptCallFrame::default();
-        self.with_call_frame(frame, |script| {
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                &mut script.instance,
-                |instance, host| {
-                    instance.push_param(game_seconds as i32);
-                    instance
-                        .call_function_with_host(&mut script.manager, "Hourglass", host)
-                        .map_err(|e| format!("Script Hourglass failed: {e}"))
-                },
-            )
-        })
-    }
-
-    /// Call the script's `CheckVictoryCondition` function.
-    ///
-    /// Returns: 0 = in progress, 1 = victory, 2 = defeat.
-    pub(crate) fn check_victory_condition(
-        &mut self,
-        game_seconds: u32,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<i32, String> {
-        let frame = crate::natives::ScriptCallFrame::default();
-        self.with_call_frame(frame, |script| {
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                &mut script.instance,
-                |instance, host| {
-                    instance.push_param(game_seconds as i32);
-                    instance
-                        .call_function_with_host(&mut script.manager, "CheckVictoryCondition", host)
-                        .map_err(|e| format!("Script CheckVictoryCondition failed: {e}"))
-                },
-            )
-        })
-    }
-
-    /// Call the script's `Finalize` function.
-    ///
-    /// `abandoned` is true if the player quit, false if won/lost normally.
-    pub(crate) fn finalize(
-        &mut self,
-        abandoned: bool,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<(), String> {
-        let frame = crate::natives::ScriptCallFrame::default();
-        self.with_call_frame(frame, |script| {
-            Self::with_script_effects_attached(
-                &mut script.script_effects,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-                frame,
-                &mut script.instance,
-                |instance, host| {
-                    instance.push_param(if abandoned { 1 } else { 0 });
-                    instance
-                        .call_function_with_host(&mut script.manager, "Finalize", host)
-                        .map(|_| ())
-                        .map_err(|e| format!("Script Finalize failed: {e}"))
-                },
-            )
-        })
-    }
-
-    /// Call the script's `PostInitialize` function, if it exists.
-    pub(crate) fn post_initialize(
-        &mut self,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> Result<(), String> {
-        if self.instance.has_function(&self.manager, "PostInitialize") {
-            let frame = crate::natives::ScriptCallFrame::default();
-            self.with_call_frame(frame, |script| {
-                Self::with_script_effects_attached(
-                    &mut script.script_effects,
-                    &mut script.state,
-                    script_domains,
-                    &script.bindings,
-                    capabilities,
-                    frame,
-                    &mut script.instance,
-                    |instance, host| {
-                        instance
-                            .call_function_with_host(&mut script.manager, "PostInitialize", host)
-                            .map(|_| ())
-                            .map_err(|e| format!("Script PostInitialize failed: {e}"))
-                    },
-                )
-            })?;
-        }
-        Ok(())
     }
 
     /// Get a mutable reference to the ordered script effects.
@@ -2136,14 +1547,23 @@ impl MissionScript {
     /// this handle outside of a script event is fine for queued commands (the
     /// engine drains them next tick). Canonical entities, AI, and grid state
     /// are deliberately unavailable through this adapter.
-    pub fn script_effects_mut(&mut self) -> Option<&mut ScriptEffects> {
-        Some(&mut self.script_effects)
+    pub fn script_effects_mut(&mut self) -> &mut ScriptEffects {
+        &mut self.script_effects
     }
 
     /// Get an immutable reference to the ordered script effects.
-    pub fn script_effects(&self) -> Option<&ScriptEffects> {
-        Some(&self.script_effects)
+    pub fn script_effects(&self) -> &ScriptEffects {
+        &self.script_effects
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptInstanceCounts {
+    pub actors: usize,
+    pub zones: usize,
+    pub targets: usize,
+    pub scrolls: usize,
+    pub waypoints: usize,
 }
 
 // ─── Mission state ───────────────────────────────────────────────────

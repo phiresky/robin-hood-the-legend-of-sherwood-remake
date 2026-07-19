@@ -46,7 +46,7 @@ impl NativeContext<'_, '_> {
                 }
                 // Mark only on the success branch.
                 if added {
-                    self.engine.commands.push(EngineCommand::MarkPc {
+                    self.emit_engine(EngineCommand::MarkPc {
                         actor_handle: actor,
                     });
                 }
@@ -175,30 +175,17 @@ impl NativeContext<'_, '_> {
             }
 
             // --- production / sector ---
-            //
-            // The engine drains these queues in
-            // `apply_production_registrations` (engine/script.rs) —
-            // it resolves each location handle to a script zone
-            // sector, sets the sector's production type, and pushes
-            // per-sector geometry into the campaign production
-            // table.  Nothing to do here beyond queuing.
             RegisterAsProductionSector => {
                 let speed = stack.pop_i32();
                 let loc = stack.pop_i32();
                 let prod_type = stack.pop_i32();
-                self.script_domains
-                    .production_initialization
-                    .sectors
-                    .push((prod_type, loc, speed));
+                self.register_production_sector(prod_type, loc, speed);
                 0
             }
             AddProductionPoint => {
                 let loc = stack.pop_i32();
                 let prod_type = stack.pop_i32();
-                self.script_domains
-                    .production_initialization
-                    .points
-                    .push((prod_type, loc));
+                self.add_production_point(prod_type, loc);
                 0
             }
             GetNumberOfActorsInSector => {
@@ -438,12 +425,10 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.apply_script_selection(actor, select != 0);
-                self.simulation_barriers
-                    .commands
-                    .push(DeferredCommand::SelectPC {
-                        actor,
-                        select: select != 0,
-                    });
+                self.emit_barrier(DeferredCommand::SelectPC {
+                    actor,
+                    select: select != 0,
+                });
                 0
             }
             IsPCSelected => {
@@ -558,10 +543,15 @@ impl NativeContext<'_, '_> {
                 // consumer in the port. Retain its registry ABI but do not
                 // manufacture a write-only queue. Implementing the AI behavior
                 // is intentionally outside this architecture-only cleanup.
-                let _should_run = stack.pop_i32();
-                let _actor = stack.pop_i32();
+                let should_run = stack.pop_i32();
+                let actor = stack.pop_i32();
                 // TODO(ai parity): implement once patrol run state has a
                 // canonical owner and an Original/Spellforge behavior oracle.
+                tracing::error!(
+                    actor,
+                    should_run = should_run != 0,
+                    "TODO(ai parity): SetPatrolShouldRun has no documented Original or Spellforge contract; request was not applied"
+                );
                 0
             }
             ComputeLocationBetween => {

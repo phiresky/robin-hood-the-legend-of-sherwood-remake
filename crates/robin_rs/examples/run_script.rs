@@ -116,7 +116,7 @@ fn main() -> std::process::ExitCode {
 
     tracing::info!(
         "--- {} deferred engine commands ---",
-        host.engine.commands.len()
+        host.engine_commands().len()
     );
 
     if !host.script_state().globals.is_empty() {

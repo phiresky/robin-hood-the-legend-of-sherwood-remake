@@ -977,9 +977,17 @@ mod tests {
             .as_mut()
             .expect("fixture mission script")
             .script_effects
-            .engine
-            .commands
-            .push(crate::natives::EngineCommand::UpdateInformationBars);
+            .emit_engine(crate::natives::EngineCommand::UpdateInformationBars);
+        {
+            let effects = &mut inner
+                .scripts
+                .mission
+                .as_mut()
+                .expect("fixture mission script")
+                .script_effects;
+            effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
+            effects.emit_barrier(crate::natives::DeferredCommand::FreezeAll { freeze: true });
+        }
 
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(crate::sequence::SequenceElement::new(
@@ -1180,10 +1188,24 @@ mod tests {
             &script.bindings.profile_manager,
             &assets.profile_manager
         ));
-        assert_eq!(script.script_effects.engine.commands.len(), 1);
         assert!(matches!(
-            script.script_effects.engine.commands.first(),
-            Some(crate::natives::EngineCommand::UpdateInformationBars)
+            script.script_effects.ordered.as_slices(),
+            (
+                [
+                    crate::natives::ScriptEffect::Presentation(
+                        crate::natives::EngineCommand::UpdateInformationBars
+                    ),
+                    crate::natives::ScriptEffect::ExternalSound(
+                        crate::natives::SoundCommand::SuspendAll
+                    ),
+                    crate::natives::ScriptEffect::Simulation(
+                        crate::natives::SimulationEffect::Deferred(
+                            crate::natives::DeferredCommand::FreezeAll { freeze: true }
+                        )
+                    )
+                ],
+                []
+            )
         ));
         assert_eq!(
             live.inner
@@ -1230,8 +1252,7 @@ mod tests {
                     .as_ref()
                     .expect("restored script during fixup observation")
                     .script_effects
-                    .engine
-                    .commands
+                    .engine_commands()
                     .len(),
                 1,
                 "save-only HUD repair must not be queued until engine fixups finish"
@@ -1249,7 +1270,7 @@ mod tests {
             .expect("restored script");
         assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
         assert_eq!(
-            script.script_effects.engine.commands.len(),
+            script.script_effects.engine_commands().len(),
             2,
             "saved queue must survive and save-load must append one HUD repair"
         );

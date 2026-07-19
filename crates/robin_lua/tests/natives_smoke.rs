@@ -142,10 +142,11 @@ fn engine_native_called_from_lua_writes_host_state() {
     assert_eq!(script_state.globals.get(&0).copied(), Some(42));
 }
 
-/// `Start()` from Lua must open a `RecordingSession`. Confirms the
-/// dispatcher maps declared bool returns to Lua booleans.
+/// Lua cannot yet suspend an mlua frame into the Engine-owned synchronous
+/// driver. EndSequence/Thanx must therefore reject before consuming the open
+/// recording; an error must never leave a partially launched sequence.
 #[test]
-fn start_then_thanx_round_trips() {
+fn end_sequence_rejects_before_mutating_the_recording() {
     let (state, _dir) = fresh_state();
     let mut host = ScriptEffects::new();
     let mut entities = Entities::new();
@@ -154,22 +155,172 @@ fn start_then_thanx_round_trips() {
     let capabilities =
         NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut script_state = ScriptState::default();
     state
-        .with_host(
+        .with_host_and_state(
             &mut host,
+            &mut script_state,
             &mut script_domains,
             &capabilities,
             |lua: &Lua| {
                 let start_ret: bool = lua.load("return Start()").eval()?;
                 assert!(start_ret);
-                // `Thanx` on an empty recording returns 0 with a
-                // warning — engine semantics preserved.
-                let thanx_ret: bool = lua.load("return Thanx()").eval()?;
-                assert!(!thanx_ret);
+                let thanx_error = lua
+                    .load("return Thanx()")
+                    .eval::<bool>()
+                    .expect_err("direct Lua Thanx requires the Engine driver");
+                assert!(
+                    thanx_error
+                        .to_string()
+                        .contains("Engine-owned synchronous yield driver")
+                );
+                let alias_error = lua
+                    .load("return EndSequence()")
+                    .eval::<bool>()
+                    .expect_err("EndSequence aliases the same preflight rejection");
+                assert!(
+                    alias_error
+                        .to_string()
+                        .contains("Engine-owned synchronous yield driver")
+                );
                 Ok(())
             },
         )
         .unwrap();
+    assert!(script_state.sequence_recorder.recording.is_some());
+    assert!(host.ordered.is_empty());
+}
+
+#[test]
+fn lua_yield_preflight_is_complete_and_property_sensitive() {
+    let (state, _dir) = fresh_state();
+    let mut host = ScriptEffects::new();
+    let mut entities = Entities::from_legacy_slots(vec![
+        Some(test_soldier()),
+        Some(robin_engine::element::Entity::Target(
+            robin_engine::element::ElementTarget {
+                element: Default::default(),
+                fx: Default::default(),
+                target: Default::default(),
+            },
+        )),
+    ]);
+    entities
+        .get_legacy_slot_mut(0)
+        .unwrap()
+        .1
+        .enemy_ai_mut()
+        .unwrap()
+        .will_be_attentive = false;
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    ai_global.ezekiel_2517 = true;
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let mut sequences = robin_engine::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = robin_engine::sound_source::SoundSourceManager::new();
+    let weather = robin_engine::engine::WeatherState::default();
+    let frame = 17;
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_world_views(&[], &[], &[])
+            .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut script_state = ScriptState::default();
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let nonhuman = ScriptHandleCodec::actor_handle_from_index(1);
+    let gated = [
+        "Thanx()".to_owned(),
+        "EndSequence()".to_owned(),
+        format!("SendMessage({actor}, 1)"),
+        format!("SendMessageWithArguments({actor}, 1, 2, 3)"),
+        format!("PrototypeFilterEvent({actor}, {actor}, 1)"),
+        format!("SetActorPosture({actor}, 0)"),
+        format!("SetActorLocation({actor}, 0)"),
+        format!("SetActorActionState({actor}, 1)"),
+        format!("SetPersistentProperty({actor}, 2, 40)"),
+        format!("SetPersistentProperty({actor}, 3, 40)"),
+        format!("InflictPain({actor}, 10, false)"),
+        format!("SetAlwaysAttentive({actor}, true)"),
+        format!("EnableViewCone({actor})"),
+    ];
+
+    state
+        .with_host_and_state(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                for source in &gated {
+                    let error = lua.load(source).exec().expect_err(source);
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("Engine-owned synchronous yield driver"),
+                        "{source}: {error}"
+                    );
+                }
+
+                // Only life/concussion properties require the engine driver.
+                // Ammo, money, and name remain ordinary callable Lua natives.
+                for prop in [0, 1, 12] {
+                    lua.load(format!(
+                        "local ok = SetPersistentProperty({actor}, {prop}, 33); assert(type(ok) == 'boolean')"
+                    ))
+                    .exec()?;
+                }
+                // Invalid/non-human life and concussion setters never emit a
+                // yield in the native. Preserve their false/warning ABI in
+                // direct Lua instead of over-gating them.
+                for target in [0x0001_FFFE, nonhuman] {
+                    for prop in [2, 3] {
+                        lua.load(format!(
+                            "assert(SetPersistentProperty({target}, {prop}, 33) == false)"
+                        ))
+                        .exec()?;
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+    drop(capabilities);
+    let soldier = entities.get_legacy_slot(0).expect("soldier remains").1;
+    assert_eq!(soldier.npc_data().unwrap().money, 33);
+    assert!(!soldier.enemy_ai().unwrap().forced_attentive);
+    assert!(host.ordered.is_empty());
+    assert!(script_state.sequence_recorder.recording.is_none());
+
+    ai_global.ezekiel_2517 = false;
+    let capabilities =
+        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+            .with_world_views(&[], &[], &[])
+            .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    state
+        .with_host_and_state(
+            &mut host,
+            &mut script_state,
+            &mut script_domains,
+            &capabilities,
+            |lua: &Lua| {
+                lua.load(format!(
+                    "SetAlwaysAttentive({actor}, false); EnableViewCone({actor})"
+                ))
+                .exec()
+            },
+        )
+        .expect("non-yielding conditional arms remain callable from Lua");
+    drop(capabilities);
+    assert!(
+        entities
+            .get_legacy_slot(0)
+            .unwrap()
+            .1
+            .ai_controller()
+            .unwrap()
+            .debug_view_cone_enabled
+    );
 }
 
 /// `StartSequence` is the Spellforge alias for `Start`. After the
@@ -305,7 +456,7 @@ fn add_and_complete_objective_mutate_live_model() {
     drop(capabilities);
     assert_eq!(briefings.get_id(true, 0), Some(7));
     assert_eq!(briefings.is_entry_done(true, 0), Some(true));
-    assert!(host.engine.commands.is_empty());
+    assert!(host.engine_commands().is_empty());
 }
 
 /// `IsActorOutOfAction` is the Spellforge English-name alias for
@@ -389,15 +540,15 @@ fn native_abi_is_signature_driven() {
 
         match expected_command {
             Some(EngineCommand::SetZoomLevel { zoom }) => assert!(matches!(
-                host.engine.commands.as_slice(),
+                host.engine_commands().as_slice(),
                 [EngineCommand::SetZoomLevel { zoom: actual }] if *actual == zoom
             )),
             Some(EngineCommand::DisplayMap { show }) => assert!(matches!(
-                host.engine.commands.as_slice(),
+                host.engine_commands().as_slice(),
                 [EngineCommand::DisplayMap { show: actual }] if *actual == show
             )),
             None => {
-                assert!(host.engine.commands.is_empty());
+                assert!(host.engine_commands().is_empty());
                 assert_eq!(script_state.globals.get(&7), Some(&9));
             }
             Some(other) => panic!("test case does not handle command {other:?}"),
@@ -807,7 +958,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
         )
         .expect("gate must be reusable after owner detaches");
     assert!(matches!(
-        competing_host.engine.commands.as_slice(),
+        competing_host.engine_commands().as_slice(),
         [EngineCommand::DisplayMap { show: true }]
     ));
 }
@@ -909,7 +1060,7 @@ fn native_dispatch_preserves_script_effects_queue_order() {
         .unwrap();
 
     assert!(matches!(
-        host.engine.commands.as_slice(),
+        host.engine_commands().as_slice(),
         [
             EngineCommand::DisplayMap { show: true },
             EngineCommand::SetZoomLevel { zoom },

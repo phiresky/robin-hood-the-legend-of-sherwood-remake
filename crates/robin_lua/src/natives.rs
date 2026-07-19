@@ -493,21 +493,38 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                 ))
             },
             |session| {
+                let words = args
+                    .iter()
+                    .zip(sig.params.iter())
+                    .zip(param_types.iter())
+                    .enumerate()
+                    .map(|(index, ((value, param), abi_type))| {
+                        argument_to_stack_word(value, *abi_type, sig, index, param.name)
+                    })
+                    .collect::<mlua::Result<Vec<_>>>()?;
                 let mut native_context = session.native_context();
+                // Lua functions cannot currently suspend their mlua call
+                // frame while EngineInner drives a typed SCB yield. Reject
+                // these natives before HostFunctions sees them: several
+                // (Thanx/SendMessage) mutate the recorder/SequenceManager as
+                // they construct the yield, so detecting it afterwards
+                // corrupts state on an otherwise failed Lua event.
+                //
+                // TODO(lua-coroutine): expose an Engine-owned Lua event
+                // coroutine driver, then remove this preflight gate.
+                if native_context.requires_engine_driver(native, &words) {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "{} requires the Engine-owned synchronous yield driver and is unavailable from a direct Lua host session",
+                        sig.name
+                    )));
+                }
                 let mut stack = NativeStack::default();
                 // Push in argument order — the engine's `pop_i32()` pulls
                 // them off in *reverse*, so the last arg ends up on top of
                 // the stack. The .scb VM produced this exact order, so we
                 // mirror it.
-                for (index, ((value, param), abi_type)) in args
-                    .iter()
-                    .zip(sig.params.iter())
-                    .zip(param_types.iter())
-                    .enumerate()
-                {
-                    stack.push_i32(argument_to_stack_word(
-                        value, *abi_type, sig, index, param.name,
-                    )?);
+                for word in words {
+                    stack.push_i32(word);
                 }
                 match robin_engine::interp::HostFunctions::call(
                     &mut native_context,
@@ -517,9 +534,9 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                     NativeCallOutcome::Return(ret) => {
                         Ok(return_from_stack_word(ret, return_type))
                     }
-                    NativeCallOutcome::PendingNestedCall(call) => {
+                    NativeCallOutcome::Yield(call) => {
                         Err(mlua::Error::RuntimeError(format!(
-                            "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
+                            "{} requires synchronous engine dispatch, which is unavailable through the Lua host adapter: {call:?}",
                             sig.name
                         )))
                     }

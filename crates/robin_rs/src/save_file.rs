@@ -369,7 +369,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v47** (2026-07-19, script effects): mission scripts serialize the
 ///   canonical `script_effects` owner with typed presentation, external, and
 ///   simulation-barrier domains.
-pub const SAVE_FORMAT_VERSION: u32 = 47;
+/// - **v48** (2026-07-19, ordered script effects): typed effects serialize in
+///   one emission-ordered stream and sequence continuation state is explicit.
+pub const SAVE_FORMAT_VERSION: u32 = 48;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,8 +445,8 @@ pub struct GameSaveFile {
     /// Host-side persistent Game flags (campaign-map display state,
     /// widget-enable booleans, men-to-blazon mode).  `Option` so saves
     /// written before this field existed still round-trip; missing
-    /// values default to the current live `Game` state on load.
-    #[serde(default)]
+    /// values default to the current live `Game` state on load when this
+    /// exact-version payload explicitly stores `None`.
     pub game_persistent: Option<GamePersistentState>,
 }
 
@@ -726,7 +728,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 47, got 46"
+            "unsupported save file version: expected 48, got 46"
         );
     }
 

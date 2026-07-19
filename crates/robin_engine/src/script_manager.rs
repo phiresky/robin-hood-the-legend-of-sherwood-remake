@@ -218,9 +218,8 @@ impl ScriptManager {
     /// Create a new `ScriptInstance` bound to the named class.
     ///
     /// The instance gets its own heap sized to the class's
-    /// `size_of_member_variables`. Install a host via
-    /// `instance.vm.host = Some(Box::new(my_host))` before calling
-    /// functions that use native calls.
+    /// `size_of_member_variables`. Engine execution uses the explicit
+    /// activation/polling API so synchronous native yields cannot be bypassed.
     pub fn create_instance(&self, class_name: &str) -> Result<ScriptInstance, ScriptError> {
         let class_idx = self
             .find_class(class_name)
@@ -258,14 +257,6 @@ impl ScriptManager {
 /// `ScriptInstance` with its own heap. The heap stores the class's member
 /// variables — each instance has independent state.
 ///
-/// # Usage
-///
-/// ```ignore
-/// let mut mgr = ScriptManager::load_file("level.scb")?;
-/// let mut inst = mgr.create_instance("StartUp")?;
-/// inst.vm.host = Some(Box::new(ScriptEffects::new()));
-/// let result = inst.call_function(&mut mgr, "Initialize")?;
-/// ```
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ScriptInstance {
     /// Index into the ScriptManager's class/program arrays.
@@ -286,6 +277,42 @@ impl fmt::Debug for ScriptInstance {
 }
 
 impl ScriptInstance {
+    /// Create an independent activation for a top-level callback without
+    /// leaving its frames installed on the persistent instance.
+    pub fn begin_activation(
+        &mut self,
+        manager: &ScriptManager,
+        fn_name: &str,
+        params: &[i32],
+    ) -> Result<crate::interp::VmActivationState, ScriptError> {
+        for &param in params {
+            self.push_param(param);
+        }
+        self.begin_call(manager, fn_name)?;
+        Ok(self.vm.take_activation())
+    }
+
+    /// Poll one activation against this instance's canonical heap.
+    /// Activation state is restored even if native dispatch panics.
+    pub fn poll_activation_with_host(
+        &mut self,
+        manager: &mut ScriptManager,
+        activation: &mut crate::interp::VmActivationState,
+        max_steps: usize,
+        fn_name: &str,
+        host: &mut dyn HostFunctions,
+    ) -> StopReason {
+        self.vm.swap_activation(activation);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.resume_run_with_host(manager, max_steps, fn_name, host)
+        }));
+        self.vm.swap_activation(activation);
+        match result {
+            Ok(stop) => stop,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     /// The class index this instance is bound to.
     pub fn class_idx(&self) -> usize {
         self.class_idx
@@ -313,125 +340,10 @@ impl ScriptInstance {
             .collect()
     }
 
-    /// Call a function by name.
-    ///
-    /// Use [`push_param`](Self::push_param) to stage parameters for
-    /// the call. Scripts that use native calls should use
-    /// [`call_function_with_host`](Self::call_function_with_host).
-    ///
-    /// The shared static area is synced from the manager before execution
-    /// and written back after, so global variable changes propagate
-    /// between instances.
-    pub fn call_function(
-        &mut self,
-        manager: &mut ScriptManager,
-        fn_name: &str,
-    ) -> Result<i32, ScriptError> {
-        let func = self
-            .find_function(manager, fn_name)
-            .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
-        let entry_addr = func.address as u32;
-
-        self.run_at(manager, entry_addr, fn_name)
-    }
-
-    /// Call a function by name with native calls dispatched through
-    /// `host` for this execution only.
-    pub fn call_function_with_host(
-        &mut self,
-        manager: &mut ScriptManager,
-        fn_name: &str,
-        host: &mut dyn HostFunctions,
-    ) -> Result<i32, ScriptError> {
-        let func = self
-            .find_function(manager, fn_name)
-            .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
-        let entry_addr = func.address as u32;
-
-        self.run_at_with_host(manager, entry_addr, fn_name, host)
-    }
-
-    /// Call a function by name with a custom step limit and native host.
-    pub fn call_function_limited_with_host(
-        &mut self,
-        manager: &mut ScriptManager,
-        fn_name: &str,
-        max_steps: usize,
-        host: &mut dyn HostFunctions,
-    ) -> Result<i32, ScriptError> {
-        let func = self
-            .find_function(manager, fn_name)
-            .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
-        let entry_addr = func.address as u32;
-        self.run_at_limited_with_host(manager, entry_addr, max_steps, fn_name, host)
-    }
-
-    /// Internal: set up the VM and run from the given entry address.
-    fn run_at(
-        &mut self,
-        manager: &mut ScriptManager,
-        entry_addr: u32,
-        fn_name: &str,
-    ) -> Result<i32, ScriptError> {
-        self.run_at_limited(manager, entry_addr, 10_000_000, fn_name)
-    }
-
-    fn run_at_with_host(
-        &mut self,
-        manager: &mut ScriptManager,
-        entry_addr: u32,
-        fn_name: &str,
-        host: &mut dyn HostFunctions,
-    ) -> Result<i32, ScriptError> {
-        self.run_at_limited_with_host(manager, entry_addr, 10_000_000, fn_name, host)
-    }
-
-    fn run_at_limited(
-        &mut self,
-        manager: &mut ScriptManager,
-        entry_addr: u32,
-        max_steps: usize,
-        fn_name: &str,
-    ) -> Result<i32, ScriptError> {
-        self.begin_at(entry_addr);
-        match self.resume_run(manager, max_steps, fn_name) {
-            StopReason::ReturnedValue(v) => Ok(v),
-            StopReason::Returned => Ok(0),
-            other => Err(ScriptError::Vm(other)),
-        }
-    }
-
-    fn run_at_limited_with_host(
-        &mut self,
-        manager: &mut ScriptManager,
-        entry_addr: u32,
-        max_steps: usize,
-        fn_name: &str,
-        host: &mut dyn HostFunctions,
-    ) -> Result<i32, ScriptError> {
-        self.begin_at(entry_addr);
-        match self.resume_run_with_host(manager, max_steps, fn_name, host) {
-            StopReason::ReturnedValue(v) => Ok(v),
-            StopReason::Returned => Ok(0),
-            other => Err(ScriptError::Vm(other)),
-        }
-    }
-
-    /// Set up the VM frames + IP for a fresh function call without
-    /// running anything yet.  Caller must have already pushed any
-    /// parameters via [`push_param`](Self::push_param).
-    ///
-    /// Pairs with [`resume_run`](Self::resume_run) which actually
-    /// drives the interpreter — splitting setup from drive lets
-    /// callers handle [`StopReason::PendingNestedCall`] yields by
-    /// dispatching the queued call out-of-band and re-invoking
-    /// `resume_run` on the same instance, picking up at the IP the
-    /// VM yielded at.
-    pub fn begin_call(
-        &mut self,
-        manager: &ScriptManager,
-        fn_name: &str,
-    ) -> Result<(), ScriptError> {
+    /// Set up the VM frames + IP for a fresh activation. The public entry is
+    /// [`begin_activation`](Self::begin_activation), which supplies parameters
+    /// explicitly and pairs with the yield-aware polling API.
+    fn begin_call(&mut self, manager: &ScriptManager, fn_name: &str) -> Result<(), ScriptError> {
         let func = self
             .find_function(manager, fn_name)
             .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
@@ -455,47 +367,8 @@ impl ScriptInstance {
         self.vm.ip = entry_addr;
     }
 
-    /// Drive the VM forward from its current IP until it stops.  Syncs
-    /// the shared static area in from `manager` before running and back
-    /// out after, so both top-of-call setup and mid-call resume see the
-    /// latest cross-instance global writes.
-    ///
-    /// Safe to call multiple times in a row to resume after a yield —
-    /// no frame/IP reset between calls.  `fn_name` is only used for
-    /// trace logging.
-    pub fn resume_run(
-        &mut self,
-        manager: &mut ScriptManager,
-        max_steps: usize,
-        fn_name: &str,
-    ) -> StopReason {
-        // Sync shared static area into this instance's VM.  Called on
-        // both the initial run and every resume — when a nested call
-        // wrote to the static area mid-yield, that update needs to be
-        // visible to this instance when it resumes.
-        self.vm.static_area.resize(manager.static_area.len(), 0);
-        self.vm.static_area.copy_from_slice(&manager.static_area);
-
-        let class_name = &manager.program.scb.classes[self.class_idx].class_name;
-        let program_len = manager.program.programs[self.class_idx].len();
-        tracing::trace!(
-            "resume_run {class_name}::{fn_name} starting (max_steps={max_steps}, program_len={program_len}, ip={})",
-            self.vm.ip,
-        );
-        let start = web_time::Instant::now();
-        let program = &manager.program.programs[self.class_idx];
-        let stop = self.vm.run_up_to(program, max_steps);
-        let elapsed = start.elapsed();
-        tracing::trace!("resume_run {class_name}::{fn_name} done: {stop:?} ({elapsed:?})");
-
-        // Sync static area back to the shared manager.
-        let copy_len = manager.static_area.len().min(self.vm.static_area.len());
-        manager.static_area[..copy_len].copy_from_slice(&self.vm.static_area[..copy_len]);
-        stop
-    }
-
     /// Drive the VM with native calls dispatched through `host`.
-    pub fn resume_run_with_host(
+    fn resume_run_with_host(
         &mut self,
         manager: &mut ScriptManager,
         max_steps: usize,
@@ -522,8 +395,7 @@ impl ScriptInstance {
         stop
     }
 
-    /// Push an i32 parameter for the next function call.
-    pub fn push_param(&mut self, value: i32) {
+    fn push_param(&mut self, value: i32) {
         self.vm
             .outgoing_params
             .extend_from_slice(&value.to_le_bytes());

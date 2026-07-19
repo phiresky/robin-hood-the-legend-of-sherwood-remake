@@ -54,12 +54,10 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.simulation_barriers.commands.push(
-                            DeferredCommand::ProcessPatchEffects {
-                                patch_index,
-                                effects,
-                            },
-                        );
+                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
+                            patch_index,
+                            effects,
+                        });
                     }
                 }
                 1
@@ -77,12 +75,10 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.simulation_barriers.commands.push(
-                            DeferredCommand::ProcessPatchEffects {
-                                patch_index,
-                                effects,
-                            },
-                        );
+                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
+                            patch_index,
+                            effects,
+                        });
                     }
                 }
                 1
@@ -182,23 +178,23 @@ impl NativeContext<'_, '_> {
 
             // --- sound ---
             SuspendAllSoundSources => {
-                self.external.sound.push(SoundCommand::SuspendAll);
+                self.emit_sound(SoundCommand::SuspendAll);
                 1
             }
             ResumeAllSoundSources => {
-                self.external.sound.push(SoundCommand::ResumeAll);
+                self.emit_sound(SoundCommand::ResumeAll);
                 1
             }
             ActivateSoundSource => {
                 let ss_h = stack.pop_i32();
                 if ss_h != 0 {
-                    self.external.sound.push(SoundCommand::Activate(ss_h));
+                    self.emit_sound(SoundCommand::Activate(ss_h));
                 }
                 1
             }
             DeactivateSoundSource => {
                 let ss_h = stack.pop_i32();
-                self.external.sound.push(SoundCommand::Deactivate(ss_h));
+                self.emit_sound(SoundCommand::Deactivate(ss_h));
                 1
             }
             DestroySoundSource => {
@@ -209,7 +205,7 @@ impl NativeContext<'_, '_> {
                         .expect("DestroySoundSource requires live sound-source state")
                         .delete(index);
                 }
-                self.external.sound.push(SoundCommand::Destroy(ss_h));
+                self.emit_sound(SoundCommand::Destroy(ss_h));
                 1
             }
 
@@ -310,12 +306,10 @@ impl NativeContext<'_, '_> {
                 // EngineInner applies positioning (inactive + special layer +
                 // building sector + gate point_in + DisableAllActionsTemp
                 // for PCs) after the script step.
-                self.simulation_barriers
-                    .commands
-                    .push(DeferredCommand::PutActorInBuilding {
-                        actor: actor_h,
-                        building: bld_h,
-                    });
+                self.emit_barrier(DeferredCommand::PutActorInBuilding {
+                    actor: actor_h,
+                    building: bld_h,
+                });
                 0
             }
             SetBuildingActive => {
@@ -573,7 +567,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.script_domains.scrolls.status.insert(scroll_h, status);
-                self.engine.commands.push(EngineCommand::SetScrollStatus {
+                self.emit_engine(EngineCommand::SetScrollStatus {
                     scroll_handle: scroll_h,
                     status,
                 });

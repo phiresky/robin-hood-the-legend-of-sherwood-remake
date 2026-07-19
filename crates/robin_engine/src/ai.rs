@@ -3205,7 +3205,7 @@ pub struct RepulsivePoint {
 /// should match the exact door state at the save point.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct DoorSeekInfo {
-    /// Index into the game host's full `doors` array. Carried so AI
+    /// Index into the canonical interactable door array. Carried so AI
     /// helpers (e.g. `RunAndAlertSoldiers`) can stash a door reference
     /// onto the NPC.
     pub door_index: crate::gate::DoorIndex,
@@ -3892,7 +3892,7 @@ impl AiPerTickData {
 pub struct ReinforcementDoorInfo {
     /// Inner position of the door (where the NPC walks *to*).
     pub position_in: Position,
-    /// Index into the game host's door array.
+    /// Index into the canonical interactable door array.
     pub door_index: crate::gate::DoorIndex,
     /// Outer point of the door (where the NPC exits the map).
     pub point_out: MapPoint,

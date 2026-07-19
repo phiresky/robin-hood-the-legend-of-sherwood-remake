@@ -160,12 +160,9 @@ impl EngineInner {
                     .scripts
                     .mission
                     .as_mut()
-                    .and_then(|s| s.script_effects_mut())
+                    .map(|s| s.script_effects_mut())
                 {
-                    effects
-                        .engine
-                        .commands
-                        .push(EngineCommand::UpdateInformationBars);
+                    effects.emit_engine(EngineCommand::UpdateInformationBars);
                 }
                 ConsoleResponse::Ok(format!("{amount} blazons added."))
             }
@@ -241,12 +238,9 @@ impl EngineInner {
                     .scripts
                     .mission
                     .as_mut()
-                    .and_then(|s| s.script_effects_mut())
+                    .map(|s| s.script_effects_mut())
                 {
-                    effects
-                        .engine
-                        .commands
-                        .push(EngineCommand::UpdateInformationBars);
+                    effects.emit_engine(EngineCommand::UpdateInformationBars);
                 }
                 self.win(true);
                 self.mission_domain.state.quit_won = true;
