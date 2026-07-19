@@ -294,6 +294,28 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
     renderer.draw_rect_outline_screen(x, y, x + w, y + h, border);
 }
 
+/// Draw the shared dark panel/input fallback used when a menu bitmap is
+/// unavailable.
+pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
+    let (sx, sy) = transform.to_screen(rect.x, rect.y);
+    renderer.fill_screen(
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + rect.w) as f32,
+            (sy + rect.h) as f32,
+        )),
+        Renderer::create_color_16(30, 25, 15),
+    );
+    renderer.draw_rect_outline_screen(
+        sx,
+        sy,
+        sx + rect.w,
+        sy + rect.h,
+        Renderer::create_color_16(180, 160, 100),
+    );
+}
+
 /// Render a slider widget — a 0..10 horizontal track with a thumb
 /// showing the current position.  The slider sprite pack typically has
 /// the track + 10 thumb positions; we pick the frame matching `value`

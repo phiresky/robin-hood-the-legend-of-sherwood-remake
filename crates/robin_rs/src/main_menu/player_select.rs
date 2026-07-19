@@ -12,7 +12,7 @@ use robin_engine::sprite::BBox;
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    draw_fallback_panel, draw_screen_background, enter_modal_gpu_phase, render_text_virt,
 };
 use crate::ingame_menu::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_NEW, MT_BTN_OK, MT_BTN_RENAME,
@@ -335,7 +335,7 @@ pub(crate) async fn show_select_player(
                     true,
                 );
             } else {
-                draw_fallback_rect(
+                draw_fallback_panel(
                     renderer,
                     transform,
                     &MenuRect {
@@ -530,26 +530,6 @@ fn difficulty_label(resources: &IngameMenuResources, d: DifficultyLevel) -> Stri
         DifficultyLevel::Hard => MT_STR_DIFFICULTY_HARD,
     };
     resources.menu_text.get(id)
-}
-
-fn draw_fallback_rect(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
-    let (sx, sy) = transform.to_screen(rect.x, rect.y);
-    renderer.fill_screen(
-        Some(&BBox::from_coords(
-            sx as f32,
-            sy as f32,
-            (sx + rect.w) as f32,
-            (sy + rect.h) as f32,
-        )),
-        Renderer::create_color_16(30, 25, 15),
-    );
-    renderer.draw_rect_outline_screen(
-        sx,
-        sy,
-        sx + rect.w,
-        sy + rect.h,
-        Renderer::create_color_16(180, 160, 100),
-    );
 }
 
 fn point_in_rect(px: i32, py: i32, x: i32, y: i32, w: i32, h: i32) -> bool {
@@ -925,7 +905,7 @@ async fn run_name_prompt(
         if let Some(bg) = bg {
             draw_background(renderer, transform, &bg, win_x, win_y, win_w, win_h);
         } else {
-            draw_fallback_rect(
+            draw_fallback_panel(
                 renderer,
                 transform,
                 &MenuRect {
@@ -999,7 +979,7 @@ async fn run_name_prompt(
                 crate::renderer::BLIT_SOURCE_TRANSPARENT,
             );
         } else {
-            draw_fallback_rect(renderer, transform, &input_rect);
+            draw_fallback_panel(renderer, transform, &input_rect);
         }
 
         // `caret_timer` ticks every frame (~60 Hz); toggle caret every

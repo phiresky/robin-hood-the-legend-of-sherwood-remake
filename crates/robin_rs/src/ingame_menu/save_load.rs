@@ -22,7 +22,6 @@ use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
-use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
@@ -33,7 +32,7 @@ use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, 
 use jiff::{Timestamp, tz::TimeZone};
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
+    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_fallback_panel,
     draw_screen_background, enter_modal_gpu_phase, render_text_virt, render_text_virt_font,
 };
 use super::resources::{
@@ -651,7 +650,7 @@ pub async fn show_save_load(
         }
 
         if needs_scrollbar {
-            draw_listbox_scrollbar(
+            widget_bridge::draw_listbox_scrollbar(
                 renderer,
                 transform,
                 resources,
@@ -779,7 +778,7 @@ fn draw_input_field(
             true,
         );
     } else {
-        draw_fallback_rect(renderer, transform, &INPUT_RECT);
+        draw_fallback_panel(renderer, transform, &INPUT_RECT);
     }
 
     let Some(font) = resources.label_font() else {
@@ -886,121 +885,8 @@ fn draw_preview(
     }
 }
 
-fn draw_fallback_rect(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
-    let (sx, sy) = transform.to_screen(rect.x, rect.y);
-    renderer.fill_screen(
-        Some(&BBox::from_coords(
-            sx as f32,
-            sy as f32,
-            (sx + rect.w) as f32,
-            (sy + rect.h) as f32,
-        )),
-        Renderer::create_color_16(30, 25, 15),
-    );
-    renderer.draw_rect_outline_screen(
-        sx,
-        sy,
-        sx + rect.w,
-        sy + rect.h,
-        Renderer::create_color_16(180, 160, 100),
-    );
-}
-
 fn list_scrollbar_width(resources: &IngameMenuResources) -> i32 {
     resources.list_scrollbar[0].map_or(0, |s| s.width)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_listbox_scrollbar(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    resources: &IngameMenuResources,
-    track_x: i32,
-    track_y: i32,
-    track_w: i32,
-    track_h: i32,
-    scroll_offset: usize,
-    visible_rows: usize,
-    total_rows: usize,
-) {
-    let slices = &resources.list_scrollbar;
-    let (Some(back_start), Some(back_fill), Some(back_end)) = (slices[0], slices[1], slices[2])
-    else {
-        return;
-    };
-    let (Some(thumb_start), Some(thumb_fill), Some(thumb_end)) = (slices[3], slices[4], slices[5])
-    else {
-        return;
-    };
-
-    let start_h = back_start.height.min(track_h);
-    let end_h = back_end.height.min(track_h - start_h);
-    let fill_y = track_y + start_h;
-    let fill_h = (track_h - start_h - end_h).max(0);
-    draw_background(
-        renderer,
-        transform,
-        &back_start,
-        track_x,
-        track_y,
-        track_w,
-        start_h,
-    );
-    if fill_h > 0 {
-        draw_background(
-            renderer, transform, &back_fill, track_x, fill_y, track_w, fill_h,
-        );
-    }
-    draw_background(
-        renderer,
-        transform,
-        &back_end,
-        track_x,
-        track_y + track_h - end_h,
-        track_w,
-        end_h,
-    );
-
-    let total = total_rows.max(1) as f32;
-    let before_ratio = (scroll_offset as f32 / total).clamp(0.0, 1.0);
-    let knob_ratio = (visible_rows as f32 / total).clamp(0.0, 1.0);
-    let usable = (track_h - 2).max(0) as f32;
-    let thumb_top = track_y + 1 + (usable * before_ratio) as i32;
-    let thumb_bot = track_y + 1 + (usable * (before_ratio + knob_ratio)) as i32;
-    let thumb_h = (thumb_bot - thumb_top).max(thumb_start.height + thumb_end.height);
-
-    let thumb_start_h = thumb_start.height.min(thumb_h);
-    let thumb_end_h = thumb_end.height.min(thumb_h - thumb_start_h);
-    let thumb_fill_h = (thumb_h - thumb_start_h - thumb_end_h).max(0);
-    draw_background(
-        renderer,
-        transform,
-        &thumb_start,
-        track_x,
-        thumb_top,
-        track_w,
-        thumb_start_h,
-    );
-    if thumb_fill_h > 0 {
-        draw_background(
-            renderer,
-            transform,
-            &thumb_fill,
-            track_x,
-            thumb_top + thumb_start_h,
-            track_w,
-            thumb_fill_h,
-        );
-    }
-    draw_background(
-        renderer,
-        transform,
-        &thumb_end,
-        track_x,
-        thumb_top + thumb_h - thumb_end_h,
-        track_w,
-        thumb_end_h,
-    );
 }
 
 /// One row in the slot list.
