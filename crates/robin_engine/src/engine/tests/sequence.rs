@@ -1025,7 +1025,17 @@ fn assert_npc_translate_books(
     let mut engine = EngineInner::new();
     let actor = match command {
         crate::element::Command::BeggarShowFace => {
-            engine.add_entity(make_test_civilian(crate::element::Posture::Upright))
+            let actor = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+            let Entity::Civilian(civilian) = engine
+                .get_entity_mut(actor)
+                .expect("new BeggarShowFace civilian should exist")
+            else {
+                panic!("new BeggarShowFace actor should be a civilian");
+            };
+            civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
+                crate::ai_friendly::FriendlyAi::new(actor.index()),
+            ));
+            actor
         }
         _ => engine.add_entity(make_test_soldier(crate::element::Posture::Upright)),
     };
