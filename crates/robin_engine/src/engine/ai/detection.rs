@@ -1,7 +1,8 @@
 //! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
 //! enemy → PC and royalist → enemy `RefreshDetection` (P3). Enemy optical
-//! stimuli dispatch at the matching per-NPC creation boundary; the NPC-side
-//! blip scan still runs as the preceding batched P2a pass.
+//! stimuli and NPC-owned blip detection dispatch at the matching per-NPC
+//! creation boundary. The preceding batched P2a pass is limited to PC Listen
+//! and object-owned discovery work.
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
 use super::*;
@@ -9,6 +10,11 @@ use crate::ai::AiPerTickData;
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
+
+const DETECTION_FREQUENCY_BLIP: u32 = 16;
+const BLIP_SUPER_DETECTION: f32 = 1.5;
+const BLIP_ON_SHOULDERS_FACTOR: f32 = 1.3;
+const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 
 /// Royalist-detection scratch type: snapshot of one Lacklandist NPC as a
 /// detection target for one Royalist's visibility pass. Rebuilt from live
@@ -50,13 +56,23 @@ pub(super) fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32)
         return (position_map, position.z);
     };
     let ground_z = entity.element_data().position().z;
-    // `compute_eyes_point` returns the engine's render-space 3D point,
-    // where `y = map_y + elevation`.
-    // TODO(coord-parity): original C++ `ComputeVisibility` subtracts
-    // `SBGeoPoint3D` eye/detection points directly. Rust visibility
-    // currently consumes projected `MapPoint`s; audit before changing
-    // that behavior.
-    (MapPoint::from_world_xyz(eye.x, eye.y, ground_z), eye.z)
+    // `compute_eyes_point` returns world-space 3D, where the feet point is
+    // `(map_x, map_y + ground_z, ground_z)`. Project with the *feet*
+    // elevation so posture-dependent horizontal offsets survive while eye
+    // height remains exclusively in the returned Z component. Projecting
+    // with `eye.z` would fold eye height into Y and then count it again in
+    // `VisibilityQuery`'s 3D distance.
+    //
+    // TODO(coord-parity): `VisibilityQuery` still uses one `MapPoint` for
+    // both projected-map LOS and the original C++ world-XY distance vector.
+    // Those spaces diverge when viewer and target ground elevations differ;
+    // split the query into LOS points and world-horizontal points before
+    // changing this established projection invariant.
+    (visibility_eye_xy(eye, ground_z), eye.z)
+}
+
+fn visibility_eye_xy(eye: crate::coordinates::WorldPoint3D, ground_z: f32) -> MapPoint {
+    MapPoint::from_world_xyz(eye.x, eye.y, ground_z)
 }
 
 struct SoldierSightContext {
@@ -314,9 +330,9 @@ impl EngineInner {
         }
     }
 
-    /// P2a — blip detection: reveal blipped soldiers/civilians/objects
-    /// that any PC sees this frame, plus drive the Listen ability's
-    /// one-shot reveal + FX-target Heard() callbacks.
+    /// P2a — non-NPC blip work: drive the Listen ability's one-shot reveal,
+    /// object-owned discovery, and FX-target Heard() callbacks. Ordinary NPC
+    /// `SeesBlip` runs inside that NPC's creation-ordered RefreshDetection.
     pub(super) fn tick_enemy_ai_blip_detection(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -325,12 +341,6 @@ impl EngineInner {
     ) {
         use crate::element::Posture;
 
-        const DETECTION_FREQUENCY_BLIP: u32 = 16;
-        // SeesBlip base multiplier.
-        const BLIP_SUPER_DETECTION: f32 = 1.5;
-        // Extra factor when PC is on shoulders.
-        const BLIP_ON_SHOULDERS_FACTOR: f32 = 1.3;
-        const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
         // Standard view radius — set at level load from the day/night
@@ -340,17 +350,6 @@ impl EngineInner {
             self.ai.standard_view_polygon_radius as f32
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS as f32
-        };
-
-        // Difficulty modifiers.
-        let difficulty_factor = match sim.config().difficulty {
-            crate::player_profile::DifficultyLevel::Easy => {
-                crate::player_profile::difficulty_params::EASY_BLIP_DETECTION_RANGE
-            }
-            crate::player_profile::DifficultyLevel::Medium => 1.0,
-            crate::player_profile::DifficultyLevel::Hard => {
-                crate::player_profile::difficulty_params::HARD_BLIP_DETECTION_RANGE
-            }
         };
 
         // ── Listen ability frame tick. ──────────────────────
@@ -422,10 +421,6 @@ impl EngineInner {
 
         let sight_obstacles = self.sight_obstacles(assets);
         let mut to_reveal: Vec<EntityId> = Vec::new();
-        // Perched PCs that saw an enemy this frame via Path A
-        // (SeesBlip) — trigger `HERO_PERCHED_AND_SEE_ENNEMY` speech
-        // after the reveal loop.
-        let mut perched_detection_triggers: Vec<EntityId> = Vec::new();
         // FX targets within listening range; `Heard(pc)` gets
         // invoked on each below.  Pair: (target_id, listening_pc_id)
         // so we can pass the PC handle to
@@ -474,38 +469,7 @@ impl EngineInner {
             if !elem.blipped {
                 continue;
             }
-            let is_npc = entity.npc_data().is_some(); // soldier or civilian
             let is_object = entity.is_object();
-            // NPC-side blip visibility belongs to RefreshDetection and is
-            // behind its broad entry gate. Door transit counts as "inside"
-            // here, unlike the later optical gate. Listen and object-side
-            // discovery are separate paths and remain eligible.
-            let npc_refresh_detection_eligible = !is_npc
-                || elem.active
-                || elem.is_in_door_transit()
-                || self.entity_building_sector(elem.sector()).is_some();
-
-            // EntityId (monotonic slot index, never reused) stands in for
-            // original `mulCreationOrder` in the common blip cadence.
-            let modified_frame = self.control.frame_counter.wrapping_add(entity_id.index());
-            let npc_blip_cadence_open = modified_frame.is_multiple_of(DETECTION_FREQUENCY_BLIP);
-
-            // Royalist soldiers auto-reveal, but still only inside the same
-            // 16-frame RefreshDetection blip gate as every other NPC.
-            if entity.is_soldier()
-                && let Entity::Soldier(s) = entity
-                && s.soldier.cached_camp == Camp::Royalists
-                && npc_refresh_detection_eligible
-                && npc_blip_cadence_open
-            {
-                to_reveal.push(entity_id);
-                continue;
-            }
-
-            // Frame gate for SeesBlip path (NPC-side, every 16 frames).
-            // The frame counter is offset by the entity's creation
-            // order to stagger NPC detection across 16 frames.
-            let sees_blip_gate = is_npc && npc_refresh_detection_eligible && npc_blip_cadence_open;
 
             // Listen path only fires on the frame a listening PC's
             // countdown hit 0 — `firing_listeners` is non-empty
@@ -518,7 +482,7 @@ impl EngineInner {
             let object_gate = is_object;
 
             // Skip if no detection path can fire this frame.
-            if !sees_blip_gate && !listen_gate && !object_gate {
+            if !listen_gate && !object_gate {
                 continue;
             }
 
@@ -531,59 +495,6 @@ impl EngineInner {
             };
 
             let mut revealed = false;
-
-            // ── Path A: SeesBlip ─────────────────────────────
-            if sees_blip_gate {
-                for pc in &world.pcs {
-                    // Original SeesBlip requires the viewing PC to be active.
-                    // Living inactive PCs remain in the world snapshot for
-                    // same-building NPC optical visibility only.
-                    if !pc.active || !pc.playable || pc.unconscious || pc.layer != blip_layer {
-                        continue;
-                    }
-                    let dx = blip_eye_xy.x - pc.eye_position.x;
-                    let dy = (blip_eye_xy.y - pc.eye_position.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = blip_eye_z - pc.eye_z;
-
-                    let super_det = if pc.posture == Posture::OnShoulders {
-                        BLIP_SUPER_DETECTION * BLIP_ON_SHOULDERS_FACTOR
-                    } else {
-                        BLIP_SUPER_DETECTION
-                    } * difficulty_factor;
-
-                    let in_range = if dz >= 0.0 {
-                        // Blip is higher — 3D spherical check.
-                        let dist_3d_sq = dx * dx + dy * dy + dz * dz;
-                        dist_3d_sq < super_det * super_det * svr * svr
-                    } else {
-                        // Blip is lower — 2D cone widens with height.
-                        let dist_2d_sq = dx * dx + dy * dy;
-                        let h_range = super_det * (svr + BLIP_CONE_APERTURE_FACTOR * (-dz));
-                        dist_2d_sq < h_range * h_range
-                    };
-
-                    if in_range
-                        && crate::sight_obstacle::is_reachable_3d(
-                            sight_obstacles,
-                            [pc.eye_position.x, pc.eye_position.y, pc.eye_z],
-                            [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
-                            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                        )
-                    {
-                        revealed = true;
-                        // SeesBlip fires HERO_PERCHED_AND_SEE_ENNEMY
-                        // whenever the detecting PC is perched on
-                        // shoulders.  Defer the call so we can emit
-                        // it after releasing the immutable
-                        // `self.world.entities` borrow.
-                        if pc.posture == Posture::OnShoulders {
-                            perched_detection_triggers.push(pc.id);
-                        }
-                        break;
-                    }
-                }
-            }
 
             // ── Path B: ListenTo ─────────────────────────────
             // Simple 3D distance check, no LOS, no cone.  One-shot.
@@ -672,18 +583,6 @@ impl EngineInner {
             }
         }
 
-        // Fire "I see an enemy from my perch" voice lines for any
-        // on-shoulders PC that spotted a blip this frame.
-        // The anti-chorus timer inside `hero_speaking` absorbs
-        // duplicates if multiple blips land on the same perched PC.
-        for pc_id in perched_detection_triggers {
-            self.hero_speaking(
-                assets,
-                pc_id,
-                crate::engine::melee::HERO_PERCHED_AND_SEE_ENNEMY,
-            );
-        }
-
         // Fire FX target Heard() callbacks.  If the target's action
         // filter has `RHFILTER_LISTEN` set AND scripts are enabled,
         // clear the bit and invoke the `ActivatedByListenable(pc)`
@@ -728,6 +627,139 @@ impl EngineInner {
                     tracing::warn!("ActivatedByListenable (target {target_handle}): {error}");
                 }
             }
+        }
+    }
+
+    /// NPC-owned `RefreshDetection` blip arm. This must run at the start of
+    /// each NPC's creation slot: an earlier NPC's synchronous Think/script
+    /// may activate, deactivate, blip, reveal, or move a later NPC before its
+    /// own cadence opens.
+    fn tick_enemy_ai_npc_blip_detection_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        use crate::element::Posture;
+
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "creation-ordered NPC {} disappeared before its blip detection slot",
+                npc_id.index()
+            )
+        });
+        let elem = entity.element_data();
+        if !elem.blipped
+            || !(elem.active
+                || elem.is_in_door_transit()
+                || self.entity_building_sector(elem.sector()).is_some())
+            || !self
+                .control
+                .frame_counter
+                .wrapping_add(npc_id.index())
+                .is_multiple_of(DETECTION_FREQUENCY_BLIP)
+        {
+            return;
+        }
+
+        // Royalist soldiers reveal themselves without consulting PCs, but
+        // only behind the same RefreshDetection entry/cadence gates.
+        if matches!(entity, Entity::Soldier(s) if s.soldier.cached_camp == Camp::Royalists) {
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .expect("blipped Royalist NPC disappeared before reveal")
+                .reveal_blip();
+            return;
+        }
+
+        let (blip_eye_xy, blip_eye_z) = human_eye_point_for_visibility(entity);
+        let standard_radius = if self.ai.standard_view_polygon_radius > 0 {
+            self.ai.standard_view_polygon_radius as f32
+        } else {
+            ai_vision::DEFAULT_VIEW_RADIUS as f32
+        };
+        let difficulty_factor = match sim.config().difficulty {
+            crate::player_profile::DifficultyLevel::Easy => {
+                crate::player_profile::difficulty_params::EASY_BLIP_DETECTION_RANGE
+            }
+            crate::player_profile::DifficultyLevel::Medium => 1.0,
+            crate::player_profile::DifficultyLevel::Hard => {
+                crate::player_profile::difficulty_params::HARD_BLIP_DETECTION_RANGE
+            }
+        };
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+
+        let mut detecting_pc = None;
+        for &pc_id in &self.world.pc_ids {
+            let pc_entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
+                panic!(
+                    "PC {} disappeared from the live PC list during NPC blip detection",
+                    pc_id.index()
+                )
+            });
+            let Entity::Pc(pc) = pc_entity else {
+                panic!(
+                    "non-PC entity {} is present in the live PC list during NPC blip detection",
+                    pc_id.index()
+                );
+            };
+            if !pc.element.active
+                || !pc.pc.playable
+                || pc.pc.life_points <= 0
+                || pc.human.unconscious
+            {
+                continue;
+            }
+            let (pc_eye_xy, pc_eye_z) = human_eye_point_for_visibility(pc_entity);
+            let dx = blip_eye_xy.x - pc_eye_xy.x;
+            let dy =
+                (blip_eye_xy.y - pc_eye_xy.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = blip_eye_z - pc_eye_z;
+            let super_detection = if pc.element.posture == Posture::OnShoulders {
+                BLIP_SUPER_DETECTION * BLIP_ON_SHOULDERS_FACTOR
+            } else {
+                BLIP_SUPER_DETECTION
+            } * difficulty_factor;
+            let in_range = if dz >= 0.0 {
+                dx * dx + dy * dy + dz * dz
+                    < super_detection * super_detection * standard_radius * standard_radius
+            } else {
+                let horizontal_radius =
+                    super_detection * (standard_radius + BLIP_CONE_APERTURE_FACTOR * -dz);
+                dx * dx + dy * dy < horizontal_radius * horizontal_radius
+            };
+            if in_range
+                && crate::sight_obstacle::is_reachable_3d(
+                    sight_obstacles,
+                    [pc_eye_xy.x, pc_eye_xy.y, pc_eye_z],
+                    [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
+                    crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                )
+            {
+                detecting_pc = Some((pc_id, pc.element.posture == Posture::OnShoulders));
+                break;
+            }
+        }
+
+        let Some((pc_id, perched)) = detecting_pc else {
+            return;
+        };
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .expect("blipped NPC disappeared before reveal")
+            .reveal_blip();
+        if perched {
+            self.hero_speaking(
+                assets,
+                pc_id,
+                crate::engine::melee::HERO_PERCHED_AND_SEE_ENNEMY,
+            );
         }
     }
 
@@ -1050,13 +1082,13 @@ impl EngineInner {
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass.
-    // TODO(parity): Script-driven mutation of an Enemy list between FIFO Think
-    // calls remains outside the frozen final-scan aggregate.
-    // TODO(parity): Fold NPC-side blip work into this creation-ordered loop;
-    // the current P2a pass cannot observe an earlier NPC Think mutating a
-    // later NPC's blip eligibility in the same frame.
-    // TODO(parity): Generalize optical detection to civilians and add the
-    // Lacklandist-soldier → Royalist-soldier Enemy target path.
+    // TODO(parity): Generalize the Enemy optical scan to civilians and the
+    // Lacklandist-soldier → Royalist-soldier path as one mixed, live
+    // detectable-list walk. Original `RefreshDetection` shares one suspect
+    // accumulator and one FIFO across interleaved PC/soldier entries, so a
+    // second camp-specific pass would silently reorder stimuli and alter the
+    // threshold. Preserve the list's AddDetectable/creation order and choose
+    // ENEMY_PC (2) versus ENEMY_NPC (16) cadence per entry when this lands.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1072,6 +1104,8 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
+            self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
+
             // Sample the two pre-acoustic RefreshDetection gates before
             // EVENT_HEAR can synchronously run Think/script and mutate the
             // viewer. Once these gates pass, original control flow always
@@ -3849,6 +3883,19 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn visibility_eye_projection_keeps_eye_height_out_of_map_y() {
+        let eye = crate::coordinates::WorldPoint3D::new(100.0, 260.0, 75.0);
+        let projected = visibility_eye_xy(eye, 30.0);
+
+        assert_eq!(projected, MapPoint::new(100.0, 230.0));
+        assert_ne!(
+            projected,
+            eye.to_map(),
+            "eye Z is carried separately by VisibilityQuery and must not be projected twice"
+        );
+    }
 
     #[test]
     fn enemy_near_sender_uses_original_trainer_substate_and_time_gates() {

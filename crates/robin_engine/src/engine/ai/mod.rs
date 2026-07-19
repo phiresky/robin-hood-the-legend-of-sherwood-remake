@@ -122,10 +122,9 @@ fn build_detectable_enemies_for(
             continue;
         }
         let is_detectable = if self_is_civilian {
-            // Bonhomie (friendly civilian) AddDetectable case:
-            // "Good civilists - detect PCs" / "Evil civilists - detect PCs".
-            // Royalist soldiers passed through the bonhomie outer filter
-            // for lacklandist civilians are then rejected by AddDetectable.
+            // Bonhomie considers Royalist soldiers for Lacklandist
+            // civilians in its outer loop, but AddDetectable's civilian arm
+            // rejects them. Both civilian camps therefore retain PCs only.
             pd.is_pc
         } else {
             // Malignity (enemy soldier) AddDetectable cases:
@@ -152,6 +151,194 @@ fn build_detectable_enemies_for(
         }
     }
     out
+}
+
+/// Snapshot the non-stairs lift entry used by original
+/// `ReconsiderEnemyApproach`. Lift doors are authored with the lift as their
+/// `sector_in`; `point_out`/`sector_out`/`layer_out` are therefore the
+/// approach point on the evaluating soldier's side.
+fn primary_target_lift_approach(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    doors: &[crate::gate::Door],
+    target_sector: crate::position_interface::SectorHandle,
+    attacker_layer: u16,
+) -> Option<Option<crate::ai::Position>> {
+    let sector_number = crate::sector::SectorNumber::new(i16::from(target_sector));
+    let grid_index = *fast_grid
+        .level
+        .sector_number_map
+        .get(&sector_number)
+        .unwrap_or_else(|| panic!("primary target sector {sector_number} is absent from the grid"));
+    let sector = fast_grid.level.sectors.get(grid_index).unwrap_or_else(|| {
+        panic!("primary target sector {sector_number} maps to missing grid index {grid_index}")
+    });
+    if !sector.sector_type.is_lift() && sector.lift_type.is_none() {
+        return None;
+    }
+    let lift_type = sector.lift_type.unwrap_or_else(|| {
+        panic!("lift sector {sector_number} has no lift type during enemy approach")
+    });
+    if lift_type == crate::sector::LiftType::Stairs {
+        // Stairs do not need a ladder-entry detour, but they still suppress
+        // charge selection in the later ReconsiderEnemyApproach branches.
+        return Some(None);
+    }
+
+    let high = doors
+        .iter()
+        .find(|door| {
+            door.sector_in == sector_number
+                && matches!(
+                    door.door_type,
+                    crate::gate::DoorType::LiftHigh | crate::gate::DoorType::LiftHighCrenel
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!("non-stairs lift sector {sector_number} has no authored high entry door")
+        });
+    let selected = if high.layer_out == attacker_layer {
+        high
+    } else {
+        doors
+            .iter()
+            .find(|door| {
+                door.sector_in == sector_number && door.door_type == crate::gate::DoorType::LiftLow
+            })
+            .unwrap_or_else(|| {
+                panic!("non-stairs lift sector {sector_number} has no authored low entry door")
+            })
+    };
+
+    Some(Some(crate::ai::Position {
+        x: selected.point_out.x,
+        y: selected.point_out.y,
+        sector: crate::position_interface::SectorHandle::new(u16::from(selected.sector_out)),
+        level: selected.layer_out,
+    }))
+}
+
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+
+    fn lift_grid(lift_type: crate::sector::LiftType) -> crate::fast_find_grid::FastFindGrid {
+        let mut grid = crate::fast_find_grid::FastFindGrid::new();
+        let sector_number = crate::sector::SectorNumber::new(42);
+        let level = std::sync::Arc::make_mut(&mut grid.level);
+        level.sector_number_map.insert(sector_number, 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: Some(lift_type),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        grid
+    }
+
+    fn lift_doors() -> Vec<crate::gate::Door> {
+        vec![
+            crate::gate::Door {
+                door_type: crate::gate::DoorType::LiftLow,
+                sector_in: crate::sector::SectorNumber::new(42),
+                sector_out: crate::sector::SectorNumber::new(5),
+                point_out: MapPoint::new(10.0, 20.0),
+                layer_out: 1,
+                ..Default::default()
+            },
+            crate::gate::Door {
+                door_type: crate::gate::DoorType::LiftHigh,
+                sector_in: crate::sector::SectorNumber::new(42),
+                sector_out: crate::sector::SectorNumber::new(8),
+                point_out: MapPoint::new(30.0, 40.0),
+                layer_out: 3,
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn lift_approach_uses_high_entry_only_from_the_high_layer() {
+        let grid = lift_grid(crate::sector::LiftType::Ladder);
+        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        let doors = lift_doors();
+
+        let high = primary_target_lift_approach(&grid, &doors, sector, 3)
+            .expect("target is in a lift")
+            .expect("ladder has an approach entry");
+        assert_eq!((high.x, high.y, high.level), (30.0, 40.0, 3));
+        assert_eq!(high.sector.map(u16::from), Some(8));
+
+        let low = primary_target_lift_approach(&grid, &doors, sector, 2)
+            .expect("target is in a lift")
+            .expect("ladder has an approach entry");
+        assert_eq!((low.x, low.y, low.level), (10.0, 20.0, 1));
+        assert_eq!(low.sector.map(u16::from), Some(5));
+    }
+
+    #[test]
+    fn stairs_are_still_lifts_but_have_no_entry_detour() {
+        let grid = lift_grid(crate::sector::LiftType::Stairs);
+        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        assert_eq!(
+            primary_target_lift_approach(&grid, &[], sector, 3),
+            Some(None)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no authored high entry door")]
+    fn non_stairs_lift_does_not_fake_a_missing_entry() {
+        let grid = lift_grid(crate::sector::LiftType::Ladder);
+        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        let _ = primary_target_lift_approach(&grid, &[], sector, 3);
+    }
+
+    #[test]
+    fn detectable_initialization_preserves_creation_order_for_mixed_enemy_kinds() {
+        let self_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let snapshot = vec![
+            PotentialDetectable {
+                id: EntityId::Soldier(crate::entity_id::SoldierId(7)),
+                is_pc: false,
+                is_soldier: true,
+                camp: Camp::Royalists,
+            },
+            PotentialDetectable {
+                id: EntityId::Pc(crate::entity_id::PcId(3)),
+                is_pc: true,
+                is_soldier: false,
+                camp: Camp::Royalists,
+            },
+            PotentialDetectable {
+                id: EntityId::Soldier(crate::entity_id::SoldierId(9)),
+                is_pc: false,
+                is_soldier: true,
+                camp: Camp::Lacklandists,
+            },
+        ];
+
+        let detectables =
+            build_detectable_enemies_for(Camp::Lacklandists, false, self_id, &snapshot);
+        assert_eq!(
+            detectables
+                .iter()
+                .map(|detectable| detectable.element.unwrap().index())
+                .collect::<Vec<_>>(),
+            vec![7, 3]
+        );
+    }
 }
 
 /// Per-segment obstacle check against a hiking path's waypoints.
@@ -939,6 +1126,7 @@ impl EngineInner {
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = ai.me;
         let me_pos = soldier.element.position_map();
+        let me_layer = soldier.element.layer();
         let couldnt_reachpoint = soldier
             .npc
             .ai_brain
@@ -1041,12 +1229,18 @@ impl EngineInner {
             npc_id,
             target_id,
         );
-        // TODO(parity): populate primary_target_in_lift and
-        // primary_target_lift_entry from live lift-sector geometry. No engine
-        // producer currently exposes the original ReconsiderEnemyApproach
-        // lift snapshot, so target rebinding deliberately clears both fields.
-        tick.primary_target_in_lift = false;
-        tick.primary_target_lift_entry = None;
+        let primary_target_lift = tick.primary_target_position.and_then(|target| {
+            target.sector.and_then(|sector| {
+                primary_target_lift_approach(
+                    &self.world.fast_grid,
+                    self.script_domains.interactables.doors.as_slice(),
+                    sector,
+                    me_layer,
+                )
+            })
+        });
+        tick.primary_target_in_lift = primary_target_lift.is_some();
+        tick.primary_target_lift_entry = primary_target_lift.flatten();
 
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
             let my_company = enemy_ai.company_number;
@@ -4011,7 +4205,9 @@ impl EngineInner {
         // below remain in the original soldier/NPC Hourglass order.
         let world = self.tick_enemy_ai_build_world_view(sim, assets);
 
-        // ── 2a. Blip detection (reveal shadows). ────────────────
+        // ── 2a. Listen/object blip work. ────────────────────────
+        // NPC-owned SeesBlip remains inside its creation-ordered
+        // RefreshDetection slot below.
         self.tick_enemy_ai_blip_detection(sim, assets, &world);
 
         // ── 3. Creation-ordered per-NPC RefreshDetection loop. ───
