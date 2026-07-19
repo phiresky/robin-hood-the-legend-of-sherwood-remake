@@ -826,11 +826,21 @@ impl EngineInner {
                     }
                 }
                 ConcussionOutcome::WokeUp => {
-                    self.dispatch_ai_stimulus(
-                        entity_id,
-                        crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
-                    );
-                    self.queue_wake_redetection_blinks(entity_id);
+                    let is_pc = self
+                        .get_entity(entity_id)
+                        .is_some_and(crate::element::Entity::is_pc);
+                    if is_pc {
+                        // PCs have no NPC Hourglass slot or AI Think call.
+                        self.queue_wake_redetection_blinks(entity_id);
+                    } else {
+                        // NPC soldiers/civilians dispatch FITAGAIN at their
+                        // owner prelude. Soldier blink follows recovery there,
+                        // so later wakers cannot reset earlier observers.
+                        self.dispatch_ai_stimulus(
+                            entity_id,
+                            crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+                        );
+                    }
                 }
                 ConcussionOutcome::NoChange => {}
             }
@@ -863,12 +873,20 @@ impl EngineInner {
             if entity.camp() == waker_camp {
                 continue;
             }
-            let Some(npc) = entity.npc_data_mut() else {
-                continue;
-            };
-            let Some(ai) = npc.ai_brain.base_mut() else {
-                continue;
-            };
+            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+                panic!(
+                    "NPC {} lost its NPC data while queueing wake blink for {}",
+                    npc_id.index(),
+                    waker_id.index()
+                )
+            });
+            let ai = npc.ai_brain.base_mut().unwrap_or_else(|| {
+                panic!(
+                    "NPC {} is missing its required AI controller while queueing wake blink for {}",
+                    npc_id.index(),
+                    waker_id.index()
+                )
+            });
             ai.outbox.actor.blink_enemy_specific.push(waker_id);
         }
     }

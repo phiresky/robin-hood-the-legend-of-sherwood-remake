@@ -1843,42 +1843,26 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
-        // ── Per-frame NPC view refresh ─────────────────────────
-        // Update each NPC's vision cone (direction, aperture,
-        // radius) from head turning, lean-out, stare, drunk wobble,
-        // death fade.  Must run before `tick_enemy_ai` so the
-        // detection pass sees the current cone parameters.
-        // ── Deferred body-broadcast from downed NPCs ────────────
-        // NPCs whose `inform_my_friends` flag was set by
-        // `set_concussion_of_the_brain` broadcast DETECTABLE_BODY to
-        // every ally during Hourglass.
+        // ── Creation-ordered pre-detection boundary ──────────────
+        // These observations remain coarse labels for the original nested
+        // order. The coordinator below interleaves the actual operations per
+        // NPC: own synchronous FITAGAIN + resurrection/eye apply, own body
+        // broadcast, own view refresh, then that same NPC's RefreshDetection.
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_inform_my_friends();
-
-        // ── Deferred resurrection-broadcast + eye-status apply ──
-        // Mirror of the fan-out above, but for NPCs that just came
-        // back up (civilian EVENT_FITAGAIN).  Remove the risen NPC
-        // from every friend's DETECTABLE_BODY list and flip their
-        // own `eye_status` back to `LookForward`.
-        self.tick_ai_pending_resurrection_and_eyes();
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::View);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.refresh_npc_views(positions_before_movement);
 
-        // RefreshDetection, including its synchronous Think side effects.
-        // Timer polling and the old lock-queue drain are separate tail
-        // phases below, exactly as in RHElementActorNPC::Hourglass.
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_enemy_ai(sim, assets);
+        self.tick_enemy_ai_with_creation_ordered_prelude(sim, assets, positions_before_movement);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
@@ -1974,12 +1958,10 @@ impl EngineInner {
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
 
-        // TODO(original-parity): RefreshView's followed-target position now
-        // observes the correct creation-order boundary, but RefreshDetection
-        // still builds one post-movement world snapshot for every NPC. Full
-        // parity requires a per-NPC Hourglass API that can consume the mixed
-        // pre/post entity view at that slot and synchronously commit that
-        // NPC's Think side effects before advancing to the next slot.
+        // TODO(original-parity): the pre-detection creation boundary above is
+        // restored, but the post-detection RefreshAmbushPoints / deafness,
+        // busy/ladder, lock gate, timers, and queued-stimulus Hourglass tail
+        // remains globally batched. Preserve it for a later PA-013 wave.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that

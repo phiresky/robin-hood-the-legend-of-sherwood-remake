@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::combat::{self};
-use crate::element::{ActionState, Command, Entity, EntityId, EyeStatus, Posture};
+use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
@@ -679,9 +679,9 @@ impl EngineInner {
     ///
     /// Original `RHElementActor::Hourglass` executes the current order inline,
     /// so a straight strike's synchronously-dispatched damage can interrupt a
-    /// later-created actor before that actor gets its own Hourglass call.  The
-    /// remaining sweep/push strike machinery stays in the batched driver until
-    /// it has its own ordering oracle.
+    /// later-created actor before that actor gets its own Hourglass call.
+    /// Sweep/push work likewise runs from its owning attacker's slot; this
+    /// helper is the narrow straight/assault owner-slot path.
     pub(crate) fn tick_straight_melee_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3012,21 +3012,11 @@ impl EngineInner {
                         .unwrap_or_default();
                     select_combat_animations(posture, action).map(|a| a.standing_up)
                 };
-                if entity.element_data().posture == Posture::Lying {
-                    entity.set_posture(Posture::Upright);
-                }
-                if let Some(actor) = entity.actor_data_mut() {
-                    actor.action_state = ActionState::Waiting;
-                }
                 let concussion = entity
                     .human_data()
                     .map(|h| h.concussion_of_the_brain)
                     .unwrap_or(0);
                 let still_stunned = concussion > STUNNING_THRESHOLD;
-                // Reopen eyes for NPCs (standup side effect).
-                if let Some(npc) = entity.npc_data_mut() {
-                    crate::ai_vision::set_view_status(npc, EyeStatus::LookForward);
-                }
 
                 let npc_id = entity_id;
                 if standing_anim.is_some() || still_stunned {
@@ -3078,10 +3068,6 @@ impl EngineInner {
 
         for elem in pending_recover {
             self.launch_element(elem);
-        }
-
-        for waker_id in &pending_fit_again {
-            self.queue_wake_redetection_blinks(*waker_id);
         }
 
         for victim_id in pending_fit_again {

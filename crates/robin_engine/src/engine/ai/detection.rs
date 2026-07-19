@@ -1144,6 +1144,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         world: &AiWorldView,
+        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
     ) {
         let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai.global.golden_eye_mode;
@@ -1154,6 +1155,23 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
+            // Original `RHElementActorNPC::Hourglass` performs these owner
+            // operations immediately before this same NPC enters
+            // `RefreshDetection` (`RHelementactornpc.cpp:3534-3546`). Do not
+            // pre-apply a later NPC's body/recovery/view work: synchronous
+            // broadcasts and Think/script effects from earlier slots may
+            // affect later observers, never observers whose slots already ran.
+            if let Some(positions_before_movement) = positions_before_movement {
+                let woke_up = self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets);
+                self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
+                if woke_up {
+                    self.queue_wake_redetection_blinks(npc_id);
+                }
+                self.tick_pending_specific_enemy_blinks_for_npc(npc_id);
+                self.tick_inform_my_friends_for_npc(npc_id);
+                self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
+            }
+
             self.tick_enemy_ai_npc_blip_detection_for_npc(sim, npc_id, assets);
 
             // Sample the two pre-acoustic RefreshDetection gates before

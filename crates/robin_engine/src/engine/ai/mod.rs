@@ -3246,29 +3246,162 @@ impl EngineInner {
         self.entity_building_sector(elem.sector()).is_some() || elem.is_in_door_transit()
     }
 
-    /// Per-frame sweep that honours `inform_my_friends` on downed NPCs.
+    /// Consume one NPC's deferred `inform_my_friends` edge at that NPC's
+    /// creation-order Hourglass boundary.
     ///
-    /// When the flag is set (and the engine isn't frozen) clear it
-    /// and call `my_dear_friends_please_please_detect_me` to broadcast
-    /// DETECTABLE_BODY to every other NPC.
-    pub(super) fn tick_inform_my_friends(&mut self) {
+    /// Original `RHElementActorNPC::Hourglass` clears the flag and calls
+    /// `MyDearFriendsPleasePleaseDetectMe` immediately before that same NPC's
+    /// `RefreshView` / `RefreshDetection` (`RHelementactornpc.cpp:3534-3546`).
+    pub(super) fn tick_inform_my_friends_for_npc(&mut self, npc_id: EntityId) {
         if self.actors_frozen() {
             return;
         }
 
-        let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (id, entity) in self.world.entities.npcs_mut() {
-            let Some(npc) = entity.npc_data_mut() else {
-                continue;
-            };
-            if npc.inform_my_friends {
+        let should_broadcast = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::npc_data_mut)
+            .is_some_and(|npc| {
+                let pending = npc.inform_my_friends;
                 npc.inform_my_friends = false;
-                to_broadcast.push(id.into());
-            }
+                pending
+            });
+        if should_broadcast {
+            self.broadcast_body_detectable(npc_id);
+        }
+    }
+
+    /// Dispatch this NPC's natural-wakeup `EVENT_FITAGAIN` synchronously at
+    /// its base-human → NPC Hourglass boundary.
+    ///
+    /// `tick_concussion_healing` runs the globally batched stand-in for
+    /// `RHElementActorHuman::Hourglass` and queues the event. The original
+    /// calls `Think(EVENT_FITAGAIN)` inline before `mbInformMyFriends`,
+    /// `RefreshView`, and `RefreshDetection` (human.cpp:335-390;
+    /// npc.cpp:3528-3544). Drain the existing FIFO prefix through that wake
+    /// event here; never pluck it ahead of older stimuli. The suffix remains
+    /// queued for `RefreshDetection`'s ordinary drain.
+    pub(super) fn dispatch_pending_fit_again_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) -> bool {
+        let (prefix_through_wake, mut suffix) = {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                return false;
+            };
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "NPC {} is missing its required AI controller while dispatching wakeup",
+                    npc_id.index()
+                )
+            });
+            let mut queued = std::mem::take(&mut ai.outbox.detection.stimuli);
+            let Some(wake_index) = queued
+                .iter()
+                .position(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain)
+            else {
+                ai.outbox.detection.stimuli = queued;
+                return false;
+            };
+            let suffix = queued.split_off(wake_index + 1);
+            assert!(
+                !suffix
+                    .iter()
+                    .any(|stimulus| stimulus.stimulus_type == StimulusType::EventFitAgain),
+                "NPC {} queued more than one EVENT_FITAGAIN before its Hourglass slot",
+                npc_id.index()
+            );
+            (queued, suffix)
+        };
+
+        {
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} disappeared before its wakeup stimulus prefix",
+                    npc_id.index()
+                )
+            });
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "NPC {} lost its AI controller before its wakeup stimulus prefix",
+                    npc_id.index()
+                )
+            });
+            ai.outbox.detection.stimuli = prefix_through_wake;
+        }
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "NPC {} disappeared after synchronous EVENT_FITAGAIN",
+                npc_id.index()
+            )
+        });
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!(
+                "NPC {} lost its AI controller after synchronous EVENT_FITAGAIN",
+                npc_id.index()
+            )
+        });
+        suffix.append(&mut ai.outbox.detection.stimuli);
+        ai.outbox.detection.stimuli = suffix;
+        true
+    }
+
+    /// Apply only this observer's targeted `BlinkEnemy(waker)` requests at
+    /// its pre-detection creation boundary.
+    ///
+    /// A wake in an earlier slot queues the request in time for this pass; a
+    /// wake in a later slot leaves it queued until this observer's next-frame
+    /// pass. Do not fold this into `drain_pending_for_npc`, which runs after
+    /// all detection and would clear an earlier observer retroactively.
+    pub(super) fn tick_pending_specific_enemy_blinks_for_npc(&mut self, npc_id: EntityId) {
+        let targets = {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                return;
+            };
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "NPC {} is missing its required AI controller while applying wake blinks",
+                    npc_id.index()
+                )
+            });
+            std::mem::take(&mut ai.outbox.actor.blink_enemy_specific)
+        };
+        if targets.is_empty() {
+            return;
         }
 
-        for body_id in to_broadcast {
-            self.broadcast_body_detectable(body_id);
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "NPC {} disappeared while applying targeted wake blinks",
+                npc_id.index()
+            )
+        });
+        let npc = entity.npc_data_mut().unwrap_or_else(|| {
+            panic!(
+                "entity {} lost NPC data while applying targeted wake blinks",
+                npc_id.index()
+            )
+        });
+        let enemy_idx = DetectableType::Enemy as usize;
+        let detectables = npc.detectable_lists.get_mut(enemy_idx).unwrap_or_else(|| {
+            panic!(
+                "NPC {} has no Enemy detectable bucket while applying wake blinks",
+                npc_id.index()
+            )
+        });
+        for detectable in detectables {
+            if detectable
+                .element
+                .is_some_and(|target| targets.contains(&target))
+            {
+                detectable.seen_now = false;
+                detectable.seen_last_frame = false;
+            }
         }
     }
 
@@ -3380,45 +3513,48 @@ impl EngineInner {
         }
     }
 
-    /// Per-frame sweep that honours `pending_inform_resurrection` and
-    /// `pending_set_eye_status` on any NPC that just regained
-    /// consciousness.  Runs `inform_everyone_on_my_resurrection` and
-    /// the companion `set_view_status(EYES_LOOK_FORWARD)` — both fired
-    /// from the civilian `EVENT_FITAGAIN` handler.
+    /// Apply one NPC's pending resurrection fan-out and eye-status change at
+    /// that NPC's creation-order Hourglass boundary.
     ///
-    /// Runs after `tick_inform_my_friends` so a "down → up → down"
-    /// flicker in the same frame resolves to the freshest state.
-    pub(super) fn tick_ai_pending_resurrection_and_eyes(&mut self) {
+    /// These outbox fields stand in for synchronous calls made while the
+    /// original NPC's base-human work handles `EVENT_FITAGAIN`. They must be
+    /// visible before this NPC refreshes its view and detection, but not
+    /// globally applied before earlier-created NPCs have detected.
+    pub(super) fn tick_ai_pending_resurrection_and_eyes_for_npc(&mut self, npc_id: EntityId) {
         if self.actors_frozen() {
             return;
         }
 
-        let mut to_broadcast: Vec<EntityId> = Vec::new();
-        let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (id, entity) in self.world.entities.npcs_mut() {
-            let Some(ai) = entity.ai_controller_mut() else {
-                continue;
-            };
-            if ai.outbox.recovery.inform_resurrection {
-                ai.outbox.recovery.inform_resurrection = false;
-                to_broadcast.push(id.into());
-            }
-            if let Some(status) = ai.outbox.recovery.set_eye_status.take() {
-                to_set_eye.push((id.into(), status));
-            }
-        }
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
+            return;
+        };
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!(
+                "NPC {} is missing its required AI controller while applying recovery state",
+                npc_id.index()
+            )
+        });
+        let inform_resurrection = ai.outbox.recovery.inform_resurrection;
+        ai.outbox.recovery.inform_resurrection = false;
+        let eye_status = ai.outbox.recovery.set_eye_status.take();
 
-        for resurrected_id in to_broadcast {
-            self.broadcast_resurrection(resurrected_id);
+        if inform_resurrection {
+            self.broadcast_resurrection(npc_id);
         }
-
-        for (npc_id, status) in to_set_eye {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            if let Some(npc) = entity.npc_data_mut() {
-                crate::ai_vision::set_view_status(npc, status);
-            }
+        if let Some(status) = eye_status {
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} disappeared while applying its pending eye status",
+                    npc_id.index()
+                )
+            });
+            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+                panic!(
+                    "entity {} lost its NPC data while applying its pending eye status",
+                    npc_id.index()
+                )
+            });
+            crate::ai_vision::set_view_status(npc, status);
         }
     }
 
@@ -3447,8 +3583,12 @@ impl EngineInner {
         }
     }
 
-    /// Per-frame view parameter refresh for every NPC.  The
-    /// `refresh_view()` call inside `perform_refresh`.
+    /// Per-frame view parameter refresh for every NPC.
+    ///
+    /// This test-facing wrapper preserves the focused EYES_FOLLOW oracle;
+    /// production coordinates the extracted per-NPC helper directly with
+    /// that NPC's `RefreshDetection` slot.
+    #[cfg(test)]
     pub(super) fn refresh_npc_views(
         &mut self,
         positions_before_movement: &EntitySlots<Option<MapPoint>>,
@@ -3459,129 +3599,138 @@ impl EngineInner {
 
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            // ── Phase 1: read-only — gather context ──
-            let (ctx, ai_primary_target, ai_last_synced_focus) = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                let Some(npc) = entity.npc_data() else {
-                    continue;
-                };
+            self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
+        }
+    }
 
-                let edata = entity.element_data();
-                let pos = crate::coordinates::MapPoint::new(
-                    edata.position_map().x,
-                    edata.position_map().y,
-                );
+    /// Refresh one NPC's view immediately before its own creation-ordered
+    /// `RefreshDetection` call.
+    pub(super) fn refresh_npc_view_for_npc(
+        &mut self,
+        npc_id: EntityId,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+    ) {
+        if self.actors_frozen() {
+            return;
+        }
 
-                let is_active_and_outside_building =
-                    edata.active && !self.entity_data_inside_building(edata);
+        // ── Phase 1: read-only — gather context ──
+        let (ctx, ai_primary_target, ai_last_synced_focus) = {
+            let Some(entity) = self.world.entities.get(npc_id) else {
+                return;
+            };
+            let Some(npc) = entity.npc_data() else {
+                return;
+            };
 
-                let animation = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(npc_id)
-                    .map(|(_, _, o)| o.order_type);
+            let edata = entity.element_data();
+            let pos =
+                crate::coordinates::MapPoint::new(edata.position_map().x, edata.position_map().y);
 
-                let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let is_active_and_outside_building =
+                edata.active && !self.entity_data_inside_building(edata);
 
-                let follow_target_position = npc.follow_target.and_then(|target_id| {
-                    self.world.entities.get(target_id).map(|target| {
-                        // Original provenance:
-                        // - RHEngine::PerformHourglass walks marrayElements in
-                        //   creation order (RHengine.cpp:3715-3724,7909-7944).
-                        // - RHElementActorNPC::Hourglass delegates to the base
-                        //   human Hourglass before RefreshView
-                        //   (RHelementactornpc.cpp:3528-3544).
-                        // - EYES_FOLLOW reads pMobileTarget->GetPositionGround
-                        //   inside RefreshView (RHelementactornpc.cpp:1012-1018).
-                        // Thus a later-created target has not moved yet, while
-                        // an earlier-created target has. EntityId::index is the
-                        // append-only legacy creation slot in this port.
-                        if target_id.index() > npc_id.index() {
-                            positions_before_movement
-                                .get(target_id)
-                                .copied()
-                                .flatten()
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "NPC {npc_id:?} follows later-created target {target_id:?}, \
+            let animation = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(npc_id)
+                .map(|(_, _, o)| o.order_type);
+
+            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+
+            let follow_target_position = npc.follow_target.and_then(|target_id| {
+                self.world.entities.get(target_id).map(|target| {
+                    // Original provenance:
+                    // - RHEngine::PerformHourglass walks marrayElements in
+                    //   creation order (RHengine.cpp:3715-3724,7909-7944).
+                    // - RHElementActorNPC::Hourglass delegates to the base
+                    //   human Hourglass before RefreshView
+                    //   (RHelementactornpc.cpp:3528-3544).
+                    // - EYES_FOLLOW reads pMobileTarget->GetPositionGround
+                    //   inside RefreshView (RHelementactornpc.cpp:1012-1018).
+                    // Thus a later-created target has not moved yet, while
+                    // an earlier-created target has. EntityId::index is the
+                    // append-only legacy creation slot in this port.
+                    if target_id.index() > npc_id.index() {
+                        positions_before_movement
+                            .get(target_id)
+                            .copied()
+                            .flatten()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "NPC {npc_id:?} follows later-created target {target_id:?}, \
                                          but the required pre-movement position snapshot is missing"
-                                    )
-                                })
-                        } else {
-                            target.element_data().position_map()
-                        }
-                    })
-                });
+                                )
+                            })
+                    } else {
+                        target.element_data().position_map()
+                    }
+                })
+            });
 
-                // Read enemy AI's primary_target, last-synced focus
-                // marker, and drunkenness for the focus edge check
-                // and wobble inputs.
-                let (primary_target, last_synced, blood_alcohol) = entity
-                    .enemy_ai()
-                    .map(|e| {
-                        (
-                            e.base.primary_target,
-                            e.base.last_synced_focus_target,
-                            e.base.blood_alcohol,
-                        )
-                    })
-                    .unwrap_or((0, None, 0));
+            // Read enemy AI's primary_target, last-synced focus
+            // marker, and drunkenness for the focus edge check
+            // and wobble inputs.
+            let (primary_target, last_synced, blood_alcohol) = entity
+                .enemy_ai()
+                .map(|e| {
+                    (
+                        e.base.primary_target,
+                        e.base.last_synced_focus_target,
+                        e.base.blood_alcohol,
+                    )
+                })
+                .unwrap_or((0, None, 0));
 
-                (
-                    ai_vision::RefreshViewContext {
-                        body_direction: edata.direction(),
-                        posture: edata.posture,
-                        animation,
-                        is_unconscious,
-                        is_tied: edata.posture == crate::element::Posture::Tied,
-                        is_dead: entity.is_dead(),
-                        is_active_and_outside_building,
-                        is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
-                        blood_alcohol,
-                        own_position: pos,
-                        follow_target_position,
-                    },
-                    primary_target,
-                    last_synced,
-                )
-            };
-            // shared borrow dropped ──
+            (
+                ai_vision::RefreshViewContext {
+                    body_direction: edata.direction(),
+                    posture: edata.posture,
+                    animation,
+                    is_unconscious,
+                    is_tied: edata.posture == crate::element::Posture::Tied,
+                    is_dead: entity.is_dead(),
+                    is_active_and_outside_building,
+                    is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+                    blood_alcohol,
+                    own_position: pos,
+                    follow_target_position,
+                },
+                primary_target,
+                last_synced,
+            )
+        };
+        // shared borrow dropped ──
 
-            // ── Phase 2: mutable — apply refresh_view + focus sync ──
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            // Edge-triggered focus sync: only react when
-            // `primary_target` *changed* since the last reconcile.
-            // The explicit `pending_focus`/`pending_unfocus` channels
-            // are honoured by the drain — they update
-            // `last_synced_focus_target` so the next pass sees no
-            // edge and won't re-assert focus.  `focus(NULL)` on self
-            // is a separate concern from `primary_target` lifecycle
-            // (e.g. rider charge passing).
-            let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
-            if ai_primary_target_focus != ai_last_synced_focus
-                && let Some(npc) = entity.npc_data_mut()
-            {
-                if let Some(target_handle) = ai_primary_target_focus {
-                    ai_vision::focus_entity(
-                        npc,
-                        EntityId::Pc(crate::entity_id::PcId(target_handle)),
-                    );
-                } else {
-                    ai_vision::unfocus(npc);
-                }
+        // ── Phase 2: mutable — apply refresh_view + focus sync ──
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
+            return;
+        };
+        // Edge-triggered focus sync: only react when
+        // `primary_target` *changed* since the last reconcile.
+        // The explicit `pending_focus`/`pending_unfocus` channels
+        // are honoured by the drain — they update
+        // `last_synced_focus_target` so the next pass sees no
+        // edge and won't re-assert focus.  `focus(NULL)` on self
+        // is a separate concern from `primary_target` lifecycle
+        // (e.g. rider charge passing).
+        let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
+        if ai_primary_target_focus != ai_last_synced_focus
+            && let Some(npc) = entity.npc_data_mut()
+        {
+            if let Some(target_handle) = ai_primary_target_focus {
+                ai_vision::focus_entity(npc, EntityId::Pc(crate::entity_id::PcId(target_handle)));
+            } else {
+                ai_vision::unfocus(npc);
             }
-            if ai_primary_target_focus != ai_last_synced_focus
-                && let Some(ai) = entity.enemy_ai_mut()
-            {
-                ai.base.last_synced_focus_target = ai_primary_target_focus;
-            }
-            if let Some(npc) = entity.npc_data_mut() {
-                ai_vision::refresh_view(npc, &ctx);
-            }
+        }
+        if ai_primary_target_focus != ai_last_synced_focus
+            && let Some(ai) = entity.enemy_ai_mut()
+        {
+            ai.base.last_synced_focus_target = ai_primary_target_focus;
+        }
+        if let Some(npc) = entity.npc_data_mut() {
+            ai_vision::refresh_view(npc, &ctx);
         }
     }
 
@@ -4196,10 +4345,36 @@ impl EngineInner {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn tick_enemy_ai(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+    ) {
+        self.tick_enemy_ai_inner(sim, assets, None);
+    }
+
+    /// Production NPC coordinator for the pre-detection portion of
+    /// `RHElementActorNPC::Hourglass`.
+    ///
+    /// Each NPC consumes only its own body/recovery work and refreshes its
+    /// own view immediately before its creation-ordered `RefreshDetection`.
+    /// The direct `tick_enemy_ai` entry point remains detection-only for
+    /// focused tests that construct already-refreshed vision state.
+    pub(super) fn tick_enemy_ai_with_creation_ordered_prelude(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+    ) {
+        self.tick_enemy_ai_inner(sim, assets, Some(positions_before_movement));
+    }
+
+    fn tick_enemy_ai_inner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
     ) {
         if self.actors_frozen() {
             return;
@@ -4216,12 +4391,13 @@ impl EngineInner {
         // RefreshDetection slot below.
         self.tick_enemy_ai_blip_detection(sim, assets, &world);
 
-        // ── 3. Creation-ordered per-NPC RefreshDetection loop. ───
-        // Acoustic detection + synchronous EVENT_HEAR, Enemy detection,
-        // volatile target rebuild, non-Enemy detectable buckets, and the
-        // resulting FIFO Think dispatches all finish for one NPC before the
-        // next creation slot starts.
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world);
+        // ── 3. Creation-ordered per-NPC prelude + RefreshDetection. ───
+        // Production first consumes the current NPC's inform/recovery outbox
+        // and refreshes its view. Acoustic detection + synchronous EVENT_HEAR,
+        // Enemy detection, volatile target rebuild, non-Enemy detectable
+        // buckets, and the resulting FIFO Think dispatches then all finish for
+        // that NPC before the next creation slot starts.
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world, positions_before_movement);
 
         // ── 6c. Process pending AI swordfight requests. ─────────
         self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
@@ -5153,7 +5329,7 @@ impl EngineInner {
         // seen_now / seen_last_frame flags on every enemy detectable
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
-        let (blink_all, blink_specific) = {
+        let blink_all = {
             let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
@@ -5162,8 +5338,7 @@ impl EngineInner {
             };
             let b = ai.outbox.actor.blink_all_enemies;
             ai.outbox.actor.blink_all_enemies = false;
-            let specific = std::mem::take(&mut ai.outbox.actor.blink_enemy_specific);
-            (b, specific)
+            b
         };
         if blink_all && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
             let idx = crate::element::DetectableType::Enemy as usize;
@@ -5174,25 +5349,6 @@ impl EngineInner {
                 }
             }
         }
-        // Single-target arm of `blink_enemy(enemy)`.  Unlike the
-        // all-enemies sweep above this only clears the detection
-        // latch for a specific target, so when that target is still
-        // in the cone the next detection pass re-fires `EVENT_VIEW`
-        // against it as a "first-seen" edge.
-        if !blink_specific.is_empty()
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-        {
-            let idx = crate::element::DetectableType::Enemy as usize;
-            if let Some(list) = s.npc.detectable_lists.get_mut(idx) {
-                for det in list.iter_mut() {
-                    if det.element.is_some_and(|e| blink_specific.contains(&e)) {
-                        det.seen_now = false;
-                        det.seen_last_frame = false;
-                    }
-                }
-            }
-        }
-
         // Process pending `EnemyInHouseAlert` request.
         //
         // Orchestrator walks the building's occupant list, sorts by
@@ -7340,7 +7496,7 @@ impl EngineInner {
         handled
     }
 
-    fn process_synchronous_look_there_for(
+    pub(super) fn process_synchronous_look_there_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
@@ -7411,67 +7567,7 @@ impl EngineInner {
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
             self.dispatch_think_with_drain(sim, target_id, &stimulus, &ctx, &tick_data, assets);
-            self.refresh_npc_view_after_synchronous_look_there(target_id);
         }
-    }
-
-    /// The port's broad `refresh_npc_views` pass has already visited a later
-    /// creation slot when an earlier NPC synchronously sends CALL_LOOKTHERE.
-    /// Replay the receiver's original per-slot RefreshView now so its new
-    /// focus/face state feeds the still-upcoming RefreshDetection call.
-    fn refresh_npc_view_after_synchronous_look_there(&mut self, npc_id: EntityId) {
-        let ctx = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index())
-            });
-            let npc = entity.npc_data().unwrap_or_else(|| {
-                panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index())
-            });
-            let element = entity.element_data();
-            let follow_target_position = npc.follow_target.map(|target_id| {
-                self.world
-                    .entities
-                    .get(target_id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "CALL_LOOKTHERE receiver {} follows missing target {}",
-                            npc_id.index(),
-                            target_id.index()
-                        )
-                    })
-                    .element_data()
-                    .position_map()
-            });
-            crate::ai_vision::RefreshViewContext {
-                body_direction: element.direction(),
-                posture: element.posture,
-                animation: self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(npc_id)
-                    .map(|(_, _, order)| order.order_type),
-                is_unconscious: entity.human_data().is_some_and(|human| human.unconscious),
-                is_tied: element.posture == crate::element::Posture::Tied,
-                is_dead: entity.is_dead(),
-                is_active_and_outside_building: element.active
-                    && !self.entity_data_inside_building(element),
-                is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
-                blood_alcohol: entity
-                    .enemy_ai()
-                    .map(|enemy| enemy.base.blood_alcohol)
-                    .unwrap_or(0),
-                own_position: element.position_map(),
-                follow_target_position,
-            }
-        };
-        let entity =
-            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index())
-            });
-        let npc = entity
-            .npc_data_mut()
-            .unwrap_or_else(|| panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index()));
-        crate::ai_vision::refresh_view(npc, &ctx);
     }
 
     fn process_synchronous_officer_reports_for(

@@ -230,6 +230,28 @@ officer cone checks. Cross-elevation human/object and exact 3D-sharpness
 regressions protect the coordinate split; the existing creation/FIFO tests
 remain unchanged.
 
+2026-07-19 NPC pre-detection boundary N1: the production coordinator now
+follows `RHElementActorHuman::Hourglass` / `RHElementActorNPC::Hourglass`
+ordering at `RHelementactorhuman.cpp:277-305,335-405` and
+`RHelementactornpc.cpp:3495-3554`. At each NPC creation slot it drains the
+existing stimulus FIFO prefix through natural `EVENT_FITAGAIN`, applies that
+NPC's resurrection fan-out and eye change, applies targeted wake
+`BlinkEnemy` requests, consumes that NPC's `mbInformMyFriends`, refreshes
+that NPC's stateful view once, and then runs its synchronous
+`RefreshDetection`. The canonical AI enqueue covers both soldier and
+civilian NPC controllers while retaining intentional non-NPC no-ops.
+Swapped-order regressions prove earlier body informs and wake blinks affect a
+later observer, while later work remains queued for an earlier observer's
+next slot; additional regressions cover both wake producers, civilian wake,
+FIFO prefix order, simultaneous recovery/inform flags, and earlier/later
+LOOKTHERE receivers. This does not move `RefreshAmbushPoints`, deafness,
+busy/ladder handling, the lock/timer/stimulus tail, or other later Hourglass
+work after detection. Natural concussion wake also still launches its
+`Recover`/`StandingUp` sequence globally before the waker reaches its owner
+prelude; restoring that base-human animation/`ActionChange` interleaving is
+explicit future PA-013 boundary debt. The eager posture/action/eye writes are
+gone, but this scoped slice does not complete PA-013.
+
 Movement follow-up `3daf2efaf` removed the two warning-and-reseed fallbacks for
 same-ID motion orders. A started order now requires its cached goal and map
 increment to remain intact, matching Original `PerformMotion`; corruption
@@ -251,7 +273,7 @@ need their own review.
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
 | Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed; animation callbacks and broader dispatch remain batched |
-| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target, synchronous HEAR/VIEW/OUTOFVIEW ordering, the shared civilian/both-camp mixed Enemy walk, per-stimulus live contexts, live per-Think Enemy-list reconstruction, creation-ordered NPC blip/reveal, lift approach data, cross-elevation world-distance/projected-LOS coordinates, lock semantics, and retained replay are fixed at the creation boundary. Exact NPC animation/ActionChange and Hourglass tails remain incomplete. |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target, synchronous wake/recovery/blink/body-inform/view prelude, HEAR/VIEW/OUTOFVIEW ordering, the shared civilian/both-camp mixed Enemy walk, per-stimulus live contexts, live per-Think Enemy-list reconstruction, creation-ordered NPC blip/reveal, lift approach data, cross-elevation world-distance/projected-LOS coordinates, lock semantics, and retained replay are fixed at the creation boundary. Exact NPC animation/ActionChange and the post-detection Hourglass tail remain incomplete. |
 | Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | live creation order, spawn-frame inclusion, straight/assault causality, non-straight phase timing, and synchronous melee victim ordering are verified by PA-013 regressions; riders and other combat maintenance remain batched |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |

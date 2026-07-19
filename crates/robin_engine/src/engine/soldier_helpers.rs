@@ -512,12 +512,10 @@ impl EngineInner {
                     if let Some(ai) = victim.ai_controller_mut() {
                         ai.non_script_unlock(crate::ai::AiLockFlags::FREEZE);
                     }
-                    // Alert the victim's AI that the PC was the
-                    // aggressor.  Today `dispatch_ai_stimulus` only
-                    // delivers to soldiers; civilians' friendly AI
-                    // doesn't accept EventGotHit yet, so a civilian
-                    // victim is a no-op here (matches the existing
-                    // not-stranglable arm in `combat.rs::StrangleDone`).
+                    // Alert the victim's generic NPC AI that the PC was the
+                    // aggressor. Friendly AI currently ignores EventGotHit,
+                    // while the canonical enqueue still preserves the event
+                    // for its normal filtered dispatch boundary.
                     let _ = victim;
                 }
                 let stim = crate::ai::Stimulus::with_human(

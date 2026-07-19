@@ -2049,8 +2049,9 @@ impl EngineInner {
                 crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
             }
             npc.alerted = false;
-            // True when the killer is a PC.  The flag is cleared once
-            // the sweep fires in `tick_inform_my_friends`.
+            // True when the killer is a PC. The flag is cleared when
+            // `tick_inform_my_friends_for_npc` consumes it at this
+            // victim's next owner slot.
             npc.inform_my_friends = killer_is_pc;
             if let Some(ai) = npc.ai_brain.base_mut() {
                 ai.knocked_out_in_money_fight = false;

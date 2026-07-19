@@ -561,7 +561,7 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
 }
 
 #[test]
-fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
+fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
@@ -590,7 +590,19 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
     );
     assert_eq!(
         pending_specific_blinks(&engine, opposite_camp_npc),
-        vec![waker]
+        Vec::<EntityId>::new(),
+        "NPC wake blink must not fan out globally before the waker's creation slot"
+    );
+    assert!(
+        engine
+            .get_entity(waker)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .any(|stimulus| stimulus.stimulus_type == crate::ai::StimulusType::EventFitAgain)
     );
 }
 
