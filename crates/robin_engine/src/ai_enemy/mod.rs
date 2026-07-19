@@ -1699,7 +1699,12 @@ impl EnemyAi {
         );
 
         crate::ai_vision::compute_visibility(&crate::ai_vision::VisibilityQuery {
-            viewer: ctx.self_eye_position,
+            viewer_los: ctx.self_eye_position,
+            viewer_world: crate::coordinates::WorldPoint3D::new(
+                ctx.self_eye_position.x,
+                ctx.self_eye_position.y + ctx.elevation,
+                ctx.self_eye_z,
+            ),
             viewer_direction: ctx.direction as i16,
             view_forward: (ctx.self_view_direction[0], ctx.self_view_direction[1]),
             view_radius: ctx.self_view_radius,
@@ -1712,12 +1717,15 @@ impl EnemyAi {
             golden_eye_mode: false,
             effective_view_radius,
             target_is_active_and_outside_building: view.active && view.building_sector.is_none(),
-            target: target_detection_xy,
+            target_los: target_detection_xy,
+            target_world: crate::coordinates::WorldPoint3D::new(
+                target_detection_xy.x,
+                target_detection_xy.y + view.elevation,
+                target_eye_z,
+            ),
             target_posture: view.posture,
             target_action_state: view.action_state,
             target_is_pc: view.is_pc,
-            viewer_eye_z: ctx.self_eye_z,
-            target_eye_z,
             sight_obstacles: ctx.obstacle_list(),
             fast_grid: &ctx.fast_grid,
             layer: ctx.position.level,

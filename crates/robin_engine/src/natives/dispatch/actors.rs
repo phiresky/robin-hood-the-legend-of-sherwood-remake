@@ -856,7 +856,8 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 let q = crate::ai_vision::VisibilityQuery {
-                    viewer: viewer_eye,
+                    viewer_los: viewer_eye,
+                    viewer_world: viewer_eye_3d,
                     viewer_direction: npc_dir,
                     view_forward,
                     view_radius,
@@ -868,12 +869,11 @@ impl NativeContext<'_, '_> {
                     golden_eye_mode,
                     effective_view_radius,
                     target_is_active_and_outside_building: tgt_active && !tgt_in_building,
-                    target: target_point,
+                    target_los: target_point,
+                    target_world: tgt_detection_3d,
                     target_posture: tgt_posture,
                     target_action_state: tgt_action_state,
                     target_is_pc: tgt_is_pc,
-                    viewer_eye_z: viewer_eye_3d.z,
-                    target_eye_z: tgt_detection_3d.z,
                     sight_obstacles: sight_obstacle_list,
                     fast_grid: &self.fast_grid,
                     layer: npc_layer,

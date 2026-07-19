@@ -29,6 +29,7 @@ struct NpcTarget {
     action_state: crate::element::ActionState,
     building_sector: Option<crate::position_interface::SectorHandle>,
     eye_z: f32,
+    ground_z: f32,
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
     direction: i16,
@@ -75,9 +76,18 @@ fn visibility_eye_xy(eye: crate::coordinates::WorldPoint3D, ground_z: f32) -> Ma
     MapPoint::from_world_xyz(eye.x, eye.y, ground_z)
 }
 
+fn visibility_world_point(
+    projected: MapPoint,
+    ground_z: f32,
+    point_z: f32,
+) -> crate::coordinates::WorldPoint3D {
+    crate::coordinates::WorldPoint3D::new(projected.x, projected.y + ground_z, point_z)
+}
+
 struct SoldierSightContext {
     eye: MapPoint,
     eye_z: f32,
+    ground_z: f32,
     dir: i16,
     layer: u16,
     view_radius: u16,
@@ -133,11 +143,13 @@ impl SoldierSightContext {
         );
         let view_direction = soldier.npc.view_direction;
         let position_map = soldier.element.position_map();
+        let ground_z = soldier.element.position().z;
         let (eye, eye_z) = human_eye_point_for_visibility(entity);
 
         Some(Self {
             eye,
             eye_z,
+            ground_z,
             dir: soldier.element.direction(),
             layer: soldier.element.layer(),
             view_radius: soldier.npc.view_radius,
@@ -1294,6 +1306,7 @@ impl EngineInner {
         };
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
+        let ground_z = viewer.ground_z;
         let dir = viewer.dir;
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
@@ -1542,7 +1555,8 @@ impl EngineInner {
                         })
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye,
+                        viewer_los: eye,
+                        viewer_world: visibility_world_point(eye, ground_z, eye_z),
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -1561,16 +1575,23 @@ impl EngineInner {
                         effective_view_radius,
                         target_is_active_and_outside_building: pc.active
                             && pc.building_sector.is_none(),
-                        target: crate::stealth::detection_point_xy(
+                        target_los: crate::stealth::detection_point_xy(
                             pc.position,
                             pc.posture,
                             pc.direction as i16,
                         ),
+                        target_world: visibility_world_point(
+                            crate::stealth::detection_point_xy(
+                                pc.position,
+                                pc.posture,
+                                pc.direction as i16,
+                            ),
+                            pc.ground_z,
+                            pc.detection_z,
+                        ),
                         target_posture: pc.posture,
                         target_action_state: pc.action_state,
                         target_is_pc: true,
-                        viewer_eye_z: eye_z,
-                        target_eye_z: pc.detection_z,
                         sight_obstacles,
                         fast_grid: &self.world.fast_grid,
                         layer,
@@ -2150,11 +2171,19 @@ impl EngineInner {
                         } else {
                             crate::ai_vision::is_detecting_target(
                                 ss.position,
+                                crate::coordinates::GroundPoint::new(
+                                    ss.position.x,
+                                    ss.position.y + ss.ground_z,
+                                ),
                                 ss.direction as i16,
                                 (ss.view_direction[0], ss.view_direction[1]),
                                 ss.real_half_aperture,
                                 ss.view_radius,
                                 me_pos_map,
+                                crate::coordinates::GroundPoint::new(
+                                    me_pos_map.x,
+                                    me_pos_map.y + ground_z,
+                                ),
                                 layer,
                                 sight_obstacles,
                                 &self.world.fast_grid,
@@ -2664,6 +2693,7 @@ impl EngineInner {
                     building_sector: self.entity_building_sector(soldier.element.sector()),
                     eye_z: soldier.element.position().z
                         + crate::stealth::detection_z_for_posture(posture, is_rider),
+                    ground_z: soldier.element.position().z,
                     direction: soldier.element.direction() as i16,
                     active: soldier.element.active,
                     unconscious: soldier.human.unconscious,
@@ -2702,6 +2732,7 @@ impl EngineInner {
         };
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
+        let ground_z = viewer.ground_z;
         let dir = viewer.dir;
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
@@ -2845,7 +2876,8 @@ impl EngineInner {
                         .copied()
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye,
+                        viewer_los: eye,
+                        viewer_world: visibility_world_point(eye, ground_z, eye_z),
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -2861,16 +2893,23 @@ impl EngineInner {
                         effective_view_radius,
                         target_is_active_and_outside_building: target.active
                             && target.building_sector.is_none(),
-                        target: crate::stealth::detection_point_xy(
+                        target_los: crate::stealth::detection_point_xy(
                             target.position,
                             target.posture,
                             target.direction,
                         ),
+                        target_world: visibility_world_point(
+                            crate::stealth::detection_point_xy(
+                                target.position,
+                                target.posture,
+                                target.direction,
+                            ),
+                            target.ground_z,
+                            target.eye_z,
+                        ),
                         target_posture: target.posture,
                         target_action_state: target.action_state,
                         target_is_pc: false,
-                        viewer_eye_z: eye_z,
-                        target_eye_z: target.eye_z,
                         sight_obstacles,
                         fast_grid: &self.world.fast_grid,
                         layer,
@@ -3130,6 +3169,7 @@ impl EngineInner {
         };
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
+        let ground_z = viewer.ground_z;
         let dir = viewer.dir;
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
@@ -3258,6 +3298,7 @@ impl EngineInner {
             ViewContext {
                 eye,
                 eye_z,
+                ground_z,
                 dir,
                 layer,
                 view_forward,
@@ -3294,6 +3335,7 @@ impl EngineInner {
             ViewContext {
                 eye,
                 eye_z,
+                ground_z,
                 dir,
                 layer,
                 view_forward,
@@ -3338,6 +3380,7 @@ impl EngineInner {
             ViewContext {
                 eye,
                 eye_z,
+                ground_z,
                 dir,
                 layer,
                 view_forward,
@@ -3379,6 +3422,7 @@ impl EngineInner {
             ViewContext {
                 eye,
                 eye_z,
+                ground_z,
                 dir,
                 layer,
                 view_forward,
@@ -3433,6 +3477,7 @@ impl EngineInner {
             ViewContext {
                 eye,
                 eye_z,
+                ground_z,
                 dir,
                 layer,
                 view_forward,
@@ -3540,7 +3585,8 @@ impl EngineInner {
                     .copied()
                     .unwrap_or(ctx.effective_view_radius_ground);
                 let q = ai_vision::VisibilityQuery {
-                    viewer: ctx.eye,
+                    viewer_los: ctx.eye,
+                    viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3553,16 +3599,23 @@ impl EngineInner {
                     effective_view_radius,
                     target_is_active_and_outside_building: target.active
                         && target.building_sector.is_none(),
-                    target: crate::stealth::detection_point_xy(
+                    target_los: crate::stealth::detection_point_xy(
                         target.position,
                         target.posture,
                         target.direction,
                     ),
+                    target_world: visibility_world_point(
+                        crate::stealth::detection_point_xy(
+                            target.position,
+                            target.posture,
+                            target.direction,
+                        ),
+                        target.ground_z,
+                        target.eye_z,
+                    ),
                     target_posture: target.posture,
                     target_action_state: target.action_state,
                     target_is_pc: target.is_pc,
-                    viewer_eye_z: ctx.eye_z,
-                    target_eye_z: target.eye_z,
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,
@@ -3759,7 +3812,8 @@ impl EngineInner {
                 0.0
             } else if gate_open {
                 let q = ai_vision::ObjectVisibilityQuery {
-                    viewer: ctx.eye,
+                    viewer_los: ctx.eye,
+                    viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3767,7 +3821,8 @@ impl EngineInner {
                     real_half_aperture: ctx.real_half_aperture,
                     viewer_in_building: ctx.viewer_in_building,
                     object_belongs_to_beggar: object.belongs_to_beggar,
-                    target: object.position,
+                    target_los: object.position,
+                    target_world: object.world_position,
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,
@@ -3855,6 +3910,7 @@ impl EngineInner {
 struct ViewContext<'a> {
     eye: MapPoint,
     eye_z: f32,
+    ground_z: f32,
     dir: i16,
     layer: u16,
     view_forward: (f32, f32),
@@ -3893,8 +3949,9 @@ mod tests {
         assert_ne!(
             projected,
             eye.to_map(),
-            "eye Z is carried separately by VisibilityQuery and must not be projected twice"
+            "eye height must not be projected into the LOS point"
         );
+        assert_eq!(visibility_world_point(projected, 30.0, eye.z), eye);
     }
 
     #[test]

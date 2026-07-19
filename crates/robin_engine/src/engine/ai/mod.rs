@@ -1419,6 +1419,7 @@ impl EngineInner {
             let pos = s.element.position_map();
             (
                 crate::coordinates::MapPoint::new(pos.x, pos.y),
+                s.element.position().z,
                 s.element.layer(),
                 self.entity_data_inside_building(&s.element),
             )
@@ -1508,17 +1509,22 @@ impl EngineInner {
             // inside a building; fold those into the cached `false` here.
             let eye_blind = s.npc.eye_status.is_blind();
             let is_detecting_cone = match me_brawler_data {
-                Some((me_pos, me_layer, me_in_building))
+                Some((me_pos, me_ground_z, me_layer, me_in_building))
                     if !eye_blind && !in_building && able_to_fight && !me_in_building =>
                 {
                     let viewer = crate::coordinates::MapPoint::new(position.x, position.y);
                     crate::ai_vision::is_detecting_target(
                         viewer,
+                        crate::coordinates::GroundPoint::new(
+                            viewer.x,
+                            viewer.y + s.element.position().z,
+                        ),
                         s.element.direction(),
                         (s.npc.view_direction[0], s.npc.view_direction[1]),
                         s.npc.real_half_aperture,
                         s.npc.view_radius,
                         me_pos,
+                        crate::coordinates::GroundPoint::new(me_pos.x, me_pos.y + me_ground_z),
                         me_layer,
                         obstacles,
                         &self.world.fast_grid,
