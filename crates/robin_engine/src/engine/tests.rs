@@ -3548,6 +3548,135 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 }
 
 #[test]
+fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
+    use crate::ai::{
+        AiState, AlertLevel, ArcheryReservationRelease, GuardedPcEffect, PointArchery,
+        ReservedShootingPoint, SectorArchery, Substate,
+    };
+    use crate::entity_id::PcId;
+    use crate::sector::{ArcheryPointIdx, SectorNumber};
+    use crate::sound::MusicMode;
+
+    let mut engine = EngineInner::new();
+
+    let old_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let current_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let EntityId::Pc(old_guarded_pc_typed) = old_guarded_pc else {
+        panic!("test PC has a non-PC entity ID")
+    };
+    let EntityId::Pc(current_guarded_pc_typed) = current_guarded_pc else {
+        panic!("test PC has a non-PC entity ID")
+    };
+
+    let mut victim = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+    let Entity::Soldier(victim_soldier) = &mut victim else {
+        unreachable!("make_test_ai_soldier returned non-soldier")
+    };
+    victim_soldier.element.active = true;
+    victim_soldier.npc.life_points = 100;
+    let victim_id = engine.add_entity(victim);
+
+    for guarded_pc in [old_guarded_pc, current_guarded_pc] {
+        let Some(Entity::Pc(pc)) = engine.get_entity_mut(guarded_pc) else {
+            panic!("test guarded PC exists")
+        };
+        pc.element.active = true;
+        pc.pc.life_points = 100;
+        pc.pc.guard = Some(victim_id);
+    }
+
+    engine.ai.global.archery_sectors.push(SectorArchery {
+        points: vec![PointArchery {
+            position: Default::default(),
+            direction: 0,
+            is_shooting_point: true,
+            sector_index: SectorNumber::new(1),
+            owner: Some(victim_id),
+        }],
+        polygon: Vec::new(),
+        layer: 0,
+        index_first_shooting_point: Some(ArcheryPointIdx(0)),
+        index_last_shooting_point: Some(ArcheryPointIdx(0)),
+        num_shooting_points: 1,
+        num_owners: 1,
+    });
+
+    let Some(Entity::Soldier(victim_soldier)) = engine.get_entity_mut(victim_id) else {
+        panic!("test victim exists")
+    };
+    let enemy = victim_soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test victim has enemy AI");
+    enemy.guarded_pc = Some(PcId(current_guarded_pc_typed.0));
+    enemy.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
+        old: Some(PcId(old_guarded_pc_typed.0)),
+        new: Some(PcId(current_guarded_pc_typed.0)),
+    });
+    // Model SetState having synchronously cleared the AI-side shooting
+    // point while its reciprocal/global release is still queued.
+    enemy.my_shooting_point = None;
+    enemy.my_archery_sector = Some(0);
+    enemy.base.outbox.actor.archery_reservation_release = ArcheryReservationRelease {
+        shooting_point: Some(ReservedShootingPoint {
+            sector_index: 0,
+            point_index: ArcheryPointIdx(0),
+        }),
+        release_sector: true,
+    };
+    enemy.base.current_state = AiState::Menacing;
+    enemy.base.current_substate = Substate::MenacingPcInComa;
+    enemy.base.current_music_alert_status = AlertLevel::Red;
+    enemy.base.view_alert_status = AlertLevel::Red;
+    enemy.base.outbox.actor.halt = true;
+    engine.ai.global.overall_villain_alert_status = AlertLevel::Red;
+    engine.ai.global.overall_alert_status = AlertLevel::Red;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&assets, victim_id);
+
+    for guarded_pc in [old_guarded_pc, current_guarded_pc] {
+        let Some(Entity::Pc(pc)) = engine.get_entity(guarded_pc) else {
+            panic!("test guarded PC survives")
+        };
+        assert_eq!(pc.pc.guard, None);
+    }
+    assert_eq!(engine.ai.global.archery_sectors[0].points[0].owner, None);
+    assert_eq!(engine.ai.global.archery_sectors[0].num_owners, 0);
+
+    let Some(Entity::Soldier(victim_soldier)) = engine.get_entity(victim_id) else {
+        panic!("test victim survives as a corpse")
+    };
+    let enemy = victim_soldier
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("test victim retains enemy AI");
+    assert_eq!(enemy.guarded_pc, None);
+    assert_eq!(enemy.my_archery_sector, None);
+    assert_eq!(enemy.base.current_state, AiState::Sleeping);
+    assert_eq!(enemy.base.current_substate, Substate::SleepingForever);
+    assert!(!enemy.base.outbox.actor.halt);
+    assert_eq!(
+        enemy.base.outbox.actor.archery_reservation_release,
+        ArcheryReservationRelease::default()
+    );
+    assert!(enemy.base.outbox.music.instant_change);
+
+    engine.update_overall_villain_alert(&assets.profile_manager);
+    assert!(
+        engine
+            .feedback
+            .pending_side_effects
+            .sounds
+            .iter()
+            .any(|command| matches!(command, SoundCommand::ForceMusicMode(MusicMode::Quiet)))
+    );
+}
+
+#[test]
 fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     use crate::element::Posture;
 
@@ -3648,7 +3777,12 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .get_entity_mut(officer_id)
             .and_then(Entity::enemy_ai_mut)
             .expect("test officer has enemy AI");
-        officer.set_state(officer_state, Substate::DefaultOnPost);
+        let officer_substate = match officer_state {
+            AiState::Default => Substate::DefaultOnPost,
+            AiState::Attacking => Substate::AttackingSwordfight,
+            other => panic!("unsupported Charly-report officer state: {other:?}"),
+        };
+        officer.set_state(officer_state, officer_substate);
     }
 
     let scratch = engine.build_sim_scratch(&assets);

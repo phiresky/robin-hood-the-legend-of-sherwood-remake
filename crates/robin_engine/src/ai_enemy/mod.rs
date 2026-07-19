@@ -19,6 +19,7 @@ pub use util::*;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
+use crate::entity_id::PcId;
 use crate::parameters_ai;
 use crate::position_interface::ASPECT_RATIO;
 use util::{fighter_detects_position_180, soldier_detects_position_180, vec_to_sector};
@@ -43,22 +44,6 @@ pub struct EnemyAi {
     /// manager no longer has an active sword-strike element for this
     /// actor (covers both natural completion and interruption).
     pub pending_special_strike: bool,
-
-    /// AI requests that the engine release this NPC's archery-sector
-    /// owner counter and clear `my_archery_sector`. Queued from
-    /// `set_state` when the soldier leaves an archer-wait substate.
-    /// The AI layer can't run `set_my_archery_sector` directly inside
-    /// `set_state` because that helper needs `&mut AiGlobalState` to
-    /// update the sector's owner counter; the engine drains this flag
-    /// post-think where `ai_global` is borrowable.
-    pub pending_release_archery_sector: bool,
-
-    /// AI requests that the engine clear the prior shooting point's
-    /// `owner` backpointer.  Queued from `EnemyAi::set_state` when
-    /// the soldier leaves an archer-wait substate.  Stored as
-    /// `(sector_idx, point_idx)` so the engine drain can locate the
-    /// slot without walking the sector.
-    pub pending_release_shooting_point: Option<(u16, u16)>,
 
     // -- Private fields --
     pub missed_pc: ElementHandle,
@@ -250,10 +235,8 @@ pub struct EnemyAi {
     pub will_be_attentive: bool,
     pub forced_attentive: bool,
 
-    /// PC this NPC is guarding. Uses `HumanHandle` (`u32`) rather
-    /// than a bespoke `PcHandle` newtype because the wider codebase
-    /// keys entity references off the same handle space.
-    pub guarded_pc: HumanHandle,
+    /// PC this NPC is guarding. `None` is the original null pointer.
+    pub guarded_pc: Option<PcId>,
 
     pub my_line_jump: Option<u32>,
 
@@ -270,8 +253,6 @@ impl Default for EnemyAi {
         Self {
             base: AiController::default(),
             pending_special_strike: false,
-            pending_release_archery_sector: false,
-            pending_release_shooting_point: None,
             missed_pc: 0,
             pc_missed: false,
             pc_gone_away_in_this_direction: 0,
@@ -362,7 +343,7 @@ impl Default for EnemyAi {
             attentive: false,
             will_be_attentive: false,
             forced_attentive: false,
-            guarded_pc: 0,
+            guarded_pc: None,
             my_line_jump: None,
             tower_guard: false,
             combat_trainer: false,
@@ -2127,20 +2108,27 @@ impl EnemyAi {
     /// Assign the soldier's guarded PC *and* synchronise the
     /// reciprocal `guard` pointer on both the old and new PC.  The
     /// AI can't touch the PC entity directly, so the PC-side flip is
-    /// queued as `pending_set_guarded_pc` for the engine drain.
+    /// queued in the ordered actor outbox for the engine drain.
     ///
-    /// `new_pc == 0` is the `SetGuardedPC(None)` case (used on exit
-    /// from `STATE_MENACING`).
-    pub fn set_guarded_pc(&mut self, new_pc: HumanHandle) {
+    pub fn set_guarded_pc(&mut self, new_pc: Option<PcId>) {
         let old_pc = self.guarded_pc;
         if old_pc == new_pc {
             return;
         }
         self.guarded_pc = new_pc;
-        self.base.outbox.actor.set_guarded_pc = Some((old_pc, new_pc));
+        self.base.outbox.actor.set_guarded_pc = Some(GuardedPcEffect {
+            old: old_pc,
+            new: new_pc,
+        });
     }
 
     pub fn set_state(&mut self, state: AiState, substate: Substate) {
+        debug_assert_eq!(
+            substate.ai_state_family(),
+            Some(state),
+            "EnemyAi::set_state received mismatched state/substate: {state:?}/{substate:?}"
+        );
+
         // Every state transition forgets pending timers; otherwise a
         // stale timer launched in the previous substate fires an
         // out-of-context `EventTimer` after the new substate has
@@ -2149,12 +2137,12 @@ impl EnemyAi {
         // it here too.
         self.base.timer_is_running = false;
 
-        // Leaving `STATE_MENACING` calls `set_guarded_pc(0)` so the
+        // Leaving `STATE_MENACING` calls `set_guarded_pc(None)` so the
         // PC being menaced loses its guard pointer and the next
         // soldier that reaches the sleeping-enemy approach can see
         // the PC as unguarded again.
         if self.base.current_state == AiState::Menacing && state != AiState::Menacing {
-            self.set_guarded_pc(0);
+            self.set_guarded_pc(None);
         }
 
         // Alert-path switch.  When leaving STATE_DEFAULT into any
@@ -2252,7 +2240,7 @@ impl EnemyAi {
         // `my_shooting_point` synchronously so same-tick reads (e.g.
         // the `else if self.my_shooting_point` arm in
         // `battle_decisions`) see the cleared state, but stash the
-        // prior slot in `pending_release_shooting_point` so the
+        // prior slot in the ordered actor outbox so the
         // engine's post-think drain can run the `set_owner(None)`
         // write — `set_state` doesn't have `&mut AiGlobalState`.
         // The archery-sector counter is released the same way.
@@ -2274,10 +2262,18 @@ impl EnemyAi {
             )
         {
             if let Some(prior) = self.my_shooting_point.take() {
-                self.pending_release_shooting_point = Some(prior);
+                self.base
+                    .outbox
+                    .actor
+                    .archery_reservation_release
+                    .shooting_point = Some(prior.into());
             }
             if self.my_archery_sector.is_some() {
-                self.pending_release_archery_sector = true;
+                self.base
+                    .outbox
+                    .actor
+                    .archery_reservation_release
+                    .release_sector = true;
             }
         }
 
@@ -4128,6 +4124,76 @@ mod tests {
         assert_eq!(
             ai.base.outbox.reentrant.state_change_notifications,
             vec![(AiState::Attacking, AiStateChangeSource::Null)]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "mismatched state/substate")]
+    fn set_state_rejects_mismatched_numeric_substate_family() {
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Default, Substate::SleepingForever);
+    }
+
+    #[test]
+    fn archery_release_is_outbox_work_and_special_strike_remains_a_latch() {
+        let mut ai = EnemyAi::new(1);
+        ai.my_shooting_point = Some((2, 3));
+        ai.my_archery_sector = Some(2);
+        ai.pending_special_strike = true;
+
+        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+
+        assert_eq!(ai.my_shooting_point, None);
+        assert_eq!(ai.my_archery_sector, Some(2));
+        assert_eq!(
+            ai.base.outbox.actor.archery_reservation_release,
+            ArcheryReservationRelease {
+                shooting_point: Some(ReservedShootingPoint {
+                    sector_index: 2,
+                    point_index: crate::sector::ArcheryPointIdx(3),
+                }),
+                release_sector: true,
+            }
+        );
+
+        assert!(ai.pending_special_strike);
+    }
+
+    #[test]
+    fn guarded_pc_relationship_uses_typed_optional_ids_and_delta() {
+        let mut ai = EnemyAi::new(1);
+        let guarded = PcId(17);
+
+        ai.set_guarded_pc(Some(guarded));
+        assert_eq!(ai.guarded_pc, Some(guarded));
+        assert_eq!(
+            ai.base.outbox.actor.set_guarded_pc,
+            Some(GuardedPcEffect {
+                old: None,
+                new: Some(guarded),
+            })
+        );
+
+        ai.set_guarded_pc(None);
+        assert_eq!(ai.guarded_pc, None);
+        assert_eq!(
+            ai.base.outbox.actor.set_guarded_pc,
+            Some(GuardedPcEffect {
+                old: Some(guarded),
+                new: None,
+            })
+        );
+
+        let encoded = serde_json::to_string(&ai).expect("serialize typed guard relationship");
+        let decoded: EnemyAi =
+            serde_json::from_str(&encoded).expect("deserialize typed guard relationship");
+        assert_eq!(decoded.guarded_pc, None);
+        assert_eq!(
+            decoded.base.outbox.actor.set_guarded_pc,
+            Some(GuardedPcEffect {
+                old: Some(guarded),
+                new: None,
+            })
         );
     }
 

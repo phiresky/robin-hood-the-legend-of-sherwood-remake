@@ -22,6 +22,14 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        debug_assert_eq!(
+            self.base.current_substate.ai_state_family(),
+            Some(self.base.current_state),
+            "EnemyAi expected-event dispatch received mismatched state/substate: {:?}/{:?}",
+            self.base.current_state,
+            self.base.current_substate
+        );
+
         match self.base.current_state {
             AiState::Sleeping => {
                 self.think_expected_sleeping_event(stimulus, global, ctx, tick, grid)
@@ -5077,8 +5085,9 @@ impl EnemyAi {
                             // SetGuardedPC( pPC ) — assigns both the
                             // soldier's guarded_pc and the PC's reciprocal
                             // guard.
-                            let pc_handle = self.base.primary_target as HumanHandle;
-                            self.set_guarded_pc(pc_handle);
+                            self.set_guarded_pc(Some(crate::entity_id::PcId(
+                                self.base.primary_target,
+                            )));
                         }
                         self.base.launch_timer(20, ctx.frame);
                     } else if target_is_pc && target_in_coma && target_guard.is_some() {
