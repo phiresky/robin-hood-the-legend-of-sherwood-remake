@@ -3426,7 +3426,7 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         let ai = mytalk_ai(&engine, soldier_id);
         assert!(ai.speech_in_flight);
         assert_eq!(ai.current_remark, Remark::Arrow);
-        assert!(ai.pending_self_stimuli.is_empty());
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     }
 
     engine.control.frame_counter = 103;
@@ -3435,7 +3435,10 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
     let ai = mytalk_ai(&engine, soldier_id);
     assert!(!ai.speech_in_flight);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
-    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        vec![StimulusType::EventMyTalk1]
+    );
 }
 
 #[test]
@@ -3462,8 +3465,11 @@ fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
     assert_eq!(engine.control.frame_counter, 101);
     assert!(!ai.speech_in_flight);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
-    assert_eq!(ai.pending_mytalk_flags, 0);
-    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+    assert_eq!(ai.outbox.speech.mytalk_flags, 0);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        vec![StimulusType::EventMyTalk1]
+    );
 }
 
 /// Build a minimal civilian entity for NPC-translate tests.
@@ -3876,10 +3882,10 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
         "GotHit EventDone recursively fires EventDone in Recovering before the outer Think returns"
     );
     assert!(
-        ai.pending_self_stimuli.is_empty(),
+        ai.outbox.reentrant.self_stimuli.is_empty(),
         "a recursive self-stimulus must not leak into the next frame"
     );
-    assert!(ai.pending_look_sidewards.is_none());
+    assert!(ai.outbox.actor.look_sidewards.is_none());
     assert!(
         engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
@@ -3922,8 +3928,8 @@ fn condolation_reenters_think_before_dispatch_returns() {
         Substate::WonderingWatchingForMoreMoney,
         "SetState -> SendCondolationCard -> Think(EventDone) must finish before dispatch returns"
     );
-    assert!(ai.pending_self_stimuli.is_empty());
-    assert!(ai.pending_look_sidewards.is_none());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    assert!(ai.outbox.actor.look_sidewards.is_none());
     assert!(
         engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
@@ -4701,7 +4707,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         (ai.base.current_state, ai.base.current_substate),
         (AiState::Default, Substate::DefaultOnPost)
     );
-    assert!(ai.base.pending_stimuli.is_empty());
+    assert!(ai.base.outbox.detection.stimuli.is_empty());
     assert_eq!(ai.base.last_stimulus_actor, Some(body_id.index()));
     assert_eq!(
         ai.base
@@ -6075,7 +6081,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         .get_entity(observer_id)
         .and_then(Entity::enemy_ai)
         .expect("Royalist multi-edge observer retains enemy AI");
-    assert!(ai.base.pending_stimuli.is_empty());
+    assert!(ai.base.outbox.detection.stimuli.is_empty());
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.last_stimulus_actor, Some(last_visible_id.index()));
     assert_eq!(
@@ -6620,7 +6626,7 @@ fn pending_specific_blinks(engine: &EngineInner, npc_id: EntityId) -> Vec<Entity
     engine
         .get_entity(npc_id)
         .and_then(|entity| entity.ai_controller())
-        .map(|ai| ai.pending_blink_enemy_specific.clone())
+        .map(|ai| ai.outbox.actor.blink_enemy_specific.clone())
         .expect("NPC has AI controller")
 }
 
@@ -7367,17 +7373,20 @@ fn call_waypoint_function_dispatches_and_falls_back() {
 #[test]
 fn execute_waypoint_script_queues_pending_dispatch() {
     let mut ai = crate::ai::AiController::default();
-    assert!(ai.pending_waypoint_script_reach_point.is_none());
-    assert!(ai.pending_self_stimuli.is_empty());
+    assert!(ai.outbox.reentrant.waypoint_script_reach_point.is_none());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
 
     let pid = crate::ai::PathId::new(5).unwrap();
     ai.execute_waypoint_script(pid, 2);
 
-    assert_eq!(ai.pending_waypoint_script_reach_point, Some((pid, 2)));
+    assert_eq!(
+        ai.outbox.reentrant.waypoint_script_reach_point,
+        Some((pid, 2))
+    );
     // AI must NOT pre-emptively queue `EventAfterScriptGoOn` — that
     // happens only after the engine dispatches `ReachPoint` and
     // confirms the script didn't transition into `DefaultScriptDriven`.
-    assert!(ai.pending_self_stimuli.is_empty());
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
 }
 
 /// `initialize_mission_script_with` walks the supplied hiking paths,

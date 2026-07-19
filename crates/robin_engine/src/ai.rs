@@ -4318,6 +4318,212 @@ pub struct InitStateSideEffects {
 // Base AI controller (per-NPC instance state)
 // ---------------------------------------------------------------------------
 
+/// Engine-facing effects produced while an AI controller is borrowed.
+///
+/// The nested owners name the same-frame barrier that consumes each effect.
+/// This is intentionally a set of directly mutated queues/options rather than
+/// a `derive_builder`, `typed-builder`, or `bon` builder: AI effects are
+/// accumulated incrementally by state-machine branches, and an empty outbox is
+/// a meaningful value. A builder would either invent defaults for required
+/// payloads or hide the barrier and insertion order behind construction
+/// boilerplate. Direct constructors for the few multi-field payloads keep the
+/// production order visible at the call site.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiOutbox {
+    /// Drained by `tick_patrol_coordination` before per-NPC thinking.
+    pub patrol: AiPatrolOutbox,
+    /// Inputs and accepted-view acknowledgement at the detection/Think edge.
+    pub detection: AiDetectionOutbox,
+    /// Recursive/cross-NPC work drained at explicit Think return barriers.
+    pub reentrant: AiReentrantOutbox,
+    /// Entity/sequence mutations applied in Original call order after Think.
+    pub actor: AiActorOutbox,
+    /// Resurrection and eye repair drained by the dedicated recovery sweep.
+    pub recovery: AiRecoveryOutbox,
+    /// Speech completion state drained by `process_npc_speech`.
+    pub speech: AiSpeechOutbox,
+    /// Music urgency drained by the overall villain-alert sweep.
+    pub music: AiMusicOutbox,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiPatrolOutbox {
+    pub direction_broadcast: Option<u16>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiDetectionOutbox {
+    pub stimuli: Vec<Stimulus>,
+    pub mark_alerted: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiReentrantOutbox {
+    pub cross_npc_actions: Vec<CrossNpcAction>,
+    pub self_stimuli: Vec<StimulusType>,
+    pub state_change_notifications: Vec<(AiState, AiStateChangeSource)>,
+    pub waypoint_script_reach_point: Option<(PathId, u8)>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiRecoveryOutbox {
+    pub inform_resurrection: bool,
+    pub set_eye_status: Option<crate::element::EyeStatus>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiSpeechOutbox {
+    pub mytalk_flags: u16,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiMusicOutbox {
+    pub instant_change: bool,
+}
+
+/// Named, serializable payload for the attentive-mode barrier. This is a
+/// deliberately local replacement for the opaque
+/// `(target, fast_officer_variant)` tuple.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AttentiveModeEffect {
+    pub target: bool,
+    pub fast_officer_variant: bool,
+}
+
+impl AttentiveModeEffect {
+    pub const fn new(target: bool, fast_officer_variant: bool) -> Self {
+        Self {
+            target,
+            fast_officer_variant,
+        }
+    }
+}
+
+/// Effects consumed by `EngineInner::drain_pending_for_npc`.
+///
+/// Fields remain separated where the engine deliberately re-enters AI between
+/// applications. The `take_*` methods below are the ordered drain API; callers
+/// do not manually clear the underlying channels.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct AiActorOutbox {
+    pub orders: Vec<AiOrderIntent>,
+    pub quit_swordfight: bool,
+    pub stop_menace: bool,
+    pub lower_shield: bool,
+    pub deactivate: bool,
+    pub halt: bool,
+    pub broadcast_panic: bool,
+    pub blink_all_enemies: bool,
+    pub enemy_in_house_alert: bool,
+    pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub delete_detectables: Vec<crate::element::DetectableType>,
+    pub delete_detectable_entity: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
+    pub blink_enemy_specific: Vec<crate::element::EntityId>,
+    pub enter_swordfight: Option<EnterSwordfightRequest>,
+    pub enter_swordfight_jump_line: Option<u32>,
+    pub stop_target: Option<HumanHandle>,
+    pub set_principal: Option<HumanHandle>,
+    pub friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
+    pub shoot_target: Option<HumanHandle>,
+    pub focus: Option<HumanHandle>,
+    pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
+    pub refill_bow_ammo: bool,
+    pub set_reported_to_officer: Vec<(NpcHandle, bool)>,
+    pub unfocus: bool,
+    pub focus_point: Option<Position>,
+    pub slowly_open_eyes: bool,
+    pub restore_detectable_objects: bool,
+    pub forget_nearby_coins: Option<Position>,
+    pub set_direction_instantly: Option<i16>,
+    pub set_attentive_mode: Option<AttentiveModeEffect>,
+    pub set_guarded_pc: Option<(HumanHandle, HumanHandle)>,
+    pub launch_commands: Vec<crate::element::Command>,
+    pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
+    pub launch_sequences: Vec<crate::sequence::Sequence>,
+    pub look_sidewards: Option<LookDirection>,
+    pub posture: Option<crate::element::Posture>,
+    pub begin_panic: Option<PanicRequest>,
+    pub panic_seek_fallback: bool,
+    pub script_seek_area: Option<ScriptSeekAreaRequest>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AiActorPreemptionEffects {
+    pub stop_menace: bool,
+    pub lower_shield: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AiActorCoreEffects {
+    pub quit_swordfight: bool,
+    pub enter_swordfight: Option<EnterSwordfightRequest>,
+    pub enter_swordfight_jump_line: Option<u32>,
+    pub stop_target: Option<HumanHandle>,
+    pub set_principal: Option<HumanHandle>,
+    pub friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
+    pub shoot_target: Option<HumanHandle>,
+    pub focus: Option<HumanHandle>,
+    pub focus_point: Option<Position>,
+    pub unfocus: bool,
+    pub set_direction_instantly: Option<i16>,
+    pub deactivate: bool,
+    pub broadcast_panic: bool,
+    pub launch_commands: Vec<crate::element::Command>,
+    pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
+    pub launch_sequences: Vec<crate::sequence::Sequence>,
+    pub look_sidewards: Option<LookDirection>,
+    pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub delete_detectables: Vec<crate::element::DetectableType>,
+    pub delete_detectable_entities: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub slowly_open_eyes: bool,
+    pub posture: Option<crate::element::Posture>,
+}
+
+impl AiActorOutbox {
+    /// Drain actor halt alone. Its application can re-enter engine sequence
+    /// handling, so the later movement-prefix barrier must not be taken yet.
+    pub(crate) fn take_halt(&mut self) -> bool {
+        std::mem::take(&mut self.halt)
+    }
+
+    /// Drain the two movement prefixes after halt has been applied.
+    pub(crate) fn take_movement_prefixes(&mut self) -> AiActorPreemptionEffects {
+        AiActorPreemptionEffects {
+            stop_menace: std::mem::take(&mut self.stop_menace),
+            lower_shield: std::mem::take(&mut self.lower_shield),
+        }
+    }
+
+    /// Drain the first contiguous post-Think application barrier.
+    pub(crate) fn take_core(&mut self) -> AiActorCoreEffects {
+        AiActorCoreEffects {
+            quit_swordfight: std::mem::take(&mut self.quit_swordfight),
+            enter_swordfight: self.enter_swordfight.take(),
+            enter_swordfight_jump_line: self.enter_swordfight_jump_line.take(),
+            stop_target: self.stop_target.take(),
+            set_principal: self.set_principal.take(),
+            friend_primary_target_swap: self.friend_primary_target_swap.take(),
+            shoot_target: self.shoot_target.take(),
+            focus: self.focus.take(),
+            focus_point: self.focus_point.take(),
+            unfocus: std::mem::take(&mut self.unfocus),
+            set_direction_instantly: self.set_direction_instantly.take(),
+            deactivate: std::mem::take(&mut self.deactivate),
+            broadcast_panic: std::mem::take(&mut self.broadcast_panic),
+            launch_commands: std::mem::take(&mut self.launch_commands),
+            launch_on_target: std::mem::take(&mut self.launch_on_target),
+            launch_sequences: std::mem::take(&mut self.launch_sequences),
+            look_sidewards: self.look_sidewards.take(),
+            add_detectables: std::mem::take(&mut self.add_detectables),
+            delete_detectables: std::mem::take(&mut self.delete_detectables),
+            delete_detectable_entities: std::mem::take(&mut self.delete_detectable_entity),
+            slowly_open_eyes: std::mem::take(&mut self.slowly_open_eyes),
+            posture: self.posture.take(),
+        }
+    }
+}
+
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -4521,15 +4727,6 @@ pub struct AiController {
     pub patrol_stopped: bool,
     pub patrol_direction: u16,
 
-    /// One-shot patrol-direction broadcast queued by the chief's
-    /// CMD_PATROL_DIRECTION macro opcode. Drained by
-    /// `EngineInner::tick_patrol_coordination` Phase 0 which calls
-    /// `set_instructed_patrol_direction(direction, &ctx)` on every
-    /// minion in `patrol`. Engine-level plumbing is required because the
-    /// per-minion `set_instructed_patrol_direction` call needs each
-    /// minion's `AiContext`.
-    pub pending_patrol_direction_broadcast: Option<u16>,
-
     /// One-shot trigger asking `EngineInner::tick_patrol_coordination`
     /// Phase 3 to clear `patrol`/`missed_patrol_members` and rebuild
     /// from `theoretical_patrol` on its next pass. Set by call sites
@@ -4554,347 +4751,17 @@ pub struct AiController {
     pub last_goto_flags: GotoFlags,
     pub stuck_counter: u16,
 
-    // -- Pending orders --
-    /// Orders produced by AI decisions, to be drained by the engine each tick.
-    /// AI has no `EngineInner` reference so it can't allocate `order_id`s;
-    /// the engine stamps them at drain time (see `AiOrderIntent::stamp`).
-    pub pending_orders: Vec<AiOrderIntent>,
+    // -- Engine-facing effects, grouped by their drain barrier --
+    pub outbox: AiOutbox,
 
-    /// Stimuli queued by the engine (e.g. from melee damage) to be
-    /// dispatched to this AI on the next think cycle.
-    pub pending_stimuli: Vec<Stimulus>,
-
-    /// Accepted `EVENT_VIEW` reached `EventViewStandardProcedure` and the
-    /// engine must mirror that handler-side alert onto `NpcData::alerted`.
-    /// This explicit one-shot avoids inferring acceptance from the handler's
-    /// legacy bool or from an AI state that a script filter may have changed.
-    pub pending_mark_alerted: bool,
-
-    /// Cross-NPC actions produced by phalanx coordination, to be drained
-    /// by the engine after each think(). See [`CrossNpcAction`].
-    pub pending_cross_npc_actions: Vec<CrossNpcAction>,
-
-    /// Self-directed stimuli queued by `say()` for MYTALK callbacks.
-    /// The engine drains these after think() and re-dispatches them
-    /// to the same NPC.
-    pub pending_self_stimuli: Vec<StimulusType>,
-
-    /// True when this NPC's bound actor-script class overrides
-    /// `FilterAIEvent`. Set once at script bind time (see
-    /// `engine/script.rs`) so `think()` cascades and `filter_stimulus`
-    /// unmapped-stimulus paths can gate their "FilterAIEvent would have
-    /// fired here" warnings to scripted actors only — the vast majority
-    /// of NPCs are unscripted and would produce no-op noise.
+    /// Cached result of script binding; this is controller state rather than
+    /// an effect and therefore remains outside the outbox.
     pub has_script_filter_override: bool,
 
-    /// AI requests that the engine call `quit_swordfight` on this NPC.
-    pub pending_quit_swordfight: bool,
-
-    /// AI requests the engine launch a `Command::StopMenace` sequence
-    /// element on this NPC, draining the menace pose back through
-    /// `TRANSITION_MENACING_WAITING_SWORD` → `TRANSITION_LOWERING_SWORD`
-    /// before any subsequently launched move starts.
-    pub pending_stop_menace: bool,
-
-    /// AI requests the engine launch a `Command::LowerShield` sequence
-    /// element on this NPC so the shield drops before the queued move
-    /// starts. Used when the actor walks off mid-shield-raise.
-    pub pending_lower_shield: bool,
-
-    /// AI requests that the engine deactivate this entity (SetActive(false)).
-    /// Set when a merry man reaches the leave-map point.
-    pub pending_deactivate: bool,
-
-    /// AI requests the engine halt the actor's current active sequence
-    /// element (and anything ≤ `Preference` priority on it). Equivalent
-    /// to `Stop(PRIORITY_PREFERENCE)` with `inside_halt_method=true`
-    /// so the interrupted element's `SendCondolationCard` is
-    /// suppressed (no `EVENT_DONE`/`EVENT_IMPOSSIBLE` back to AI).
-    /// Set by [`AiController::stop_all`]. Drained synchronously by
-    /// the engine inside `tick_enemy_ai` *before* `process_pending_ai_orders`
-    /// runs the new Turn / movement commands this AI queued in the same
-    /// think.
-    pub pending_halt: bool,
-
-    /// AI requests the engine trigger panic on nearby civilians.
-    pub pending_broadcast_panic: bool,
-
-    /// AI requests the engine reset the `seen_now` / `seen_last_frame`
-    /// flags on all enemy detectables so the next detection pass
-    /// re-fires the "first seen" edge for anyone currently in the
-    /// view cone. Used by `ThinkAlertingEvent` `EVENT_STOP` to make the
-    /// NPC re-detect a target it already tracked — the intent is "I
-    /// paid attention when the player said stop, so please re-register
-    /// anyone I can still see".
-    pub pending_blink_all_enemies: bool,
-
-    /// AI requests the engine orchestrate a building-wide alert. The
-    /// engine enumerates building occupants, sorts by camp, panics
-    /// civilians, and calls `InitBattleBeforeDoor` on the lacklandist /
-    /// royalist split. Set by any EVENT_VIEW case that triggers
-    /// `EnemyInHouseAlert` (the attacking door-fight substates, the
-    /// fleeing-indoors branch, and `EventViewStandardProcedure` when the
-    /// NPC is indoors).
-    pub pending_enemy_in_house_alert: bool,
-
-    /// AI requests the engine add a detectable to this NPC's detection list.
-    pub pending_add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-    /// AI requests the engine clear all detectables of a given type.
-    pub pending_delete_detectables: Vec<crate::element::DetectableType>,
-    /// AI requests the engine remove a single `(element, type)`
-    /// detectable entry from this NPC's list. Distinct from
-    /// `pending_delete_detectables`, which clears every entry of a given
-    /// type.
-    pub pending_delete_detectable_entity:
-        Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-
-    /// AI requests the engine strip `DETECTABLE_BEGGAR(entity)` from
-    /// every NPC's list so only one soldier handles the PC-beggar.
-    /// Called inside the `EVENT_SEES_BEGGAR` / `_ANY_SEEK_AREA_SUBSTATE_`
-    /// handler right after the soldier queues the beggar into its seek
-    /// plan.
-    pub pending_delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
-
-    /// AI requests the engine clear `seen_now` / `seen_last_frame` on
-    /// the `DETECTABLE_ENEMY` entry whose element matches each listed
-    /// target. Single-target counterpart of `pending_blink_all_enemies`.
-    /// Queued by the wake-up broadcast in `tick_concussion_healing` so
-    /// NPCs re-fire `EVENT_VIEW` against a waking adversary they were
-    /// already tracking.
-    pub pending_blink_enemy_specific: Vec<crate::element::EntityId>,
-
-    /// AI requests that the engine either raise this NPC's sword or call
-    /// `enter_swordfight(me, target)`.
-    pub pending_enter_swordfight: Option<EnterSwordfightRequest>,
-    /// Jump-line index for table swordfight, passed alongside
-    /// `pending_enter_swordfight`. `None` = normal swordfight.
-    pub pending_enter_swordfight_jump_line: Option<u32>,
-
-    /// AI requests that the engine call `stop_owner(target, PRIORITY_NORMAL)`
-    /// on a *different* entity (not `me`). Used inside
-    /// `BeginSwordfight` — the engaging soldier freezes its moving
-    /// target so the swordfight starts from a stable position.
-    pub pending_stop_target: Option<HumanHandle>,
-
-    /// AI requests that the engine promote this handle to principal opponent.
-    pub pending_set_principal: Option<HumanHandle>,
-
-    /// AI requests that `friend_id`'s `primary_target` be reassigned
-    /// to `new_primary_target` — the friend target-swap. The evaluating
-    /// NPC updates its own `primary_target` in place — this field covers
-    /// the friend half.
-    pub pending_friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
-
-    /// AI requests that the engine launch a bow shot at this target.
-    /// Set by `shoot_arrow_at`, drained by the engine post-think loop.
-    pub pending_shoot_target: Option<HumanHandle>,
-
-    /// AI requests that the engine call `focus_entity(target)` on this NPC
-    /// — sets the eye-tracking target.
-    pub pending_focus: Option<HumanHandle>,
-
-    /// AI requests the engine run `UnalertAllNearCharlySeekers(charly)` —
-    /// the engine iterates same-camp soldiers and dispatches
-    /// `CALL_CHARLY_IS_BACK` to those that detect either the charly
-    /// or the seeker (`me`) within 180°. Deferred via this option
-    /// because the walk needs the engine's NPC table.
-    ///
-    /// `None` — no request pending.
-    pub pending_unalert_near_charly_seekers: Option<CharlySeekerTarget>,
-
-    /// AI requests the engine refill the bow ammo to `MAX_NPC_ARROWS`.
-    /// Triggered when a fleeing archer reaches an arrow-reserves point.
-    /// The engine writes `NpcData::number_of_arrows` when draining.
-    pub pending_refill_bow_ammo: bool,
-
-    /// AI requests that the engine write `reported_to_officer` on
-    /// another soldier NPC. Used inside `MissedCharlyAlert`. The engine
-    /// drains these pairs post-think and writes the flag on the
-    /// target's `EnemyAi::reported_to_officer`.
-    pub pending_set_reported_to_officer: Vec<(NpcHandle, bool)>,
-
-    /// AI requests that the engine call `unfocus()` on this NPC —
-    /// clears the eye-tracking target.
-    pub pending_unfocus: bool,
-
-    /// Last value of `primary_target` that was reconciled into
-    /// `NpcData::follow_target`. Used by `refresh_npc_views` to gate
-    /// the auto-sync to *changes* in `primary_target` rather than
-    /// asserting `follow_target = primary_target` every tick.
-    ///
-    /// Without this gate, every tick the auto-sync would override any
-    /// explicit `Focus(NULL)` (queued via `pending_unfocus`) while
-    /// `primary_target` stayed set — defeating patterns like rider-charge
-    /// passing and `BattleDecisions` entry, which clear focus without
-    /// clearing the primary target.
-    ///
-    /// The drain pass updates this field whenever an explicit
-    /// `pending_focus` / `pending_unfocus` / `pending_focus_point` fires,
-    /// so subsequent ticks see `primary_target == last_synced` and leave
-    /// the explicit focus state alone.
+    /// Last primary target reconciled into the entity-side focus state.
+    /// This gates automatic focus synchronization across explicit outbox
+    /// focus/unfocus effects.
     pub last_synced_focus_target: Option<HumanHandle>,
-
-    /// AI requests that the engine call `focus_point(point)` on this
-    /// NPC — engages `EYES_STARE` with the narrow `STARE_HALF_ANGLE_RANGE`
-    /// view cone locked on a ground point (rather than a target entity).
-    /// Used by the call-look-there / tower-guard-alert / combat-alert
-    /// standard procedures so the alerted NPC's view cone narrows toward
-    /// the hint position.
-    pub pending_focus_point: Option<Position>,
-
-    /// Queued `FilterAIEvent(source, AI_STATE_CHANGE_TO_*)`
-    /// notifications produced inline by `set_state`. Each entry is
-    /// `(new_state, source)` where `source` mirrors the explicit
-    /// argument:
-    ///
-    /// - `SelfActor` — pass `me` (the script-side handle for the actor
-    ///   itself). Used for Sleeping / Default / Wondering / Seeking
-    ///   transitions (friendly AI also routes Default/Wondering/
-    ///   Seeking/Sleeping the same way).
-    /// - `Null` — pass a null source for Attacking/Menacing/Fleeing
-    ///   without a primary target.
-    /// - `Human(h)` — pass a primary-target handle.
-    ///
-    /// The engine drains the queue after the AI tick via
-    /// `dispatch_ai_state_change_notifications`, translating
-    /// source variants to actor script handles.
-    ///
-    /// Capturing each transition synchronously inside `set_state` gives
-    /// per-substate firing — every intra-think transition produces a
-    /// notification, not just the final delta against `start_think`'s
-    /// snapshot.
-    pub pending_state_change_notifications: Vec<(AiState, AiStateChangeSource)>,
-
-    /// AI requests that the engine fire `SlowlyOpenEyes()` on this
-    /// NPC: reset `view_radius` to 5, point `view_radius_goal` at the
-    /// engine's standard view radius, and switch `eye_status` to
-    /// `EyeStatus::ViewconeGrow` so `refresh_view` ramps the cone
-    /// back open. Set when an AI handler recovers vision (e.g.
-    /// `EVENT_WASP_AWAY`, apple-sauce visor recovery).
-    pub pending_slowly_open_eyes: bool,
-
-    /// AI requests that the engine run `InformEveryoneOnMyResurrection`
-    /// on this NPC's behalf — walk every other NPC and delete this NPC
-    /// from their `DETECTABLE_BODY` list so they stop acting on a stale
-    /// "I saw this body" memory. Set by `EVENT_FITAGAIN` handlers once
-    /// a downed NPC regains consciousness.
-    pub pending_inform_resurrection: bool,
-
-    /// AI requests that the engine run `RestoreDetectableObjects`: walk
-    /// every active engine object and, for any `OBJECT_ALE` (always) or
-    /// `OBJECT_COIN` (iff `!knocked_out_in_money_fight`), add it to
-    /// this NPC's `DETECTABLE_OBJECT` list when not already present.
-    /// Set by the `EVENT_FITAGAIN` / `SleepingUnconscious` handler when
-    /// an enemy wakes up from a KO so any bottles / coins that dropped
-    /// during the brawl re-enter perception. Drained once per tick by
-    /// the engine AI pipeline.
-    pub pending_restore_detectable_objects: bool,
-
-    /// AI requests that the engine sweep this NPC's `DETECTABLE_OBJECT`
-    /// list and drop every coin entry within MaxNorm
-    /// `NEARBY_COIN_DISTANCE = 500` of `pos`. The AI side keeps no
-    /// copy of the detectable list, so it queues this request and the
-    /// engine performs the sweep in `tick_ai_pending_*`. Drained once
-    /// per tick.
-    pub pending_forget_nearby_coins: Option<Position>,
-
-    /// AI requests that the engine call `SetViewStatus(status)` on this
-    /// NPC — flip `view_transition` and overwrite `eye_status`. Used by
-    /// the civilian `EVENT_FITAGAIN` handler to reset the eyes to
-    /// `EYES_LOOK_FORWARD` after regaining consciousness.
-    pub pending_set_eye_status: Option<crate::element::EyeStatus>,
-
-    /// AI requests that the engine snap this NPC's direction instantly.
-    pub pending_set_direction_instantly: Option<i16>,
-
-    /// AI requests that the engine flip the attentive flag and play the
-    /// corresponding WAITING_UPRIGHT ↔ WAITING_ALERTED transition
-    /// animation. Tuple is `(target_attentive, use_fast_officer_variant)`.
-    /// Set from `EnemyAi::set_state` based on the new state/substate
-    /// pair.
-    pub pending_set_attentive_mode: Option<(bool, bool)>,
-
-    /// AI requests the engine mirror a `SetGuardedPC` change: clear
-    /// `pc.guard` on the *old* target PC and set it to this soldier
-    /// on the *new* target PC. The AI writes its own `guarded_pc`
-    /// field directly and queues this tuple so the engine can update
-    /// the reciprocal PC-side `pc.guard` field (which the AI can't
-    /// touch — `self` only borrows the soldier).
-    ///
-    /// `.0 = old_pc`, `.1 = new_pc`. Either may be `0` (meaning the
-    /// `NULL` guarded-PC).
-    pub pending_set_guarded_pc: Option<(HumanHandle, HumanHandle)>,
-
-    /// Sequence commands the AI wants the engine to launch on behalf of
-    /// this NPC. Each entry becomes a `SequenceElement` with the NPC as
-    /// owner.
-    pub pending_launch_commands: Vec<crate::element::Command>,
-
-    /// Sequence commands the AI wants the engine to launch on behalf of
-    /// *another* entity (e.g. soldier forcing a beggar to stand up via
-    /// `Command::LeaveBeggar`). Each entry is `(target_handle, command)`
-    /// — target handle is the standard actor script handle (matches
-    /// the `SequenceElement` owner). Used by the beggar identify
-    /// cascade.
-    pub pending_launch_on_target: Vec<(crate::ai::NpcHandle, crate::element::Command)>,
-
-    /// Full `Sequence` objects the AI wants the engine to launch via
-    /// `SequenceManager::launch_sequence`. Use this when a single
-    /// AI decision needs to launch a multi-element sequence with
-    /// properties (directions, antagonists, …) that cannot be
-    /// expressed with `pending_launch_commands`' one-command-per-entry
-    /// shape. Used e.g. for the officer's turn/gather/point alert
-    /// sequence.
-    pub pending_launch_sequences: Vec<crate::sequence::Sequence>,
-
-    /// Queued `LookSidewards(direction)` request — launches a
-    /// one-or-two-element sequence of `LOOK_LEFT` / `LOOK_RIGHT` /
-    /// `LEAN_OUT`. The engine builds the sequence at post-think time so
-    /// the AI layer doesn't need access to the sequence manager.
-    pub pending_look_sidewards: Option<LookDirection>,
-
-    /// Queued `SetPosture(posture)` request. Emitted by the AI when the
-    /// NPC reaches its guard post and the `likes_to_sit_around` /
-    /// `special_action` flags are set. The engine applies this to the
-    /// element's `PositionInterface` at post-think time so the AI layer
-    /// doesn't need element mutation access.
-    pub pending_posture: Option<crate::element::Posture>,
-
-    /// Queued per-waypoint script `ReachPoint(actor)` dispatch —
-    /// `Some((path_idx, wp_idx))` when the AI hit a
-    /// `WaypointCommand::Script` waypoint this tick. Drained by the
-    /// engine right after the triggering `think()` returns: it calls
-    /// `MissionScript::call_waypoint_function("ReachPoint", &[me])`
-    /// against the bound waypoint VM, then fires
-    /// `EventAfterScriptGoOn` unless the script transitioned the NPC
-    /// into `Substate::DefaultScriptDriven`. Fallback to
-    /// `EventAfterScriptGoOn` if no script is bound for this waypoint
-    /// preserves the previous behaviour for scripted-but-class-missing
-    /// waypoints.
-    pub pending_waypoint_script_reach_point: Option<(PathId, u8)>,
-
-    /// Queued `Panic(center, runs, alert)` request. The engine drains
-    /// this at post-think time and performs the door lookup (against
-    /// `ai_global.door_seek_infos`) so the AI layer doesn't need the
-    /// door list on its call stack. On success the engine transitions
-    /// to `Fleeing / FleeingRunToDoor` and issues a GoTo to the door
-    /// entry point; on failure (or when the NPC can't reach any door)
-    /// it transitions to `Fleeing / FleeingPanic` and fires a
-    /// self-`EventReachPoint` so the flee-run state machine picks up on
-    /// the next tick.
-    pub pending_begin_panic: Option<PanicRequest>,
-
-    /// Set by the `FleeingPanic` `EventCouldntReachPoint` arm when the
-    /// panic-run `GoTo` failed and we need the engine to pick a
-    /// fallback `SeekPoint` to flee toward. Drained post-think by
-    /// `EngineInner::process_pending_panic_seek_fallback_for`.
-    pub pending_panic_seek_fallback: bool,
-
-    /// Pending script-driven SeekArea request, set by
-    /// `script_set_ai_state` when the bytecode asks for
-    /// `STATE_SEEKING`. The engine drains this at post-think time by
-    /// calling `EnemyAi::seek_area(center, radius, 0, UNDEFINED)`.
-    pub pending_script_seek_area: Option<ScriptSeekAreaRequest>,
 
     // -- Stare target --
     /// If set, the NPC should face toward this actor for `stare_remaining` frames.
@@ -4919,21 +4786,6 @@ pub struct AiController {
     pub cached_frame: u32,
     /// Whether this NPC is inside a building, set by the engine.
     pub cached_in_building: bool,
-    /// Speech flags from the last accepted say() call. Stored so that
-    /// `process_npc_speech` Phase 3 (finished exclamation callback) knows
-    /// which MYTALK event to fire.
-    pub pending_mytalk_flags: u16,
-
-    /// Set by `set_alert_status_with_flags` when the caller passes
-    /// `AlertFlags::INSTANT_MUSIC_CHANGE` and the call actually changes
-    /// `current_music_alert_status`. Consumed once per frame by
-    /// `EngineInner::update_overall_villain_alert`: if any NPC has it set
-    /// when the overall villain alert transitions, music is dispatched
-    /// via `ForceMusicMode` (immediate cut) instead of `SetMusicMode`
-    /// (queued/blended), regardless of which colour transition fired.
-    /// Cleared on every NPC after the sweep, whether or not music was
-    /// dispatched — the flag is per-call.
-    pub pending_instant_music_change: bool,
 }
 
 impl Default for AiController {
@@ -5030,7 +4882,6 @@ impl Default for AiController {
             theoretical_patrol: Vec::new(),
             patrol_stopped: false,
             patrol_direction: 0,
-            pending_patrol_direction_broadcast: None,
             needs_patrol_reinit: false,
             got_the_beggar_trick: false,
             ai_log: Vec::new(),
@@ -5038,56 +4889,9 @@ impl Default for AiController {
             last_goto_destination: Position::default(),
             last_goto_flags: GotoFlags::empty(),
             stuck_counter: 0,
-            pending_orders: Vec::new(),
-            pending_stimuli: Vec::new(),
-            pending_mark_alerted: false,
-            pending_cross_npc_actions: Vec::new(),
-            pending_self_stimuli: Vec::new(),
+            outbox: AiOutbox::default(),
             has_script_filter_override: false,
-            pending_quit_swordfight: false,
-            pending_stop_menace: false,
-            pending_lower_shield: false,
-            pending_deactivate: false,
-            pending_halt: false,
-            pending_broadcast_panic: false,
-            pending_blink_all_enemies: false,
-            pending_enemy_in_house_alert: false,
-            pending_add_detectables: Vec::new(),
-            pending_delete_detectables: Vec::new(),
-            pending_delete_detectable_entity: Vec::new(),
-            pending_delete_beggar_for_all_npc: Vec::new(),
-            pending_blink_enemy_specific: Vec::new(),
-            pending_enter_swordfight: None,
-            pending_enter_swordfight_jump_line: None,
-            pending_stop_target: None,
-            pending_set_principal: None,
-            pending_friend_primary_target_swap: None,
-            pending_shoot_target: None,
-            pending_focus: None,
-            pending_unalert_near_charly_seekers: None,
-            pending_refill_bow_ammo: false,
-            pending_set_reported_to_officer: Vec::new(),
-            pending_unfocus: false,
-            pending_focus_point: None,
             last_synced_focus_target: None,
-            pending_state_change_notifications: Vec::new(),
-            pending_slowly_open_eyes: false,
-            pending_inform_resurrection: false,
-            pending_restore_detectable_objects: false,
-            pending_forget_nearby_coins: None,
-            pending_set_eye_status: None,
-            pending_set_direction_instantly: None,
-            pending_set_attentive_mode: None,
-            pending_set_guarded_pc: None,
-            pending_launch_commands: Vec::new(),
-            pending_launch_on_target: Vec::new(),
-            pending_launch_sequences: Vec::new(),
-            pending_look_sidewards: None,
-            pending_posture: None,
-            pending_begin_panic: None,
-            pending_panic_seek_fallback: false,
-            pending_script_seek_area: None,
-            pending_waypoint_script_reach_point: None,
             stare_target_actor: None,
             stare_target_position: None,
             stare_remaining: 0,
@@ -5096,8 +4900,6 @@ impl Default for AiController {
             max_visibility: 0.0,
             cached_frame: 0,
             cached_in_building: false,
-            pending_mytalk_flags: 0,
-            pending_instant_music_change: false,
         }
     }
 }
@@ -5327,12 +5129,12 @@ impl AiController {
         // those AI actions are deferred through pending_* queues; once the
         // script lock lands, no pre-lock deferred return-to-duty work may
         // survive and interrupt the scripted sequence that follows.
-        self.pending_orders.clear();
-        self.pending_self_stimuli.clear();
+        self.outbox.actor.orders.clear();
+        self.outbox.reentrant.self_stimuli.clear();
         if !from_lockai_command {
             // Cancel the NPC's current order. The engine drains
             // `pending_halt` in post-think.
-            self.pending_halt = true;
+            self.outbox.actor.halt = true;
         }
         self.break_macro();
     }
@@ -5346,7 +5148,7 @@ impl AiController {
     pub fn script_unlock(&mut self, is_unconscious: bool) {
         // Clear current detections so NPCs re-register view-cone
         // occupants on the next detection pass.
-        self.pending_blink_all_enemies = true;
+        self.outbox.actor.blink_all_enemies = true;
 
         // Skip the return-to-duty Think if a EVENT_AFTER_SCRIPT_GO_ON
         // is already queued — the script left a waypoint-continuation
@@ -5359,7 +5161,9 @@ impl AiController {
         self.script_locked = false;
 
         if self.current_state != AiState::Sleeping && !after_script_go_on && !is_unconscious {
-            self.pending_self_stimuli
+            self.outbox
+                .reentrant
+                .self_stimuli
                 .push(StimulusType::EventReturnToDuty);
         }
     }
@@ -5675,12 +5479,12 @@ impl AiController {
     /// Drain all pending orders produced by AI decisions.
     /// Called by the engine each tick to dispatch them.
     pub fn take_pending_orders(&mut self) -> Vec<AiOrderIntent> {
-        std::mem::take(&mut self.pending_orders)
+        std::mem::take(&mut self.outbox.actor.orders)
     }
 
     /// Whether the AI has produced any orders this tick.
     pub fn has_pending_orders(&self) -> bool {
-        !self.pending_orders.is_empty()
+        !self.outbox.actor.orders.is_empty()
     }
 
     // -- Cross-NPC action access --
@@ -5688,22 +5492,22 @@ impl AiController {
     /// Drain all pending cross-NPC actions produced by phalanx logic.
     /// Called by the engine after each think() to dispatch them.
     pub fn take_pending_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
-        std::mem::take(&mut self.pending_cross_npc_actions)
+        std::mem::take(&mut self.outbox.reentrant.cross_npc_actions)
     }
 
     /// Drain only result-bearing officer reports, leaving ordinary deferred
     /// cross-NPC actions queued for the end-of-frame batch.
     pub fn take_pending_officer_reports(&mut self) -> Vec<CrossNpcAction> {
         let mut reports = Vec::new();
-        let mut deferred = Vec::with_capacity(self.pending_cross_npc_actions.len());
-        for action in self.pending_cross_npc_actions.drain(..) {
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
             if matches!(action, CrossNpcAction::ReportBackToOfficer { .. }) {
                 reports.push(action);
             } else {
                 deferred.push(action);
             }
         }
-        self.pending_cross_npc_actions = deferred;
+        self.outbox.reentrant.cross_npc_actions = deferred;
         reports
     }
 
@@ -5711,8 +5515,8 @@ impl AiController {
     /// formation/coordination work for the ordinary cross-NPC batch.
     pub fn take_pending_look_there_actions(&mut self) -> Vec<CrossNpcAction> {
         let mut look_there = Vec::new();
-        let mut deferred = Vec::with_capacity(self.pending_cross_npc_actions.len());
-        for action in self.pending_cross_npc_actions.drain(..) {
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
             if matches!(
                 &action,
                 CrossNpcAction::SendStimulus {
@@ -5725,14 +5529,14 @@ impl AiController {
                 deferred.push(action);
             }
         }
-        self.pending_cross_npc_actions = deferred;
+        self.outbox.reentrant.cross_npc_actions = deferred;
         look_there
     }
 
     /// Drain self-directed stimuli queued by `say()`.
     /// The engine re-dispatches these as think() calls to the same NPC.
     pub fn take_pending_self_stimuli(&mut self) -> Vec<StimulusType> {
-        std::mem::take(&mut self.pending_self_stimuli)
+        std::mem::take(&mut self.outbox.reentrant.self_stimuli)
     }
 
     // -- Shield commands --
@@ -5740,7 +5544,7 @@ impl AiController {
     /// Issue a raise-shield order toward a danger point.
     pub fn raise_shield(&mut self, danger_point: Position) {
         use crate::order::OrderType;
-        self.pending_orders.push(AiOrderIntent::new(
+        self.outbox.actor.orders.push(AiOrderIntent::new(
             OrderType::RaisingShield,
             danger_point.x,
             danger_point.y,
@@ -5750,7 +5554,9 @@ impl AiController {
     /// Issue a lower-shield order.
     pub fn lower_shield(&mut self) {
         use crate::order::OrderType;
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(AiOrderIntent::new(OrderType::LoweringShield, 0.0, 0.0));
     }
 
@@ -5809,17 +5615,21 @@ impl AiController {
     /// target.
     pub fn set_checkpoint_charly(&mut self, target: NpcHandle) {
         use crate::element::DetectableType;
-        self.pending_delete_detectables
+        self.outbox
+            .actor
+            .delete_detectables
             .push(DetectableType::MissedFriend);
         self.checkpoint_charly = target;
         if target != 0 {
-            self.pending_add_detectables.push((
+            self.outbox.actor.add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
                 DetectableType::MissedFriend,
             ));
         } else {
             self.sorrow_level = 0;
-            self.pending_delete_detectables
+            self.outbox
+                .actor
+                .delete_detectables
                 .push(DetectableType::MissedFriend);
         }
     }
@@ -5853,7 +5663,7 @@ impl AiController {
                 }
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
-                self.pending_delete_detectable_entity.push((
+                self.outbox.actor.delete_detectable_entity.push((
                     EntityId::Soldier(crate::entity_id::SoldierId(body)),
                     DetectableType::Body,
                 ));
@@ -5866,7 +5676,7 @@ impl AiController {
             && self.my_reconnaissance_report.charly == 0
         {
             self.my_reconnaissance_report.charly = other.charly;
-            self.pending_add_detectables.push((
+            self.outbox.actor.add_detectables.push((
                 EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
                 DetectableType::MissedFriend,
             ));
@@ -6092,7 +5902,7 @@ impl AiController {
                     );
                     return;
                 }
-                self.pending_script_seek_area = Some(ScriptSeekAreaRequest {
+                self.outbox.actor.script_seek_area = Some(ScriptSeekAreaRequest {
                     center: current_position,
                     radius: crate::parameters_ai::AI_SCRIPT_SEEK_RADIUS as u16,
                 });
@@ -6116,7 +5926,7 @@ impl AiController {
                 self.directed_panic = false;
                 self.set_ai_state(AiState::Fleeing);
                 self.current_substate = Substate::FleeingPanic;
-                self.pending_begin_panic = Some(PanicRequest {
+                self.outbox.actor.begin_panic = Some(PanicRequest {
                     center: None,
                     runs,
                     alert: AlertLevel::Red,
@@ -6146,7 +5956,7 @@ impl AiController {
     /// `EngineInner::tick_patrol_coordination` Phase 0 drain it (it has
     /// access to each minion's entity + context).
     pub fn instruct_patrol_direction_to_patrol_members(&mut self, direction: u16) {
-        self.pending_patrol_direction_broadcast = Some(direction);
+        self.outbox.patrol.direction_broadcast = Some(direction);
     }
 
     // -- Waypoint-script launch --
@@ -6166,7 +5976,7 @@ impl AiController {
     /// bound instance, and then fires `EventAfterScriptGoOn` unless the
     /// script put us into `DefaultScriptDriven`.
     pub fn execute_waypoint_script(&mut self, path_idx: PathId, wp_idx: u8) {
-        self.pending_waypoint_script_reach_point = Some((path_idx, wp_idx));
+        self.outbox.reentrant.waypoint_script_reach_point = Some((path_idx, wp_idx));
     }
 
     // -- Waypoint-macro launch --
@@ -6592,7 +6402,7 @@ impl AiController {
                                 self.me
                             );
                         }
-                        self.pending_look_sidewards = Some(LookDirection::Left);
+                        self.outbox.actor.look_sidewards = Some(LookDirection::Left);
                         self.current_substate = Substate::DefaultInMacroWaitingForDone;
                         self.macro_started_in_this_frame = false;
                         return;
@@ -6606,7 +6416,7 @@ impl AiController {
                                 self.me
                             );
                         }
-                        self.pending_look_sidewards = Some(LookDirection::Right);
+                        self.outbox.actor.look_sidewards = Some(LookDirection::Right);
                         self.current_substate = Substate::DefaultInMacroWaitingForDone;
                         self.macro_started_in_this_frame = false;
                         return;
@@ -6621,7 +6431,7 @@ impl AiController {
                         if !ctx.self_is_soldier {
                             tracing::warn!("NPC {}: CMD_BEND is illegal for civilians", self.me);
                         }
-                        self.pending_look_sidewards = Some(LookDirection::Down);
+                        self.outbox.actor.look_sidewards = Some(LookDirection::Down);
                         self.launch_macro_timer(frames as u32, ctx.frame);
                         self.macro_started_in_this_frame = false;
                         return;
@@ -6976,11 +6786,12 @@ impl AiController {
                 self.execute_next_macro_command(ctx);
             } else {
                 // Not yet there — wait, register us.
-                self.pending_cross_npc_actions
-                    .push(CrossNpcAction::RegisterSynchronizingActor {
+                self.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::RegisterSynchronizingActor {
                         target,
                         actor: self.me,
-                    });
+                    },
+                );
                 self.current_substate = Substate::DefaultSynchronizing;
             }
             return;
@@ -7073,7 +6884,7 @@ impl AiController {
         let looks_for_div = self.number_of_looks.max(1) as u16;
         self.delta_sorrow_level = 1000 / looks_for_div;
         self.current_substate = Substate::DefaultLookingSidewardsForCharly;
-        self.pending_look_sidewards = Some(
+        self.outbox.actor.look_sidewards = Some(
             if crate::sim_rng::u32(crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
                 LookDirection::LeftRight
             } else {
@@ -7088,7 +6899,7 @@ impl AiController {
     /// (equivalent to `Stop(PREFERENCE)`), breaks the macro, and clears
     /// the AI-side timers. The actual halt happens in the engine
     /// post-think drain where it can borrow `&mut Engine`; see
-    /// [`AiController::pending_halt`].
+    /// [`AiController::outbox`] actor-preemption barrier.
     pub fn stop_all(&mut self) {
         // When in a CheckFor look-around, clear the checkpoint
         // *before* the halt so the missed-friend detectable list and
@@ -7100,7 +6911,7 @@ impl AiController {
         if in_charly_look {
             self.set_checkpoint_charly(0);
         }
-        self.pending_halt = true;
+        self.outbox.actor.halt = true;
         // Skip BreakMacro when we're in a CheckFor look or being
         // instructed by an officer — these substates need the
         // in-flight macro to survive the halt.
@@ -7124,39 +6935,39 @@ impl AiController {
     /// `pending_*` fields must be added here when introduced.
     pub fn clear_all_pending(&mut self) {
         let _ = self.take_pending_orders();
-        self.pending_halt = false;
-        self.pending_enter_swordfight = None;
-        self.pending_enter_swordfight_jump_line = None;
-        self.pending_stop_target = None;
-        self.pending_set_principal = None;
-        self.pending_friend_primary_target_swap = None;
-        self.pending_shoot_target = None;
-        self.pending_focus = None;
-        self.pending_unfocus = false;
-        self.pending_focus_point = None;
-        self.pending_set_direction_instantly = None;
-        self.pending_deactivate = false;
-        self.pending_broadcast_panic = false;
-        self.pending_script_seek_area = None;
-        self.pending_launch_commands.clear();
-        self.pending_launch_on_target.clear();
-        self.pending_launch_sequences.clear();
-        self.pending_look_sidewards = None;
-        self.pending_add_detectables.clear();
-        self.pending_delete_detectables.clear();
-        self.pending_delete_detectable_entity.clear();
-        self.pending_delete_beggar_for_all_npc.clear();
-        self.pending_blink_enemy_specific.clear();
-        self.pending_slowly_open_eyes = false;
-        self.pending_restore_detectable_objects = false;
-        self.pending_forget_nearby_coins = None;
-        self.pending_posture = None;
-        self.pending_quit_swordfight = false;
-        self.pending_stop_menace = false;
-        self.pending_lower_shield = false;
-        self.pending_unalert_near_charly_seekers = None;
-        self.pending_refill_bow_ammo = false;
-        self.pending_set_reported_to_officer.clear();
+        self.outbox.actor.halt = false;
+        self.outbox.actor.enter_swordfight = None;
+        self.outbox.actor.enter_swordfight_jump_line = None;
+        self.outbox.actor.stop_target = None;
+        self.outbox.actor.set_principal = None;
+        self.outbox.actor.friend_primary_target_swap = None;
+        self.outbox.actor.shoot_target = None;
+        self.outbox.actor.focus = None;
+        self.outbox.actor.unfocus = false;
+        self.outbox.actor.focus_point = None;
+        self.outbox.actor.set_direction_instantly = None;
+        self.outbox.actor.deactivate = false;
+        self.outbox.actor.broadcast_panic = false;
+        self.outbox.actor.script_seek_area = None;
+        self.outbox.actor.launch_commands.clear();
+        self.outbox.actor.launch_on_target.clear();
+        self.outbox.actor.launch_sequences.clear();
+        self.outbox.actor.look_sidewards = None;
+        self.outbox.actor.add_detectables.clear();
+        self.outbox.actor.delete_detectables.clear();
+        self.outbox.actor.delete_detectable_entity.clear();
+        self.outbox.actor.delete_beggar_for_all_npc.clear();
+        self.outbox.actor.blink_enemy_specific.clear();
+        self.outbox.actor.slowly_open_eyes = false;
+        self.outbox.actor.restore_detectable_objects = false;
+        self.outbox.actor.forget_nearby_coins = None;
+        self.outbox.actor.posture = None;
+        self.outbox.actor.quit_swordfight = false;
+        self.outbox.actor.stop_menace = false;
+        self.outbox.actor.lower_shield = false;
+        self.outbox.actor.unalert_near_charly_seekers = None;
+        self.outbox.actor.refill_bow_ammo = false;
+        self.outbox.actor.set_reported_to_officer.clear();
     }
 
     // -- Movement commands --
@@ -7315,7 +7126,9 @@ impl AiController {
         // `launch_pending_orders_for_npc` runs the move.
         self.apply_goto_action_state_teardown(flags, ctx);
 
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(Self::make_move_order(&destination, flags));
     }
 
@@ -7337,17 +7150,17 @@ impl AiController {
         if flags.contains(GotoFlags::SWORD) {
             // GOTO_SWORD branch — already-in-sword is a no-op,
             // otherwise prepend ENTER_SWORDFIGHT without an opponent.
-            if !action_state.is_sword() && self.pending_enter_swordfight.is_none() {
-                self.pending_enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
-                self.pending_enter_swordfight_jump_line = None;
+            if !action_state.is_sword() && self.outbox.actor.enter_swordfight.is_none() {
+                self.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
+                self.outbox.actor.enter_swordfight_jump_line = None;
             }
         } else if action_state.is_sword() {
             // Leaving a sword fight to walk somewhere without
             // GOTO_SWORD — sheath first.
-            self.pending_quit_swordfight = true;
+            self.outbox.actor.quit_swordfight = true;
         } else if action_state == crate::element::ActionState::Menacing {
             // Drop the menace pose before walking.
-            self.pending_stop_menace = true;
+            self.outbox.actor.stop_menace = true;
         }
 
         // Orthogonal to the sword/menace switch above — the shield
@@ -7356,7 +7169,7 @@ impl AiController {
         // element so the shield drops (and the parry geometry stops
         // being armed) before the queued move runs.
         if action_state.is_shield() {
-            self.pending_lower_shield = true;
+            self.outbox.actor.lower_shield = true;
         }
     }
 
@@ -7380,7 +7193,7 @@ impl AiController {
         self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.speed_factor = speed;
-        self.pending_orders.push(order);
+        self.outbox.actor.orders.push(order);
     }
 
     /// Queue the direct map-exit movement used by
@@ -7395,7 +7208,7 @@ impl AiController {
 
         let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
         order.move_flags |= crate::sequence::MoveFlags::MAP.bits() as u16;
-        self.pending_orders.push(order);
+        self.outbox.actor.orders.push(order);
     }
 
     /// Low-level movement primitive (go-near variant) — see
@@ -7441,7 +7254,7 @@ impl AiController {
         self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.tolerance = effective_distance as f32;
-        self.pending_orders.push(order);
+        self.outbox.actor.orders.push(order);
     }
 
     // -- Facing commands --
@@ -7453,7 +7266,9 @@ impl AiController {
     /// direction / action state). Prefer [`Self::face_position_with_ctx`]
     /// at call sites that have a ctx.
     pub fn face_position(&mut self, pos: Position) {
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(AiOrderIntent::face_toward(pos.x, pos.y));
     }
 
@@ -7488,7 +7303,9 @@ impl AiController {
             self.already_turned = true;
             return;
         }
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(AiOrderIntent::face_toward(pos.x, pos.y));
     }
 
@@ -7518,7 +7335,7 @@ impl AiController {
     /// The engine drains `pending_self_stimuli` and re-dispatches them
     /// after the current think cycle.
     pub fn fire_self_stimulus(&mut self, stimulus_type: StimulusType) {
-        self.pending_self_stimuli.push(stimulus_type);
+        self.outbox.reentrant.self_stimuli.push(stimulus_type);
     }
 
     /// Turn to face a direction (0–15 sector).
@@ -7617,7 +7434,7 @@ impl AiController {
             None
         };
         if let Some(stimulus_type) = event {
-            self.pending_self_stimuli.push(stimulus_type);
+            self.outbox.reentrant.self_stimuli.push(stimulus_type);
         }
     }
 
@@ -7641,9 +7458,13 @@ impl AiController {
         // short-circuit isn't worth wiring here — callers already
         // queue `pending_halt` / `stop_all` before `point_to` via the
         // instruct flow, so the Turn will run cleanly.
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(AiOrderIntent::face_toward(pos.x, pos.y));
-        self.pending_orders
+        self.outbox
+            .actor
+            .orders
             .push(AiOrderIntent::new(OrderType::Pointing, pos.x, pos.y));
     }
 
@@ -7686,7 +7507,7 @@ impl AiController {
         if flags.contains(AlertFlags::INSTANT_MUSIC_CHANGE)
             && level != self.current_music_alert_status
         {
-            self.pending_instant_music_change = true;
+            self.outbox.music.instant_change = true;
         }
         self.current_music_alert_status = level;
 
@@ -8217,10 +8038,14 @@ impl AiController {
                     // directly which snapped the actor to the seated
                     // frame instead of playing the transition.
                     if self.likes_to_sit_around {
-                        self.pending_launch_commands
+                        self.outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::SitDown);
                     } else if self.special_action {
-                        self.pending_launch_commands
+                        self.outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::EnterLeisure);
                     }
                     self.set_ai_state(AiState::Default);
@@ -8315,7 +8140,7 @@ impl AiController {
                                     .map(|v| v.ai_substate)
                                     .unwrap_or(Substate::DefaultGotoPost);
                                 if substate == Substate::DefaultSynchronizing {
-                                    self.pending_cross_npc_actions.push(
+                                    self.outbox.reentrant.cross_npc_actions.push(
                                         CrossNpcAction::SendStimulus {
                                             target: guy,
                                             stimulus_type: StimulusType::EventSyncCharly,
@@ -8564,7 +8389,7 @@ impl AiController {
                     // found, the engine drain re-fires the self
                     // `EventReachPoint` as an emergency fall-through.
                     self.first_try = false;
-                    self.pending_panic_seek_fallback = true;
+                    self.outbox.actor.panic_seek_fallback = true;
                 }
             }
 
@@ -8994,7 +8819,7 @@ mod tests {
         ai.face_direction(ctx.direction, ctx);
 
         assert!(ai.already_turned);
-        assert!(!ai.pending_halt);
+        assert!(!ai.outbox.actor.halt);
         assert!(ai.take_pending_orders().is_empty());
     }
 
@@ -9012,7 +8837,7 @@ mod tests {
         ai.face_position_with_ctx(same_direction_target(&ctx), &ctx);
 
         assert!(ai.already_turned);
-        assert!(!ai.pending_halt);
+        assert!(!ai.outbox.actor.halt);
         assert!(ai.take_pending_orders().is_empty());
     }
 
@@ -9466,5 +9291,39 @@ mod tests {
         };
         assert_eq!(ap.position_3d.z, 0.0);
         assert_eq!(ap.id, 0);
+    }
+
+    #[test]
+    fn ai_outbox_drain_barriers_are_independent_and_serializable() {
+        let mut outbox = AiOutbox::default();
+        outbox.actor.halt = true;
+        outbox.actor.stop_menace = true;
+        outbox.actor.quit_swordfight = true;
+        outbox.reentrant.self_stimuli.push(StimulusType::EventDone);
+        outbox.music.instant_change = true;
+
+        let encoded = serde_json::to_string(&outbox).expect("serialize AI outbox");
+        let mut decoded: AiOutbox = serde_json::from_str(&encoded).expect("deserialize AI outbox");
+
+        assert!(decoded.actor.take_halt());
+        let preemption = decoded.actor.take_movement_prefixes();
+        assert!(preemption.stop_menace);
+        assert!(!preemption.lower_shield);
+        assert!(!decoded.actor.halt);
+        assert!(decoded.actor.quit_swordfight);
+        assert_eq!(
+            decoded.reentrant.self_stimuli,
+            vec![StimulusType::EventDone]
+        );
+        assert!(decoded.music.instant_change);
+
+        let core = decoded.actor.take_core();
+        assert!(core.quit_swordfight);
+        assert!(!decoded.actor.quit_swordfight);
+        assert_eq!(
+            decoded.reentrant.self_stimuli,
+            vec![StimulusType::EventDone]
+        );
+        assert!(decoded.music.instant_change);
     }
 }

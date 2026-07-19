@@ -518,7 +518,7 @@ impl EngineInner {
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(initiator)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
-            ai.pending_shoot_target = None;
+            ai.outbox.actor.shoot_target = None;
         }
 
         // The "prepare to enter swordfight" step runs `stop(PREFERENCE)`

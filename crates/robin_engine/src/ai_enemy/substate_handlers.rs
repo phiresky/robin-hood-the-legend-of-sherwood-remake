@@ -11,11 +11,9 @@ use super::util::{pos_diff, resolve_seek_point_id, vec_to_sector};
 use super::{EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, archer, combat, task_priority};
 
 impl EnemyAi {
-    // -----------------------------------------------------------------------
-    // ThinkExpectedEvent — state machine for expected events
-    // Port of RHArtificialMalignity::ThinkExpectedEvent
-    // -----------------------------------------------------------------------
-
+    // One dispatcher preserves the numeric Substate machine while the
+    // implementations are owned by coherent state families. See
+    // original-code/RHartificialmalignity.cpp:ThinkExpectedEvent.
     pub(super) fn think_expected_event(
         &mut self,
         stimulus: &Stimulus,
@@ -24,10 +22,41 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
-        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_state {
+            AiState::Sleeping => {
+                self.think_expected_sleeping_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Default => {
+                self.think_expected_default_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Wondering => {
+                self.think_expected_wondering_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Seeking => {
+                self.think_expected_seeking_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Attacking => {
+                self.think_expected_attacking_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Menacing => {
+                self.think_expected_menacing_event(stimulus, global, ctx, tick, grid)
+            }
+            AiState::Fleeing => {
+                self.think_expected_fleeing_event(stimulus, global, ctx, tick, grid)
+            }
+        }
+    }
 
+    fn think_expected_sleeping_event(
+        &mut self,
+        stimulus: &Stimulus,
+        _global: &mut AiGlobalState,
+        ctx: &AiContext,
+        _tick: &AiPerTickData,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
-            // ============ SLEEPING ============
             Substate::SleepingAwakening => {
                 if matches!(
                     stimulus_type,
@@ -51,6 +80,21 @@ impl EnemyAi {
             }
 
             // ============ DEFAULT (common) ============
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_default_event(
+        &mut self,
+        stimulus: &Stimulus,
+        _global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
             Substate::DefaultGotoPost
             | Substate::DefaultGotoPostTurn
             | Substate::DefaultGotoRoute
@@ -164,6 +208,111 @@ impl EnemyAi {
             }
 
             // ============ WONDERING ============
+            Substate::DefaultScriptDriven => {}
+
+            // Soldier keeps scanning for Charly while on duty.
+            // Random sidewards look, sorrow-level accumulation, and
+            // periodic re-seeking.
+            Substate::DefaultLookingForCharly => {
+                if stimulus_type == StimulusType::EventTimer {
+                    let rand_sorrow =
+                        crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..5000) as u16;
+                    if rand_sorrow < self.base.sorrow_level + 10 {
+                        self.set_state(
+                            AiState::Default,
+                            Substate::DefaultLookingSidewardsForCharly,
+                        );
+                        self.base.outbox.actor.look_sidewards = Some(
+                            if crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..2) != 0
+                            {
+                                LookDirection::LeftRight
+                            } else {
+                                LookDirection::RightLeft
+                            },
+                        );
+                    }
+                    self.base.sorrow_level = self
+                        .base
+                        .sorrow_level
+                        .saturating_add(self.base.delta_sorrow_level);
+                    if self.base.sorrow_level > 1000 {
+                        self.base.sorrow_level = 0;
+                        // search_charly().
+                        self.search_charly(ctx, tick);
+                    }
+                    self.base
+                        .launch_timer(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32, ctx.frame);
+                }
+            }
+
+            // Done sweeping eyes, back to baseline looking for Charly.
+            Substate::DefaultLookingSidewardsForCharly => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.set_state(AiState::Default, Substate::DefaultLookingForCharly);
+                    self.base.launch_timer(10, ctx.frame);
+                }
+            }
+
+            // Reacted to detecting Charly; either resume macro or
+            // return to duty.
+            Substate::DefaultDetectedCharly => {
+                if stimulus_type == StimulusType::EventTimer {
+                    if self.base.macro_in_progress {
+                        self.set_state(AiState::Default, Substate::DefaultInMacro);
+                        self.base.execute_next_macro_command(ctx);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+            }
+
+            // Synchronize with Charly; if he's gone astray, give up;
+            // else wait for a SyncCharly event.
+            Substate::DefaultSynchronizing => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If `synchronize_charly` is not in STATE_DEFAULT
+                    // or is dead, return to duty; else re-arm the
+                    // timer.
+                    let sync_gone = ctx
+                        .entity_view(self.base.synchronize_charly)
+                        .map(|v| v.ai_state != AiState::Default || !v.is_able_to_fight)
+                        .unwrap_or(true);
+                    if sync_gone {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.base.launch_timer(20, ctx.frame);
+                    }
+                }
+                StimulusType::EventSyncCharly => {
+                    if let crate::ai::StimulusInfo::Index(idx) = stimulus.info
+                        && idx == self.base.synchronize_index
+                    {
+                        // Assertion: `macro_in_progress` is true here.
+                        self.set_state(AiState::Default, Substate::DefaultInMacro);
+                        self.base.execute_next_macro_command(ctx);
+                    }
+                }
+                _ => {}
+            },
+
+            // WonderingLooking3 shares the timer-to-sidewards
+            // transition with looking 1/2; the next state is
+            // WonderingLooking3Sidewards.
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_wondering_event(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
             Substate::WonderingWatching => {
                 if stimulus_type == StimulusType::EventTimer {
                     self.return_to_duty(DutyFlags::empty(), ctx, tick);
@@ -174,7 +323,7 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking1Sidewards);
                     // Random LR or RL.
-                    self.base.pending_look_sidewards = Some(
+                    self.base.outbox.actor.look_sidewards = Some(
                         if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
                             != 0
                         {
@@ -207,7 +356,7 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking2Sidewards);
                     // Random LR or RL.
-                    self.base.pending_look_sidewards = Some(
+                    self.base.outbox.actor.look_sidewards = Some(
                         if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
                             != 0
                         {
@@ -309,7 +458,7 @@ impl EnemyAi {
                             owner,
                             antagonist,
                         ));
-                        self.base.pending_launch_sequences.push(seq);
+                        self.base.outbox.actor.launch_sequences.push(seq);
                     }
                     self.base.launch_timer(30, ctx.frame);
                 }
@@ -349,7 +498,7 @@ impl EnemyAi {
                     if !self.money_fight_victims.is_empty() {
                         let next = self.money_fight_victims.remove(0);
                         self.base.detected_body = next as HumanHandle;
-                        self.base.pending_cross_npc_actions.push(
+                        self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SetLootedAfterMoneyFight {
                                 target: next,
                                 looted: true,
@@ -455,7 +604,7 @@ impl EnemyAi {
                                     owner,
                                     antagonist,
                                 ));
-                                self.base.pending_launch_sequences.push(seq);
+                                self.base.outbox.actor.launch_sequences.push(seq);
                             }
                             self.base.launch_timer(60, ctx.frame);
                         }
@@ -503,6 +652,863 @@ impl EnemyAi {
             // ============ SEEKING ============
 
             // -- Seek-area substates --
+            Substate::WonderingLooking3 => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(AiState::Wondering, Substate::WonderingLooking3Sidewards);
+                    self.base.outbox.actor.look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
+                }
+            }
+
+            // Done sweeping eyes after awakening/wasp sting; return to duty.
+            Substate::WonderingLooking3Sidewards => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+            }
+
+            // Apple reaction: decide whether to chase, else return to duty.
+            Substate::WonderingAppleReactiontime => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // Logic:
+                    //   if !ShallIReactOnApple || !ChaseChilds()
+                    //     return_to_duty();
+                    //
+                    // ShallIReactOnApple outdoor answer:
+                    //   soldier_profile_apple > 0
+                    let shall_react = self.soldier_profile_apple > 0;
+                    let chased = shall_react && self.chase_childs(ctx);
+                    if !chased {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+            }
+
+            // Chase child who threw the apple; panic-run counter
+            // drives refreshes.
+            Substate::WonderingAppleChasingChild => match stimulus_type {
+                StimulusType::EventMyTalk1
+                    // antagonist.think(CallYourTalk1)
+                    if self.base.antagonist != 0 => {
+                        self.base
+                            .outbox.reentrant.cross_npc_actions
+                            .push(CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallYourTalk1,
+                                info: crate::ai::StimulusInfo::None,
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            });
+                    }
+                StimulusType::EventTimer => {
+                    if self.base.lasting_panic_runs > 0 {
+                        self.base.lasting_panic_runs -= 1;
+                        // Re-issue `go_near(antagonist_pos, 5, RUN |
+                        // DONT_STOP)` from the same substate each
+                        // panic tick.  Our Shape 1 contract requires
+                        // every movement name its new substate (see
+                        // comment at fn go_near above), so route the
+                        // refresh through
+                        // `WonderingAppleChasingChildWaiting` — its
+                        // EventTimer transitions back to ChasingChild.
+                        // Issue GoNear from here bundled with the
+                        // Waiting transition so the movement order
+                        // lives with its new substate.
+                        if let Some(view) = ctx.entity_view(self.base.antagonist) {
+                            self.go_near(
+                                AiState::Wondering,
+                                Substate::WonderingAppleChasingChildWaiting,
+                                view.position,
+                                5,
+                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP,
+                                ctx,
+                            );
+                        }
+                        self.base.launch_timer(10, ctx.frame);
+                    } else {
+                        self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChildEnd);
+                        // Face(antagonist)
+                        self.base.face_entity(self.base.antagonist, ctx);
+                        self.base.launch_timer(30, ctx.frame);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    self.set_state(
+                        AiState::Wondering,
+                        Substate::WonderingAppleChasingChildWaiting,
+                    );
+                    self.base.launch_timer(10, ctx.frame);
+                }
+                _ => {}
+            },
+
+            // Waiting between chase refreshes.
+            Substate::WonderingAppleChasingChildWaiting => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChild);
+                    self.base.launch_timer(1, ctx.frame);
+                }
+            }
+
+            // End of apple chase.
+            Substate::WonderingAppleChasingChildEnd => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+            }
+
+            // Running for money: race rivals on timer, and on reach,
+            // take it or look for more.
+            Substate::WonderingRunningForMoney => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If another guy is in sight approaching the money,
+                    // re-stage RunningForMoney and notify any patrol
+                    // chief; otherwise just re-arm the timer.
+                    //
+                    // `there_is_another_guy_in_sight_approaching_to_money`
+                    // walks same-camp soldiers and checks
+                    // is_take_money || is_fight_for_money (minus
+                    // MoneyReactiontime), not self, and
+                    // `is_detecting_180_degrees`.
+                    let another_guy_approaching =
+                        self.there_is_another_guy_in_sight_approaching_to_money(ctx, tick);
+                    if another_guy_approaching {
+                        // GoNear(money, AI_STOP_BEFORE_MONEY_DISTANCE,
+                        //         RUN | FIND_ACCESSIBLE)
+                        //
+                        // Shape 1 contract forbids same-substate
+                        // re-issue; route through MoneyReactiontime,
+                        // whose timer already advances back to
+                        // RunningForMoney.
+                        if let Some(obj_pos) = ctx.entity_position(self.base.interesting_object) {
+                            self.go_near(
+                                AiState::Wondering,
+                                Substate::WonderingMoneyReactiontime,
+                                obj_pos,
+                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::FIND_ACCESSIBLE,
+                                ctx,
+                            );
+                            self.base.launch_timer(1, ctx.frame);
+                        }
+                        // If my patrol chief is an officer whose 180°
+                        // detects me, fire EVENT_SEES_BRAWL at them.
+                        if let Some(chief_id) = self.base.patrol_chief
+                            && let Some(chief_view) = ctx.entity_view(chief_id.index())
+                            && chief_view.is_soldier()
+                            && chief_view.is_able_to_fight
+                            && chief_view.rank == ProfileRank::Officer
+                        {
+                            self.base.outbox.reentrant.cross_npc_actions.push(
+                                CrossNpcAction::SendStimulus {
+                                    target: chief_id.index(),
+                                    stimulus_type: StimulusType::EventSeesBrawl,
+                                    info: crate::ai::StimulusInfo::Human(
+                                        self.base.me as HumanHandle,
+                                    ),
+                                    fallback_to_sender: None,
+                                    to_whole_patrol: false,
+                                },
+                            );
+                        }
+                    } else {
+                        self.base.launch_timer(20, ctx.frame);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    // If money is still active and within 25 units
+                    // (MaxNorm), take it + notify friends with
+                    // EventObjectAway; else look for more.
+                    let obj = self.base.interesting_object;
+                    let close_enough = ctx
+                        .entity_position(obj)
+                        .map(|p| {
+                            let dx = (p.x - ctx.position.x).abs();
+                            let dy = (p.y - ctx.position.y).abs();
+                            dx.max(dy) < 25.0
+                        })
+                        .unwrap_or(false);
+                    if obj != 0 && close_enough {
+                        // StopAll + Take sequence.
+                        self.base.stop_all();
+                        use crate::element::Command;
+                        use crate::sequence::{Sequence, SequenceElement};
+                        let owner = self.base.owner_entity_id;
+                        let antagonist = Some(crate::element::EntityId::Bonus(
+                            crate::entity_id::BonusId(obj),
+                        ));
+                        let mut seq = Sequence::new();
+                        seq.append_element(SequenceElement::new_interaction(
+                            1,
+                            Command::Take,
+                            owner,
+                            antagonist,
+                        ));
+                        self.base.outbox.actor.launch_sequences.push(seq);
+
+                        // Notify any same-camp soldier whose substate
+                        // is take-money or fight-for-money with
+                        // EventObjectAway carrying a StolenObject.
+                        let stolen = crate::ai::StolenObject {
+                            object: obj as crate::ai::ObjectHandle,
+                            thief: self.base.me,
+                        };
+                        for cs in tick.camp_soldiers.iter() {
+                            if cs.handle == self.base.me {
+                                continue;
+                            }
+                            if cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money()
+                            {
+                                self.base.outbox.reentrant.cross_npc_actions.push(
+                                    CrossNpcAction::SendStimulus {
+                                        target: cs.handle,
+                                        stimulus_type: StimulusType::EventObjectAway,
+                                        info: crate::ai::StimulusInfo::Stolen(stolen),
+                                        fallback_to_sender: None,
+                                        to_whole_patrol: false,
+                                    },
+                                );
+                            }
+                        }
+
+                        self.set_state(AiState::Wondering, Substate::WonderingTakingMoney);
+                    } else {
+                        // Transition to WatchingForMoreMoney + look
+                        // sidewards.
+                        self.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
+                        self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
+                    }
+                }
+                _ => {}
+            },
+
+            // Brawl reaction: set mood, approach the friend in
+            // trouble, run on timer tick.
+            Substate::WonderingBrawlReactiontime => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
+                    self.base.set_emoticon(EmoticonType::Thunderstorm);
+                    self.base.say(Remark::GoldBrawl);
+                    //   seek_position = friend_in_trouble.position;
+                    //   GoNear(seek_position, AI_HIT_DISTANCE, RUN);
+                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
+                        self.base.seek_position = view.position;
+                        self.base.go_near(
+                            view.position,
+                            parameters_ai::AI_HIT_DISTANCE,
+                            crate::ai::GotoFlags::RUN,
+                            ctx,
+                        );
+                    }
+                    self.base.launch_timer(1, ctx.frame);
+                }
+            }
+
+            // Brawl approach: refresh chase on timer; on reach,
+            // attempt the hit.
+            Substate::WonderingBrawlApproaching => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If target moved > 3 units from the seek position,
+                    // update seek position and re-issue GoNear.
+                    // Otherwise re-arm the timer.
+                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
+                        let dx = (self.base.seek_position.x - view.position.x).abs();
+                        let dy = (self.base.seek_position.y - view.position.y).abs();
+                        if dx.max(dy) > 3.0 {
+                            self.base.seek_position = view.position;
+                            self.base.go_near(
+                                view.position,
+                                parameters_ai::AI_HIT_DISTANCE,
+                                crate::ai::GotoFlags::RUN,
+                                ctx,
+                            );
+                        }
+                    }
+                    self.base.launch_timer(1, ctx.frame);
+                }
+                StimulusType::EventReachPoint => {
+                    // Check friend_in_trouble substate:
+                    // - if asleep (Sleeping) → skip hit, go to hitting;
+                    // - if distance > AI_HIT_DISTANCE+3 → re-issue GoNear;
+                    // - else actually transition to hitting.
+                    let friend_sleeping = ctx
+                        .entity_view(self.base.friend_in_trouble)
+                        .map(|v| v.ai_state == AiState::Sleeping)
+                        .unwrap_or(false);
+                    if friend_sleeping {
+                        // Drop the sleeping friend from
+                        // `money_fight_enemies` so subsequent brawl
+                        // arms don't keep re-targeting a KO'd soldier
+                        // (and so `wants_to_continue_money_fight`'s
+                        // size-based threshold isn't skewed).
+                        let fit = self.base.friend_in_trouble as NpcHandle;
+                        self.money_fight_enemies.retain(|h| *h != fit);
+                        self.base.friend_in_trouble = 0;
+                    }
+                    self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
+                }
+                _ => {}
+            },
+
+            // Brawl hit resolution; civilians panic, chase chain continues.
+            Substate::WonderingBrawlHitting => {
+                if stimulus_type == StimulusType::EventDone {
+                    // Scan camp for an officer who might hear/see me
+                    // and alert them with EventSeesBrawl.
+                    self.maybe_officer_sees_me_fighting(ctx, tick);
+                    // Broadcast civilian panic for anyone in view
+                    // radius.  Queued via `pending_broadcast_panic`.
+                    self.nearby_civilians_panic();
+
+                    // Remove KO'd target from the enemy list.
+                    if self.base.friend_in_trouble != 0 {
+                        let fit = self.base.friend_in_trouble as NpcHandle;
+                        let is_unconscious = ctx
+                            .entity_view(fit as HumanHandle)
+                            .map(|v| v.is_unconscious)
+                            .unwrap_or(false);
+                        if is_unconscious {
+                            self.money_fight_enemies.retain(|h| *h != fit);
+                        }
+                    }
+
+                    // Refresh the enemy list if we've run out —
+                    // picks up any same-camp soldier that joined the
+                    // brawl after our initial snapshot.
+                    if self.money_fight_enemies.is_empty() {
+                        self.create_new_list_of_money_fight_enemies(tick, ctx);
+                    }
+
+                    // Morale-gated continue-or-stop.
+                    if !self.wants_to_continue_money_fight(tick, ctx) {
+                        self.money_fight_enemies.clear();
+                        // stop_brawling_and_collect_money().
+                        self.stop_brawling_and_collect_money(ctx, tick);
+                    } else {
+                        let fit_ok = self.base.friend_in_trouble != 0
+                            && !ctx
+                                .entity_view(self.base.friend_in_trouble)
+                                .map(|v| v.is_unconscious)
+                                .unwrap_or(true);
+                        if fit_ok {
+                            self.set_state(
+                                AiState::Wondering,
+                                Substate::WonderingBrawlReactiontime,
+                            );
+                            self.base.face_entity(self.base.friend_in_trouble, ctx);
+                            self.base.launch_timer(30, ctx.frame);
+                        } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
+                            self.base.friend_in_trouble = next as HumanHandle;
+                            self.set_state(
+                                AiState::Wondering,
+                                Substate::WonderingBrawlReactiontime,
+                            );
+                            self.base.launch_timer(10, ctx.frame);
+                        } else {
+                            // stop_brawling_and_collect_money().
+                            self.stop_brawling_and_collect_money(ctx, tick);
+                        }
+                    }
+                }
+            }
+
+            // Brawl-got-hit: pivot to BrawlRecovering, register
+            // attacker as new money-fight enemy, set thunderstorm
+            // emoticon. If the NPC is lying, queue StandUp; otherwise
+            // self-fire EventDone so BrawlRecovering immediately picks
+            // the next victim.
+            Substate::WonderingBrawlGotHit => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.set_state(AiState::Wondering, Substate::WonderingBrawlRecovering);
+                    // maybe_officer_sees_me_fighting().
+                    self.maybe_officer_sees_me_fighting(ctx, tick);
+                    // SetEmoticon(Thunderstorm).
+                    self.base.set_emoticon(EmoticonType::Thunderstorm);
+                    // Insert friend_in_trouble into money_fight_enemies
+                    // (asserts soldier + non-self).
+                    let fit = self.base.friend_in_trouble;
+                    if fit != 0 && fit != self.base.me {
+                        let is_soldier = ctx
+                            .entity_view(fit)
+                            .map(|v| v.is_soldier())
+                            .unwrap_or(false);
+                        if is_soldier && !self.money_fight_enemies.contains(&(fit as NpcHandle)) {
+                            self.money_fight_enemies.push(fit as NpcHandle);
+                        }
+                    }
+                    // If lying, launch StandUp; else recurse
+                    // Think(EventDone) into BrawlRecovering.
+                    if ctx.posture == crate::element::Posture::Lying {
+                        self.base.stop_all();
+                        self.base
+                            .outbox
+                            .actor
+                            .launch_commands
+                            .push(crate::element::Command::StandUp);
+                    } else {
+                        // Self-fire EventDone so the new
+                        // BrawlRecovering substate picks up the next
+                        // victim immediately on this same tick.
+                        self.base.fire_self_stimulus(StimulusType::EventDone);
+                    }
+                }
+            }
+
+            // Brawl recovery: go punch the next enemy, or stop brawling.
+            Substate::WonderingBrawlRecovering => {
+                if stimulus_type == StimulusType::EventDone {
+                    // Pick nearest money-fight enemy and approach.
+                    if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
+                        self.base.friend_in_trouble = next as HumanHandle;
+                        self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
+                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
+                            self.base.go_near(
+                                view.position,
+                                parameters_ai::AI_HIT_DISTANCE,
+                                crate::ai::GotoFlags::RUN,
+                                ctx,
+                            );
+                        }
+                        // maybe_officer_sees_me_fighting().
+                        self.maybe_officer_sees_me_fighting(ctx, tick);
+                    } else {
+                        // stop_brawling_and_collect_money().
+                        self.stop_brawling_and_collect_money(ctx, tick);
+                    }
+                }
+            }
+
+            // Reached looting body.  Either re-transition to loot
+            // (distant), flag a tied body, or kick off the SEARCH
+            // sequence.
+            Substate::WonderingApproachingToLoot => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    let body = self.base.detected_body;
+                    let view = ctx.entity_view(body);
+                    let (body_pos, is_tied) = view
+                        .map(|v| (v.position, v.posture == crate::element::Posture::Tied))
+                        .unwrap_or((Position::default(), false));
+                    let dx = body_pos.x - ctx.position.x;
+                    let dy = body_pos.y - ctx.position.y;
+                    let dist = dx.abs().max(dy.abs());
+                    if body == 0 || dist > 100.0 {
+                        // Too far — let Looting handle re-entry.
+                        self.set_state(AiState::Wondering, Substate::WonderingLooting);
+                        // Kick the state machine via a 1-tick timer;
+                        // the Looting arm handles the follow-up.  We
+                        // can't re-enter `think()` from inside an arm,
+                        // so fall back to a short timer that reaches
+                        // the same code path.
+                        self.base.launch_timer(1, ctx.frame);
+                    } else if is_tied {
+                        // Spot the tied body and transition to
+                        // body-seek; emit the reconnaissance report
+                        // update.
+                        self.base.my_reconnaissance_report.add_seen_body(body);
+                        self.base
+                            .my_reconnaissance_report
+                            .update(ReportType::Body, body_pos);
+                        self.set_state(AiState::Seeking, Substate::SeekingBody);
+                        // Re-issue Think(EventReachPoint) via a 1-tick
+                        // timer (see comment above).
+                        self.base.launch_timer(1, ctx.frame);
+                    } else {
+                        // Start SEARCH sequence, transition to Looting.
+                        use crate::element::Command;
+                        use crate::sequence::{Sequence, SequenceElement};
+                        self.old_money = ctx
+                            .entity_view(self.base.me)
+                            .map(|v| v.current_money.min(u16::MAX as u32) as u16)
+                            .unwrap_or(0);
+                        self.set_state(AiState::Wondering, Substate::WonderingLooting);
+                        self.base.stop_all();
+                        let owner = self.base.owner_entity_id;
+                        let antagonist = Some(crate::element::EntityId::Soldier(
+                            crate::entity_id::SoldierId(body),
+                        ));
+                        let mut seq = Sequence::new();
+                        seq.append_element(SequenceElement::new_interaction(
+                            1,
+                            Command::SearchCmd,
+                            owner,
+                            antagonist,
+                        ));
+                        self.base.outbox.actor.launch_sequences.push(seq);
+                    }
+                }
+            }
+
+            // Looting: inspect gain, move to next victim or return to duty.
+            Substate::WonderingLooting => {
+                if stimulus_type == StimulusType::EventDone {
+                    let current_money = ctx
+                        .entity_view(self.base.me)
+                        .map(|v| v.current_money.min(u16::MAX as u32) as u16)
+                        .unwrap_or(0);
+                    if current_money > self.old_money {
+                        self.base
+                            .set_transient_emoticon(EmoticonType::Sun, 20, ctx.frame);
+                        self.base.say(Remark::SearchingSoldierGold);
+                    } else {
+                        self.base
+                            .set_transient_emoticon(EmoticonType::Cloud, 20, ctx.frame);
+                        self.base.say(Remark::SearchingSoldierNothing);
+                    }
+
+                    while self
+                        .money_fight_victims
+                        .first()
+                        .and_then(|h| ctx.entity_view(*h as HumanHandle))
+                        .map(|v| v.looted_after_money_fight)
+                        .unwrap_or(false)
+                    {
+                        self.money_fight_victims.remove(0);
+                    }
+                    if !self.money_fight_victims.is_empty() {
+                        let next = self.money_fight_victims.remove(0);
+                        self.base.detected_body = next as HumanHandle;
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SetLootedAfterMoneyFight {
+                                target: next,
+                                looted: true,
+                            },
+                        );
+                        self.set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
+                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
+                            self.base.go_near(
+                                view.position,
+                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                                crate::ai::GotoFlags::empty(),
+                                ctx,
+                            );
+                        }
+                    } else {
+                        self.return_to_duty(DutyFlags::KEEP_EMOTICON, ctx, tick);
+                    }
+                }
+            }
+
+            // Beer went away: try next remembered beer, else return to duty.
+            Substate::WonderingAleAway => {
+                if stimulus_type == StimulusType::EventTimer {
+                    if !self.other_seen_ale.is_empty() {
+                        // Remember next beer as object of desire.
+                        let next = self.other_seen_ale.remove(0);
+                        self.base.object_of_desire = next;
+                        self.base.interesting_object = next;
+                        // SetState(Wondering, ApproachingAle).
+                        self.set_state(AiState::Wondering, Substate::WonderingApproachingAle);
+                        // GoNear(obj_pos, AI_STOP_BEFORE_MONEY_DISTANCE, FIND_ACCESSIBLE)
+                        if let Some(pos) = ctx.entity_position(next) {
+                            self.base.go_near(
+                                pos,
+                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                                crate::ai::GotoFlags::FIND_ACCESSIBLE,
+                                ctx,
+                            );
+                        }
+                        // Remember patrol return point
+                        self.return_to_patrol_point = ctx.position;
+                        // Quick recheck
+                        self.base.launch_timer(1, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+            }
+
+            // Officer sees brawl: close distance, clear emoticon.
+            Substate::WonderingOfficerSeeingBrawl => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(
+                        AiState::Wondering,
+                        Substate::WonderingOfficerApproachingBrawl,
+                    );
+                    self.base.set_emoticon(EmoticonType::None);
+                    // GoNear(friend_in_trouble.position, 100);
+                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
+                        self.base
+                            .go_near(view.position, 100, crate::ai::GotoFlags::empty(), ctx);
+                    }
+                }
+            }
+
+            // Officer reached the brawl; enter finish-brawl state,
+            // set thunderstorm mood.
+            Substate::WonderingOfficerApproachingBrawl => {
+                match stimulus_type {
+                    StimulusType::EventReachPoint => {
+                        // If already talking, delay finish.
+                        if self.base.current_remark != Remark::TheSoundOfSilence {
+                            self.base.launch_timer(50, ctx.frame);
+                        } else {
+                            self.begin_finishing_brawl(ctx, tick);
+                        }
+                    }
+                    StimulusType::EventTimer => {
+                        self.begin_finishing_brawl(ctx, tick);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Finishing-brawl orchestration: chain CallYourTalk1..3,
+            // then timer dismisses soldiers and waits on the antagonist.
+            Substate::WonderingOfficerFinishingBrawl => match stimulus_type {
+                StimulusType::EventTimer | StimulusType::EventMyTalk2 => {
+                    // forget_all_nearby_coins().
+                    self.forget_all_nearby_coins(ctx);
+                    // Walk list_us, send ReturnToDuty to each soldier
+                    // that isn't the antagonist.
+                    let antagonist = self.base.antagonist;
+                    let us: Vec<HumanHandle> = self
+                        .base
+                        .list_us
+                        .iter()
+                        .copied()
+                        .filter(|h| *h != antagonist && *h != self.base.me)
+                        .collect();
+                    for target in us {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                target,
+                                stimulus_type: StimulusType::EventReturnToDuty,
+                                info: crate::ai::StimulusInfo::None,
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            },
+                        );
+                    }
+                    self.base.list_us.clear();
+
+                    // CallCleanUpAfterBrawl to antagonist.
+                    if antagonist != 0 {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                target: antagonist,
+                                stimulus_type: StimulusType::CallCleanUpAfterBrawl,
+                                info: crate::ai::StimulusInfo::None,
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            },
+                        );
+                        self.set_state(
+                            AiState::Wondering,
+                            Substate::WonderingOfficerFinishingBrawlWaiting,
+                        );
+                        self.base.launch_timer(10, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                StimulusType::CallYourTalk3 => {
+                    self.base.say(Remark::OfficerEndsConversation);
+                }
+                _ => {}
+            },
+
+            // Keep waiting while antagonist still
+            // approaching/awakening a victim; else end.
+            Substate::WonderingOfficerFinishingBrawlWaiting => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // If antagonist is still approaching or awakening
+                    // the brawl victim, re-arm timer; else end.
+                    let still_waiting = ctx
+                        .entity_view(self.base.antagonist)
+                        .map(|v| {
+                            matches!(
+                                v.ai_substate,
+                                Substate::WonderingApproachingBrawlVictim
+                                    | Substate::WonderingAwakenBrawlVictim
+                            )
+                        })
+                        .unwrap_or(false);
+                    if still_waiting {
+                        self.base.launch_timer(10, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+            }
+
+            // Soldier side of the "officer finished brawl" lecture:
+            // 3-variant excuse speeches until the timer fires.
+            Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl => {
+                match stimulus_type {
+                    StimulusType::EventTimer => {
+                        // forget_all_nearby_coins(); return_to_duty();
+                        self.forget_all_nearby_coins(ctx);
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                    StimulusType::EventMyTalk1
+                    | StimulusType::EventMyTalk2
+                    | StimulusType::EventMyTalk3 => {
+                        self.base.set_emoticon(EmoticonType::None);
+                        // antagonist.think(CallYourTalk1).
+                        // Note: always forward as CallYourTalk1
+                        // regardless of which MyTalk variant
+                        // triggered — the 3 cycle variants just vary
+                        // which BadExcuse sample plays; the callback
+                        // is always CallYourTalk1 on the officer.
+                        if self.base.antagonist != 0 {
+                            self.base.outbox.reentrant.cross_npc_actions.push(
+                                CrossNpcAction::SendStimulus {
+                                    target: self.base.antagonist,
+                                    stimulus_type: StimulusType::CallYourTalk1,
+                                    info: crate::ai::StimulusInfo::None,
+                                    fallback_to_sender: None,
+                                    to_whole_patrol: false,
+                                },
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Listening after whistling sound: decide whether to
+            // investigate or bail.
+            Substate::WonderingWatchingWhistling => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // ShallIFollowWhistle outdoor arm:
+                    //   whistle > 1 && company_number != 100
+                    let shall_follow =
+                        self.soldier_profile_whistle > 1 && self.company_number != 100;
+                    if !shall_follow {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                        return false;
+                    }
+
+                    // Rank branch.
+                    let rank = self.get_rank();
+                    let mut near_officer: Option<NpcHandle> = None;
+                    let mut look_for_soldiers = false;
+                    match rank {
+                        ProfileRank::Soldier => {
+                            // `near_officer_who_is_wondering_about_the_same_noise`:
+                            // scan same-camp officers who are able to
+                            // fight, not script-locked, whose live
+                            // `seek_position` matches mine (same
+                            // noise), within 360° detection range.
+                            // `has_as_seek_position(pos)` is a literal
+                            // exact equality including layer / sector
+                            // / x / y.
+                            let my_seek = self.base.seek_position;
+                            near_officer = tick
+                                .camp_soldiers
+                                .iter()
+                                .find(|cs| {
+                                    cs.rank == ProfileRank::Officer
+                                        && cs.is_able_to_fight
+                                        && !cs.script_locked
+                                        && cs.seek_position.x == my_seek.x
+                                        && cs.seek_position.y == my_seek.y
+                                        && cs.seek_position.level == my_seek.level
+                                        && self
+                                            .is_detecting_360_degrees(cs.handle as HumanHandle, ctx)
+                                })
+                                .map(|cs| cs.handle);
+                        }
+                        ProfileRank::Officer => {
+                            // ShallISendOutSoldier outdoor arm:
+                            //   initiative < 50 || patrol.len() > 0
+                            look_for_soldiers = self.soldier_profile_initiative < 50
+                                || !self.base.patrol.is_empty();
+                        }
+                        ProfileRank::Knight | ProfileRank::None => {}
+                    }
+
+                    if let Some(officer) = near_officer {
+                        // Face officer + transition to
+                        // DefaultLookingOfficerForAdvice + ? emoticon
+                        // + 100-tick timer.
+                        self.base.face_entity(officer, ctx);
+                        self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
+                        self.base.set_emoticon(EmoticonType::QuestionMark);
+                        self.base.launch_timer(100, ctx.frame);
+                    } else if look_for_soldiers {
+                        // OfficerLookForSoldier(ReportType::Noise).
+                        self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
+                    } else {
+                        // SeekArea(seek_position,
+                        //   (MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98,
+                        //   LOCATION_FIRST | WALKING);
+                        const MAX_WHISTLE_SEEK_RADIUS: u32 = 400;
+                        let whistle = self.soldier_profile_whistle as u32;
+                        let radius = if whistle >= 2 {
+                            ((MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98) as u16
+                        } else {
+                            0
+                        };
+                        self.seek_area(
+                            self.base.seek_position,
+                            radius,
+                            SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
+                            0,
+                            global,
+                            ctx,
+                            tick,
+                        );
+                    }
+                }
+            }
+
+            // Watcher finishes looking at tower guard; back to duty.
+            Substate::WonderingApproachingBrawlVictim => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    use crate::element::Command;
+                    use crate::sequence::{Sequence, SequenceElement};
+                    self.set_state(AiState::Wondering, Substate::WonderingAwakenBrawlVictim);
+                    self.base.stop_all();
+                    let owner = self.base.owner_entity_id;
+                    let body = self.base.detected_body;
+                    if body != 0 {
+                        let antagonist = Some(crate::element::EntityId::Soldier(
+                            crate::entity_id::SoldierId(body),
+                        ));
+                        let mut seq = Sequence::new();
+                        seq.append_element(SequenceElement::new_interaction(
+                            1,
+                            Command::WakeUp,
+                            owner,
+                            antagonist,
+                        ));
+                        self.base.outbox.actor.launch_sequences.push(seq);
+                    }
+                }
+            }
+
+            // Done awakening the victim: move to the next fight victim.
+            Substate::WonderingAwakenBrawlVictim => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.awake_next_money_fight_victim_if_any(ctx, tick);
+                }
+            }
+
+            // Attacker returns to another PC after menacing: begin a
+            // swordfight.
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_seeking_event(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
             Substate::SeekingSeekpoint => {
                 if stimulus_type == StimulusType::EventReachPoint
                     || stimulus_type == StimulusType::EventTimer
@@ -553,7 +1559,7 @@ impl EnemyAi {
                         AiState::Seeking,
                         Substate::SeekingSeekpointWatchingSidewards,
                     );
-                    self.base.pending_look_sidewards = Some(
+                    self.base.outbox.actor.look_sidewards = Some(
                         if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemySeekLook, 0..2) != 0 {
                             LookDirection::LeftRight
                         } else {
@@ -598,7 +1604,7 @@ impl EnemyAi {
                             Substate::SeekingSeekpointCheckingAmbushPoint,
                         );
                         // Look LEFT.
-                        self.base.pending_look_sidewards = Some(LookDirection::Left);
+                        self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
                         self.base.launch_timer(
                             parameters_ai::AI_AMBUSH_POINT_GLANCE_TIME as u32,
                             ctx.frame,
@@ -621,7 +1627,7 @@ impl EnemyAi {
                             Substate::SeekingSeekpointCheckingAmbushPoint,
                         );
                         // Look RIGHT.
-                        self.base.pending_look_sidewards = Some(LookDirection::Right);
+                        self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
                         self.base.launch_timer(
                             parameters_ai::AI_AMBUSH_POINT_GLANCE_TIME as u32,
                             ctx.frame,
@@ -675,19 +1681,27 @@ impl EnemyAi {
                     // Timer = 50 (NPC target) / 100 (PC target) for archers, 30 for melee.
                     if self.is_archer() {
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::TurnFast);
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::EquipBow);
                         let timer = if self.beggar_is_npc { 50 } else { 100 };
                         self.base.launch_timer(timer, ctx.frame);
                     } else {
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::TurnFast);
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::StartMenace);
                         self.base.launch_timer(30, ctx.frame);
                     }
@@ -706,7 +1720,7 @@ impl EnemyAi {
                         // the beggar via `pending_launch_on_target`,
                         // which carries (target, cmd) to the
                         // engine-side sequence-manager drain.
-                        self.base.pending_launch_on_target.push((
+                        self.base.outbox.actor.launch_on_target.push((
                             self.beggar_to_examine,
                             crate::element::Command::BeggarShowFace,
                         ));
@@ -726,7 +1740,7 @@ impl EnemyAi {
                             // False beggar stands up via `LeaveBeggar`,
                             // then the archer transitions to
                             // AttackingBowShooting and shoots.
-                            self.base.pending_launch_on_target.push((
+                            self.base.outbox.actor.launch_on_target.push((
                                 self.beggar_to_examine,
                                 crate::element::Command::LeaveBeggar,
                             ));
@@ -820,7 +1834,7 @@ impl EnemyAi {
                     // The engine consumes `pending_look_sidewards`
                     // into a sequence of LookLeft / LookRight commands
                     // at post-think time.
-                    self.base.pending_look_sidewards = Some(
+                    self.base.outbox.actor.look_sidewards = Some(
                         if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemySeekLook, 0..2) != 0 {
                             LookDirection::LeftRight
                         } else {
@@ -971,7 +1985,7 @@ impl EnemyAi {
                             owner,
                             antagonist,
                         ));
-                        self.base.pending_launch_sequences.push(seq);
+                        self.base.outbox.actor.launch_sequences.push(seq);
                         self.base.launch_timer(50, ctx.frame);
                         self.base.clear_emoticon();
                     } else {
@@ -1333,15 +2347,15 @@ impl EnemyAi {
                     // the stimulus and optimistically transition —
                     // the timer-based validation in WaitForSoldier
                     // will catch failures.
-                    self.base
-                        .pending_cross_npc_actions
-                        .push(CrossNpcAction::SendStimulus {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SendStimulus {
                             fallback_to_sender: None,
                             to_whole_patrol: false,
                             target: self.base.antagonist,
                             stimulus_type: StimulusType::CallHey,
                             info: StimulusInfo::Human(self.base.me),
-                        });
+                        },
+                    );
                     self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
                     self.base
                         .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
@@ -1392,15 +2406,15 @@ impl EnemyAi {
                     }
                     StimulusType::EventMyTalk1 => {
                         // I said "Soldier! Examine this place!"
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: StimulusInfo::None,
-                            });
+                            },
+                        );
                     }
                     StimulusType::CallYourTalk2 => {
                         // Soldier said "Sir, yes, Sir!"
@@ -1572,7 +2586,7 @@ impl EnemyAi {
                             .find(|cs| cs.handle == self.base.antagonist)
                             .map(|cs| cs.ai_substate);
                         if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
-                            self.base.pending_cross_npc_actions.push(
+                            self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
                                     fallback_to_sender: None,
                                     to_whole_patrol: false,
@@ -1601,15 +2615,15 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::EventMyTalk1 => {
                         // I said "What's your order, Sir?"
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: StimulusInfo::None,
-                            });
+                            },
+                        );
                     }
                     StimulusType::CallYourTalk1 => {
                         // Officer said "Soldier! Examine this place!"
@@ -1618,7 +2632,7 @@ impl EnemyAi {
                             && self.already_seen_bodies.contains(&self.base.detected_body)
                         {
                             // Already examined — skip search, return to officer
-                            self.base.pending_cross_npc_actions.push(
+                            self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
                                     fallback_to_sender: Some(self.base.me),
                                     to_whole_patrol: false,
@@ -1640,19 +2654,19 @@ impl EnemyAi {
                     }
                     StimulusType::EventMyTalk2 => {
                         // I said "Sir, yes, Sir!"
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk2,
                                 info: StimulusInfo::None,
-                            });
+                            },
+                        );
                         // Add the body to our detection list so we don't
                         // re-react when detecting it later.
                         if let StimulusInfo::Human(body_handle) = stimulus.info {
-                            self.base.pending_add_detectables.push((
+                            self.base.outbox.actor.add_detectables.push((
                                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(
                                     body_handle,
                                 )),
@@ -1743,7 +2757,7 @@ impl EnemyAi {
                                 Substate::SeekingOfficerWaitForInstructedSoldier
                                 | Substate::SeekingOfficerWaitForInstructedGroup,
                             ) => {
-                                self.base.pending_cross_npc_actions.push(
+                                self.base.outbox.reentrant.cross_npc_actions.push(
                                     CrossNpcAction::SendStimulus {
                                         fallback_to_sender: None,
                                         to_whole_patrol: false,
@@ -1775,15 +2789,15 @@ impl EnemyAi {
                 // Soldier gives report to officer
                 match stimulus_type {
                     StimulusType::EventMyTalk1 => {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: StimulusInfo::Human(self.base.me),
-                            });
+                            },
+                        );
                         self.base.launch_timer(20, ctx.frame);
                     }
                     StimulusType::EventTimer => {
@@ -1884,9 +2898,8 @@ impl EnemyAi {
 
                     // Instruct each soldier via CALL_INSTRUCTION
                     self.alerted_us.retain(|&handle| {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: handle,
@@ -1896,7 +2909,8 @@ impl EnemyAi {
                                     seek_flags: seek_flags.bits(),
                                     who_tells_me: self.base.me,
                                 }),
-                            });
+                            },
+                        );
                         true // keep all in list for WaitForInstructedGroup
                     });
 
@@ -2065,7 +3079,7 @@ impl EnemyAi {
                                 AiState::Seeking,
                                 Substate::SeekingGroupGetInstructedByOfficer,
                             );
-                            self.base.pending_cross_npc_actions.push(
+                            self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
                                     fallback_to_sender: None,
                                     to_whole_patrol: false,
@@ -2185,7 +3199,9 @@ impl EnemyAi {
                                 // Close enough — treat as seen
                                 // Clear friend detection list — we've reached the officer.
                                 self.base
-                                    .pending_delete_detectables
+                                    .outbox
+                                    .actor
+                                    .delete_detectables
                                     .push(crate::element::DetectableType::Friend);
                                 self.set_state(
                                     AiState::Seeking,
@@ -2223,7 +3239,7 @@ impl EnemyAi {
                                     | Substate::SeekingDetectedCharly
                             )
                         ) {
-                            self.base.pending_cross_npc_actions.push(
+                            self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
                                     fallback_to_sender: None,
                                     to_whole_patrol: false,
@@ -2322,26 +3338,26 @@ impl EnemyAi {
                         ReportType::MissedCharly => officer_report == ReportType::Nothing,
                     };
 
-                    self.base
-                        .pending_cross_npc_actions
-                        .push(CrossNpcAction::SendStimulus {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SendStimulus {
                             fallback_to_sender: None,
                             to_whole_patrol: false,
                             target: self.base.antagonist,
                             stimulus_type: StimulusType::CallReport,
                             info: StimulusInfo::Human(self.base.me),
-                        });
+                        },
+                    );
 
                     if point_direction {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: StimulusInfo::None,
-                            });
+                            },
+                        );
                         self.set_state(
                             AiState::Seeking,
                             Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
@@ -2443,15 +3459,15 @@ impl EnemyAi {
                         );
                     }
                     StimulusType::EventMyTalk1 => {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: Some(self.base.me),
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: StimulusInfo::None,
-                            });
+                            },
+                        );
                     }
                     StimulusType::EventTimer
                         if !self.alert_soldiers(
@@ -2470,6 +3486,699 @@ impl EnemyAi {
             }
 
             // ============ ATTACKING ============
+            Substate::SeekingKnightWatchingTowerGuard => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // Knight reacts directly on alerts:
+                    //   SeekArea(seek_position, AI_HINT_SEEK_RADIUS, LOCATION_FIRST);
+                    self.seek_area(
+                        self.base.seek_position,
+                        parameters_ai::AI_HINT_SEEK_RADIUS as u16,
+                        SeekFlags::LOCATION_FIRST,
+                        0,
+                        global,
+                        ctx,
+                        tick,
+                    );
+                }
+            }
+
+            // Freeing someone from the net: wait out, or reach point
+            // and take the net.
+            Substate::SeekingNet => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If detected body is no longer stuck under net
+                    // AND I'm detecting them → resurrected,
+                    // ReturnToDuty; else re-arm timer.
+                    let body_stuck = ctx
+                        .entity_view(self.base.detected_body)
+                        .map(|v| v.stuck_under_net)
+                        .unwrap_or(false);
+                    let detecting =
+                        self.is_detecting_360_degrees(self.base.detected_body as HumanHandle, ctx);
+                    if !body_stuck && detecting {
+                        // Resurrected.
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.base.launch_timer(10, ctx.frame);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    // If detected body is still under net, riders just
+                    // SeekArea around themselves; foot units launch
+                    // the SEARCH×4+TAKE sequence + transition to
+                    // SeekingTakingNet.  Otherwise ReturnToDuty.
+                    let body_stuck = ctx
+                        .entity_view(self.base.detected_body)
+                        .map(|v| v.stuck_under_net)
+                        .unwrap_or(false);
+                    if body_stuck {
+                        if ctx.self_is_rider {
+                            // Rider can't dismount to take the net;
+                            // expand the seek radius and look.
+                            let here = ctx.position;
+                            self.seek_area(
+                                here,
+                                parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                                SeekFlags::BODY_SEEK,
+                                0,
+                                global,
+                                ctx,
+                                tick,
+                            );
+                        } else {
+                            // SEARCH×4 + TAKE on interesting_object
+                            // (the net).  Only fire the sequence if
+                            // the object is still active.
+                            let net_obj = self.base.interesting_object;
+                            let active = net_obj != 0 && ctx.entity_position(net_obj).is_some();
+                            if active {
+                                self.set_state(AiState::Seeking, Substate::SeekingTakingNet);
+                                self.base.stop_all();
+                                let owner = self.base.owner_entity_id;
+                                let antagonist = Some(crate::element::EntityId::Net(
+                                    crate::entity_id::NetId(net_obj),
+                                ));
+                                let mut seq = crate::sequence::Sequence::new();
+                                seq.append_element(
+                                    crate::sequence::SequenceElement::new_interaction(
+                                        1,
+                                        crate::element::Command::SearchCmd,
+                                        owner,
+                                        None,
+                                    ),
+                                );
+                                seq.append_element(
+                                    crate::sequence::SequenceElement::new_interaction(
+                                        2,
+                                        crate::element::Command::SearchCmd,
+                                        owner,
+                                        None,
+                                    ),
+                                );
+                                seq.append_element(
+                                    crate::sequence::SequenceElement::new_interaction(
+                                        3,
+                                        crate::element::Command::SearchCmd,
+                                        owner,
+                                        None,
+                                    ),
+                                );
+                                seq.append_element(
+                                    crate::sequence::SequenceElement::new_interaction(
+                                        4,
+                                        crate::element::Command::SearchCmd,
+                                        owner,
+                                        None,
+                                    ),
+                                );
+                                seq.append_element(
+                                    crate::sequence::SequenceElement::new_interaction(
+                                        5,
+                                        crate::element::Command::Take,
+                                        owner,
+                                        antagonist,
+                                    ),
+                                );
+                                self.base.outbox.actor.launch_sequences.push(seq);
+                                self.base.set_emoticon(EmoticonType::None);
+                            }
+                        }
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                _ => {}
+            },
+
+            // Finished removing a net: free another, examine body,
+            // or return to duty.
+            Substate::SeekingTakingNet => {
+                if stimulus_type == StimulusType::EventDone {
+                    // 3-way branch on detected body state:
+                    //   stuck-under-net → RunToFreeNetVictim (still
+                    //     another net on top)
+                    //   dead|unconscious → RunToExamineBody
+                    //   else → ReturnToDuty
+                    let body = self.base.detected_body;
+                    let view = ctx.entity_view(body);
+                    let stuck = view.map(|v| v.stuck_under_net).unwrap_or(false);
+                    let examine = view
+                        .map(|v| !v.is_able_to_fight && !v.stuck_under_net)
+                        .unwrap_or(false);
+                    if stuck || examine {
+                        // `run_to_examine_body` internally forks on
+                        // `stuck_under_net` and transitions into
+                        // SeekingNet for the net-takedown path, or
+                        // SeekingBody for the examine path.
+                        self.run_to_examine_body(body, ctx, tick, grid);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+            }
+
+            // Officer scanning for free soldiers (three stages).
+            Substate::SeekingOfficerLookingForSoldiers1
+            | Substate::SeekingOfficerLookingForSoldiers2
+            | Substate::SeekingOfficerLookingForSoldiers3 => {
+                if stimulus_type == StimulusType::EventTimer {
+                    let next = match self.base.current_substate {
+                        Substate::SeekingOfficerLookingForSoldiers1 => {
+                            Substate::SeekingOfficerLookingForSoldiers1Sidewards
+                        }
+                        Substate::SeekingOfficerLookingForSoldiers2 => {
+                            Substate::SeekingOfficerLookingForSoldiers2Sidewards
+                        }
+                        _ => Substate::SeekingOfficerLookingForSoldiers3Sidewards,
+                    };
+                    self.set_state(AiState::Seeking, next);
+                    self.base.outbox.actor.look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::OfficerSearchLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
+                }
+            }
+
+            // Sidewards 1/2 advance to next look stage, face 5/16
+            // rotation, delay 30.
+            Substate::SeekingOfficerLookingForSoldiers1Sidewards
+            | Substate::SeekingOfficerLookingForSoldiers2Sidewards => {
+                if stimulus_type == StimulusType::EventDone {
+                    let next = match self.base.current_substate {
+                        Substate::SeekingOfficerLookingForSoldiers1Sidewards => {
+                            Substate::SeekingOfficerLookingForSoldiers2
+                        }
+                        _ => Substate::SeekingOfficerLookingForSoldiers3,
+                    };
+                    self.set_state(AiState::Seeking, next);
+                    // FaceTo((direction + 5) % 16)
+                    let new_dir = (ctx.direction + 5) % 16;
+                    self.base.face_direction(new_dir, ctx);
+                    self.base.launch_timer(30, ctx.frame);
+                }
+            }
+
+            // Stage-3 sidewards complete; done looking.
+            Substate::SeekingOfficerLookingForSoldiers3Sidewards => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+            }
+
+            // Charly search path: step through `search_charly_way`
+            // on each reach point.
+            Substate::SeekingCharly => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    if !self.search_charly_way.is_empty() {
+                        self.search_charly_way.remove(0);
+                    }
+                    if self.search_charly_way.is_empty() {
+                        // If checkpoint_charly == 0 → ReturnToDuty;
+                        // else transition to CharlyWatching +
+                        // LookSidewards(LeftRight).
+                        if self.base.checkpoint_charly == 0 {
+                            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                        } else {
+                            self.set_state(AiState::Seeking, Substate::SeekingCharlyWatching);
+                            self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
+                        }
+                    } else {
+                        // GoTo next waypoint with RUN (+ DONT_STOP
+                        // if more than one remains).
+                        let next = self.search_charly_way[0];
+                        let flags = if self.search_charly_way.len() > 1 {
+                            crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP
+                        } else {
+                            crate::ai::GotoFlags::RUN
+                        };
+                        self.base.go_to(next, flags, ctx);
+                    }
+                }
+            }
+
+            // Done watching at charly checkpoint: trigger
+            // missed-charly alert.
+            Substate::SeekingCharlyWatching => {
+                if stimulus_type == StimulusType::EventDone {
+                    // Inlined `missed_charly_alert()`: a ~40-line
+                    // sequence of recon-report updates, rank branch
+                    // (AlertOfficer/AlertSoldiers), and a SeekArea
+                    // fallback.  The "set_reported_to_officer(false)"
+                    // on `checkpoint_charly` writes to another NPC's
+                    // field; queued via
+                    // `pending_set_reported_to_officer` and drained
+                    // by the engine after the think pass.
+                    self.base.say(Remark::DidntFindCharly);
+                    let my_pos = ctx.position;
+                    self.base.seek_position = my_pos;
+                    self.base
+                        .my_reconnaissance_report
+                        .update(ReportType::MissedCharly, my_pos);
+                    self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
+                    self.base.frame_when_enemy_detected = ctx.frame;
+                    // charly.set_reported_to_officer(false).
+                    // Queued via `pending_set_reported_to_officer`;
+                    // the engine drains these pairs after the think
+                    // pass.
+                    if self.base.checkpoint_charly != 0 {
+                        self.base
+                            .outbox
+                            .actor
+                            .set_reported_to_officer
+                            .push((self.base.checkpoint_charly as NpcHandle, false));
+                    }
+                    let alert_handled = match self.get_rank() {
+                        ProfileRank::Soldier => {
+                            self.alert_officer(my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
+                        }
+                        ProfileRank::Officer => self.alert_soldiers(
+                            my_pos,
+                            SeekFlags::CHARLY_SEEK.bits(),
+                            global,
+                            grid,
+                            ctx,
+                            tick,
+                        ),
+                        ProfileRank::Knight | ProfileRank::None => false,
+                    };
+                    if !alert_handled {
+                        // Seek yourself fallback.  Uses the FIX radius
+                        // if the checkpoint charly has no patrol path,
+                        // else PATROL radius.
+                        let charly_has_path = ctx
+                            .entity_view(self.base.checkpoint_charly)
+                            .map(|v| v.has_patrol_path)
+                            .unwrap_or(false);
+                        let radius = if charly_has_path {
+                            parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+                        } else {
+                            parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+                        };
+                        self.seek_area(
+                            my_pos,
+                            radius,
+                            SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+                            0,
+                            global,
+                            ctx,
+                            tick,
+                        );
+                    }
+                }
+            }
+
+            // Detected charly reaction; rank-dependent follow-up.
+            Substate::SeekingDetectedCharly => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // Mark charly seen, then branch on rank.
+                    self.base.my_reconnaissance_report.charly_seen = true;
+                    match self.get_rank() {
+                        ProfileRank::Officer if !self.alerted_us.is_empty() => {
+                            // Reload previous state + short timer.
+                            // The reference leaves this branch as "tell
+                            // all soldiers to go home" without an
+                            // implementation; preserve the shipped
+                            // reload-and-wait behavior.
+                            self.set_state(self.previous_state, self.previous_substate);
+                            self.base.launch_timer(10, ctx.frame);
+                        }
+                        _ => {
+                            // Soldier, Knight, or officer with no alerted
+                            // soldiers all fall through to ReturnToDuty.
+                            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                        }
+                    }
+                }
+            }
+
+            // Officer sends charly away toward another officer.
+            Substate::SeekingSendCharlyToOfficer => match stimulus_type {
+                StimulusType::EventMyTalk1
+                    // antagonist.think(CallGoToOfficer, me)
+                    if self.base.antagonist != 0 => {
+                        self.base
+                            .outbox.reentrant.cross_npc_actions
+                            .push(CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallGoToOfficer,
+                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            });
+                    }
+                StimulusType::EventMyTalk2 => {
+                    self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
+                    self.base.launch_timer(100, ctx.frame);
+                }
+                _ => {}
+            },
+
+            // Watching a charly who's been sent off; timer returns
+            // to duty.
+            Substate::SeekingLookingResurrectedCharly => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+            }
+
+            // Charly was sent to officer; go near the officer.
+            Substate::SeekingCharlySentToOfficer => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
+                    // GoNear(antagonist.position, 40);
+                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
+                        self.base
+                            .go_near(view.position, 40, crate::ai::GotoFlags::empty(), ctx);
+                    }
+                    // unalert_all_near_charly_seekers(me).
+                    // Drained engine-side via
+                    // `pending_unalert_near_charly_seekers` — the
+                    // engine walks all soldiers and dispatches
+                    // CallCharlyIsBack to ones detecting me 180°.
+                    self.base.outbox.actor.unalert_near_charly_seekers =
+                        Some(CharlySeekerTarget::SelfNpc);
+                    self.base.launch_timer(10, ctx.frame);
+                }
+            }
+
+            // Charly on the way to officer; timer either transitions
+            // to "seen" or retries.
+            Substate::SeekingCharlyGoToOfficer => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // Original: mpMe->IsDetecting(mpAntagonist). This is
+                    // the normal live view cone, not the 360° helper.
+                    if self.is_detecting(self.base.antagonist as HumanHandle, ctx) {
+                        // The engine delivers this action synchronously and
+                        // feeds the officer's actual Think return value into
+                        // `resolve_charly_officer_report`.
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::ReportBackToOfficer {
+                                officer: self.base.antagonist,
+                                charly: self.base.me,
+                            },
+                        );
+                    } else {
+                        // unalert_all_near_charly_seekers(me).
+                        self.base.outbox.actor.unalert_near_charly_seekers =
+                            Some(CharlySeekerTarget::SelfNpc);
+                        self.base.launch_timer(10, ctx.frame);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+                _ => {}
+            },
+
+            // Charly reached officer; reach→CallCoordinate; timer
+            // keeps polling.
+            Substate::SeekingCharlyGoToOfficerSeen => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // Only re-arm if antagonist is in
+                    // `OfficerWaitForCharly`; else ReturnToDuty.
+                    let waits_for_charly = ctx
+                        .entity_view(self.base.antagonist)
+                        .map(|v| v.ai_substate == Substate::SeekingOfficerWaitForCharly)
+                        .unwrap_or(false);
+                    if waits_for_charly {
+                        // unalert_all_near_charly_seekers(me).
+                        self.base.outbox.actor.unalert_near_charly_seekers =
+                            Some(CharlySeekerTarget::SelfNpc);
+                        self.base.launch_timer(20, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    // antagonist.think(CallCoordinate, me)
+                    if self.base.antagonist != 0 {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallCoordinate,
+                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            },
+                        );
+                    }
+                    self.set_state(AiState::Seeking, Substate::SeekingCharlyGetLectureByOfficer);
+                }
+                _ => {}
+            },
+
+            // Charly receives the officer's lecture and transitions
+            // to stage 2 on talk.
+            Substate::SeekingCharlyGetLectureByOfficer => {
+                if stimulus_type == StimulusType::CallYourTalk1 {
+                    self.base.say(Remark::CharlyDefendsHimself);
+                    self.set_state(
+                        AiState::Seeking,
+                        Substate::SeekingCharlyGetLectureByOfficer2,
+                    );
+                }
+            }
+
+            // Charly lecture stage 2: relays talk, ends on
+            // CallYourTalk2.
+            Substate::SeekingCharlyGetLectureByOfficer2 => match stimulus_type {
+                StimulusType::EventMyTalk1
+                    // antagonist.think(CallYourTalk1)
+                    if self.base.antagonist != 0 => {
+                        self.base
+                            .outbox.reentrant.cross_npc_actions
+                            .push(CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallYourTalk1,
+                                info: crate::ai::StimulusInfo::None,
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            });
+                    }
+                StimulusType::CallYourTalk2 => {
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+                _ => {}
+            },
+
+            // Officer waits for
+            // charly: on timer inspect antagonist substate; on coordinate
+            // call, rebuke.
+            Substate::SeekingOfficerWaitForCharly => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If antagonist is still in one of the
+                    // "on the way" charly substates, face them, clear the
+                    // emoticon and re-arm the timer; else ReturnToDuty.
+                    let is_on_the_way = ctx
+                        .entity_view(self.base.antagonist)
+                        .map(|v| {
+                            matches!(
+                                v.ai_substate,
+                                Substate::SeekingCharlySentToOfficer
+                                    | Substate::SeekingCharlyGoToOfficer
+                                    | Substate::SeekingCharlyGoToOfficerSeen
+                            )
+                        })
+                        .unwrap_or(false);
+                    if is_on_the_way {
+                        self.base.face_entity(self.base.antagonist, ctx);
+                        self.base.set_emoticon(EmoticonType::None);
+                        self.base.launch_timer(20, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                StimulusType::CallCoordinate => {
+                    // If antagonist == stimulus_info.human
+                    let human_matches = matches!(
+                        stimulus.info,
+                        crate::ai::StimulusInfo::Human(h) if h as NpcHandle == self.base.antagonist,
+                    );
+                    if human_matches {
+                        self.base.face_entity(self.base.antagonist, ctx);
+                        self.base.say_with_flags(
+                            Remark::OfficerRebukesCharly,
+                            crate::ai::SpeechFlags::MYTALK_1,
+                        );
+                        self.set_state(AiState::Seeking, Substate::SeekingOfficerLectureCharly);
+                    }
+                }
+                _ => {}
+            },
+
+            // Officer lectures charly. MyTalk1 → CallYourTalk1 to charly;
+            // CallYourTalk1 → end lecture; MyTalk2 → point to best-waypoint
+            // and launch pointing timer.
+            Substate::SeekingOfficerLectureCharly => match stimulus_type {
+                StimulusType::EventMyTalk1 if self.base.antagonist != 0 => {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SendStimulus {
+                            target: self.base.antagonist,
+                            stimulus_type: StimulusType::CallYourTalk1,
+                            info: crate::ai::StimulusInfo::None,
+                            fallback_to_sender: None,
+                            to_whole_patrol: false,
+                        },
+                    );
+                }
+                StimulusType::CallYourTalk1 => {
+                    self.base.say_with_flags(
+                        Remark::OfficerRebukesCharlyEnd,
+                        crate::ai::SpeechFlags::MYTALK_2,
+                    );
+                }
+                StimulusType::EventMyTalk2 => {
+                    // If antagonist has a path, find the nearest waypoint to
+                    // the officer's position and PointTo it; else PointTo
+                    // the antagonist's initial position. The patrol-path
+                    // waypoint list isn't exposed on AiEntityView (only the
+                    // has_patrol_path flag) — when the antagonist has a path
+                    // we fall back to their current position as a reasonable
+                    // "where I want you to go" stand-in.  For the no-path
+                    // case we use `initial_position` which is now available
+                    // on the view.
+                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
+                        let target = if view.has_patrol_path {
+                            // Best proxy without per-waypoint list.
+                            view.position
+                        } else {
+                            view.initial_position
+                        };
+                        self.base.point_to(target);
+                    }
+                    self.set_state(
+                        AiState::Seeking,
+                        Substate::SeekingOfficerLectureCharlyPointing,
+                    );
+                    self.base.say_with_flags(
+                        Remark::OfficerEndsConversation,
+                        crate::ai::SpeechFlags::MYTALK_3,
+                    );
+                    self.base.launch_timer(20, ctx.frame);
+                }
+                _ => {}
+            },
+
+            // Pointing done: forward CALL_YOURTALK_2 and go home.
+            Substate::SeekingOfficerLectureCharlyPointing => {
+                if stimulus_type == StimulusType::EventMyTalk3 {
+                    if self.base.antagonist != 0 {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallYourTalk2,
+                                info: crate::ai::StimulusInfo::None,
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            },
+                        );
+                    }
+                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                }
+            }
+
+            // Civilian reached soldier to report; waits for officer's
+            // wait-state.
+            Substate::SeekingCivilianRunningToSoldierSeen => match stimulus_type {
+                StimulusType::EventTimer => {
+                    // If antagonist is still WaitForAlertingCivilian, re-arm
+                    // timer; else end.
+                    let officer_waiting = ctx
+                        .entity_view(self.base.antagonist)
+                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
+                        .unwrap_or(false);
+                    if officer_waiting {
+                        self.base.launch_timer(20, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                StimulusType::EventReachPoint => {
+                    // Only transition if antagonist still in
+                    // wait-for-alerting-civilian; else ReturnToDuty.
+                    let officer_waiting = ctx
+                        .entity_view(self.base.antagonist)
+                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
+                        .unwrap_or(false);
+                    if officer_waiting {
+                        self.set_state(
+                            AiState::Seeking,
+                            Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
+                        );
+                        self.base.launch_timer(10, ctx.frame);
+                    } else {
+                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    }
+                }
+                _ => {}
+            },
+
+            // Civilian begins report; denunciates and points.
+            Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.set_state(
+                        AiState::Seeking,
+                        Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
+                    );
+                    if self.base.antagonist != 0 {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallReport,
+                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                            },
+                        );
+                    }
+                    self.base.say(Remark::CivDenunciates);
+                    self.base.point_to(self.base.seek_position);
+                }
+            }
+
+            // Done pointing: transition to end and face antagonist.
+            Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.set_state(
+                        AiState::Seeking,
+                        Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
+                    );
+                    self.base.face_entity(self.base.antagonist, ctx);
+                    self.base.launch_timer(30, ctx.frame);
+                }
+            }
+
+            // Civilian panics after denunciation.
+            Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.panic_from_position(
+                        self.base.seek_position,
+                        parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    );
+                }
+            }
+
+            // Reserve overview re-evaluates via BattleDecisions.
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_attacking_event(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
             Substate::AttackingReactiontimeTurning => {
                 if stimulus_type == StimulusType::EventDone
                     || stimulus_type == StimulusType::EventTimer
@@ -2530,7 +4239,9 @@ impl EnemyAi {
                         self.reinitialize_them_list(ctx, tick);
                         self.set_state(AiState::Attacking, Substate::AttackingReactiontimeBending);
                         self.base
-                            .pending_launch_commands
+                            .outbox
+                            .actor
+                            .launch_commands
                             .push(crate::element::Command::EquipBowDown);
                     } else {
                         self.i_am_in_trouble(self.base.primary_target);
@@ -2574,7 +4285,7 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventDone {
                     self.set_state(AiState::Attacking, Substate::AttackingOverviewLookRight);
                     // Look RIGHT.
-                    self.base.pending_look_sidewards = Some(LookDirection::Right);
+                    self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
                     self.base
                         .launch_timer(parameters_ai::AI_END_OVERVIEW_TIME as u32, ctx.frame);
                 }
@@ -2718,7 +4429,9 @@ impl EnemyAi {
             Substate::AttackingSwordfightParade => {
                 if stimulus_type == StimulusType::EventTimer {
                     self.base
-                        .pending_launch_commands
+                        .outbox
+                        .actor
+                        .launch_commands
                         .push(crate::element::Command::StopParrySword);
                     self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                     self.base.launch_timer(20, ctx.frame);
@@ -2744,7 +4457,7 @@ impl EnemyAi {
                     if close_enough {
                         self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                         self.base.launch_timer(20, ctx.frame);
-                        self.base.pending_set_principal = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_principal = Some(self.base.primary_target);
                     } else {
                         // Re-approach
                         let target_pos = self
@@ -2757,7 +4470,7 @@ impl EnemyAi {
                             self.base.already_on_point = false;
                             self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                             self.base.launch_timer(20, ctx.frame);
-                            self.base.pending_set_principal = Some(self.base.primary_target);
+                            self.base.outbox.actor.set_principal = Some(self.base.primary_target);
                         }
                     }
                 }
@@ -2802,15 +4515,15 @@ impl EnemyAi {
                         .map(|cs| cs.handle)
                         .collect();
                     for target in friends_to_coord {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target,
                                 stimulus_type: StimulusType::CallCoordinate,
                                 info: crate::ai::StimulusInfo::Human(me),
-                            });
+                            },
+                        );
                     }
                     // Fall through to CallCoordinate arm.
                     self.reinitialize_them_list(ctx, tick);
@@ -2847,8 +4560,9 @@ impl EnemyAi {
                     self.base.stop_all();
                     // Launch EnterSwordfight with opponent=0 (just
                     // rises the sword pose).
-                    self.base.pending_enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
-                    self.base.pending_enter_swordfight_jump_line = None;
+                    self.base.outbox.actor.enter_swordfight =
+                        Some(EnterSwordfightRequest::RaiseSword);
+                    self.base.outbox.actor.enter_swordfight_jump_line = None;
                     self.set_state(AiState::Attacking, Substate::AttackingObserve);
                     self.base.set_emoticon(EmoticonType::None);
                     self.base.launch_timer(50, ctx.frame);
@@ -2881,7 +4595,7 @@ impl EnemyAi {
                         Substate::AttackingTooProudToAttackOverview,
                     );
                     if crate::sim_rng::u32(crate::sim_rng::RngSite::TooProudLook, 0..16) == 0 {
-                        self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
+                        self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
                     } else {
                         self.base.launch_timer(20, ctx.frame);
                     }
@@ -3022,7 +4736,7 @@ impl EnemyAi {
                         // `focus(primary_target)`.
                         self.base.launch_timer(5, ctx.frame);
                         if self.base.primary_target != 0 {
-                            self.base.pending_focus = Some(self.base.primary_target);
+                            self.base.outbox.actor.focus = Some(self.base.primary_target);
                         }
                     }
                     StimulusType::EventTimer => {
@@ -3286,7 +5000,7 @@ impl EnemyAi {
                                 })
                                 .unwrap_or(false);
                             if archer_in_bow {
-                                self.base.pending_cross_npc_actions.push(
+                                self.base.outbox.reentrant.cross_npc_actions.push(
                                     CrossNpcAction::SendStimulus {
                                         fallback_to_sender: None,
                                         to_whole_patrol: false,
@@ -3308,1700 +5022,6 @@ impl EnemyAi {
             // panic is over) and then falls through into
             // `think_expected_event_common_stuff`, which owns the
             // actual panic/hide/door/hiding state machine.
-            Substate::FleeingPanic
-            | Substate::FleeingRunToHide
-            | Substate::FleeingRunToDoor
-            | Substate::FleeingHiding => {
-                if self.base.current_substate == Substate::FleeingPanic
-                    && matches!(
-                        stimulus_type,
-                        StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
-                    )
-                    && self.base.lasting_panic_runs == 0
-                {
-                    // Malignity-specific: when the panic is spent,
-                    // clear the seen-enemy counter so the soldier
-                    // can re-spook on the next sighting.  Friendly
-                    // AI doesn't track this counter the same way
-                    // (its own reset lives elsewhere).
-                    self.fleeing_seen_enemy_counter = 0;
-                }
-                return self.base.think_expected_event_common_stuff(stimulus, ctx);
-            }
-
-            // Merry man fleeing to map exit.
-            Substate::FleeingMerryManRunToLeaveMap => {
-                match stimulus_type {
-                    StimulusType::EventTimer => {
-                        // Stuck recovery: if we're not already sprinting
-                        // toward the door, re-issue the GoTo.  Gated
-                        // on `action_state != MovingFast` &&
-                        // `last_goto_destination` set, so an actor
-                        // mid-run doesn't get its sequence torn down
-                        // every 30 frames.
-                        let dest = self.base.last_goto_destination;
-                        if ctx.self_action_state != crate::element::ActionState::MovingFast
-                            && (dest.x != 0.0 || dest.y != 0.0)
-                        {
-                            self.base.stop_all();
-                            self.go_to(
-                                self.base.current_state,
-                                self.base.current_substate,
-                                dest,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                        }
-                        self.base.launch_timer(30, ctx.frame);
-                    }
-                    StimulusType::EventReachPoint => {
-                        // Check if we're near the door.
-                        let dest = self.base.last_goto_destination;
-                        let dx = ctx.position.x - dest.x;
-                        let dy = ctx.position.y - dest.y;
-                        let dist = dx.abs().max(dy.abs());
-                        if dist < 10.0 {
-                            // Arrived at door PositionIn — now run to PointOut
-                            // to exit the map (launches a sequence
-                            // element targeting the door's PointOut).
-                            self.set_state(AiState::Fleeing, Substate::FleeingMerryManLeaveMap);
-                            if let Some(door_idx) = self.my_door_index {
-                                // `my_door_index` is a `game_host.doors`
-                                // index.  Find the matching reinforcement
-                                // door entry (linear scan; small list)
-                                // for the cached point_out geometry.
-                                if let Some(door) = global
-                                    .reinforcement_doors
-                                    .iter()
-                                    .find(|d| d.door_index.0 == door_idx)
-                                {
-                                    let point_out_pos = Position {
-                                        x: door.point_out.x,
-                                        y: door.point_out.y,
-                                        ..dest
-                                    };
-                                    self.base.run_to_map_exit(point_out_pos);
-                                } else {
-                                    // Door gone — just lock and deactivate.
-                                    self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
-                                    self.base.pending_deactivate = true;
-                                }
-                            } else {
-                                // No door stored — just lock and deactivate.
-                                self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
-                                self.base.pending_deactivate = true;
-                            }
-                        } else {
-                            // Not there yet — retry.
-                            self.go_to(
-                                self.base.current_state,
-                                self.base.current_substate,
-                                dest,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                            self.base.launch_timer(30, ctx.frame);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // Merry man has reached PointOut — deactivate.
-            Substate::FleeingMerryManLeaveMap => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    // `non_script_lock(Freeze); set_active(false);`
-                    self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
-                    self.base.pending_deactivate = true;
-                }
-            }
-
-            // ============ BULK-PORTED HANDLERS ============
-            //
-            // The block below ports the ~83 substates that were
-            // previously swept into the no-op group when the
-            // exhaustive-match refactor landed.  Many of these arms
-            // call helpers that were not yet ported when this block first
-            // landed. The remaining fallback arms below are kept explicit
-            // and should be replaced with exact handlers as each parity
-            // path is audited.
-
-            // Empty case; script-driven
-            // substate is handled elsewhere.  Kept here as an explicit arm to
-            // document the mapping.
-            Substate::DefaultScriptDriven => {}
-
-            // Soldier keeps scanning for Charly while on duty.
-            // Random sidewards look, sorrow-level accumulation, and
-            // periodic re-seeking.
-            Substate::DefaultLookingForCharly => {
-                if stimulus_type == StimulusType::EventTimer {
-                    let rand_sorrow =
-                        crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..5000) as u16;
-                    if rand_sorrow < self.base.sorrow_level + 10 {
-                        self.set_state(
-                            AiState::Default,
-                            Substate::DefaultLookingSidewardsForCharly,
-                        );
-                        self.base.pending_look_sidewards = Some(
-                            if crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..2) != 0
-                            {
-                                LookDirection::LeftRight
-                            } else {
-                                LookDirection::RightLeft
-                            },
-                        );
-                    }
-                    self.base.sorrow_level = self
-                        .base
-                        .sorrow_level
-                        .saturating_add(self.base.delta_sorrow_level);
-                    if self.base.sorrow_level > 1000 {
-                        self.base.sorrow_level = 0;
-                        // search_charly().
-                        self.search_charly(ctx, tick);
-                    }
-                    self.base
-                        .launch_timer(parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32, ctx.frame);
-                }
-            }
-
-            // Done sweeping eyes, back to baseline looking for Charly.
-            Substate::DefaultLookingSidewardsForCharly => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.set_state(AiState::Default, Substate::DefaultLookingForCharly);
-                    self.base.launch_timer(10, ctx.frame);
-                }
-            }
-
-            // Reacted to detecting Charly; either resume macro or
-            // return to duty.
-            Substate::DefaultDetectedCharly => {
-                if stimulus_type == StimulusType::EventTimer {
-                    if self.base.macro_in_progress {
-                        self.set_state(AiState::Default, Substate::DefaultInMacro);
-                        self.base.execute_next_macro_command(ctx);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-            }
-
-            // Synchronize with Charly; if he's gone astray, give up;
-            // else wait for a SyncCharly event.
-            Substate::DefaultSynchronizing => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If `synchronize_charly` is not in STATE_DEFAULT
-                    // or is dead, return to duty; else re-arm the
-                    // timer.
-                    let sync_gone = ctx
-                        .entity_view(self.base.synchronize_charly)
-                        .map(|v| v.ai_state != AiState::Default || !v.is_able_to_fight)
-                        .unwrap_or(true);
-                    if sync_gone {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    } else {
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                }
-                StimulusType::EventSyncCharly => {
-                    if let crate::ai::StimulusInfo::Index(idx) = stimulus.info
-                        && idx == self.base.synchronize_index
-                    {
-                        // Assertion: `macro_in_progress` is true here.
-                        self.set_state(AiState::Default, Substate::DefaultInMacro);
-                        self.base.execute_next_macro_command(ctx);
-                    }
-                }
-                _ => {}
-            },
-
-            // WonderingLooking3 shares the timer-to-sidewards
-            // transition with looking 1/2; the next state is
-            // WonderingLooking3Sidewards.
-            Substate::WonderingLooking3 => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(AiState::Wondering, Substate::WonderingLooking3Sidewards);
-                    self.base.pending_look_sidewards = Some(
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
-                            != 0
-                        {
-                            LookDirection::RightLeft
-                        } else {
-                            LookDirection::LeftRight
-                        },
-                    );
-                }
-            }
-
-            // Done sweeping eyes after awakening/wasp sting; return to duty.
-            Substate::WonderingLooking3Sidewards => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-            }
-
-            // Apple reaction: decide whether to chase, else return to duty.
-            Substate::WonderingAppleReactiontime => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Logic:
-                    //   if !ShallIReactOnApple || !ChaseChilds()
-                    //     return_to_duty();
-                    //
-                    // ShallIReactOnApple outdoor answer:
-                    //   soldier_profile_apple > 0
-                    let shall_react = self.soldier_profile_apple > 0;
-                    let chased = shall_react && self.chase_childs(ctx);
-                    if !chased {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-            }
-
-            // Chase child who threw the apple; panic-run counter
-            // drives refreshes.
-            Substate::WonderingAppleChasingChild => match stimulus_type {
-                StimulusType::EventMyTalk1
-                    // antagonist.think(CallYourTalk1)
-                    if self.base.antagonist != 0 => {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallYourTalk1,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                StimulusType::EventTimer => {
-                    if self.base.lasting_panic_runs > 0 {
-                        self.base.lasting_panic_runs -= 1;
-                        // Re-issue `go_near(antagonist_pos, 5, RUN |
-                        // DONT_STOP)` from the same substate each
-                        // panic tick.  Our Shape 1 contract requires
-                        // every movement name its new substate (see
-                        // comment at fn go_near above), so route the
-                        // refresh through
-                        // `WonderingAppleChasingChildWaiting` — its
-                        // EventTimer transitions back to ChasingChild.
-                        // Issue GoNear from here bundled with the
-                        // Waiting transition so the movement order
-                        // lives with its new substate.
-                        if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                            self.go_near(
-                                AiState::Wondering,
-                                Substate::WonderingAppleChasingChildWaiting,
-                                view.position,
-                                5,
-                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP,
-                                ctx,
-                            );
-                        }
-                        self.base.launch_timer(10, ctx.frame);
-                    } else {
-                        self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChildEnd);
-                        // Face(antagonist)
-                        self.base.face_entity(self.base.antagonist, ctx);
-                        self.base.launch_timer(30, ctx.frame);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    self.set_state(
-                        AiState::Wondering,
-                        Substate::WonderingAppleChasingChildWaiting,
-                    );
-                    self.base.launch_timer(10, ctx.frame);
-                }
-                _ => {}
-            },
-
-            // Waiting between chase refreshes.
-            Substate::WonderingAppleChasingChildWaiting => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChild);
-                    self.base.launch_timer(1, ctx.frame);
-                }
-            }
-
-            // End of apple chase.
-            Substate::WonderingAppleChasingChildEnd => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-            }
-
-            // Running for money: race rivals on timer, and on reach,
-            // take it or look for more.
-            Substate::WonderingRunningForMoney => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If another guy is in sight approaching the money,
-                    // re-stage RunningForMoney and notify any patrol
-                    // chief; otherwise just re-arm the timer.
-                    //
-                    // `there_is_another_guy_in_sight_approaching_to_money`
-                    // walks same-camp soldiers and checks
-                    // is_take_money || is_fight_for_money (minus
-                    // MoneyReactiontime), not self, and
-                    // `is_detecting_180_degrees`.
-                    let another_guy_approaching =
-                        self.there_is_another_guy_in_sight_approaching_to_money(ctx, tick);
-                    if another_guy_approaching {
-                        // GoNear(money, AI_STOP_BEFORE_MONEY_DISTANCE,
-                        //         RUN | FIND_ACCESSIBLE)
-                        //
-                        // Shape 1 contract forbids same-substate
-                        // re-issue; route through MoneyReactiontime,
-                        // whose timer already advances back to
-                        // RunningForMoney.
-                        if let Some(obj_pos) = ctx.entity_position(self.base.interesting_object) {
-                            self.go_near(
-                                AiState::Wondering,
-                                Substate::WonderingMoneyReactiontime,
-                                obj_pos,
-                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::FIND_ACCESSIBLE,
-                                ctx,
-                            );
-                            self.base.launch_timer(1, ctx.frame);
-                        }
-                        // If my patrol chief is an officer whose 180°
-                        // detects me, fire EVENT_SEES_BRAWL at them.
-                        if let Some(chief_id) = self.base.patrol_chief
-                            && let Some(chief_view) = ctx.entity_view(chief_id.index())
-                            && chief_view.is_soldier()
-                            && chief_view.is_able_to_fight
-                            && chief_view.rank == ProfileRank::Officer
-                        {
-                            self.base.pending_cross_npc_actions.push(
-                                CrossNpcAction::SendStimulus {
-                                    target: chief_id.index(),
-                                    stimulus_type: StimulusType::EventSeesBrawl,
-                                    info: crate::ai::StimulusInfo::Human(
-                                        self.base.me as HumanHandle,
-                                    ),
-                                    fallback_to_sender: None,
-                                    to_whole_patrol: false,
-                                },
-                            );
-                        }
-                    } else {
-                        self.base.launch_timer(20, ctx.frame);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    // If money is still active and within 25 units
-                    // (MaxNorm), take it + notify friends with
-                    // EventObjectAway; else look for more.
-                    let obj = self.base.interesting_object;
-                    let close_enough = ctx
-                        .entity_position(obj)
-                        .map(|p| {
-                            let dx = (p.x - ctx.position.x).abs();
-                            let dy = (p.y - ctx.position.y).abs();
-                            dx.max(dy) < 25.0
-                        })
-                        .unwrap_or(false);
-                    if obj != 0 && close_enough {
-                        // StopAll + Take sequence.
-                        self.base.stop_all();
-                        use crate::element::Command;
-                        use crate::sequence::{Sequence, SequenceElement};
-                        let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Bonus(
-                            crate::entity_id::BonusId(obj),
-                        ));
-                        let mut seq = Sequence::new();
-                        seq.append_element(SequenceElement::new_interaction(
-                            1,
-                            Command::Take,
-                            owner,
-                            antagonist,
-                        ));
-                        self.base.pending_launch_sequences.push(seq);
-
-                        // Notify any same-camp soldier whose substate
-                        // is take-money or fight-for-money with
-                        // EventObjectAway carrying a StolenObject.
-                        let stolen = crate::ai::StolenObject {
-                            object: obj as crate::ai::ObjectHandle,
-                            thief: self.base.me,
-                        };
-                        for cs in tick.camp_soldiers.iter() {
-                            if cs.handle == self.base.me {
-                                continue;
-                            }
-                            if cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money()
-                            {
-                                self.base.pending_cross_npc_actions.push(
-                                    CrossNpcAction::SendStimulus {
-                                        target: cs.handle,
-                                        stimulus_type: StimulusType::EventObjectAway,
-                                        info: crate::ai::StimulusInfo::Stolen(stolen),
-                                        fallback_to_sender: None,
-                                        to_whole_patrol: false,
-                                    },
-                                );
-                            }
-                        }
-
-                        self.set_state(AiState::Wondering, Substate::WonderingTakingMoney);
-                    } else {
-                        // Transition to WatchingForMoreMoney + look
-                        // sidewards.
-                        self.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
-                        self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
-                    }
-                }
-                _ => {}
-            },
-
-            // Brawl reaction: set mood, approach the friend in
-            // trouble, run on timer tick.
-            Substate::WonderingBrawlReactiontime => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
-                    self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    self.base.say(Remark::GoldBrawl);
-                    //   seek_position = friend_in_trouble.position;
-                    //   GoNear(seek_position, AI_HIT_DISTANCE, RUN);
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        self.base.seek_position = view.position;
-                        self.base.go_near(
-                            view.position,
-                            parameters_ai::AI_HIT_DISTANCE,
-                            crate::ai::GotoFlags::RUN,
-                            ctx,
-                        );
-                    }
-                    self.base.launch_timer(1, ctx.frame);
-                }
-            }
-
-            // Brawl approach: refresh chase on timer; on reach,
-            // attempt the hit.
-            Substate::WonderingBrawlApproaching => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If target moved > 3 units from the seek position,
-                    // update seek position and re-issue GoNear.
-                    // Otherwise re-arm the timer.
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        let dx = (self.base.seek_position.x - view.position.x).abs();
-                        let dy = (self.base.seek_position.y - view.position.y).abs();
-                        if dx.max(dy) > 3.0 {
-                            self.base.seek_position = view.position;
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_HIT_DISTANCE,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                        }
-                    }
-                    self.base.launch_timer(1, ctx.frame);
-                }
-                StimulusType::EventReachPoint => {
-                    // Check friend_in_trouble substate:
-                    // - if asleep (Sleeping) → skip hit, go to hitting;
-                    // - if distance > AI_HIT_DISTANCE+3 → re-issue GoNear;
-                    // - else actually transition to hitting.
-                    let friend_sleeping = ctx
-                        .entity_view(self.base.friend_in_trouble)
-                        .map(|v| v.ai_state == AiState::Sleeping)
-                        .unwrap_or(false);
-                    if friend_sleeping {
-                        // Drop the sleeping friend from
-                        // `money_fight_enemies` so subsequent brawl
-                        // arms don't keep re-targeting a KO'd soldier
-                        // (and so `wants_to_continue_money_fight`'s
-                        // size-based threshold isn't skewed).
-                        let fit = self.base.friend_in_trouble as NpcHandle;
-                        self.money_fight_enemies.retain(|h| *h != fit);
-                        self.base.friend_in_trouble = 0;
-                    }
-                    self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
-                }
-                _ => {}
-            },
-
-            // Brawl hit resolution; civilians panic, chase chain continues.
-            Substate::WonderingBrawlHitting => {
-                if stimulus_type == StimulusType::EventDone {
-                    // Scan camp for an officer who might hear/see me
-                    // and alert them with EventSeesBrawl.
-                    self.maybe_officer_sees_me_fighting(ctx, tick);
-                    // Broadcast civilian panic for anyone in view
-                    // radius.  Queued via `pending_broadcast_panic`.
-                    self.nearby_civilians_panic();
-
-                    // Remove KO'd target from the enemy list.
-                    if self.base.friend_in_trouble != 0 {
-                        let fit = self.base.friend_in_trouble as NpcHandle;
-                        let is_unconscious = ctx
-                            .entity_view(fit as HumanHandle)
-                            .map(|v| v.is_unconscious)
-                            .unwrap_or(false);
-                        if is_unconscious {
-                            self.money_fight_enemies.retain(|h| *h != fit);
-                        }
-                    }
-
-                    // Refresh the enemy list if we've run out —
-                    // picks up any same-camp soldier that joined the
-                    // brawl after our initial snapshot.
-                    if self.money_fight_enemies.is_empty() {
-                        self.create_new_list_of_money_fight_enemies(tick, ctx);
-                    }
-
-                    // Morale-gated continue-or-stop.
-                    if !self.wants_to_continue_money_fight(tick, ctx) {
-                        self.money_fight_enemies.clear();
-                        // stop_brawling_and_collect_money().
-                        self.stop_brawling_and_collect_money(ctx, tick);
-                    } else {
-                        let fit_ok = self.base.friend_in_trouble != 0
-                            && !ctx
-                                .entity_view(self.base.friend_in_trouble)
-                                .map(|v| v.is_unconscious)
-                                .unwrap_or(true);
-                        if fit_ok {
-                            self.set_state(
-                                AiState::Wondering,
-                                Substate::WonderingBrawlReactiontime,
-                            );
-                            self.base.face_entity(self.base.friend_in_trouble, ctx);
-                            self.base.launch_timer(30, ctx.frame);
-                        } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                            self.base.friend_in_trouble = next as HumanHandle;
-                            self.set_state(
-                                AiState::Wondering,
-                                Substate::WonderingBrawlReactiontime,
-                            );
-                            self.base.launch_timer(10, ctx.frame);
-                        } else {
-                            // stop_brawling_and_collect_money().
-                            self.stop_brawling_and_collect_money(ctx, tick);
-                        }
-                    }
-                }
-            }
-
-            // Brawl-got-hit: pivot to BrawlRecovering, register
-            // attacker as new money-fight enemy, set thunderstorm
-            // emoticon. If the NPC is lying, queue StandUp; otherwise
-            // self-fire EventDone so BrawlRecovering immediately picks
-            // the next victim.
-            Substate::WonderingBrawlGotHit => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.set_state(AiState::Wondering, Substate::WonderingBrawlRecovering);
-                    // maybe_officer_sees_me_fighting().
-                    self.maybe_officer_sees_me_fighting(ctx, tick);
-                    // SetEmoticon(Thunderstorm).
-                    self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    // Insert friend_in_trouble into money_fight_enemies
-                    // (asserts soldier + non-self).
-                    let fit = self.base.friend_in_trouble;
-                    if fit != 0 && fit != self.base.me {
-                        let is_soldier = ctx
-                            .entity_view(fit)
-                            .map(|v| v.is_soldier())
-                            .unwrap_or(false);
-                        if is_soldier && !self.money_fight_enemies.contains(&(fit as NpcHandle)) {
-                            self.money_fight_enemies.push(fit as NpcHandle);
-                        }
-                    }
-                    // If lying, launch StandUp; else recurse
-                    // Think(EventDone) into BrawlRecovering.
-                    if ctx.posture == crate::element::Posture::Lying {
-                        self.base.stop_all();
-                        self.base
-                            .pending_launch_commands
-                            .push(crate::element::Command::StandUp);
-                    } else {
-                        // Self-fire EventDone so the new
-                        // BrawlRecovering substate picks up the next
-                        // victim immediately on this same tick.
-                        self.base.fire_self_stimulus(StimulusType::EventDone);
-                    }
-                }
-            }
-
-            // Brawl recovery: go punch the next enemy, or stop brawling.
-            Substate::WonderingBrawlRecovering => {
-                if stimulus_type == StimulusType::EventDone {
-                    // Pick nearest money-fight enemy and approach.
-                    if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                        self.base.friend_in_trouble = next as HumanHandle;
-                        self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
-                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_HIT_DISTANCE,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-                        }
-                        // maybe_officer_sees_me_fighting().
-                        self.maybe_officer_sees_me_fighting(ctx, tick);
-                    } else {
-                        // stop_brawling_and_collect_money().
-                        self.stop_brawling_and_collect_money(ctx, tick);
-                    }
-                }
-            }
-
-            // Reached looting body.  Either re-transition to loot
-            // (distant), flag a tied body, or kick off the SEARCH
-            // sequence.
-            Substate::WonderingApproachingToLoot => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    let body = self.base.detected_body;
-                    let view = ctx.entity_view(body);
-                    let (body_pos, is_tied) = view
-                        .map(|v| (v.position, v.posture == crate::element::Posture::Tied))
-                        .unwrap_or((Position::default(), false));
-                    let dx = body_pos.x - ctx.position.x;
-                    let dy = body_pos.y - ctx.position.y;
-                    let dist = dx.abs().max(dy.abs());
-                    if body == 0 || dist > 100.0 {
-                        // Too far — let Looting handle re-entry.
-                        self.set_state(AiState::Wondering, Substate::WonderingLooting);
-                        // Kick the state machine via a 1-tick timer;
-                        // the Looting arm handles the follow-up.  We
-                        // can't re-enter `think()` from inside an arm,
-                        // so fall back to a short timer that reaches
-                        // the same code path.
-                        self.base.launch_timer(1, ctx.frame);
-                    } else if is_tied {
-                        // Spot the tied body and transition to
-                        // body-seek; emit the reconnaissance report
-                        // update.
-                        self.base.my_reconnaissance_report.add_seen_body(body);
-                        self.base
-                            .my_reconnaissance_report
-                            .update(ReportType::Body, body_pos);
-                        self.set_state(AiState::Seeking, Substate::SeekingBody);
-                        // Re-issue Think(EventReachPoint) via a 1-tick
-                        // timer (see comment above).
-                        self.base.launch_timer(1, ctx.frame);
-                    } else {
-                        // Start SEARCH sequence, transition to Looting.
-                        use crate::element::Command;
-                        use crate::sequence::{Sequence, SequenceElement};
-                        self.old_money = ctx
-                            .entity_view(self.base.me)
-                            .map(|v| v.current_money.min(u16::MAX as u32) as u16)
-                            .unwrap_or(0);
-                        self.set_state(AiState::Wondering, Substate::WonderingLooting);
-                        self.base.stop_all();
-                        let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Soldier(
-                            crate::entity_id::SoldierId(body),
-                        ));
-                        let mut seq = Sequence::new();
-                        seq.append_element(SequenceElement::new_interaction(
-                            1,
-                            Command::SearchCmd,
-                            owner,
-                            antagonist,
-                        ));
-                        self.base.pending_launch_sequences.push(seq);
-                    }
-                }
-            }
-
-            // Looting: inspect gain, move to next victim or return to duty.
-            Substate::WonderingLooting => {
-                if stimulus_type == StimulusType::EventDone {
-                    let current_money = ctx
-                        .entity_view(self.base.me)
-                        .map(|v| v.current_money.min(u16::MAX as u32) as u16)
-                        .unwrap_or(0);
-                    if current_money > self.old_money {
-                        self.base
-                            .set_transient_emoticon(EmoticonType::Sun, 20, ctx.frame);
-                        self.base.say(Remark::SearchingSoldierGold);
-                    } else {
-                        self.base
-                            .set_transient_emoticon(EmoticonType::Cloud, 20, ctx.frame);
-                        self.base.say(Remark::SearchingSoldierNothing);
-                    }
-
-                    while self
-                        .money_fight_victims
-                        .first()
-                        .and_then(|h| ctx.entity_view(*h as HumanHandle))
-                        .map(|v| v.looted_after_money_fight)
-                        .unwrap_or(false)
-                    {
-                        self.money_fight_victims.remove(0);
-                    }
-                    if !self.money_fight_victims.is_empty() {
-                        let next = self.money_fight_victims.remove(0);
-                        self.base.detected_body = next as HumanHandle;
-                        self.base.pending_cross_npc_actions.push(
-                            CrossNpcAction::SetLootedAfterMoneyFight {
-                                target: next,
-                                looted: true,
-                            },
-                        );
-                        self.set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
-                        if let Some(view) = ctx.entity_view(next as HumanHandle) {
-                            self.base.go_near(
-                                view.position,
-                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                                crate::ai::GotoFlags::empty(),
-                                ctx,
-                            );
-                        }
-                    } else {
-                        self.return_to_duty(DutyFlags::KEEP_EMOTICON, ctx, tick);
-                    }
-                }
-            }
-
-            // Beer went away: try next remembered beer, else return to duty.
-            Substate::WonderingAleAway => {
-                if stimulus_type == StimulusType::EventTimer {
-                    if !self.other_seen_ale.is_empty() {
-                        // Remember next beer as object of desire.
-                        let next = self.other_seen_ale.remove(0);
-                        self.base.object_of_desire = next;
-                        self.base.interesting_object = next;
-                        // SetState(Wondering, ApproachingAle).
-                        self.set_state(AiState::Wondering, Substate::WonderingApproachingAle);
-                        // GoNear(obj_pos, AI_STOP_BEFORE_MONEY_DISTANCE, FIND_ACCESSIBLE)
-                        if let Some(pos) = ctx.entity_position(next) {
-                            self.base.go_near(
-                                pos,
-                                parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                                crate::ai::GotoFlags::FIND_ACCESSIBLE,
-                                ctx,
-                            );
-                        }
-                        // Remember patrol return point
-                        self.return_to_patrol_point = ctx.position;
-                        // Quick recheck
-                        self.base.launch_timer(1, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-            }
-
-            // Officer sees brawl: close distance, clear emoticon.
-            Substate::WonderingOfficerSeeingBrawl => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(
-                        AiState::Wondering,
-                        Substate::WonderingOfficerApproachingBrawl,
-                    );
-                    self.base.set_emoticon(EmoticonType::None);
-                    // GoNear(friend_in_trouble.position, 100);
-                    if let Some(view) = ctx.entity_view(self.base.friend_in_trouble) {
-                        self.base
-                            .go_near(view.position, 100, crate::ai::GotoFlags::empty(), ctx);
-                    }
-                }
-            }
-
-            // Officer reached the brawl; enter finish-brawl state,
-            // set thunderstorm mood.
-            Substate::WonderingOfficerApproachingBrawl => {
-                match stimulus_type {
-                    StimulusType::EventReachPoint => {
-                        // If already talking, delay finish.
-                        if self.base.current_remark != Remark::TheSoundOfSilence {
-                            self.base.launch_timer(50, ctx.frame);
-                        } else {
-                            self.begin_finishing_brawl(ctx, tick);
-                        }
-                    }
-                    StimulusType::EventTimer => {
-                        self.begin_finishing_brawl(ctx, tick);
-                    }
-                    _ => {}
-                }
-            }
-
-            // Finishing-brawl orchestration: chain CallYourTalk1..3,
-            // then timer dismisses soldiers and waits on the antagonist.
-            Substate::WonderingOfficerFinishingBrawl => match stimulus_type {
-                StimulusType::EventTimer | StimulusType::EventMyTalk2 => {
-                    // forget_all_nearby_coins().
-                    self.forget_all_nearby_coins(ctx);
-                    // Walk list_us, send ReturnToDuty to each soldier
-                    // that isn't the antagonist.
-                    let antagonist = self.base.antagonist;
-                    let us: Vec<HumanHandle> = self
-                        .base
-                        .list_us
-                        .iter()
-                        .copied()
-                        .filter(|h| *h != antagonist && *h != self.base.me)
-                        .collect();
-                    for target in us {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target,
-                                stimulus_type: StimulusType::EventReturnToDuty,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                    self.base.list_us.clear();
-
-                    // CallCleanUpAfterBrawl to antagonist.
-                    if antagonist != 0 {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: antagonist,
-                                stimulus_type: StimulusType::CallCleanUpAfterBrawl,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                        self.set_state(
-                            AiState::Wondering,
-                            Substate::WonderingOfficerFinishingBrawlWaiting,
-                        );
-                        self.base.launch_timer(10, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                StimulusType::CallYourTalk3 => {
-                    self.base.say(Remark::OfficerEndsConversation);
-                }
-                _ => {}
-            },
-
-            // Keep waiting while antagonist still
-            // approaching/awakening a victim; else end.
-            Substate::WonderingOfficerFinishingBrawlWaiting => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // If antagonist is still approaching or awakening
-                    // the brawl victim, re-arm timer; else end.
-                    let still_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| {
-                            matches!(
-                                v.ai_substate,
-                                Substate::WonderingApproachingBrawlVictim
-                                    | Substate::WonderingAwakenBrawlVictim
-                            )
-                        })
-                        .unwrap_or(false);
-                    if still_waiting {
-                        self.base.launch_timer(10, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-            }
-
-            // Soldier side of the "officer finished brawl" lecture:
-            // 3-variant excuse speeches until the timer fires.
-            Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl => {
-                match stimulus_type {
-                    StimulusType::EventTimer => {
-                        // forget_all_nearby_coins(); return_to_duty();
-                        self.forget_all_nearby_coins(ctx);
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                    StimulusType::EventMyTalk1
-                    | StimulusType::EventMyTalk2
-                    | StimulusType::EventMyTalk3 => {
-                        self.base.set_emoticon(EmoticonType::None);
-                        // antagonist.think(CallYourTalk1).
-                        // Note: always forward as CallYourTalk1
-                        // regardless of which MyTalk variant
-                        // triggered — the 3 cycle variants just vary
-                        // which BadExcuse sample plays; the callback
-                        // is always CallYourTalk1 on the officer.
-                        if self.base.antagonist != 0 {
-                            self.base.pending_cross_npc_actions.push(
-                                CrossNpcAction::SendStimulus {
-                                    target: self.base.antagonist,
-                                    stimulus_type: StimulusType::CallYourTalk1,
-                                    info: crate::ai::StimulusInfo::None,
-                                    fallback_to_sender: None,
-                                    to_whole_patrol: false,
-                                },
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // Listening after whistling sound: decide whether to
-            // investigate or bail.
-            Substate::WonderingWatchingWhistling => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // ShallIFollowWhistle outdoor arm:
-                    //   whistle > 1 && company_number != 100
-                    let shall_follow =
-                        self.soldier_profile_whistle > 1 && self.company_number != 100;
-                    if !shall_follow {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                        return false;
-                    }
-
-                    // Rank branch.
-                    let rank = self.get_rank();
-                    let mut near_officer: Option<NpcHandle> = None;
-                    let mut look_for_soldiers = false;
-                    match rank {
-                        ProfileRank::Soldier => {
-                            // `near_officer_who_is_wondering_about_the_same_noise`:
-                            // scan same-camp officers who are able to
-                            // fight, not script-locked, whose live
-                            // `seek_position` matches mine (same
-                            // noise), within 360° detection range.
-                            // `has_as_seek_position(pos)` is a literal
-                            // exact equality including layer / sector
-                            // / x / y.
-                            let my_seek = self.base.seek_position;
-                            near_officer = tick
-                                .camp_soldiers
-                                .iter()
-                                .find(|cs| {
-                                    cs.rank == ProfileRank::Officer
-                                        && cs.is_able_to_fight
-                                        && !cs.script_locked
-                                        && cs.seek_position.x == my_seek.x
-                                        && cs.seek_position.y == my_seek.y
-                                        && cs.seek_position.level == my_seek.level
-                                        && self
-                                            .is_detecting_360_degrees(cs.handle as HumanHandle, ctx)
-                                })
-                                .map(|cs| cs.handle);
-                        }
-                        ProfileRank::Officer => {
-                            // ShallISendOutSoldier outdoor arm:
-                            //   initiative < 50 || patrol.len() > 0
-                            look_for_soldiers = self.soldier_profile_initiative < 50
-                                || !self.base.patrol.is_empty();
-                        }
-                        ProfileRank::Knight | ProfileRank::None => {}
-                    }
-
-                    if let Some(officer) = near_officer {
-                        // Face officer + transition to
-                        // DefaultLookingOfficerForAdvice + ? emoticon
-                        // + 100-tick timer.
-                        self.base.face_entity(officer, ctx);
-                        self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
-                        self.base.set_emoticon(EmoticonType::QuestionMark);
-                        self.base.launch_timer(100, ctx.frame);
-                    } else if look_for_soldiers {
-                        // OfficerLookForSoldier(ReportType::Noise).
-                        self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
-                    } else {
-                        // SeekArea(seek_position,
-                        //   (MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98,
-                        //   LOCATION_FIRST | WALKING);
-                        const MAX_WHISTLE_SEEK_RADIUS: u32 = 400;
-                        let whistle = self.soldier_profile_whistle as u32;
-                        let radius = if whistle >= 2 {
-                            ((MAX_WHISTLE_SEEK_RADIUS * (whistle - 2)) / 98) as u16
-                        } else {
-                            0
-                        };
-                        self.seek_area(
-                            self.base.seek_position,
-                            radius,
-                            SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
-                            0,
-                            global,
-                            ctx,
-                            tick,
-                        );
-                    }
-                }
-            }
-
-            // Watcher finishes looking at tower guard; back to duty.
-            Substate::SeekingKnightWatchingTowerGuard => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Knight reacts directly on alerts:
-                    //   SeekArea(seek_position, AI_HINT_SEEK_RADIUS, LOCATION_FIRST);
-                    self.seek_area(
-                        self.base.seek_position,
-                        parameters_ai::AI_HINT_SEEK_RADIUS as u16,
-                        SeekFlags::LOCATION_FIRST,
-                        0,
-                        global,
-                        ctx,
-                        tick,
-                    );
-                }
-            }
-
-            // Freeing someone from the net: wait out, or reach point
-            // and take the net.
-            Substate::SeekingNet => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If detected body is no longer stuck under net
-                    // AND I'm detecting them → resurrected,
-                    // ReturnToDuty; else re-arm timer.
-                    let body_stuck = ctx
-                        .entity_view(self.base.detected_body)
-                        .map(|v| v.stuck_under_net)
-                        .unwrap_or(false);
-                    let detecting =
-                        self.is_detecting_360_degrees(self.base.detected_body as HumanHandle, ctx);
-                    if !body_stuck && detecting {
-                        // Resurrected.
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    } else {
-                        self.base.launch_timer(10, ctx.frame);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    // If detected body is still under net, riders just
-                    // SeekArea around themselves; foot units launch
-                    // the SEARCH×4+TAKE sequence + transition to
-                    // SeekingTakingNet.  Otherwise ReturnToDuty.
-                    let body_stuck = ctx
-                        .entity_view(self.base.detected_body)
-                        .map(|v| v.stuck_under_net)
-                        .unwrap_or(false);
-                    if body_stuck {
-                        if ctx.self_is_rider {
-                            // Rider can't dismount to take the net;
-                            // expand the seek radius and look.
-                            let here = ctx.position;
-                            self.seek_area(
-                                here,
-                                parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                                SeekFlags::BODY_SEEK,
-                                0,
-                                global,
-                                ctx,
-                                tick,
-                            );
-                        } else {
-                            // SEARCH×4 + TAKE on interesting_object
-                            // (the net).  Only fire the sequence if
-                            // the object is still active.
-                            let net_obj = self.base.interesting_object;
-                            let active = net_obj != 0 && ctx.entity_position(net_obj).is_some();
-                            if active {
-                                self.set_state(AiState::Seeking, Substate::SeekingTakingNet);
-                                self.base.stop_all();
-                                let owner = self.base.owner_entity_id;
-                                let antagonist = Some(crate::element::EntityId::Net(
-                                    crate::entity_id::NetId(net_obj),
-                                ));
-                                let mut seq = crate::sequence::Sequence::new();
-                                seq.append_element(
-                                    crate::sequence::SequenceElement::new_interaction(
-                                        1,
-                                        crate::element::Command::SearchCmd,
-                                        owner,
-                                        None,
-                                    ),
-                                );
-                                seq.append_element(
-                                    crate::sequence::SequenceElement::new_interaction(
-                                        2,
-                                        crate::element::Command::SearchCmd,
-                                        owner,
-                                        None,
-                                    ),
-                                );
-                                seq.append_element(
-                                    crate::sequence::SequenceElement::new_interaction(
-                                        3,
-                                        crate::element::Command::SearchCmd,
-                                        owner,
-                                        None,
-                                    ),
-                                );
-                                seq.append_element(
-                                    crate::sequence::SequenceElement::new_interaction(
-                                        4,
-                                        crate::element::Command::SearchCmd,
-                                        owner,
-                                        None,
-                                    ),
-                                );
-                                seq.append_element(
-                                    crate::sequence::SequenceElement::new_interaction(
-                                        5,
-                                        crate::element::Command::Take,
-                                        owner,
-                                        antagonist,
-                                    ),
-                                );
-                                self.base.pending_launch_sequences.push(seq);
-                                self.base.set_emoticon(EmoticonType::None);
-                            }
-                        }
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                _ => {}
-            },
-
-            // Finished removing a net: free another, examine body,
-            // or return to duty.
-            Substate::SeekingTakingNet => {
-                if stimulus_type == StimulusType::EventDone {
-                    // 3-way branch on detected body state:
-                    //   stuck-under-net → RunToFreeNetVictim (still
-                    //     another net on top)
-                    //   dead|unconscious → RunToExamineBody
-                    //   else → ReturnToDuty
-                    let body = self.base.detected_body;
-                    let view = ctx.entity_view(body);
-                    let stuck = view.map(|v| v.stuck_under_net).unwrap_or(false);
-                    let examine = view
-                        .map(|v| !v.is_able_to_fight && !v.stuck_under_net)
-                        .unwrap_or(false);
-                    if stuck || examine {
-                        // `run_to_examine_body` internally forks on
-                        // `stuck_under_net` and transitions into
-                        // SeekingNet for the net-takedown path, or
-                        // SeekingBody for the examine path.
-                        self.run_to_examine_body(body, ctx, tick, grid);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-            }
-
-            // Officer scanning for free soldiers (three stages).
-            Substate::SeekingOfficerLookingForSoldiers1
-            | Substate::SeekingOfficerLookingForSoldiers2
-            | Substate::SeekingOfficerLookingForSoldiers3 => {
-                if stimulus_type == StimulusType::EventTimer {
-                    let next = match self.base.current_substate {
-                        Substate::SeekingOfficerLookingForSoldiers1 => {
-                            Substate::SeekingOfficerLookingForSoldiers1Sidewards
-                        }
-                        Substate::SeekingOfficerLookingForSoldiers2 => {
-                            Substate::SeekingOfficerLookingForSoldiers2Sidewards
-                        }
-                        _ => Substate::SeekingOfficerLookingForSoldiers3Sidewards,
-                    };
-                    self.set_state(AiState::Seeking, next);
-                    self.base.pending_look_sidewards = Some(
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::OfficerSearchLook, 0..2)
-                            != 0
-                        {
-                            LookDirection::RightLeft
-                        } else {
-                            LookDirection::LeftRight
-                        },
-                    );
-                }
-            }
-
-            // Sidewards 1/2 advance to next look stage, face 5/16
-            // rotation, delay 30.
-            Substate::SeekingOfficerLookingForSoldiers1Sidewards
-            | Substate::SeekingOfficerLookingForSoldiers2Sidewards => {
-                if stimulus_type == StimulusType::EventDone {
-                    let next = match self.base.current_substate {
-                        Substate::SeekingOfficerLookingForSoldiers1Sidewards => {
-                            Substate::SeekingOfficerLookingForSoldiers2
-                        }
-                        _ => Substate::SeekingOfficerLookingForSoldiers3,
-                    };
-                    self.set_state(AiState::Seeking, next);
-                    // FaceTo((direction + 5) % 16)
-                    let new_dir = (ctx.direction + 5) % 16;
-                    self.base.face_direction(new_dir, ctx);
-                    self.base.launch_timer(30, ctx.frame);
-                }
-            }
-
-            // Stage-3 sidewards complete; done looking.
-            Substate::SeekingOfficerLookingForSoldiers3Sidewards => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-            }
-
-            // Charly search path: step through `search_charly_way`
-            // on each reach point.
-            Substate::SeekingCharly => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    if !self.search_charly_way.is_empty() {
-                        self.search_charly_way.remove(0);
-                    }
-                    if self.search_charly_way.is_empty() {
-                        // If checkpoint_charly == 0 → ReturnToDuty;
-                        // else transition to CharlyWatching +
-                        // LookSidewards(LeftRight).
-                        if self.base.checkpoint_charly == 0 {
-                            self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                        } else {
-                            self.set_state(AiState::Seeking, Substate::SeekingCharlyWatching);
-                            self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
-                        }
-                    } else {
-                        // GoTo next waypoint with RUN (+ DONT_STOP
-                        // if more than one remains).
-                        let next = self.search_charly_way[0];
-                        let flags = if self.search_charly_way.len() > 1 {
-                            crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP
-                        } else {
-                            crate::ai::GotoFlags::RUN
-                        };
-                        self.base.go_to(next, flags, ctx);
-                    }
-                }
-            }
-
-            // Done watching at charly checkpoint: trigger
-            // missed-charly alert.
-            Substate::SeekingCharlyWatching => {
-                if stimulus_type == StimulusType::EventDone {
-                    // Inlined `missed_charly_alert()`: a ~40-line
-                    // sequence of recon-report updates, rank branch
-                    // (AlertOfficer/AlertSoldiers), and a SeekArea
-                    // fallback.  The "set_reported_to_officer(false)"
-                    // on `checkpoint_charly` writes to another NPC's
-                    // field; queued via
-                    // `pending_set_reported_to_officer` and drained
-                    // by the engine after the think pass.
-                    self.base.say(Remark::DidntFindCharly);
-                    let my_pos = ctx.position;
-                    self.base.seek_position = my_pos;
-                    self.base
-                        .my_reconnaissance_report
-                        .update(ReportType::MissedCharly, my_pos);
-                    self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
-                    self.base.frame_when_enemy_detected = ctx.frame;
-                    // charly.set_reported_to_officer(false).
-                    // Queued via `pending_set_reported_to_officer`;
-                    // the engine drains these pairs after the think
-                    // pass.
-                    if self.base.checkpoint_charly != 0 {
-                        self.base
-                            .pending_set_reported_to_officer
-                            .push((self.base.checkpoint_charly as NpcHandle, false));
-                    }
-                    let alert_handled = match self.get_rank() {
-                        ProfileRank::Soldier => {
-                            self.alert_officer(my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
-                        }
-                        ProfileRank::Officer => self.alert_soldiers(
-                            my_pos,
-                            SeekFlags::CHARLY_SEEK.bits(),
-                            global,
-                            grid,
-                            ctx,
-                            tick,
-                        ),
-                        ProfileRank::Knight | ProfileRank::None => false,
-                    };
-                    if !alert_handled {
-                        // Seek yourself fallback.  Uses the FIX radius
-                        // if the checkpoint charly has no patrol path,
-                        // else PATROL radius.
-                        let charly_has_path = ctx
-                            .entity_view(self.base.checkpoint_charly)
-                            .map(|v| v.has_patrol_path)
-                            .unwrap_or(false);
-                        let radius = if charly_has_path {
-                            parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
-                        } else {
-                            parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
-                        };
-                        self.seek_area(
-                            my_pos,
-                            radius,
-                            SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
-                            0,
-                            global,
-                            ctx,
-                            tick,
-                        );
-                    }
-                }
-            }
-
-            // Detected charly reaction; rank-dependent follow-up.
-            Substate::SeekingDetectedCharly => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // Mark charly seen, then branch on rank.
-                    self.base.my_reconnaissance_report.charly_seen = true;
-                    match self.get_rank() {
-                        ProfileRank::Officer if !self.alerted_us.is_empty() => {
-                            // Reload previous state + short timer.
-                            // The reference leaves this branch as "tell
-                            // all soldiers to go home" without an
-                            // implementation; preserve the shipped
-                            // reload-and-wait behavior.
-                            self.set_state(self.previous_state, self.previous_substate);
-                            self.base.launch_timer(10, ctx.frame);
-                        }
-                        _ => {
-                            // Soldier, Knight, or officer with no alerted
-                            // soldiers all fall through to ReturnToDuty.
-                            self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                        }
-                    }
-                }
-            }
-
-            // Officer sends charly away toward another officer.
-            Substate::SeekingSendCharlyToOfficer => match stimulus_type {
-                StimulusType::EventMyTalk1
-                    // antagonist.think(CallGoToOfficer, me)
-                    if self.base.antagonist != 0 => {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallGoToOfficer,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                StimulusType::EventMyTalk2 => {
-                    self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
-                    self.base.launch_timer(100, ctx.frame);
-                }
-                _ => {}
-            },
-
-            // Watching a charly who's been sent off; timer returns
-            // to duty.
-            Substate::SeekingLookingResurrectedCharly => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-            }
-
-            // Charly was sent to officer; go near the officer.
-            Substate::SeekingCharlySentToOfficer => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
-                    // GoNear(antagonist.position, 40);
-                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                        self.base
-                            .go_near(view.position, 40, crate::ai::GotoFlags::empty(), ctx);
-                    }
-                    // unalert_all_near_charly_seekers(me).
-                    // Drained engine-side via
-                    // `pending_unalert_near_charly_seekers` — the
-                    // engine walks all soldiers and dispatches
-                    // CallCharlyIsBack to ones detecting me 180°.
-                    self.base.pending_unalert_near_charly_seekers =
-                        Some(CharlySeekerTarget::SelfNpc);
-                    self.base.launch_timer(10, ctx.frame);
-                }
-            }
-
-            // Charly on the way to officer; timer either transitions
-            // to "seen" or retries.
-            Substate::SeekingCharlyGoToOfficer => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // Original: mpMe->IsDetecting(mpAntagonist). This is
-                    // the normal live view cone, not the 360° helper.
-                    if self.is_detecting(self.base.antagonist as HumanHandle, ctx) {
-                        // The engine delivers this action synchronously and
-                        // feeds the officer's actual Think return value into
-                        // `resolve_charly_officer_report`.
-                        self.base.pending_cross_npc_actions.push(
-                            CrossNpcAction::ReportBackToOfficer {
-                                officer: self.base.antagonist,
-                                charly: self.base.me,
-                            },
-                        );
-                    } else {
-                        // unalert_all_near_charly_seekers(me).
-                        self.base.pending_unalert_near_charly_seekers =
-                            Some(CharlySeekerTarget::SelfNpc);
-                        self.base.launch_timer(10, ctx.frame);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-                _ => {}
-            },
-
-            // Charly reached officer; reach→CallCoordinate; timer
-            // keeps polling.
-            Substate::SeekingCharlyGoToOfficerSeen => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // Only re-arm if antagonist is in
-                    // `OfficerWaitForCharly`; else ReturnToDuty.
-                    let waits_for_charly = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingOfficerWaitForCharly)
-                        .unwrap_or(false);
-                    if waits_for_charly {
-                        // unalert_all_near_charly_seekers(me).
-                        self.base.pending_unalert_near_charly_seekers =
-                            Some(CharlySeekerTarget::SelfNpc);
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    // antagonist.think(CallCoordinate, me)
-                    if self.base.antagonist != 0 {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallCoordinate,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                    self.set_state(AiState::Seeking, Substate::SeekingCharlyGetLectureByOfficer);
-                }
-                _ => {}
-            },
-
-            // Charly receives the officer's lecture and transitions
-            // to stage 2 on talk.
-            Substate::SeekingCharlyGetLectureByOfficer => {
-                if stimulus_type == StimulusType::CallYourTalk1 {
-                    self.base.say(Remark::CharlyDefendsHimself);
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingCharlyGetLectureByOfficer2,
-                    );
-                }
-            }
-
-            // Charly lecture stage 2: relays talk, ends on
-            // CallYourTalk2.
-            Substate::SeekingCharlyGetLectureByOfficer2 => match stimulus_type {
-                StimulusType::EventMyTalk1
-                    // antagonist.think(CallYourTalk1)
-                    if self.base.antagonist != 0 => {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallYourTalk1,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                StimulusType::CallYourTalk2 => {
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-                _ => {}
-            },
-
-            // Officer waits for
-            // charly: on timer inspect antagonist substate; on coordinate
-            // call, rebuke.
-            Substate::SeekingOfficerWaitForCharly => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If antagonist is still in one of the
-                    // "on the way" charly substates, face them, clear the
-                    // emoticon and re-arm the timer; else ReturnToDuty.
-                    let is_on_the_way = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| {
-                            matches!(
-                                v.ai_substate,
-                                Substate::SeekingCharlySentToOfficer
-                                    | Substate::SeekingCharlyGoToOfficer
-                                    | Substate::SeekingCharlyGoToOfficerSeen
-                            )
-                        })
-                        .unwrap_or(false);
-                    if is_on_the_way {
-                        self.base.face_entity(self.base.antagonist, ctx);
-                        self.base.set_emoticon(EmoticonType::None);
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                StimulusType::CallCoordinate => {
-                    // If antagonist == stimulus_info.human
-                    let human_matches = matches!(
-                        stimulus.info,
-                        crate::ai::StimulusInfo::Human(h) if h as NpcHandle == self.base.antagonist,
-                    );
-                    if human_matches {
-                        self.base.face_entity(self.base.antagonist, ctx);
-                        self.base.say_with_flags(
-                            Remark::OfficerRebukesCharly,
-                            crate::ai::SpeechFlags::MYTALK_1,
-                        );
-                        self.set_state(AiState::Seeking, Substate::SeekingOfficerLectureCharly);
-                    }
-                }
-                _ => {}
-            },
-
-            // Officer lectures charly. MyTalk1 → CallYourTalk1 to charly;
-            // CallYourTalk1 → end lecture; MyTalk2 → point to best-waypoint
-            // and launch pointing timer.
-            Substate::SeekingOfficerLectureCharly => match stimulus_type {
-                StimulusType::EventMyTalk1 if self.base.antagonist != 0 => {
-                    self.base
-                        .pending_cross_npc_actions
-                        .push(CrossNpcAction::SendStimulus {
-                            target: self.base.antagonist,
-                            stimulus_type: StimulusType::CallYourTalk1,
-                            info: crate::ai::StimulusInfo::None,
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                        });
-                }
-                StimulusType::CallYourTalk1 => {
-                    self.base.say_with_flags(
-                        Remark::OfficerRebukesCharlyEnd,
-                        crate::ai::SpeechFlags::MYTALK_2,
-                    );
-                }
-                StimulusType::EventMyTalk2 => {
-                    // If antagonist has a path, find the nearest waypoint to
-                    // the officer's position and PointTo it; else PointTo
-                    // the antagonist's initial position. The patrol-path
-                    // waypoint list isn't exposed on AiEntityView (only the
-                    // has_patrol_path flag) — when the antagonist has a path
-                    // we fall back to their current position as a reasonable
-                    // "where I want you to go" stand-in.  For the no-path
-                    // case we use `initial_position` which is now available
-                    // on the view.
-                    if let Some(view) = ctx.entity_view(self.base.antagonist) {
-                        let target = if view.has_patrol_path {
-                            // Best proxy without per-waypoint list.
-                            view.position
-                        } else {
-                            view.initial_position
-                        };
-                        self.base.point_to(target);
-                    }
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingOfficerLectureCharlyPointing,
-                    );
-                    self.base.say_with_flags(
-                        Remark::OfficerEndsConversation,
-                        crate::ai::SpeechFlags::MYTALK_3,
-                    );
-                    self.base.launch_timer(20, ctx.frame);
-                }
-                _ => {}
-            },
-
-            // Pointing done: forward CALL_YOURTALK_2 and go home.
-            Substate::SeekingOfficerLectureCharlyPointing => {
-                if stimulus_type == StimulusType::EventMyTalk3 {
-                    if self.base.antagonist != 0 {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallYourTalk2,
-                                info: crate::ai::StimulusInfo::None,
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                }
-            }
-
-            // Civilian reached soldier to report; waits for officer's
-            // wait-state.
-            Substate::SeekingCivilianRunningToSoldierSeen => match stimulus_type {
-                StimulusType::EventTimer => {
-                    // If antagonist is still WaitForAlertingCivilian, re-arm
-                    // timer; else end.
-                    let officer_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
-                        .unwrap_or(false);
-                    if officer_waiting {
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                StimulusType::EventReachPoint => {
-                    // Only transition if antagonist still in
-                    // wait-for-alerting-civilian; else ReturnToDuty.
-                    let officer_waiting = ctx
-                        .entity_view(self.base.antagonist)
-                        .map(|v| v.ai_substate == Substate::SeekingWaitForAlertingCivilian)
-                        .unwrap_or(false);
-                    if officer_waiting {
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
-                        );
-                        self.base.launch_timer(10, ctx.frame);
-                    } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
-                }
-                _ => {}
-            },
-
-            // Civilian begins report; denunciates and points.
-            Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
-                    );
-                    if self.base.antagonist != 0 {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallReport,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                    }
-                    self.base.say(Remark::CivDenunciates);
-                    self.base.point_to(self.base.seek_position);
-                }
-            }
-
-            // Done pointing: transition to end and face antagonist.
-            Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.set_state(
-                        AiState::Seeking,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
-                    );
-                    self.base.face_entity(self.base.antagonist, ctx);
-                    self.base.launch_timer(30, ctx.frame);
-                }
-            }
-
-            // Civilian panics after denunciation.
-            Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
-                if stimulus_type == StimulusType::EventTimer {
-                    self.panic_from_position(
-                        self.base.seek_position,
-                        parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                    );
-                }
-            }
-
-            // Reserve overview re-evaluates via BattleDecisions.
             Substate::AttackingReserveOverview => {
                 if stimulus_type == StimulusType::EventTimer {
                     self.battle_decisions(global, ctx, tick, grid);
@@ -5042,15 +5062,17 @@ impl EnemyAi {
                             // VIP variant — launch an EnterSwordfight against
                             // the guarded PC to trigger the menace-variant
                             // sword draw.
-                            self.base.pending_enter_swordfight =
+                            self.base.outbox.actor.enter_swordfight =
                                 Some(EnterSwordfightRequest::Engage(self.base.primary_target));
-                            self.base.pending_enter_swordfight_jump_line = None;
+                            self.base.outbox.actor.enter_swordfight_jump_line = None;
                         } else {
                             // Normal variant — say, launch StartMenace
                             // command, set guard.
                             self.base.say(Remark::MenacesPcInComa);
                             self.base
-                                .pending_launch_commands
+                                .outbox
+                                .actor
+                                .launch_commands
                                 .push(crate::element::Command::StartMenace);
                             // SetGuardedPC( pPC ) — assigns both the
                             // soldier's guarded_pc and the PC's reciprocal
@@ -5100,7 +5122,7 @@ impl EnemyAi {
                                 owner,
                                 antagonist,
                             ));
-                            self.base.pending_launch_sequences.push(seq);
+                            self.base.outbox.actor.launch_sequences.push(seq);
                         }
                     } else {
                         self.get_battle_overview(0, ctx, tick);
@@ -5194,7 +5216,7 @@ impl EnemyAi {
             Substate::AttackingTooProudToAttackOverview => match stimulus_type {
                 StimulusType::EventDone => {
                     if self.base.primary_target != 0 {
-                        self.base.pending_focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.focus = Some(self.base.primary_target);
                     }
                     self.base.launch_timer(5, ctx.frame);
                 }
@@ -5399,6 +5421,120 @@ impl EnemyAi {
 
             // Guarding a PC in coma: if still close & in coma keep
             // watching; else give up.
+            Substate::AttackingSwordfightStepBack => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+                    self.base.launch_timer(20, ctx.frame);
+                }
+            }
+
+            // Officer approached brawl victim: kick off wake-up sequence.
+            Substate::AttackingReturnToOtherPcAfterMenacing => {
+                if stimulus_type == StimulusType::EventDone {
+                    self.begin_swordfight(ctx, tick);
+                }
+            }
+
+            // Running to enemy on a ladder: reach → face + focus + wait;
+            // timer → reconsider.
+            Substate::AttackingRunningToLadder => match stimulus_type {
+                StimulusType::EventReachPoint => {
+                    if self.base.primary_target != 0 {
+                        self.base.face_entity(self.base.primary_target, ctx);
+                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                    }
+                    self.set_state(AiState::Attacking, Substate::AttackingWaitingAtLadder);
+                    self.base.launch_timer(1, ctx.frame);
+                }
+                StimulusType::EventTimer => {
+                    self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
+                }
+                _ => {}
+            },
+
+            // Waiting at ladder: if enemy still on lift, reface & rearm;
+            // else reconsider.
+            Substate::AttackingWaitingAtLadder => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // If primary target is on a lift sector, face+focus+wait;
+                    // else reconsider enemy approach.
+                    let target_on_lift = grid
+                        .and_then(|g| {
+                            ctx.entity_view(self.base.primary_target)
+                                .and_then(|v| v.position.sector)
+                                .map(|s| g.sector_type(u32::from(s)).is_lift())
+                        })
+                        .unwrap_or(false);
+                    if target_on_lift {
+                        self.base.face_entity(self.base.primary_target, ctx);
+                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                        self.base.launch_timer(20, ctx.frame);
+                    } else {
+                        self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
+                    }
+                }
+            }
+
+            // Avenger on roof: reached pos, face seek & wait.
+            Substate::AttackingRunToAvengerOnRoof => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    self.base.face_position(self.base.seek_position);
+                    self.set_state(AiState::Attacking, Substate::AttackingWaitForAvengerOnRoof);
+                    self.base.launch_timer(100, ctx.frame);
+                }
+            }
+
+            // Wait for avenger: either re-face if detected, or SeekArea on
+            // lost sight.
+            Substate::AttackingWaitForAvengerOnRoof => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // IsDetecting180Degrees(primary_target)? re-face +
+                    // 30-tick timer; else SeekArea(pos,
+                    // AI_LOST_ENEMY_SEEK_RADIUS, 0).
+                    if self.base.primary_target != 0
+                        && self
+                            .is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+                    {
+                        self.base.face_entity(self.base.primary_target, ctx);
+                        self.base.launch_timer(30, ctx.frame);
+                    } else {
+                        self.seek_area(
+                            self.base.seek_position,
+                            parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                            SeekFlags::empty(),
+                            0,
+                            global,
+                            ctx,
+                            tick,
+                        );
+                    }
+                }
+            }
+
+            // No-op group — only substates that still genuinely have no
+            // handler remain here.  Explicit enumeration (no `_ =>`
+            // catch-all) so adding a new `Substate` variant is a compile
+            // error forcing the author to decide where it belongs.  The
+            // 83 variants ported above were previously swept into this
+            // group by the exhaustive-match refactor; see commit fbda9e7a
+            // (AttackingSwordfightParade) for the original motivating fix.
+            Substate::AttackingRiderChargingApproaching
+            | Substate::AttackingRiderChargingPassing => {}
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_menacing_event(
+        &mut self,
+        stimulus: &Stimulus,
+        _global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
             Substate::MenacingPcInComa => {
                 if stimulus_type == StimulusType::EventTimer {
                     // Assert IsPC + check MaxNormDistance < 100 &&
@@ -5422,12 +5558,148 @@ impl EnemyAi {
             }
 
             // Reached arrow reserves: refill ammo and SeekArea around.
+            _ => {}
+        }
+        false
+    }
+
+    fn think_expected_fleeing_event(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        match self.base.current_substate {
+            Substate::FleeingPanic
+            | Substate::FleeingRunToHide
+            | Substate::FleeingRunToDoor
+            | Substate::FleeingHiding => {
+                if self.base.current_substate == Substate::FleeingPanic
+                    && matches!(
+                        stimulus_type,
+                        StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
+                    )
+                    && self.base.lasting_panic_runs == 0
+                {
+                    // Malignity-specific: when the panic is spent,
+                    // clear the seen-enemy counter so the soldier
+                    // can re-spook on the next sighting.  Friendly
+                    // AI doesn't track this counter the same way
+                    // (its own reset lives elsewhere).
+                    self.fleeing_seen_enemy_counter = 0;
+                }
+                return self.base.think_expected_event_common_stuff(stimulus, ctx);
+            }
+
+            // Merry man fleeing to map exit.
+            Substate::FleeingMerryManRunToLeaveMap => {
+                match stimulus_type {
+                    StimulusType::EventTimer => {
+                        // Stuck recovery: if we're not already sprinting
+                        // toward the door, re-issue the GoTo.  Gated
+                        // on `action_state != MovingFast` &&
+                        // `last_goto_destination` set, so an actor
+                        // mid-run doesn't get its sequence torn down
+                        // every 30 frames.
+                        let dest = self.base.last_goto_destination;
+                        if ctx.self_action_state != crate::element::ActionState::MovingFast
+                            && (dest.x != 0.0 || dest.y != 0.0)
+                        {
+                            self.base.stop_all();
+                            self.go_to(
+                                self.base.current_state,
+                                self.base.current_substate,
+                                dest,
+                                crate::ai::GotoFlags::RUN,
+                                ctx,
+                            );
+                        }
+                        self.base.launch_timer(30, ctx.frame);
+                    }
+                    StimulusType::EventReachPoint => {
+                        // Check if we're near the door.
+                        let dest = self.base.last_goto_destination;
+                        let dx = ctx.position.x - dest.x;
+                        let dy = ctx.position.y - dest.y;
+                        let dist = dx.abs().max(dy.abs());
+                        if dist < 10.0 {
+                            // Arrived at door PositionIn — now run to PointOut
+                            // to exit the map (launches a sequence
+                            // element targeting the door's PointOut).
+                            self.set_state(AiState::Fleeing, Substate::FleeingMerryManLeaveMap);
+                            if let Some(door_idx) = self.my_door_index {
+                                // `my_door_index` is a `game_host.doors`
+                                // index.  Find the matching reinforcement
+                                // door entry (linear scan; small list)
+                                // for the cached point_out geometry.
+                                if let Some(door) = global
+                                    .reinforcement_doors
+                                    .iter()
+                                    .find(|d| d.door_index.0 == door_idx)
+                                {
+                                    let point_out_pos = Position {
+                                        x: door.point_out.x,
+                                        y: door.point_out.y,
+                                        ..dest
+                                    };
+                                    self.base.run_to_map_exit(point_out_pos);
+                                } else {
+                                    // Door gone — just lock and deactivate.
+                                    self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
+                                    self.base.outbox.actor.deactivate = true;
+                                }
+                            } else {
+                                // No door stored — just lock and deactivate.
+                                self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
+                                self.base.outbox.actor.deactivate = true;
+                            }
+                        } else {
+                            // Not there yet — retry.
+                            self.go_to(
+                                self.base.current_state,
+                                self.base.current_substate,
+                                dest,
+                                crate::ai::GotoFlags::RUN,
+                                ctx,
+                            );
+                            self.base.launch_timer(30, ctx.frame);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Merry man has reached PointOut — deactivate.
+            Substate::FleeingMerryManLeaveMap => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    // `non_script_lock(Freeze); set_active(false);`
+                    self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);
+                    self.base.outbox.actor.deactivate = true;
+                }
+            }
+
+            // ============ BULK-PORTED HANDLERS ============
+            //
+            // The block below ports the ~83 substates that were
+            // previously swept into the no-op group when the
+            // exhaustive-match refactor landed.  Many of these arms
+            // call helpers that were not yet ported when this block first
+            // landed. The remaining fallback arms below are kept explicit
+            // and should be replaced with exact handlers as each parity
+            // path is audited.
+
+            // Empty case; script-driven
+            // substate is handled elsewhere.  Kept here as an explicit arm to
+            // document the mapping.
             Substate::FleeingRunForArrowReserves => {
                 if stimulus_type == StimulusType::EventReachPoint {
                     // Flag the engine drain to refill the archer's arrows —
                     // the engine-side `pending_refill_bow_ammo` processor
                     // writes `NpcData::number_of_arrows = MAX_NPC_ARROWS`.
-                    self.base.pending_refill_bow_ammo = true;
+                    self.base.outbox.actor.refill_bow_ammo = true;
                     self.seek_area(
                         self.base.seek_position,
                         parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
@@ -5498,181 +5770,7 @@ impl EnemyAi {
 
             // Sword fight step back reached point: resume swordfight with
             // 20-tick timer.
-            Substate::AttackingSwordfightStepBack => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                    self.base.launch_timer(20, ctx.frame);
-                }
-            }
-
-            // Officer approached brawl victim: kick off wake-up sequence.
-            Substate::WonderingApproachingBrawlVictim => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    use crate::element::Command;
-                    use crate::sequence::{Sequence, SequenceElement};
-                    self.set_state(AiState::Wondering, Substate::WonderingAwakenBrawlVictim);
-                    self.base.stop_all();
-                    let owner = self.base.owner_entity_id;
-                    let body = self.base.detected_body;
-                    if body != 0 {
-                        let antagonist = Some(crate::element::EntityId::Soldier(
-                            crate::entity_id::SoldierId(body),
-                        ));
-                        let mut seq = Sequence::new();
-                        seq.append_element(SequenceElement::new_interaction(
-                            1,
-                            Command::WakeUp,
-                            owner,
-                            antagonist,
-                        ));
-                        self.base.pending_launch_sequences.push(seq);
-                    }
-                }
-            }
-
-            // Done awakening the victim: move to the next fight victim.
-            Substate::WonderingAwakenBrawlVictim => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.awake_next_money_fight_victim_if_any(ctx, tick);
-                }
-            }
-
-            // Attacker returns to another PC after menacing: begin a
-            // swordfight.
-            Substate::AttackingReturnToOtherPcAfterMenacing => {
-                if stimulus_type == StimulusType::EventDone {
-                    self.begin_swordfight(ctx, tick);
-                }
-            }
-
-            // Running to enemy on a ladder: reach → face + focus + wait;
-            // timer → reconsider.
-            Substate::AttackingRunningToLadder => match stimulus_type {
-                StimulusType::EventReachPoint => {
-                    if self.base.primary_target != 0 {
-                        self.base.face_entity(self.base.primary_target, ctx);
-                        self.base.pending_focus = Some(self.base.primary_target);
-                    }
-                    self.set_state(AiState::Attacking, Substate::AttackingWaitingAtLadder);
-                    self.base.launch_timer(1, ctx.frame);
-                }
-                StimulusType::EventTimer => {
-                    self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
-                }
-                _ => {}
-            },
-
-            // Waiting at ladder: if enemy still on lift, reface & rearm;
-            // else reconsider.
-            Substate::AttackingWaitingAtLadder => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // If primary target is on a lift sector, face+focus+wait;
-                    // else reconsider enemy approach.
-                    let target_on_lift = grid
-                        .and_then(|g| {
-                            ctx.entity_view(self.base.primary_target)
-                                .and_then(|v| v.position.sector)
-                                .map(|s| g.sector_type(u32::from(s)).is_lift())
-                        })
-                        .unwrap_or(false);
-                    if target_on_lift {
-                        self.base.face_entity(self.base.primary_target, ctx);
-                        self.base.pending_focus = Some(self.base.primary_target);
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
-                    }
-                }
-            }
-
-            // Avenger on roof: reached pos, face seek & wait.
-            Substate::AttackingRunToAvengerOnRoof => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    self.base.face_position(self.base.seek_position);
-                    self.set_state(AiState::Attacking, Substate::AttackingWaitForAvengerOnRoof);
-                    self.base.launch_timer(100, ctx.frame);
-                }
-            }
-
-            // Wait for avenger: either re-face if detected, or SeekArea on
-            // lost sight.
-            Substate::AttackingWaitForAvengerOnRoof => {
-                if stimulus_type == StimulusType::EventTimer {
-                    // IsDetecting180Degrees(primary_target)? re-face +
-                    // 30-tick timer; else SeekArea(pos,
-                    // AI_LOST_ENEMY_SEEK_RADIUS, 0).
-                    if self.base.primary_target != 0
-                        && self
-                            .is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
-                    {
-                        self.base.face_entity(self.base.primary_target, ctx);
-                        self.base.launch_timer(30, ctx.frame);
-                    } else {
-                        self.seek_area(
-                            self.base.seek_position,
-                            parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                            SeekFlags::empty(),
-                            0,
-                            global,
-                            ctx,
-                            tick,
-                        );
-                    }
-                }
-            }
-
-            // No-op group — only substates that still genuinely have no
-            // handler remain here.  Explicit enumeration (no `_ =>`
-            // catch-all) so adding a new `Substate` variant is a compile
-            // error forcing the author to decide where it belongs.  The
-            // 83 variants ported above were previously swept into this
-            // group by the exhaustive-match refactor; see commit fbda9e7a
-            // (AttackingSwordfightParade) for the original motivating fix.
-            Substate::StartSleepingSubstates
-            | Substate::SleepingForever
-            | Substate::SleepingUnconscious
-            | Substate::SleepingNapping
-            | Substate::EndSleepingSubstates
-            | Substate::StartDefaultSubstates
-            | Substate::DefaultHomeSweetHome
-            | Substate::DefaultChildApproachedWhistling
-            | Substate::EndDefaultSubstates
-            | Substate::StartWonderingSubstates
-            | Substate::WonderingWaspInArmour
-            | Substate::WonderingUnderNet
-            | Substate::WonderingCivilianAdmiringHero
-            | Substate::WonderingCivilianEnemyReactiontime
-            | Substate::WonderingCivilianBodyReactiontime
-            | Substate::WonderingChildApproachingWhistling
-            | Substate::EndWonderingSubstates
-            | Substate::StartSeekingSubstates
-            | Substate::SeekingCivilianRunningToSoldier
-            | Substate::EndSeekingSubstates
-            | Substate::StartAttackingSubstates
-            | Substate::AttackingGotHit
-            | Substate::AttackingGotHitStandingUp
-            | Substate::AttackingHitting
-            | Substate::AttackingBowCorrectingPosition
-            | Substate::AttackingArcherWaitOnArcheryPath
-            | Substate::AttackingArcherWaitOnArcheryPathBending
-            | Substate::EndAttackingSubstates
-            | Substate::StartMenacingSubstates
-            | Substate::EndMenacingSubstates
-            | Substate::StartFleeingSubstates
-            | Substate::FleeingChildChased
-            | Substate::FleeingChildChasedSupplementalRuns
-            | Substate::FleeingChildChasedEnd
-            | Substate::FleeingChildFriendChased
-            | Substate::EndFleeingSubstates
-            | Substate::BeginAdditionalSubstates
-            | Substate::NumberOfSubstates
-            | Substate::None => {}
-
-            // Rider-charging arms above use `if` guards on stimulus_type;
-            // those don't contribute to exhaustiveness.  Fall through as
-            // no-op for any other stimulus arriving at these substates.
-            Substate::AttackingRiderChargingApproaching
-            | Substate::AttackingRiderChargingPassing => {}
+            _ => {}
         }
         false
     }

@@ -1364,7 +1364,9 @@ impl EnemyAi {
                     break;
                 }
                 self.base
-                    .pending_cross_npc_actions
+                    .outbox
+                    .reentrant
+                    .cross_npc_actions
                     .push(CrossNpcAction::BreakPhalanx { target: current });
                 let Some(snap) = self.find_fighter(current, tick) else {
                     break;
@@ -1385,7 +1387,9 @@ impl EnemyAi {
                     break;
                 }
                 self.base
-                    .pending_cross_npc_actions
+                    .outbox
+                    .reentrant
+                    .cross_npc_actions
                     .push(CrossNpcAction::BreakPhalanx { target: current });
                 let Some(snap) = self.find_fighter(current, tick) else {
                     break;
@@ -1548,7 +1552,9 @@ impl EnemyAi {
             };
             // Propagate primary_target to all phalanx members.
             self.base
-                .pending_cross_npc_actions
+                .outbox
+                .reentrant
+                .cross_npc_actions
                 .push(CrossNpcAction::SetPrimaryTarget {
                     target: current,
                     primary_target: self.base.primary_target,
@@ -1697,7 +1703,7 @@ impl EnemyAi {
                         y: new_left.y + i as f32 * right_scaled.1,
                         ..new_left
                     };
-                    self.base.pending_cross_npc_actions.push(
+                    self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::InstructGatherPosition {
                             target: guy,
                             position: new_pos,
@@ -1785,13 +1791,13 @@ impl EnemyAi {
                     y: new_left.y + i as f32 * right_scaled.1,
                     ..new_left
                 };
-                self.base
-                    .pending_cross_npc_actions
-                    .push(CrossNpcAction::InstructGatherPosition {
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::InstructGatherPosition {
                         target: guy,
                         position: new_pos,
                         direction: ideal_direction,
-                    });
+                    },
+                );
             }
             true
         }
@@ -1924,20 +1930,20 @@ impl EnemyAi {
             let old_right = self.right_combat_neighbour;
             self.left_combat_neighbour = left_neighbour;
             self.right_combat_neighbour = right_neighbour;
-            self.base
-                .pending_cross_npc_actions
-                .push(CrossNpcAction::UpdateLeftCombatNeighbour {
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::UpdateLeftCombatNeighbour {
                     target: self.base.me,
                     old_left,
                     new_left: left_neighbour,
-                });
-            self.base
-                .pending_cross_npc_actions
-                .push(CrossNpcAction::UpdateRightCombatNeighbour {
+                },
+            );
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::UpdateRightCombatNeighbour {
                     target: self.base.me,
                     old_right,
                     new_right: right_neighbour,
-                });
+                },
+            );
 
             self.go_to(
                 AiState::Attacking,
@@ -2216,7 +2222,7 @@ impl EnemyAi {
             self.end_swordfight(ctx, tick);
 
             // Focus(NULL) — clear target lock.
-            self.base.pending_unfocus = true;
+            self.base.outbox.actor.unfocus = true;
 
             // Chase or overview depending on target type and personality.
             if tick.primary_target_is_pc
@@ -2239,7 +2245,7 @@ impl EnemyAi {
                 let dx = self.base.seek_position.x - ctx.position.x;
                 let dy = self.base.seek_position.y - ctx.position.y;
                 let dir = vec_to_sector(dx, dy);
-                self.base.pending_set_direction_instantly = Some(dir as i16);
+                self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
                 self.get_battle_overview(0, ctx, tick);
             }
             return;
@@ -2346,7 +2352,7 @@ impl EnemyAi {
                     // Request the engine to enter swordfight with the new
                     // target. The engine picks this up after the AI
                     // tick.
-                    self.base.pending_enter_swordfight =
+                    self.base.outbox.actor.enter_swordfight =
                         Some(EnterSwordfightRequest::Engage(nearest_enemy_of_solo));
                     self.base.primary_target = nearest_enemy_of_solo;
                     return;
@@ -2446,7 +2452,7 @@ impl EnemyAi {
                     // SetAsNewPrincipalOpponent.
                     self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                     debug_assert!(self.is_allowed_to_attack(self.base.primary_target, ctx, tick));
-                    self.base.pending_set_principal = Some(self.base.primary_target);
+                    self.base.outbox.actor.set_principal = Some(self.base.primary_target);
                     self.base.launch_timer(20, ctx.frame);
                     return;
                 }
@@ -2678,9 +2684,9 @@ impl EnemyAi {
         // (5) Focus(primary). With null primary the focus is cleared,
         //     matching the engine's drain behaviour.
         if new_primary != 0 {
-            self.base.pending_focus = Some(new_primary);
+            self.base.outbox.actor.focus = Some(new_primary);
         } else {
-            self.base.pending_unfocus = true;
+            self.base.outbox.actor.unfocus = true;
         }
 
         // (6) No target → battle overview.
@@ -2695,9 +2701,9 @@ impl EnemyAi {
             if let Some(primary) = self.find_fighter(new_primary, tick) {
                 let v = pos_diff(&primary.position, &me_pos);
                 let dir = vec_to_sector_ar(v.0, v.1, ASPECT_RATIO);
-                self.base.pending_set_direction_instantly = Some(dir as i16);
+                self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
             }
-            self.base.pending_focus = Some(new_primary);
+            self.base.outbox.actor.focus = Some(new_primary);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);
@@ -2915,7 +2921,7 @@ impl EnemyAi {
 
         if b_move {
             // Go to the new position.
-            self.base.pending_focus = Some(self.base.primary_target);
+            self.base.outbox.actor.focus = Some(self.base.primary_target);
             self.go_to(
                 AiState::Attacking,
                 Substate::AttackingObserveAndMove,
@@ -2927,8 +2933,8 @@ impl EnemyAi {
             // Stay in place, face primary target.
             let to_target = pos_diff(&primary.position, &ctx.position);
             let dir = vec_to_sector(to_target.0, to_target.1);
-            self.base.pending_set_direction_instantly = Some(dir as i16);
-            self.base.pending_focus = Some(self.base.primary_target);
+            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+            self.base.outbox.actor.focus = Some(self.base.primary_target);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);
@@ -3114,20 +3120,20 @@ impl EnemyAi {
         let old_right = self.right_combat_neighbour;
         self.left_combat_neighbour = best.left_neighbour;
         self.right_combat_neighbour = best.right_neighbour;
-        self.base
-            .pending_cross_npc_actions
-            .push(CrossNpcAction::UpdateLeftCombatNeighbour {
+        self.base.outbox.reentrant.cross_npc_actions.push(
+            CrossNpcAction::UpdateLeftCombatNeighbour {
                 target: self.base.me,
                 old_left,
                 new_left: best.left_neighbour,
-            });
-        self.base
-            .pending_cross_npc_actions
-            .push(CrossNpcAction::UpdateRightCombatNeighbour {
+            },
+        );
+        self.base.outbox.reentrant.cross_npc_actions.push(
+            CrossNpcAction::UpdateRightCombatNeighbour {
                 target: self.base.me,
                 old_right,
                 new_right: best.right_neighbour,
-            });
+            },
+        );
 
         best
     }

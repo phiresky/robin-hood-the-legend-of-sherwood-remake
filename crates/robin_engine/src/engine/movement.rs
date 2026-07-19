@@ -5735,8 +5735,8 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
-            let halt = ai.pending_halt;
-            ai.pending_halt = false;
+            let halt = ai.outbox.actor.halt;
+            ai.outbox.actor.halt = false;
             (ai.has_pending_orders(), halt)
         };
         if take_halt {

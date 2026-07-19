@@ -329,7 +329,7 @@ impl EngineInner {
     ///
     /// Combat events (EVENT_GOOD_STRIKE, EVENT_LETHAL_STRIKE,
     /// EVENT_ENTER_SWORDFIGHT, etc.) are queued on
-    /// `AiController::pending_stimuli` by `dispatch_ai_stimulus()`
+    /// `AiController::outbox.detection.stimuli` by `dispatch_ai_stimulus()`
     /// during the combat tick.  We defer them to avoid re-entrant
     /// borrow issues, then replay them now.
     pub(super) fn tick_enemy_ai_drain_pending_stimuli(&mut self, assets: &LevelAssets) {
@@ -356,7 +356,7 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
-            std::mem::take(&mut ai.pending_stimuli)
+            std::mem::take(&mut ai.outbox.detection.stimuli)
         };
         if stimuli.is_empty() {
             return;

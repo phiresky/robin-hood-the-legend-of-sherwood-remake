@@ -714,7 +714,7 @@ impl EngineInner {
             let Some(ai) = npc.ai_brain.base_mut() else {
                 continue;
             };
-            ai.pending_blink_enemy_specific.push(waker_id);
+            ai.outbox.actor.blink_enemy_specific.push(waker_id);
         }
     }
 

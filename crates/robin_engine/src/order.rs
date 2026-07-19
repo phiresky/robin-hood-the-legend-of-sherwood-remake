@@ -643,7 +643,7 @@ pub fn alloc_order_id(counter: &mut u32) -> NonZeroU32 {
 /// An order produced by an AI controller that hasn't been stamped with
 /// an `order_id` yet.  AI code (`AiBase::go_to`, `raise_shield`,
 /// `point_to`, etc.) has no `EngineInner` reference and can't allocate
-/// an id, so it pushes `AiOrderIntent`s onto `AiBase.pending_orders`.
+/// an id, so it pushes `AiOrderIntent`s onto `AiBase.outbox.actor.orders`.
 /// The engine drains these after each `think()` call in
 /// `process_pending_ai_orders`, allocates ids via
 /// `EngineInner::alloc_order_id`, and calls [`AiOrderIntent::stamp`]

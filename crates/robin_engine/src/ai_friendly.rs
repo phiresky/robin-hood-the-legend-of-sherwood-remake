@@ -100,7 +100,9 @@ impl FriendlyAi {
             _ => AiStateChangeSource::SelfActor,
         };
         self.base
-            .pending_state_change_notifications
+            .outbox
+            .reentrant
+            .state_change_notifications
             .push((state, source));
 
         self.base.set_ai_state(state);
@@ -178,7 +180,7 @@ impl FriendlyAi {
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
         self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        self.base.pending_begin_panic = Some(PanicRequest {
+        self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: Some(center),
             runs,
             alert: AlertLevel::Red,
@@ -217,7 +219,7 @@ impl FriendlyAi {
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = false;
         self.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        self.base.pending_begin_panic = Some(PanicRequest {
+        self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: None,
             runs,
             alert: AlertLevel::Red,
@@ -504,7 +506,9 @@ impl FriendlyAi {
             self.base.couldnt_reachpoint = false;
             if self.base.think_recursion_depth < 100 {
                 self.base
-                    .pending_self_stimuli
+                    .outbox
+                    .reentrant
+                    .self_stimuli
                     .push(StimulusType::EventCouldntReachPoint);
             } else if self.base.think_recursion_depth < 111 {
                 self.return_to_duty(DutyFlags::empty(), ctx);
@@ -514,7 +518,9 @@ impl FriendlyAi {
             self.base.already_on_point = false;
             if self.base.think_recursion_depth < 100 {
                 self.base
-                    .pending_self_stimuli
+                    .outbox
+                    .reentrant
+                    .self_stimuli
                     .push(StimulusType::EventReachPoint);
             } else if self.base.think_recursion_depth < 111 {
                 self.return_to_duty(DutyFlags::empty(), ctx);
@@ -523,7 +529,11 @@ impl FriendlyAi {
         if self.base.already_turned {
             self.base.already_turned = false;
             if self.base.think_recursion_depth < 100 {
-                self.base.pending_self_stimuli.push(StimulusType::EventDone);
+                self.base
+                    .outbox
+                    .reentrant
+                    .self_stimuli
+                    .push(StimulusType::EventDone);
             } else if self.base.think_recursion_depth < 111 {
                 self.return_to_duty(DutyFlags::empty(), ctx);
             }
@@ -767,7 +777,7 @@ impl FriendlyAi {
                                 // ordering is ever refactored —
                                 // folding in costs ~50 LOC then.
                                 // See parity-audit divergence (2).
-                                self.base.pending_cross_npc_actions.push(
+                                self.base.outbox.reentrant.cross_npc_actions.push(
                                     CrossNpcAction::SendStimulus {
                                         target: antagonist_handle,
                                         stimulus_type: StimulusType::CallAlert,
@@ -777,14 +787,18 @@ impl FriendlyAi {
                                     },
                                 );
                                 self.base
-                                    .pending_delete_detectables
+                                    .outbox
+                                    .actor
+                                    .delete_detectables
                                     .push(crate::element::DetectableType::Friend);
                                 self.set_state(
                                     AiState::Seeking,
                                     Substate::SeekingCivilianRunningToSoldierSeen,
                                 );
                                 self.base
-                                    .pending_self_stimuli
+                                    .outbox
+                                    .reentrant
+                                    .self_stimuli
                                     .push(StimulusType::EventReachPoint);
                             }
                         }
@@ -854,9 +868,8 @@ impl FriendlyAi {
                     // without needing to reach back into the
                     // civilian's AI state.  The return value is
                     // ignored — it's fire-and-forget.
-                    self.base
-                        .pending_cross_npc_actions
-                        .push(CrossNpcAction::SendStimulus {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SendStimulus {
                             target: self.base.antagonist,
                             stimulus_type: StimulusType::CallReport,
                             info: StimulusInfo::Hint(Hint {
@@ -866,7 +879,8 @@ impl FriendlyAi {
                             }),
                             fallback_to_sender: None,
                             to_whole_patrol: false,
-                        });
+                        },
+                    );
                     self.base.say(Remark::CivDenunciates);
                     let seek_pos = self.base.seek_position;
                     self.base.point_to(seek_pos);
@@ -1058,7 +1072,9 @@ impl FriendlyAi {
                     self.base.antagonist = soldier_handle;
                     // Clear friend detection list — we've reached the soldier.
                     self.base
-                        .pending_delete_detectables
+                        .outbox
+                        .actor
+                        .delete_detectables
                         .push(crate::element::DetectableType::Friend);
 
                     // The soldier's CALL_ALERT handler accepts iff
@@ -1073,15 +1089,15 @@ impl FriendlyAi {
                         .is_some_and(|v| v.ai_state == AiState::Default);
 
                     if alert_accepted {
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
                                 target: soldier_handle,
                                 stimulus_type: StimulusType::CallAlert,
                                 info: StimulusInfo::Human(self.base.me),
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
-                            });
+                            },
+                        );
                         self.set_state(
                             AiState::Seeking,
                             Substate::SeekingCivilianRunningToSoldierSeen,
@@ -1139,7 +1155,11 @@ impl FriendlyAi {
                     }
                     let q = self.base.stimulus_queue.remove(0);
                     if q.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        self.base.pending_self_stimuli.push(q.stimulus_type);
+                        self.base
+                            .outbox
+                            .reentrant
+                            .self_stimuli
+                            .push(q.stimulus_type);
                     }
                 }
 
@@ -1287,8 +1307,9 @@ impl FriendlyAi {
                 // drains in post-think (analogous to
                 // `pending_inform_my_friends` on the "I went down"
                 // side of the KO cycle).
-                self.base.pending_inform_resurrection = true;
-                self.base.pending_set_eye_status = Some(crate::element::EyeStatus::LookForward);
+                self.base.outbox.recovery.inform_resurrection = true;
+                self.base.outbox.recovery.set_eye_status =
+                    Some(crate::element::EyeStatus::LookForward);
                 self.return_to_duty(DutyFlags::empty(), ctx);
             }
 
@@ -1473,7 +1494,9 @@ impl FriendlyAi {
             self.base.non_script_lock(AiLockFlags::BUSY);
             self.base.was_busy = true;
             self.base
-                .pending_self_stimuli
+                .outbox
+                .reentrant
+                .self_stimuli
                 .push(StimulusType::EventReturnToDuty);
             return;
         }
@@ -1785,7 +1808,9 @@ impl FriendlyAi {
                         // We queue the clear — the engine drains it
                         // post-think.
                         self.base
-                            .pending_delete_detectables
+                            .outbox
+                            .actor
+                            .delete_detectables
                             .push(crate::element::DetectableType::Friend);
                         return false;
                     }
@@ -1797,12 +1822,18 @@ impl FriendlyAi {
         // Queue the friend-detectable adds we accumulated above.
         // Done here (not inline) so the early-return above doesn't
         // add detectables we're about to drop.
-        self.base.pending_add_detectables.extend(detectables_to_add);
+        self.base
+            .outbox
+            .actor
+            .add_detectables
+            .extend(detectables_to_add);
 
         let Some((target_handle, _, target_pos)) = best else {
             // No candidate found — clear friend list and give up.
             self.base
-                .pending_delete_detectables
+                .outbox
+                .actor
+                .delete_detectables
                 .push(crate::element::DetectableType::Friend);
             return false;
         };
@@ -1837,7 +1868,9 @@ impl FriendlyAi {
                 );
             }
             self.base
-                .pending_delete_detectables
+                .outbox
+                .actor
+                .delete_detectables
                 .push(crate::element::DetectableType::Friend);
             return false;
         }
@@ -1950,10 +1983,12 @@ impl FriendlyAi {
                             // the raw `Order` and let the engine's
                             // drain path issue the path request.
                             let order = AiController::make_move_order(&dest, flags);
-                            self.base.pending_orders.push(order);
+                            self.base.outbox.actor.orders.push(order);
                         } else {
                             self.base
-                                .pending_self_stimuli
+                                .outbox
+                                .reentrant
+                                .self_stimuli
                                 .push(StimulusType::EventCouldntReachPoint);
                         }
                         self.base.stuck_counter = 0;
@@ -2361,11 +2396,11 @@ mod tests {
         );
 
         assert!(
-            ai.base.pending_inform_resurrection,
+            ai.base.outbox.recovery.inform_resurrection,
             "EVENT_FITAGAIN must queue resurrection fan-out"
         );
         assert_eq!(
-            ai.base.pending_set_eye_status,
+            ai.base.outbox.recovery.set_eye_status,
             Some(crate::element::EyeStatus::LookForward),
             "EVENT_FITAGAIN must reset eyes to LookForward"
         );
@@ -2464,7 +2499,9 @@ mod tests {
         );
         let request = ai
             .base
-            .pending_begin_panic
+            .outbox
+            .actor
+            .begin_panic
             .as_ref()
             .expect("a panic request must be queued");
         let center = request
@@ -2878,7 +2915,9 @@ mod tests {
             ai.alert_soldier(ctx.position, 0, &ctx, None, None);
             let friends: Vec<_> = ai
                 .base
-                .pending_add_detectables
+                .outbox
+                .actor
+                .add_detectables
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
                 .collect();

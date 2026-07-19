@@ -1265,14 +1265,15 @@ pub fn begin_strangle(
             .unwrap_or(false);
         if let Some(ai) = victim.ai_controller_mut() {
             if is_moving {
-                ai.pending_cross_npc_actions
-                    .push(crate::ai::CrossNpcAction::SendStimulus {
+                ai.outbox.reentrant.cross_npc_actions.push(
+                    crate::ai::CrossNpcAction::SendStimulus {
                         target: target_id.index(),
                         stimulus_type: crate::ai::StimulusType::EventStop,
                         info: crate::ai::StimulusInfo::None,
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                    });
+                    },
+                );
             }
             ai.non_script_lock(crate::ai::AiLockFlags::FREEZE);
         }

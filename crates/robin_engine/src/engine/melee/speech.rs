@@ -529,7 +529,7 @@ impl EngineInner {
             // Queue the stimulus for the next AI tick rather than calling
             // think() inline (avoids re-entrant borrow issues). The engine's
             // detection loop will pick up any pending stimuli.
-            enemy_ai.base.pending_stimuli.push(stimulus);
+            enemy_ai.base.outbox.detection.stimuli.push(stimulus);
         }
     }
 

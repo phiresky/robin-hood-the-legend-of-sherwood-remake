@@ -31,7 +31,9 @@ impl EnemyAi {
         // animation has finished (is_idle), dismiss the wasp.
         if self.base.current_substate == Substate::WonderingWaspInArmour && is_idle {
             self.base
-                .pending_self_stimuli
+                .outbox
+                .reentrant
+                .self_stimuli
                 .push(StimulusType::EventWaspAway);
         }
 
@@ -163,10 +165,12 @@ impl EnemyAi {
                 let flags = self.base.last_goto_flags;
                 if dest.x != 0.0 || dest.y != 0.0 {
                     let order = crate::ai::AiController::make_move_order(&dest, flags);
-                    self.base.pending_orders.push(order);
+                    self.base.outbox.actor.orders.push(order);
                 } else {
                     self.base
-                        .pending_self_stimuli
+                        .outbox
+                        .reentrant
+                        .self_stimuli
                         .push(StimulusType::EventCouldntReachPoint);
                 }
                 self.base.stuck_counter = 0;
@@ -348,14 +352,14 @@ impl EnemyAi {
                     AiState::Seeking,
                     Substate::SeekingSeekpointCheckingAmbushPoint,
                 );
-                self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
+                self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
             } else if !more_than_one_near {
                 // Single point — peek right immediately.
                 self.set_state(
                     AiState::Seeking,
                     Substate::SeekingSeekpointCheckingAmbushPoint,
                 );
-                self.base.pending_look_sidewards = Some(LookDirection::Right);
+                self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
             } else {
                 // Multiple near — defer the look so a second nearby
                 // point can join the decision.
@@ -372,13 +376,13 @@ impl EnemyAi {
                     AiState::Seeking,
                     Substate::SeekingSeekpointCheckingAmbushPoint,
                 );
-                self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
+                self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
             } else if !more_than_one_near {
                 self.set_state(
                     AiState::Seeking,
                     Substate::SeekingSeekpointCheckingAmbushPoint,
                 );
-                self.base.pending_look_sidewards = Some(LookDirection::Left);
+                self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
             } else {
                 self.set_state(
                     AiState::Seeking,
