@@ -174,6 +174,13 @@ pub struct EngineArgs<'a> {
     /// SP↔MP-host divergence from RNG-consuming work between the
     /// two restore points.
     pub rng_seed: u64,
+    /// Whether the mission VM and StartUp binding are enabled for this
+    /// engine instance. Kept per-construction so concurrent sessions cannot
+    /// observe a process-global script mode.
+    pub script_enabled: bool,
+    /// Whether newly loaded NPCs start invulnerable for this engine instance.
+    /// This is the construction-time `-highlander2` mode.
+    pub highlander2: bool,
     /// AI GoldenEye cheat flag.  Set on the engine before any AI
     /// init runs.  Threaded as a constructor param (rather than a
     /// post-init `SetGoldenEyeMode` dispatch) so the local engine's
@@ -262,6 +269,8 @@ impl Engine {
             inner.initialize_from_campaign(
                 assets,
                 &mut staging,
+                args.script_enabled,
+                args.highlander2,
                 loaded,
                 level_directory,
                 bg_pixel_dims,
@@ -386,6 +395,8 @@ impl Engine {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed: 0,
+            script_enabled: true,
+            highlander2: false,
             goldeneye: false,
         })
     }
@@ -1044,6 +1055,8 @@ mod tests {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed: 0,
+            script_enabled: true,
+            highlander2: false,
             goldeneye: false,
         });
 

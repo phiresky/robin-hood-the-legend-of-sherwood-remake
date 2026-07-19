@@ -1443,6 +1443,8 @@ pub(super) fn load_level_and_sprite_bank(
             ground_mark_sprite,
             titbit_row_frame_counts,
             rng_seed,
+            script_enabled: args.global_options.script_enabled,
+            highlander2: args.global_options.highlander2,
             goldeneye: goldeneye_initial,
         }) {
             Ok(engine) => engine,

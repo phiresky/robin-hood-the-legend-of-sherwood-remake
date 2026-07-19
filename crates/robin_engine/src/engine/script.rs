@@ -2167,6 +2167,8 @@ impl EngineInner {
         &mut self,
         assets: &mut LevelAssets,
         staging: &mut LevelLoadStaging,
+        script_enabled: bool,
+        highlander2: bool,
         loaded: crate::level_data::LoadedLevel,
         level_directory: &str,
         bg_pixel_dims: (f32, f32),
@@ -2185,6 +2187,8 @@ impl EngineInner {
         self.initialize_from_mission(
             assets,
             staging,
+            script_enabled,
+            highlander2,
             &mission_filename,
             &proto_level_filename,
             loaded,

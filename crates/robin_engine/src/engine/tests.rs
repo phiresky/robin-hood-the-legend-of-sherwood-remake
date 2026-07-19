@@ -2205,6 +2205,8 @@ fn mission_stat_resets_on_new_mission() {
     let _ = engine.initialize_from_mission(
         &mut assets,
         &mut staging,
+        true,
+        false,
         "test_mission",
         "test_proto",
         loaded,

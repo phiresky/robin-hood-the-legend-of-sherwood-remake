@@ -523,8 +523,17 @@ mod mission_level_builder_tests {
     #[test]
     fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
-        loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
-            doors: vec![door(3)],
+        loaded.proto.buildings = vec![
+            RawBuildingEntry::StandaloneDoors {
+                doors: vec![door(3)],
+            },
+            RawBuildingEntry::Building {
+                doors: vec![door(8)],
+            },
+        ];
+        loaded.mission.building_tenants = vec![RawBuildingTenants {
+            tenant_element_indices: Vec::new(),
+            arrow_reserve: false,
         }];
         let mut lift_door = door(4);
         lift_door.sector_out = 20;
@@ -547,14 +556,26 @@ mod mission_level_builder_tests {
             .expect("non-script domains still construct");
 
         assert!(engine.scripts.mission.is_none());
-        assert_eq!(engine.script_domains.interactables.doors.len(), 2);
+        assert_eq!(engine.script_domains.interactables.doors.len(), 3);
         assert_eq!(
             engine.script_domains.interactables.doors[0].door_type,
             crate::gate::DoorType::Gate
         );
         assert_eq!(
             engine.script_domains.interactables.doors[1].door_type,
+            crate::gate::DoorType::Reinforcement
+        );
+        assert_eq!(
+            engine.script_domains.interactables.doors[2].door_type,
             crate::gate::DoorType::LiftHigh
+        );
+
+        engine.cache_door_ai_metadata();
+        assert_eq!(engine.ai.global.door_seek_infos.len(), 3);
+        assert_eq!(engine.ai.global.reinforcement_doors.len(), 1);
+        assert_eq!(
+            engine.ai.global.reinforcement_doors[0].door_index,
+            crate::gate::DoorIndex(1)
         );
 
         for sector_number in [0_i16, 1_i16] {
@@ -585,11 +606,11 @@ mod mission_level_builder_tests {
         engine.populate_sector_gates_from_doors();
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[1].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
         );
     }
 
@@ -1470,6 +1491,8 @@ impl EngineInner {
         &mut self,
         assets: &mut LevelAssets,
         staging: &mut LevelLoadStaging,
+        script_enabled: bool,
+        highlander2: bool,
         mission_name: &str,
         proto_level_name: &str,
         mut loaded: crate::level_data::LoadedLevel,
@@ -1477,10 +1500,6 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
-        let script_enabled = crate::engine::GlobalOptions::global()
-            .as_ref()
-            .map(|options| options.script_enabled)
-            .unwrap_or(true);
         let level_builder = MissionLevelBuilder::new(mission_name, script_enabled, &loaded);
         self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
@@ -2387,14 +2406,8 @@ impl EngineInner {
         );
 
         // Every freshly-constructed NPC (soldier or civilian, regardless
-        // of camp) seeds `invulnerable` from the global highlander2
-        // option.  The launcher sets the global from `-highlander2`
-        // cmdline and never clears it again, so any NPC spawned
-        // post-startup is born invulnerable when the cheat is on.
-        let highlander2 = crate::engine::GlobalOptions::global()
-            .as_ref()
-            .map(|o| o.highlander2)
-            .unwrap_or(false);
+        // of camp) seeds `invulnerable` from the session's highlander2
+        // construction mode.
 
         // Spawn civilians (CIVI sub-chunk, before soldiers in the ELEMENT chunk)
         for raw in &loaded.mission.civilians {
@@ -4430,89 +4443,7 @@ impl EngineInner {
 
         self.attach_mission_level_stage(&level_plan)?;
 
-        // Cache door geometry for `FindDoorEnemyCouldBeBehind`, which
-        // walks the door list owned by the building/sector graph.
-        let mission_loaded = self.scripts.mission.is_some();
-        if !mission_loaded {
-            tracing::warn!(
-                "Skipping door-derived AI caches because the mission script failed to load"
-            );
-        }
-        let door_infos: Vec<crate::ai::DoorSeekInfo> = if mission_loaded {
-            self.script_domains
-                .interactables
-                .doors
-                .iter()
-                .enumerate()
-                .map(|(idx, door)| {
-                    // Cache the actor-independent portion of the exact
-                    // authorization used by FindDoorEnemyCouldBeBehind.
-                    // Live building capacity and rider state are applied
-                    // when the seek helper consumes this snapshot.
-                    let npc_villain_authorized_direct =
-                        crate::ai::cache_npc_villain_authorized_direct(door);
-                    crate::ai::DoorSeekInfo {
-                        door_index: crate::gate::DoorIndex(idx as u32),
-                        door_type: door.door_type,
-                        point_out: door.point_out,
-                        position_in: crate::ai::Position {
-                            x: door.point_in.x,
-                            y: door.point_in.y,
-                            sector: crate::position_interface::SectorHandle::new(u16::from(
-                                door.sector_in,
-                            )),
-                            level: door.layer_in,
-                        },
-                        sector_out: u16::from(door.sector_out),
-                        sector_in: u16::from(door.sector_in),
-                        layer_out: door.layer_out,
-                        npc_villain_authorized_direct,
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        self.ai.global.door_seek_infos = door_infos;
-        tracing::debug!(
-            "Cached {} door seek infos for FindDoorEnemyCouldBeBehind",
-            self.ai.global.door_seek_infos.len(),
-        );
-
-        // Populate reinforcement door info for MerryManForestCassos.
-        self.ai.global.reinforcement_doors = if mission_loaded {
-            self.script_domains
-                .interactables
-                .doors
-                .iter()
-                .enumerate()
-                .filter(|(_, d)| d.door_type == crate::gate::DoorType::Reinforcement)
-                .map(|(idx, d)| crate::ai::ReinforcementDoorInfo {
-                    position_in: crate::ai::Position {
-                        x: d.point_in.x,
-                        y: d.point_in.y,
-                        sector: crate::position_interface::SectorHandle::new(u16::from(
-                            d.sector_in,
-                        )),
-                        level: d.layer_in,
-                    },
-                    door_index: crate::gate::DoorIndex(idx as u32),
-                    point_out: d.point_out,
-                    point_in: d.point_in,
-                    point_mid: d.point_mid,
-                    layer_out: d.layer_out,
-                    sector_out: crate::position_interface::SectorHandle::new(u16::from(
-                        d.sector_out,
-                    )),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        tracing::debug!(
-            "Cached {} reinforcement doors for MerryManForestCassos",
-            self.ai.global.reinforcement_doors.len(),
-        );
+        self.cache_door_ai_metadata();
 
         // Sort portrait order by character priority (descending — highest
         // priority = leftmost slot). Done here so the portrait bar, the
@@ -5764,6 +5695,79 @@ impl EngineInner {
                 missing_values,
             );
         }
+    }
+
+    /// Cache the world-derived door metadata consumed by AI queries.
+    ///
+    /// These caches belong to the constructed level, not to the mission VM,
+    /// so they must also be populated when scripting is disabled.
+    fn cache_door_ai_metadata(&mut self) {
+        self.ai.global.door_seek_infos = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .map(|(idx, door)| {
+                // Cache the actor-independent portion of the exact
+                // authorization used by FindDoorEnemyCouldBeBehind.
+                // Live building capacity and rider state are applied
+                // when the seek helper consumes this snapshot.
+                let npc_villain_authorized_direct =
+                    crate::ai::cache_npc_villain_authorized_direct(door);
+                crate::ai::DoorSeekInfo {
+                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_type: door.door_type,
+                    point_out: door.point_out,
+                    position_in: crate::ai::Position {
+                        x: door.point_in.x,
+                        y: door.point_in.y,
+                        sector: crate::position_interface::SectorHandle::new(u16::from(
+                            door.sector_in,
+                        )),
+                        level: door.layer_in,
+                    },
+                    sector_out: u16::from(door.sector_out),
+                    sector_in: u16::from(door.sector_in),
+                    layer_out: door.layer_out,
+                    npc_villain_authorized_direct,
+                }
+            })
+            .collect();
+        tracing::debug!(
+            "Cached {} door seek infos for FindDoorEnemyCouldBeBehind",
+            self.ai.global.door_seek_infos.len(),
+        );
+
+        // Populate reinforcement door info for MerryManForestCassos.
+        self.ai.global.reinforcement_doors = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .filter(|(_, door)| door.door_type == crate::gate::DoorType::Reinforcement)
+            .map(|(idx, door)| crate::ai::ReinforcementDoorInfo {
+                position_in: crate::ai::Position {
+                    x: door.point_in.x,
+                    y: door.point_in.y,
+                    sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)),
+                    level: door.layer_in,
+                },
+                door_index: crate::gate::DoorIndex(idx as u32),
+                point_out: door.point_out,
+                point_in: door.point_in,
+                point_mid: door.point_mid,
+                layer_out: door.layer_out,
+                sector_out: crate::position_interface::SectorHandle::new(u16::from(
+                    door.sector_out,
+                )),
+            })
+            .collect();
+        tracing::debug!(
+            "Cached {} reinforcement doors for MerryManForestCassos",
+            self.ai.global.reinforcement_doors.len(),
+        );
     }
 
     // ─── Loaded level → canonical script domains ────────────────────────
