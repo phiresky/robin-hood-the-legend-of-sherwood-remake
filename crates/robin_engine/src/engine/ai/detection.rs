@@ -214,6 +214,7 @@ impl EngineInner {
     /// walked in order and each eligible nearby enemy is sent through Think.
     pub(crate) fn tick_attacking_reactiontime_enemy_near(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         scratch: &SimScratch,
     ) {
@@ -294,15 +295,21 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
-                let tick_data =
-                    self.build_npc_tick_data_for_target(npc_id, scratch, assets, Some(target_id));
+                let tick_data = self.build_npc_tick_data_for_target(
+                    sim,
+                    npc_id,
+                    scratch,
+                    assets,
+                    Some(target_id),
+                );
                 let stimulus = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventEnemyNear,
                     target_handle,
                 );
-                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+                self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
             }
         }
     }
@@ -312,6 +319,7 @@ impl EngineInner {
     /// one-shot reveal + FX-target Heard() callbacks.
     pub(super) fn tick_enemy_ai_blip_detection(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         world: &AiWorldView,
     ) {
@@ -335,7 +343,7 @@ impl EngineInner {
         };
 
         // Difficulty modifiers.
-        let difficulty_factor = match crate::player_profile::DifficultyLevel::current() {
+        let difficulty_factor = match sim.config().difficulty {
             crate::player_profile::DifficultyLevel::Easy => {
                 crate::player_profile::difficulty_params::EASY_BLIP_DETECTION_RANGE
             }
@@ -708,19 +716,20 @@ impl EngineInner {
             }
         }
         if !listenable_calls.is_empty() {
-            let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-                for (target_handle, pc_handle) in listenable_calls {
-                    if let Err(e) = script.call_target_function(
-                        target_handle,
-                        "ActivatedByListenable",
-                        &[pc_handle],
-                        script_domains,
-                        capabilities,
-                    ) {
-                        tracing::warn!("ActivatedByListenable (target {target_handle}): {e}");
+            let _ =
+                self.with_script_session(sim, assets, |script, script_domains, capabilities| {
+                    for (target_handle, pc_handle) in listenable_calls {
+                        if let Err(e) = script.call_target_function(
+                            target_handle,
+                            "ActivatedByListenable",
+                            &[pc_handle],
+                            script_domains,
+                            capabilities,
+                        ) {
+                            tracing::warn!("ActivatedByListenable (target {target_handle}): {e}");
+                        }
                     }
-                }
-            });
+                });
         }
     }
 
@@ -737,6 +746,7 @@ impl EngineInner {
     /// same NPC's optical `InstantDetection` decision immediately afterward.
     pub(super) fn tick_enemy_ai_acoustic_detection_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         world: &AiWorldView,
@@ -998,7 +1008,7 @@ impl EngineInner {
             // `UpdateHearing` calls Think inline. Rebuild both views for each
             // edge because an earlier PC's hearing handler may mutate state
             // consumed by the next handler or by optical detection below.
-            let scratch = self.build_sim_scratch(assets);
+            let scratch = self.build_sim_scratch(sim, assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let building_sector = self
                 .world
@@ -1020,10 +1030,11 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
-            self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -1050,6 +1061,7 @@ impl EngineInner {
     // Lacklandist-soldier → Royalist-soldier Enemy target path.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         world: &AiWorldView,
     ) {
@@ -1076,7 +1088,7 @@ impl EngineInner {
                     && entity.human_data().is_none_or(|human| !human.unconscious)
                     && elem.posture != Posture::Tied
             });
-            self.tick_enemy_ai_acoustic_detection_for_npc(npc_id, assets, world);
+            self.tick_enemy_ai_acoustic_detection_for_npc(sim, npc_id, assets, world);
 
             // RefreshDetection clears both maxima after acoustics but
             // before its narrower optical eligibility gate. In particular,
@@ -1210,6 +1222,7 @@ impl EngineInner {
             }
 
             self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                sim,
                 npc_id,
                 assets,
                 enemy_detection_tick_data,

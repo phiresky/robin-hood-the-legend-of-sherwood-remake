@@ -55,16 +55,6 @@ impl DifficultyLevel {
         }
     }
 
-    /// Get the current difficulty from the global profile manager.
-    /// Returns `Medium` if no profile is active.
-    pub fn current() -> Self {
-        let ppm = PlayerProfileManager::global();
-        ppm.as_ref()
-            .and_then(|mgr| mgr.get_active())
-            .map(|p| p.difficulty)
-            .unwrap_or(Self::Medium)
-    }
-
     /// Apply difficulty scaling to a base capacity value.
     ///
     /// Only meaningful for Lacklandist (enemy) entities — callers must

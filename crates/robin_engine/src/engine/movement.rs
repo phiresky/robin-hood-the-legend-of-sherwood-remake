@@ -1062,6 +1062,7 @@ impl EngineInner {
     /// for spread-out groups.
     pub(crate) fn perform_group_move(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_ids: &[EntityId],
         click_point: MapPoint,
@@ -1652,6 +1653,7 @@ impl EngineInner {
                         GoalShape::Point(*dest)
                     };
                     self.build_gate_movement_sequence(
+                        sim,
                         *pc_id,
                         gate_steps,
                         goal_shape,
@@ -1804,6 +1806,7 @@ impl EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn build_gate_movement_sequence(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         entity_id: EntityId,
         gate_path: Vec<crate::gate::GatePathStep>,
         goal: GoalShape,
@@ -2105,12 +2108,15 @@ impl EngineInner {
                 // Original: `RHSequence::AppendMoveToSequence` in
                 // `original-code/RHsequence.cpp:484` sums two `rand() & 15`
                 // draws for this building-exit wait.
-                let r: u32 =
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::RuntimeBuildingExitWait, 0..16)
-                        + crate::sim_rng::u32(
-                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
-                            0..16,
-                        );
+                let r: u32 = crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::RuntimeBuildingExitWait,
+                    0..16,
+                ) + crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::RuntimeBuildingExitWait,
+                    0..16,
+                );
                 let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 seq.append_element(w);
@@ -2526,9 +2532,11 @@ impl EngineInner {
                         // direction stuffed on the element is the
                         // door's `point_out - point_in` sector-index.
                         let r: u32 = crate::sim_rng::u32(
+                            sim,
                             crate::sim_rng::RngSite::RuntimeBuildingExitWait,
                             0..16,
                         ) + crate::sim_rng::u32(
+                            sim,
                             crate::sim_rng::RngSite::RuntimeBuildingExitWait,
                             0..16,
                         );
@@ -3132,6 +3140,7 @@ impl EngineInner {
     ///   with RIDER_CHARGE flag (need EventGaloppLoopEnd).
     pub(super) fn tick_entity_movement(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>) {
         if self.actors_frozen() {
@@ -4338,6 +4347,7 @@ impl EngineInner {
             let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
             let sprite = &mut elem.sprite;
             let (motion_state, frame_dist_raw) = sprite.perform_motion(
+                sim,
                 motion_order,
                 sprite_motion_order_for_nonanimation(anim),
                 direction,
@@ -5349,7 +5359,7 @@ impl EngineInner {
         // crossing a LINE_PATCH line, route the PC's new position
         // through the patch's Enter/Leave + auto-Apply flow.
         for (entity_id, old_pos, new_pos, layer) in patch_cross_checks {
-            self.check_for_patch_line_crossing(assets, entity_id, old_pos, new_pos, layer);
+            self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
         }
 
         // Dispatch transition-animation seek refreshes detected
@@ -5386,6 +5396,7 @@ impl EngineInner {
                     .map(|e| e.element_data().position_map())
                     .unwrap_or_default();
                 self.apply_seek_refresh(
+                    sim,
                     assets,
                     owner,
                     seq_id,
@@ -5411,7 +5422,7 @@ impl EngineInner {
         // Execute pending door-pass triggers (PassingDoor steps).
         // These need &mut self for layer/sector changes and building callbacks.
         for (entity_id, door_index, direct, trigger_num) in door_triggers {
-            self.execute_pass_door(assets, entity_id, door_index, direct, trigger_num);
+            self.execute_pass_door(sim, assets, entity_id, door_index, direct, trigger_num);
         }
         for (entity_id, door_index, direct) in completed_door_passes {
             tracing::debug!(
@@ -6227,6 +6238,7 @@ impl EngineInner {
     /// `process_patch_effects`.
     pub(super) fn check_for_patch_line_crossing(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         old_pos: MapPoint,
@@ -6366,7 +6378,7 @@ impl EngineInner {
             };
 
             if !effects.is_empty() {
-                self.process_patch_effects(assets, patch_index, effects);
+                self.process_patch_effects(sim, assets, patch_index, effects);
             }
         }
     }
@@ -6457,6 +6469,7 @@ impl EngineInner {
     /// complete later through [`EngineInner::process_next_path_request`].
     pub(crate) fn try_dispatch_move_path(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -6930,11 +6943,12 @@ impl EngineInner {
             return MovePathOutcome::Pending;
         }
 
-        self.finish_move_path(request, vec![source, dest])
+        self.finish_move_path(sim, request, vec![source, dest])
     }
 
     pub(super) fn finish_move_path(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         request: PendingPathRequest,
         mut waypoints: Vec<MapPoint>,
     ) -> MovePathOutcome {
@@ -6980,6 +6994,7 @@ impl EngineInner {
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
                 waypoints = crate::engine::tick::apply_drunken_path_deviation(
+                    sim,
                     waypoints,
                     source,
                     blood_alcohol,

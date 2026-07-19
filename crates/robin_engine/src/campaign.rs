@@ -189,6 +189,15 @@ pub struct Campaign {
     /// abandon/restart behavior survives save/load and rollback
     /// snapshots. Boxed to avoid recursive sizing.
     pub pre_mission_snapshot: Option<Box<Campaign>>,
+    /// Authoritative simulation state immediately before mission selection.
+    /// Kept beside the existing campaign restart snapshot so save-loaded
+    /// `LevelRestart` can replay selection from the identical RNG position.
+    pub pre_mission_rng_seed: Option<u64>,
+    pub pre_mission_sim_config: Option<crate::engine::SimConfig>,
+    /// Whether the restart snapshot already names the mission that should be
+    /// constructed. Direct launches do not run campaign selection, so their
+    /// restart path must rebuild that exact mission without selecting again.
+    pub pre_mission_was_preselected: bool,
 }
 
 impl Default for Campaign {
@@ -223,6 +232,9 @@ impl Default for Campaign {
             collected_relics: Vec::new(),
             production_sectors: default_production_sectors(),
             pre_mission_snapshot: None,
+            pre_mission_rng_seed: None,
+            pre_mission_sim_config: None,
+            pre_mission_was_preselected: false,
         }
     }
 }
@@ -301,7 +313,7 @@ pub fn calculate_warcrime_recruitment(
 
 impl Campaign {
     /// Create a new campaign from loaded profiles.
-    pub fn from_profiles(profiles: &ProfileManager) -> Campaign {
+    pub fn from_profiles(profiles: &ProfileManager, difficulty: DifficultyLevel) -> Campaign {
         let mut campaign = Campaign {
             ..Default::default()
         };
@@ -333,7 +345,6 @@ impl Campaign {
             profiles.characters.len() > 1,
             "campaign init: need at least two character profiles (Robin Town + Robin Hood)"
         );
-        let difficulty = DifficultyLevel::current();
         let mut robin_char_idx: Option<usize> = None;
         for (i, cp) in profiles.characters.iter().enumerate() {
             campaign.characters.push(PcDescription {
@@ -376,6 +387,54 @@ impl Campaign {
         let mut snap = self.clone();
         snap.pre_mission_snapshot = None;
         self.pre_mission_snapshot = Some(Box::new(snap));
+    }
+
+    /// Capture the campaign and the authoritative pre-selection simulation
+    /// checkpoint as one restart boundary.
+    pub fn snapshot_with_simulation(
+        &mut self,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+    ) {
+        self.snapshot_with_simulation_mode(rng_seed, sim_config, false);
+    }
+
+    fn snapshot_with_simulation_mode(
+        &mut self,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+        preselected: bool,
+    ) {
+        self.pre_mission_rng_seed = Some(rng_seed);
+        self.pre_mission_sim_config = Some(sim_config);
+        self.pre_mission_was_preselected = preselected;
+        self.snapshot();
+    }
+
+    /// Capture a direct/preselected mission boundary. Unlike the ordinary
+    /// session boundary, restart must not run campaign selection again.
+    pub fn snapshot_preselected_with_simulation(
+        &mut self,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+    ) {
+        self.snapshot_with_simulation_mode(rng_seed, sim_config, true);
+    }
+
+    pub fn has_restart_simulation_checkpoint(&self) -> bool {
+        self.pre_mission_snapshot.is_some()
+            && self.pre_mission_rng_seed.is_some()
+            && self.pre_mission_sim_config.is_some()
+    }
+
+    /// Required pre-selection checkpoint paired with the current snapshot.
+    pub fn restart_simulation_checkpoint(&self) -> (u64, crate::engine::SimConfig) {
+        (
+            self.pre_mission_rng_seed
+                .expect("campaign restart snapshot is missing its RNG checkpoint"),
+            self.pre_mission_sim_config
+                .expect("campaign restart snapshot is missing its SimConfig checkpoint"),
+        )
     }
 
     /// Restore the pre-mission snapshot captured by [`Campaign::snapshot`].
@@ -528,6 +587,7 @@ impl Campaign {
     /// slot), or `None` when the gang has no eligible peasant.
     pub fn get_random_peasant_from_gang(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         preferred_profile_idx: Option<CharacterProfileIdx>,
         profiles: &ProfileManager,
     ) -> Option<usize> {
@@ -565,6 +625,7 @@ impl Campaign {
             return None;
         };
         let pick = crate::sim_rng::usize(
+            sim,
             crate::sim_rng::RngSite::CampaignReinforcementPeasant,
             0..pool.len(),
         );
@@ -732,7 +793,12 @@ impl Campaign {
     ///
     /// Returns `true` if the named profile was found and added (or was
     /// already in the gang — still counts as success).
-    pub fn rescue_pc_by_profile_name(&mut self, name: &str, profiles: &ProfileManager) -> bool {
+    pub fn rescue_pc_by_profile_name(
+        &mut self,
+        name: &str,
+        profiles: &ProfileManager,
+        difficulty: DifficultyLevel,
+    ) -> bool {
         // Find the character profile id matching the name (case-sensitive).
         let profile_idx = profiles.character_idx_by_name(name);
         let Some(profile_idx) = profile_idx else {
@@ -756,7 +822,6 @@ impl Campaign {
                 // PcDescription with full, difficulty-scaled pockets.
                 // The PRIS rescue-PC spawn path doesn't push to
                 // `campaign.characters` up front, so we do it here.
-                let difficulty = DifficultyLevel::current();
                 let cp = profiles
                     .get_character(profile_idx)
                     .expect("rescue_pc_by_profile_name: profile_idx just resolved from name");
@@ -821,14 +886,16 @@ impl Campaign {
     /// out of range, picks randomly. Returns the character index in `self.characters`.
     pub fn add_new_peasant_to_gang(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         peasant_type: Option<u16>,
         profiles: &ProfileManager,
     ) -> usize {
         // 50% chance to bring back a reservist if any exist
         if !self.reservist_indices.is_empty()
-            && crate::sim_rng::bool(crate::sim_rng::RngSite::CampaignReservistReturn)
+            && crate::sim_rng::bool(sim, crate::sim_rng::RngSite::CampaignReservistReturn)
         {
             let reservist_pos = crate::sim_rng::usize(
+                sim,
                 crate::sim_rng::RngSite::CampaignReservistReturn,
                 ..self.reservist_indices.len(),
             );
@@ -851,6 +918,7 @@ impl Campaign {
         let chosen = match peasant_type {
             Some(t) if (t as usize) < candidates.len() => t as usize,
             _ => crate::sim_rng::usize(
+                sim,
                 crate::sim_rng::RngSite::CampaignNewPeasantType,
                 ..candidates.len(),
             ),
@@ -866,7 +934,7 @@ impl Campaign {
         let desc = PcDescription {
             character_profile_idx: Some(profile_idx),
             instanced: false,
-            status: PcStatus::from_profile(cp, false, DifficultyLevel::current()),
+            status: PcStatus::from_profile(cp, false, sim.config().difficulty),
         };
         let char_idx = self.add_to_characters(desc, profiles);
         self.add_to_gang(char_idx, profiles);
@@ -881,6 +949,7 @@ impl Campaign {
     /// Returns the number of new peasants added.
     pub fn recruit_post_mission_peasants(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         living_soldiers: u32,
         dead_soldiers: u32,
         difficulty: DifficultyLevel,
@@ -903,7 +972,7 @@ impl Campaign {
 
         self.set_reservists_back(false);
         for _ in 0..count {
-            self.add_new_peasant_to_gang(None, profiles);
+            self.add_new_peasant_to_gang(sim, None, profiles);
         }
         // The caller is responsible for writing the new-peasant count
         // into the mission stats — we keep mission-stat mutation out
@@ -969,6 +1038,7 @@ impl Campaign {
     /// the campaign map).
     pub fn try_consume_blazons_for_pseudo_in_sherwood(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         profiles: &ProfileManager,
     ) -> bool {
         let blazon_idx = match self.blazon_mission_idx {
@@ -988,7 +1058,7 @@ impl Campaign {
         self.set_mission_done(true, Some(blazon_idx), profiles);
         self.remove_accessible_mission(blazon_idx);
         self.next_mission_idx = None;
-        self.determine_accessible_missions(profiles);
+        self.determine_accessible_missions(sim, profiles);
         true
     }
 
@@ -1001,12 +1071,17 @@ impl Campaign {
     ///
     /// Returns `true` when the cascade closed the buy screen — the
     /// caller uses that to short-circuit its post-buy update.
-    pub fn buy_blazon(&mut self, mission_index: usize, profiles: &ProfileManager) -> bool {
+    pub fn buy_blazon(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        mission_index: usize,
+        profiles: &ProfileManager,
+    ) -> bool {
         let price = self.missions[mission_index].get_blazon_price() as i32;
         self.add_value(CampaignValue::Ransom, -price);
         self.add_value(CampaignValue::Blazon, 1);
         self.missions[mission_index].increase_blazon_price(profiles);
-        self.try_consume_blazons_for_pseudo_in_sherwood(profiles)
+        self.try_consume_blazons_for_pseudo_in_sherwood(sim, profiles)
     }
 
     // ── Mission team / requirements ──
@@ -1073,7 +1148,11 @@ impl Campaign {
     /// Each rescued PC is added via `rescue_pc_by_profile_name`.
     ///
     /// Returns the number of PCs actually added to the gang.
-    pub fn rescue_pcs_for_current_mission_win(&mut self, profiles: &ProfileManager) -> usize {
+    pub fn rescue_pcs_for_current_mission_win(
+        &mut self,
+        profiles: &ProfileManager,
+        difficulty: DifficultyLevel,
+    ) -> usize {
         let idx = match self.current_mission_idx {
             Some(i) => i,
             None => return 0,
@@ -1093,7 +1172,7 @@ impl Campaign {
         };
         let mut added = 0;
         for name in names {
-            if self.rescue_pc_by_profile_name(name, profiles) {
+            if self.rescue_pc_by_profile_name(name, profiles, difficulty) {
                 added += 1;
             }
         }
@@ -1166,7 +1245,11 @@ impl Campaign {
     /// Pick the next mission to play. Returns the mission index.
     /// If `next_mission_idx` is already set (chosen on the Sherwood map),
     /// uses that; otherwise runs `determine_accessible_missions`.
-    pub fn determine_next_mission(&mut self, profiles: &ProfileManager) -> usize {
+    pub fn determine_next_mission(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        profiles: &ProfileManager,
+    ) -> usize {
         let sherwood_idx = self.get_sherwood_mission_idx();
 
         if let Some(next_idx) = self.next_mission_idx {
@@ -1176,7 +1259,7 @@ impl Campaign {
             self.next_mission_idx = None;
         } else {
             // Determine missions that can be played
-            self.determine_accessible_missions(profiles);
+            self.determine_accessible_missions(sim, profiles);
 
             // Win pseudo missions that require zero blazons
             let empty_pseudo_indices: Vec<usize> = self
@@ -1719,13 +1802,17 @@ impl Campaign {
 
     /// Reset the campaign to its initial state, recreating missions and
     /// gang from the loaded profiles.
-    pub fn reset(&mut self, profiles: &ProfileManager) {
+    pub fn reset(&mut self, profiles: &ProfileManager, difficulty: DifficultyLevel) {
         self.last_mission_idx = None;
         self.current_mission_idx = None;
         self.next_mission_idx = None;
         self.blazon_mission_idx = None;
         self.ares = -1;
         self.last_pseudo_mission_status = MissionStatus::Available;
+        self.pre_mission_snapshot = None;
+        self.pre_mission_rng_seed = None;
+        self.pre_mission_sim_config = None;
+        self.pre_mission_was_preselected = false;
 
         // Reset values, set initial ransom
         self.values = enum_map! { _ => 0 };
@@ -1748,7 +1835,6 @@ impl Campaign {
         // ammo is seeded from the profile's max-ammo values, then
         // difficulty-scaled. Only forest Robin is put into the initial
         // gang below, matching `RHCampaign::CreateGang`.
-        let difficulty = DifficultyLevel::current();
         let mut robin_char_idx: Option<usize> = None;
         for (i, cp) in profiles.characters.iter().enumerate() {
             self.characters.push(PcDescription {
@@ -1787,7 +1873,12 @@ impl Campaign {
     ///   R=Robin, J=Petit Jean, T=Frere Tuck, S=Stutely,
     ///   W=Will Ecarlate, M=Lady Marianne, A/B/C=Paysan A/B/C,
     ///   F=Ferris.
-    pub fn create_gang_from_pcs(&mut self, pcs: &str, profiles: &ProfileManager) {
+    pub fn create_gang_from_pcs(
+        &mut self,
+        pcs: &str,
+        profiles: &ProfileManager,
+        difficulty: DifficultyLevel,
+    ) {
         let char_names: Vec<&str> = pcs
             .chars()
             .filter_map(|c| match c.to_ascii_uppercase() {
@@ -1813,7 +1904,6 @@ impl Campaign {
 
         // Each named gang member is initialised with full pockets;
         // ammo is difficulty-scaled.
-        let difficulty = DifficultyLevel::current();
         for name in &char_names {
             // Find the character profile index by name (case-sensitive).
             // If multiple profiles share the same name (e.g. forest/town Robin),
@@ -1856,7 +1946,11 @@ impl Campaign {
     // ═══════════════════════════════════════════════════════════════
 
     /// Determine which missions are accessible and select candidates.
-    pub fn determine_accessible_missions(&mut self, profiles: &ProfileManager) {
+    pub fn determine_accessible_missions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        profiles: &ProfileManager,
+    ) {
         // First mission is always Sherwood -- skip it (index 0)
         for i in 1..self.missions.len() {
             if self.missions[i].is_accessible(self, profiles)
@@ -1877,12 +1971,17 @@ impl Campaign {
             }
         }
 
-        self.select_missions(false, profiles);
-        self.select_missions(true, profiles);
+        self.select_missions(sim, false, profiles);
+        self.select_missions(sim, true, profiles);
     }
 
     /// Run the multi-pass mission selection pipeline.
-    fn select_missions(&mut self, pending: bool, profiles: &ProfileManager) {
+    fn select_missions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        pending: bool,
+        profiles: &ProfileManager,
+    ) {
         let mut attempts_left = 10u32;
 
         while attempts_left > 0 {
@@ -1904,7 +2003,7 @@ impl Campaign {
 
             if !pending {
                 if candidates.len() > 1 {
-                    self.filter_blazon_by_chance(&mut candidates, profiles);
+                    self.filter_blazon_by_chance(sim, &mut candidates, profiles);
                 }
                 self.filter_by_blazons(&mut candidates, profiles);
             }
@@ -1913,7 +2012,7 @@ impl Campaign {
                 self.filter_by_repetition(&mut candidates);
             }
             if candidates.len() > 1 {
-                self.filter_non_blazon_by_chance(&mut candidates, profiles);
+                self.filter_non_blazon_by_chance(sim, &mut candidates, profiles);
             }
             if candidates.len() > 1 {
                 self.filter_by_location(&mut candidates, profiles);
@@ -1949,6 +2048,7 @@ impl Campaign {
 
         if fallback.len() > 1 {
             let pick = fallback[crate::sim_rng::usize(
+                sim,
                 crate::sim_rng::RngSite::CampaignForcedMission,
                 0..fallback.len(),
             )];
@@ -2083,7 +2183,12 @@ impl Campaign {
     }
 
     /// Random chance filter for blazon (attack/pseudo) missions.
-    fn filter_blazon_by_chance(&mut self, candidates: &mut Vec<usize>, profiles: &ProfileManager) {
+    fn filter_blazon_by_chance(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        candidates: &mut Vec<usize>,
+        profiles: &ProfileManager,
+    ) {
         let backup = candidates.clone();
         candidates.retain(|&idx| {
             let m = &self.missions[idx];
@@ -2093,7 +2198,7 @@ impl Campaign {
                 return true;
             }
             let chance =
-                crate::sim_rng::usize(crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
+                crate::sim_rng::usize(sim, crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
             if p.access_probability < chance as u16 {
                 self.missions[idx].age = 0;
                 false
@@ -2109,6 +2214,7 @@ impl Campaign {
     /// Random chance filter for non-blazon missions.
     fn filter_non_blazon_by_chance(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         candidates: &mut Vec<usize>,
         profiles: &ProfileManager,
     ) {
@@ -2120,7 +2226,7 @@ impl Campaign {
                 return true;
             }
             let chance =
-                crate::sim_rng::usize(crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
+                crate::sim_rng::usize(sim, crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
             if p.access_probability < chance as u16 {
                 self.missions[idx].age = 0;
                 false
@@ -2282,8 +2388,8 @@ impl Campaign {
 
 impl Campaign {
     /// Create a campaign from profiles loaded from disk.
-    pub fn create(profiles: &ProfileManager) -> Campaign {
-        let campaign = Campaign::from_profiles(profiles);
+    pub fn create(profiles: &ProfileManager, difficulty: DifficultyLevel) -> Campaign {
+        let campaign = Campaign::from_profiles(profiles, difficulty);
         tracing::info!(
             "Rust campaign: {} missions, {} characters, {} in gang",
             campaign.missions.len(),
@@ -2333,6 +2439,33 @@ mod tests {
     }
 
     #[test]
+    fn simulation_snapshot_records_explicit_preselection_mode() {
+        let config = crate::engine::SimConfig::default();
+        let mut campaign = Campaign::default();
+        campaign.pre_mission_was_preselected = true;
+
+        campaign.snapshot_with_simulation(11, config);
+        assert!(!campaign.pre_mission_was_preselected);
+        assert!(
+            !campaign
+                .pre_mission_snapshot
+                .as_ref()
+                .unwrap()
+                .pre_mission_was_preselected
+        );
+
+        campaign.snapshot_preselected_with_simulation(22, config);
+        assert!(campaign.pre_mission_was_preselected);
+        assert!(
+            campaign
+                .pre_mission_snapshot
+                .as_ref()
+                .unwrap()
+                .pre_mission_was_preselected
+        );
+    }
+
+    #[test]
     fn campaign_gang() {
         let mut c = Campaign::new();
         c.characters.push(PcDescription {
@@ -2360,7 +2493,7 @@ mod tests {
     #[test]
     fn campaign_from_profiles_seeds_only_forest_robin() {
         let profiles = profile_manager_with_robin_party();
-        let c = Campaign::from_profiles(&profiles);
+        let c = Campaign::from_profiles(&profiles, DifficultyLevel::Medium);
 
         assert_eq!(c.gang_indices, vec![1]);
         assert_eq!(
@@ -2373,11 +2506,11 @@ mod tests {
     #[test]
     fn campaign_reset_seeds_only_forest_robin_team() {
         let profiles = profile_manager_with_robin_party();
-        let mut c = Campaign::from_profiles(&profiles);
+        let mut c = Campaign::from_profiles(&profiles, DifficultyLevel::Medium);
         c.gang_indices = vec![0, 1, 2, 3];
         c.mission_team_indices = vec![0, 1, 2, 3];
 
-        c.reset(&profiles);
+        c.reset(&profiles, DifficultyLevel::Medium);
 
         assert_eq!(c.gang_indices, vec![1]);
         assert_eq!(c.mission_team_indices, vec![1]);

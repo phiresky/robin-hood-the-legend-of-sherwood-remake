@@ -169,7 +169,13 @@ impl EngineInner {
     ///    refreshes the minimap dot.
     ///
     /// `scroll_handle` and `pc_handle` are actor script handles.
-    pub(crate) fn take_scroll(&mut self, assets: &LevelAssets, pc: EntityId, scroll: EntityId) {
+    pub(crate) fn take_scroll(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pc: EntityId,
+        scroll: EntityId,
+    ) {
         // Flip the taken flag.
         if let Some(entity) = self.get_entity_mut(scroll)
             && let Some(obj) = entity.object_data_mut()
@@ -193,7 +199,7 @@ impl EngineInner {
         let scroll_handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc);
         let script_result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
+            .with_script_session(sim, assets, |script, script_domains, capabilities| {
                 script.call_scroll_function(
                     scroll_handle,
                     "IsTaken",
@@ -248,8 +254,12 @@ impl EngineInner {
 
     /// Whether this scroll is due to be replaced by an amulet on Easy
     /// when its presence flag is unset.
-    fn is_scroll_to_be_replaced_by_amulet(&self, scroll: EntityId) -> bool {
-        let difficulty = crate::player_profile::DifficultyLevel::current();
+    fn is_scroll_to_be_replaced_by_amulet(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        scroll: EntityId,
+    ) -> bool {
+        let difficulty = sim.config().difficulty;
         if difficulty != crate::player_profile::DifficultyLevel::Easy {
             return false;
         }
@@ -276,13 +286,18 @@ impl EngineInner {
     /// spawned) inherits its `position_map` via
     /// [`PendingScrollAmulet::position_map`].  Returns `None` if the
     /// scroll is not revealable.
-    pub fn reveal_scroll(&mut self, assets: &LevelAssets, scroll_id: u16) -> Option<EntityId> {
+    pub fn reveal_scroll(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        scroll_id: u16,
+    ) -> Option<EntityId> {
         if !self.is_scroll_revealable(assets, scroll_id) {
             return None;
         }
         let eid = *assets.entities.scroll_entity_ids.get(scroll_id as usize)?;
 
-        if self.is_scroll_to_be_replaced_by_amulet(eid) {
+        if self.is_scroll_to_be_replaced_by_amulet(sim, eid) {
             let (pos, layer, sector, direction, obstacle_index, material) = {
                 let e = self.get_entity(eid)?;
                 let ed = e.element_data();
@@ -331,6 +346,7 @@ impl EngineInner {
     /// `None` if the entity isn't a civilian / beggar.
     pub fn reveal_scrolls(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         beggar: EntityId,
@@ -364,7 +380,7 @@ impl EngineInner {
         let remark = if revealable_count != 0 {
             // Reveal each scroll and queue it onto the minimap.
             for &scroll_id in &current_set {
-                if let Some(revealed) = self.reveal_scroll(assets, scroll_id) {
+                if let Some(revealed) = self.reveal_scroll(sim, assets, scroll_id) {
                     display.minimap.set_highlighted(revealed.index());
                 }
             }
@@ -426,18 +442,27 @@ impl EngineInner {
     /// (`BONUS_FourLeavedClover` / `"BONUS Trefle"`) is preloaded at
     /// level-load by [`EngineInner::preload_scroll_amulet_sprite`],
     /// so this path only reads the scriptor cache (`&LevelAssets`).
-    pub(crate) fn drain_pending_scroll_amulets(&mut self, assets: &LevelAssets) {
+    pub(crate) fn drain_pending_scroll_amulets(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.orders.pending_scroll_amulets.is_empty() {
             return;
         }
         let requests: Vec<PendingScrollAmulet> =
             std::mem::take(&mut self.orders.pending_scroll_amulets);
         for req in requests {
-            self.spawn_scroll_amulet(assets, req);
+            self.spawn_scroll_amulet(sim, assets, req);
         }
     }
 
-    fn spawn_scroll_amulet(&mut self, assets: &LevelAssets, req: PendingScrollAmulet) {
+    fn spawn_scroll_amulet(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        req: PendingScrollAmulet,
+    ) {
         // Resolve the amulet sprite from the preloaded scriptor cache
         // (`BONUS_FourLeavedClover` / "BONUS Trefle"). A miss here
         // means `preload_scroll_amulet_sprite` didn't run — treat as
@@ -455,7 +480,7 @@ impl EngineInner {
             );
             return;
         }
-        sprite.force_random_sprite_frame(crate::sim_rng::RngSite::ScrollRevealFrame);
+        sprite.force_random_sprite_frame(sim, crate::sim_rng::RngSite::ScrollRevealFrame);
 
         let mut element = crate::element::ElementData {
             kind: crate::element::ElementKind::ObjectBonus,

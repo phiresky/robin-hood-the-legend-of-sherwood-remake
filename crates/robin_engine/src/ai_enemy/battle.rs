@@ -35,6 +35,7 @@ impl EnemyAi {
     /// exact same tail end — only the source of the list differs.
     fn approach_sleeping_enemies(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         targets: &[crate::ai::SleepingEnemyInfo],
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -92,7 +93,7 @@ impl EnemyAi {
             );
         } else {
             // No allowed target — stand down.
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
     }
 
@@ -109,14 +110,19 @@ impl EnemyAi {
     /// `tick.nearby_sleeping_enemies`.  This method just performs
     /// the target selection + state transition that the reference
     /// runs after the inline GetNumberOfFighters loop.
-    fn kill_nearby_sleeping_enemies(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+    fn kill_nearby_sleeping_enemies(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
         // Combat trainers and merry-man-forest fighters call
         // `ReturnToDuty()` first — note the quirk that the function then
         // *continues* and may still overwrite state with
         // `SUBSTATE_ATTACKING_APPROACHING_SLEEPING_ENEMY` below. We
         // mirror the behaviour exactly.
         if self.combat_trainer || self.is_merry_man_forest(ctx) {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
 
         // Clear the them-list before refilling it with sleeping bodies.
@@ -125,7 +131,7 @@ impl EnemyAi {
         // The engine-side scan already handled the
         // `IsDetecting360Degrees` + non-carried + layer check.
         // Everything we see here is a valid finish-off candidate.
-        self.approach_sleeping_enemies(&tick.nearby_sleeping_enemies, ctx, tick);
+        self.approach_sleeping_enemies(sim, &tick.nearby_sleeping_enemies, ctx, tick);
     }
 
     // -----------------------------------------------------------------------
@@ -216,7 +222,12 @@ impl EnemyAi {
     // MakeBattlePredecisions — offensive or defensive?
     // -----------------------------------------------------------------------
 
-    pub fn make_battle_predecisions(&mut self, ctx: &AiContext, tick: &AiPerTickData) -> Decision {
+    pub fn make_battle_predecisions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> Decision {
         // Archers with no ammo or already swordfighting → defensive.
         if self.is_archer() && (ctx.remaining_arrows == 0 || ctx.is_swordfighting) {
             return Decision::PredecisionDefensive;
@@ -271,7 +282,7 @@ impl EnemyAi {
         // Decision based on odds and courage.
         let courage = self.get_courage();
         if odds < (50 - courage as i16 / 2)
-            && crate::sim_rng::u16(crate::sim_rng::RngSite::BattleCourage, 0..100) > courage
+            && crate::sim_rng::u16(sim, crate::sim_rng::RngSite::BattleCourage, 0..100) > courage
         {
             Decision::PredecisionDefensive
         } else {
@@ -285,6 +296,7 @@ impl EnemyAi {
 
     pub fn battle_decisions(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -430,7 +442,7 @@ impl EnemyAi {
             //   on a bend point with friend-seen enemies should hold
             //   the firing position, not run away to seek.
             if self.combat_trainer {
-                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             } else if self.my_shooting_point.is_some() {
                 // Archer has a shooting point — equip bow based on
                 // elevation relative to last-seen enemy.
@@ -481,6 +493,7 @@ impl EnemyAi {
                     self.base.seek_position = pos;
                 }
                 self.seek_area(
+                    sim,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST,
@@ -502,6 +515,7 @@ impl EnemyAi {
                     self.pc_gone_away_in_this_direction = forecast.direction;
                 }
                 self.seek_area(
+                    sim,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
@@ -515,12 +529,12 @@ impl EnemyAi {
                 // being carried — dump them into list_them, pick a
                 // target, and walk up to finish them off.
                 debug_assert!(self.list_them.is_empty());
-                self.approach_sleeping_enemies(&tick.unconscious_enemies, ctx, tick);
+                self.approach_sleeping_enemies(sim, &tick.unconscious_enemies, ctx, tick);
             } else {
                 // Final "there is literally nothing going on" fallback —
                 // look for sleeping enemies anywhere within the 360°
                 // detection radius and walk over to one.
-                self.kill_nearby_sleeping_enemies(ctx, tick);
+                self.kill_nearby_sleeping_enemies(sim, ctx, tick);
             }
             return;
         }
@@ -572,7 +586,7 @@ impl EnemyAi {
                 self.forced_next_battle_decision = Decision::None;
                 // Simulate "no forced decision" by jumping into the
                 // else block via a goto-style early flag.
-                let predecision = self.make_battle_predecisions(ctx, tick);
+                let predecision = self.make_battle_predecisions(sim, ctx, tick);
                 decision = if self.combat_trainer || predecision == Decision::PredecisionDefensive {
                     Decision::Cassos
                 } else {
@@ -581,7 +595,7 @@ impl EnemyAi {
             }
         } else {
             // (1) Predecision: Offensive or defensive?
-            let predecision = self.make_battle_predecisions(ctx, tick);
+            let predecision = self.make_battle_predecisions(sim, ctx, tick);
 
             // Use engine-populated cached values for battle context.
             let friends_with_lower_company = tick.friends_lower_company;
@@ -758,7 +772,7 @@ impl EnemyAi {
             "battle_decisions: chose decision"
         );
         // Carry out decision (with possible fallback loop)
-        self.execute_battle_decision(decision, cover_shield_bearer, global, ctx, tick, grid);
+        self.execute_battle_decision(sim, decision, cover_shield_bearer, global, ctx, tick, grid);
 
         self.base
             .register_log_line(LogLineType::BattleDecision, decision as u16);
@@ -769,6 +783,7 @@ impl EnemyAi {
     /// decision phase for `CoverBehindShieldBearer`; 0 for all other decisions.
     fn execute_battle_decision(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         mut decision: Decision,
         cover_shield_bearer: HumanHandle,
         global: &mut AiGlobalState,
@@ -823,7 +838,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if ctx.self_action_state.is_sword() {
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattleProvoke, 0..4) == 0 {
+                        if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BattleProvoke, 0..4)
+                            == 0
+                        {
                             self.base
                                 .outbox
                                 .actor
@@ -911,7 +928,7 @@ impl EnemyAi {
                         continue;
                     }
                     // Pick best shot target.
-                    let target = self.propose_shot_target(ctx, tick);
+                    let target = self.propose_shot_target(sim, ctx, tick);
                     if target != 0 {
                         self.base.primary_target = target;
                         self.base.outbox.actor.focus = Some(target);
@@ -959,8 +976,11 @@ impl EnemyAi {
                     // position, NOT seek_position.
                     if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global)
                     {
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
-                            == 0
+                        if crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::BattlePanicRemark,
+                            0..2,
+                        ) == 0
                         {
                             self.base.say(Remark::Cassos);
                         } else {
@@ -1009,8 +1029,11 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
-                            == 0
+                        if crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::BattlePanicRemark,
+                            0..2,
+                        ) == 0
                         {
                             self.base.say(Remark::Cassos);
                         } else {
@@ -1055,8 +1078,11 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
-                            == 0
+                        if crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::BattlePanicRemark,
+                            0..2,
+                        ) == 0
                         {
                             self.base.say(Remark::Cassos);
                         } else {
@@ -2312,6 +2338,7 @@ impl EnemyAi {
     /// Handle reattack after a rider has passed through enemies and returned.
     pub(super) fn rider_reattack(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2329,7 +2356,7 @@ impl EnemyAi {
                 .go_to(self.base.seek_position, GotoFlags::RUN, ctx);
         } else {
             // Enemies visible — reconsider battle
-            self.battle_decisions(global, ctx, tick, grid);
+            self.battle_decisions(sim, global, ctx, tick, grid);
         }
     }
 

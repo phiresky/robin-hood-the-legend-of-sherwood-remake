@@ -22,6 +22,7 @@ impl EnemyAi {
     /// branches can short-circuit the function before the tail ever runs.
     fn event_sees_charly_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         charly: HumanHandle,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -114,7 +115,7 @@ impl EnemyAi {
                             | Substate::SeekingCharlyGetLectureByOfficer
                             | Substate::SeekingCharlyGetLectureByOfficer2 => {
                                 // Already sent to officer.
-                                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                                 return;
                             }
                             _ => {
@@ -187,7 +188,7 @@ impl EnemyAi {
         if !sync_in_default {
             // "Forget it" — drop back into macro flow.
             self.set_state(AiState::Default, Substate::DefaultInMacro);
-            self.base.execute_next_macro_command(ctx);
+            self.base.execute_next_macro_command(sim, ctx);
             return;
         }
 
@@ -207,7 +208,7 @@ impl EnemyAi {
         if friend_is_already_there {
             // Already at the sync waypoint — resume macro.
             self.set_state(AiState::Default, Substate::DefaultInMacro);
-            self.base.execute_next_macro_command(ctx);
+            self.base.execute_next_macro_command(sim, ctx);
         } else {
             // Wait — register ourselves and stall.
             self.base.outbox.reentrant.cross_npc_actions.push(
@@ -227,6 +228,7 @@ impl EnemyAi {
 
     pub(super) fn think_unexpected_event(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -246,7 +248,7 @@ impl EnemyAi {
                     (AiState::Seeking, Substate::SeekingCharly)
                 ) || self.seeking_charly;
                 if !already_seeking {
-                    self.search_charly(ctx, tick);
+                    self.search_charly(sim, ctx, tick);
                 }
                 return true;
             }
@@ -296,6 +298,7 @@ impl EnemyAi {
                                 {
                                     self.base.say(Remark::HuntsEnemy);
                                     self.seek_area(
+                                        sim,
                                         self.base.seek_position,
                                         parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                                         SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
@@ -337,7 +340,7 @@ impl EnemyAi {
                             }
                             // Fall through to the seek handler below by
                             // invoking the shared helper directly.
-                            self.out_of_view_seek_handler(enemy, global, ctx, tick, grid);
+                            self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
                         }
 
                         // Stationary / combat-posture substates. On
@@ -369,7 +372,7 @@ impl EnemyAi {
                         | Substate::AttackingTooProudToAttackApproach
                             if enemy == self.base.primary_target =>
                         {
-                            self.out_of_view_seek_handler(enemy, global, ctx, tick, grid);
+                            self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
                         }
 
                         // Do-nothing substates.
@@ -382,6 +385,7 @@ impl EnemyAi {
                             self.reinitialize_them_list(ctx, tick);
                             if self.list_them.is_empty() {
                                 self.seek_area(
+                                    sim,
                                     self.base.seek_position,
                                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                                     SeekFlags::empty(),
@@ -408,11 +412,12 @@ impl EnemyAi {
                 match self.base.current_substate {
                     // Seek point unreachable → try next.
                     Substate::SeekingSeekpoint => {
-                        self.seek_next_point(global, ctx, tick);
+                        self.seek_next_point(sim, global, ctx, tick);
                     }
                     // Body unreachable → seek area.
                     Substate::SeekingBody => {
                         self.seek_area(
+                            sim,
                             self.base.seek_position,
                             parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                             SeekFlags::empty(),
@@ -427,13 +432,13 @@ impl EnemyAi {
                     | Substate::AttackingChargingEnemy => {
                         // Can't reach enemy — try observe instead
                         self.reinitialize_them_list(ctx, tick);
-                        self.battle_decisions(global, ctx, tick, grid);
+                        self.battle_decisions(sim, global, ctx, tick, grid);
                     }
                     Substate::AttackingObserve => {
                         // Ignore.
                     }
                     _ => {
-                        self.couldnt_reachpoint_emergency_routine(global, ctx, tick);
+                        self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
                     }
                 }
             }
@@ -447,7 +452,7 @@ impl EnemyAi {
                     self.get_battle_overview(0, ctx, tick);
                 } else {
                     let done = Stimulus::new(StimulusType::EventDone);
-                    self.think(&done, global, ctx, tick, grid);
+                    self.think(sim, &done, global, ctx, tick, grid);
                 }
             }
 
@@ -475,7 +480,7 @@ impl EnemyAi {
 
                 if self.base.knocked_out_in_money_fight {
                     self.base.knocked_out_in_money_fight = false;
-                    self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 } else {
                     self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
                     self.base
@@ -597,7 +602,7 @@ impl EnemyAi {
                             self.base.launch_timer(20, ctx.frame);
                         } else {
                             // Officer refused — give up.
-                            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                         }
                     }
                     ProfileRank::Officer => {
@@ -798,7 +803,7 @@ impl EnemyAi {
 
             StimulusType::EventAdversaryWeak => {
                 if self.base.current_substate.is_any_swordfight() {
-                    self.reconsider_swordfight(true, global, ctx, tick, grid);
+                    self.reconsider_swordfight(sim, true, global, ctx, tick, grid);
                 }
             }
 
@@ -838,7 +843,7 @@ impl EnemyAi {
                         substate = ?self.base.current_substate,
                         "EventSeesBeggar: queued beggar for identification"
                     );
-                    // Queue beggar for control during seek_next_point().
+                    // Queue beggar for control during seek_next_point(sim, ).
                     // Stores the beggar's actual position via the
                     // antagonist's position. We read it from the
                     // `ctx.antagonist` snapshot populated by the engine
@@ -910,7 +915,7 @@ impl EnemyAi {
                     }
                     let queued = self.base.stimulus_queue.remove(0);
                     if queued.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        self.think(&queued, global, ctx, tick, grid);
+                        self.think(sim, &queued, global, ctx, tick, grid);
                     }
                 }
 
@@ -931,7 +936,7 @@ impl EnemyAi {
                         let flags = self.base.default_path_walking_flags;
                         self.go_to(AiState::Default, Substate::DefaultEnroute, dest, flags, ctx);
                     } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     }
                     return false;
                 }
@@ -954,7 +959,7 @@ impl EnemyAi {
                     if is_money_of_interest {
                         self.stolen_money_standard_procedure(thief, ctx, tick);
                     } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     }
                 }
             }
@@ -971,7 +976,7 @@ impl EnemyAi {
                     == Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl
                 {
                     self.create_list_of_near_money_fight_victims(ctx, tick);
-                    self.awake_next_money_fight_victim_if_any(ctx, tick);
+                    self.awake_next_money_fight_victim_if_any(sim, ctx, tick);
                 }
             }
 
@@ -984,7 +989,7 @@ impl EnemyAi {
                         || self.base.current_substate == Substate::DefaultLookingForCharly
                         || self.base.current_substate == Substate::DefaultLookingSidewardsForCharly;
                     if eligible {
-                        self.event_sees_charly_standard_procedure(charly, ctx, tick);
+                        self.event_sees_charly_standard_procedure(sim, charly, ctx, tick);
                     }
                 }
             }
@@ -1118,7 +1123,7 @@ impl EnemyAi {
                 );
                 // LaunchTimer(300 + (rand() % 32)).
                 let extra =
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::SoldierBrawlCooldown, 0..32);
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SoldierBrawlCooldown, 0..32);
                 self.base.launch_timer(300 + extra, ctx.frame);
             }
 
@@ -1128,7 +1133,7 @@ impl EnemyAi {
             StimulusType::EventAfterCombatInjury => {
                 if self.base.current_substate.is_real_swordfight() {
                     self.base.stop_all();
-                    self.reconsider_swordfight(false, global, ctx, tick, grid);
+                    self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
                     if self.base.current_substate == Substate::AttackingSwordfight {
                         self.base.say(Remark::CombatInsult);
                     }
@@ -1152,6 +1157,7 @@ impl EnemyAi {
 
     pub(super) fn think_alerting_event(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -1167,14 +1173,18 @@ impl EnemyAi {
                         AiState::Sleeping => {} // ignore (should not happen)
                         AiState::Wondering | AiState::Default | AiState::Seeking => {
                             if !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             ) {
-                                self.event_view_standard_procedure(enemy, global, ctx, tick, grid);
+                                self.event_view_standard_procedure(
+                                    sim, enemy, global, ctx, tick, grid,
+                                );
                             }
                         }
                         AiState::Menacing => {
                             if enemy != self.guarded_pc {
-                                self.event_view_standard_procedure(enemy, global, ctx, tick, grid);
+                                self.event_view_standard_procedure(
+                                    sim, enemy, global, ctx, tick, grid,
+                                );
                             }
                         }
                         AiState::Fleeing => {
@@ -1238,7 +1248,7 @@ impl EnemyAi {
                                         ctx,
                                         ctx.entity_view(enemy).map(|v| (v.position, v.elevation)),
                                     );
-                                    self.battle_decisions(global, ctx, tick, grid);
+                                    self.battle_decisions(sim, global, ctx, tick, grid);
                                 }
 
                                 Substate::AttackingApproachingSleepingEnemy
@@ -1254,7 +1264,7 @@ impl EnemyAi {
                                         .unwrap_or(false);
                                     if !target_unconscious {
                                         self.event_view_standard_procedure(
-                                            enemy, global, ctx, tick, grid,
+                                            sim, enemy, global, ctx, tick, grid,
                                         );
                                     }
                                 }
@@ -1277,7 +1287,7 @@ impl EnemyAi {
                                     // BattleDecisions.
                                     self.reinitialize_them_list(ctx, tick);
                                     if !self.maybe_make_rider_attack(ctx, tick, grid) {
-                                        self.battle_decisions(global, ctx, tick, grid);
+                                        self.battle_decisions(sim, global, ctx, tick, grid);
                                     }
                                 }
 
@@ -1291,7 +1301,8 @@ impl EnemyAi {
             StimulusType::EventSeesShadow => {
                 if let StimulusInfo::Position(ref pos) = stimulus.info
                     && self.base.current_state == AiState::Default
-                    && !self.dispatch_stimulus_to_whole_patrol(stimulus, global, ctx, tick, grid)
+                    && !self
+                        .dispatch_stimulus_to_whole_patrol(sim, stimulus, global, ctx, tick, grid)
                 {
                     self.event_sees_shadow_standard_procedure(pos, ctx, tick);
                 }
@@ -1370,10 +1381,10 @@ impl EnemyAi {
                     | AiState::Seeking => {
                         if let StimulusInfo::Noise(ref noise) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             )
                         {
-                            self.event_hear_standard_procedure(noise, ctx, tick);
+                            self.event_hear_standard_procedure(sim, noise, ctx, tick);
                         }
                     }
                     _ => {} // ignore in menacing/fleeing/attacking
@@ -1388,10 +1399,10 @@ impl EnemyAi {
                     | AiState::Seeking => {
                         if let StimulusInfo::Position(ref pos) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             )
                         {
-                            self.event_get_arrow_standard_procedure(pos, global, ctx, tick);
+                            self.event_get_arrow_standard_procedure(sim, pos, global, ctx, tick);
                         }
                     }
                     _ => {} // ignore
@@ -1444,7 +1455,7 @@ impl EnemyAi {
                     | AiState::Seeking => {
                         if let StimulusInfo::Human(body) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             )
                         {
                             self.event_sees_body_standard_procedure(body, ctx, tick, grid);
@@ -1462,7 +1473,7 @@ impl EnemyAi {
                     | AiState::Seeking => {
                         if let StimulusInfo::Object(obj) = stimulus.info
                             && !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             )
                         {
                             self.event_sees_object_standard_procedure(obj, ctx, tick);
@@ -1497,7 +1508,8 @@ impl EnemyAi {
                 );
                 if state_ok
                     && let StimulusInfo::Hint(ref hint) = stimulus.info
-                    && !self.dispatch_stimulus_to_whole_patrol(stimulus, global, ctx, tick, grid)
+                    && !self
+                        .dispatch_stimulus_to_whole_patrol(sim, stimulus, global, ctx, tick, grid)
                 {
                     self.call_look_there_standard_procedure(&hint.seek_point, ctx, tick);
                 }
@@ -1509,7 +1521,7 @@ impl EnemyAi {
                         #[allow(clippy::collapsible_match)]
                         AiState::Default | AiState::Wondering => {
                             if !self.dispatch_stimulus_to_whole_patrol(
-                                stimulus, global, ctx, tick, grid,
+                                sim, stimulus, global, ctx, tick, grid,
                             ) {
                                 self.call_tower_guard_alert_standard_procedure(hint, ctx, tick);
                             }
@@ -1700,7 +1712,7 @@ impl EnemyAi {
 
             StimulusType::EventPcShotAtMe => {
                 if let StimulusInfo::Human(enemy) = stimulus.info {
-                    self.event_view_standard_procedure(enemy, global, ctx, tick, grid);
+                    self.event_view_standard_procedure(sim, enemy, global, ctx, tick, grid);
                 }
             }
 
@@ -1722,6 +1734,7 @@ impl EnemyAi {
     /// React to seeing an enemy. Port of `EventViewStandardProcedure`.
     fn event_view_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -1868,7 +1881,7 @@ impl EnemyAi {
             // (the broader sightings stay quiet).
             self.set_state(AiState::Attacking, Substate::AttackingReactiontime);
             self.i_am_in_trouble(enemy);
-            self.battle_decisions(global, ctx, tick, grid);
+            self.battle_decisions(sim, global, ctx, tick, grid);
         } else if self.enemy_seen_below {
             // Archer saw enemy from a wall — no turn, just a short 5-tick
             // reaction to aim the bow.
@@ -1897,6 +1910,7 @@ impl EnemyAi {
     /// React to hearing a noise. Port of `EventHearStandardProcedure`.
     fn event_hear_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         noise: &Noise,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2040,7 +2054,11 @@ impl EnemyAi {
                 self.base.seek_position = noise.origin;
                 self.base.face_position(noise.origin);
                 self.base.launch_timer(
-                    70 + crate::sim_rng::u32(crate::sim_rng::RngSite::SoldierNoiseCooldown, 0..60),
+                    70 + crate::sim_rng::u32(
+                        sim,
+                        crate::sim_rng::RngSite::SoldierNoiseCooldown,
+                        0..60,
+                    ),
                     ctx.frame,
                 );
             }
@@ -2170,6 +2188,7 @@ impl EnemyAi {
     /// React to seeing an arrow impact. Port of `EventGetArrowStandardProcedure`.
     fn event_get_arrow_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         pos: &Position,
         global: &AiGlobalState,
         ctx: &AiContext,
@@ -2192,7 +2211,13 @@ impl EnemyAi {
             self.base.seek_position = *pos;
             // Snap onto a nearby seek point (0.3 of me→origin, no
             // absolute).
-            global.set_pos_on_near_seek_point(ctx.position, &mut self.base.seek_position, 0.3, 0);
+            global.set_pos_on_near_seek_point(
+                sim,
+                ctx.position,
+                &mut self.base.seek_position,
+                0.3,
+                0,
+            );
             let seek = self.base.seek_position;
             self.base.face_position(seek);
             self.base.launch_timer(1, ctx.frame);
@@ -2208,7 +2233,13 @@ impl EnemyAi {
             self.set_state(AiState::Seeking, substate);
             self.base.seek_position = *pos;
             // Both arms snap the seek target onto a nearby seek point.
-            global.set_pos_on_near_seek_point(ctx.position, &mut self.base.seek_position, 0.3, 0);
+            global.set_pos_on_near_seek_point(
+                sim,
+                ctx.position,
+                &mut self.base.seek_position,
+                0.3,
+                0,
+            );
             let seek = self.base.seek_position;
             self.base.face_position(seek);
             // Focus on the interesting object — locks the eye-tracking
@@ -2471,6 +2502,7 @@ impl EnemyAi {
 
     pub fn couldnt_reachpoint_emergency_routine(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2504,11 +2536,12 @@ impl EnemyAi {
             | AiState::Wondering
             | AiState::Menacing
             | AiState::Fleeing => {
-                self.return_to_duty(DutyFlags::BECAUSE_COULDNT_REACHPOINT, ctx, tick);
+                self.return_to_duty(sim, DutyFlags::BECAUSE_COULDNT_REACHPOINT, ctx, tick);
             }
             // Dead-body sweep around the actor.
             AiState::Seeking => {
                 self.seek_area(
+                    sim,
                     ctx.position,
                     parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                     SeekFlags::empty(),
@@ -2663,6 +2696,8 @@ mod tests {
 
     #[test]
     fn event_enemy_near_assigns_stimulus_target_and_begins_swordfight() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         for substate in [
             Substate::AttackingReactiontimeTurning,
             Substate::AttackingReactiontime,
@@ -2678,6 +2713,7 @@ mod tests {
 
             let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
             ai.think_unexpected_event(
+                sim,
                 &stimulus,
                 &mut AiGlobalState::default(),
                 &AiContext::default(),
@@ -2697,6 +2733,8 @@ mod tests {
 
     #[test]
     fn event_enemy_near_is_ignored_outside_original_substates() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToEnemy;
@@ -2704,6 +2742,7 @@ mod tests {
 
         let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
         ai.think_unexpected_event(
+            sim,
             &stimulus,
             &mut AiGlobalState::default(),
             &AiContext::default(),

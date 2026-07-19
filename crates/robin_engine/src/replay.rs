@@ -2,7 +2,7 @@
 //!
 //! A replay is a sequence of player commands keyed by frame number,
 //! plus the metadata needed to reconstruct the initial engine state
-//! (mission ID, RNG seed, optional campaign snapshot). Recording
+//! (mission ID, RNG seed, simulation config, and campaign snapshot). Recording
 //! happens transparently during normal gameplay; playback feeds the
 //! recorded commands back into the engine in place of live input.
 //!
@@ -37,6 +37,8 @@ pub struct ReplayHeader {
     pub mission_id: String,
     /// RNG seed used at mission start.
     pub rng_seed: u64,
+    /// Complete deterministic configuration used at mission construction.
+    pub sim_config: crate::engine::SimConfig,
     /// Replay *schema* version, bumped when the on-disk layout or the
     /// deterministic state-hash contract changes. Distinct from the engine git
     /// hash, which lives outside the header (prefix of the compact format).
@@ -45,17 +47,16 @@ pub struct ReplayHeader {
     /// Set to 0 during recording (unknown until mission ends);
     /// filled in by the player on load from the max frame index.
     pub total_frames: u32,
-    /// Optional campaign snapshot captured at mission start, stored as
+    /// Required campaign snapshot captured at mission start, stored as
     /// an opaque bitcode-serialized blob. Engine initialization depends
     /// on campaign progression (ARES, prior mission outcomes, relics,
-    /// …) so replays started mid-campaign need this to reproduce
-    /// bit-exactly. `None` means the caller didn't supply a snapshot.
-    pub campaign: Option<Vec<u8>>,
+    /// …) so every replay needs this to reproduce bit-exactly.
+    pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 3 uses tagged [`PlayerInput`] values
-/// and hashes the current nested `EngineInner` owner layout.
-pub const REPLAY_SCHEMA_VERSION: u32 = 3;
+/// On-disk replay schema version. Version 5 requires the complete campaign
+/// snapshot and [`crate::engine::SimConfig`] used for frame-0 construction.
+pub const REPLAY_SCHEMA_VERSION: u32 = 5;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic
 /// engine-state hash used for desync detection on replay.
@@ -137,15 +138,20 @@ impl ReplayData {
             .next()
             .ok_or("empty replay file")?
             .map_err(|e| format!("read error: {e}"))?;
-        let mut header: ReplayHeader =
+        let header_value: serde_json::Value =
             serde_json::from_str(&header_line).map_err(|e| format!("bad header: {e}"))?;
-        if header.version != REPLAY_SCHEMA_VERSION {
+        let version = header_value
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("bad header: missing integer version")? as u32;
+        if version != REPLAY_SCHEMA_VERSION {
             return Err(format!(
                 "unsupported replay schema version {}; expected {REPLAY_SCHEMA_VERSION}",
-                header.version
+                version
             ));
         }
-
+        let mut header: ReplayHeader =
+            serde_json::from_value(header_value).map_err(|e| format!("bad header: {e}"))?;
         let mut frames = BTreeMap::new();
         let mut hashes = BTreeMap::new();
         let mut max_frame: u32 = 0;
@@ -198,21 +204,28 @@ pub struct ReplayRecorder {
 impl ReplayRecorder {
     /// Create a recorder that streams to `path`.  Writes the header
     /// immediately; returns `Err` if the file can't be created.
-    pub fn new(path: &str, mission_id: String, rng_seed: u64) -> std::io::Result<Self> {
+    pub fn new(
+        path: &str,
+        mission_id: String,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+        campaign: &crate::campaign::Campaign,
+    ) -> std::io::Result<Self> {
         let file = std::fs::File::create(path)?;
-        Self::with_writer(Box::new(file), mission_id, rng_seed)
+        Self::with_writer(Box::new(file), mission_id, rng_seed, sim_config, campaign)
     }
 
-    /// Create a recorder and include a bitcode campaign snapshot in
-    /// the replay header.
+    /// Backward-compatible name for [`Self::new`]. Every recorder requires a
+    /// campaign snapshot.
     pub fn new_with_campaign(
         path: &str,
         mission_id: String,
         rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
         campaign: &crate::campaign::Campaign,
     ) -> std::io::Result<Self> {
         let file = std::fs::File::create(path)?;
-        Self::with_writer_and_campaign(Box::new(file), mission_id, rng_seed, Some(campaign))
+        Self::with_writer(Box::new(file), mission_id, rng_seed, sim_config, campaign)
     }
 
     /// Create a recorder that streams to an arbitrary `Write` sink.
@@ -225,28 +238,15 @@ impl ReplayRecorder {
         writer: Box<dyn std::io::Write + Send>,
         mission_id: String,
         rng_seed: u64,
-    ) -> std::io::Result<Self> {
-        Self::with_writer_and_campaign(writer, mission_id, rng_seed, None)
-    }
-
-    /// Create a recorder to an arbitrary sink, optionally stamping a
-    /// campaign snapshot into the replay header.  The snapshot is
-    /// captured before frame 0 so replay launch can restore campaign
-    /// progression before loading the mission.
-    pub fn with_writer_and_campaign(
-        writer: Box<dyn std::io::Write + Send>,
-        mission_id: String,
-        rng_seed: u64,
-        campaign: Option<&crate::campaign::Campaign>,
+        sim_config: crate::engine::SimConfig,
+        campaign: &crate::campaign::Campaign,
     ) -> std::io::Result<Self> {
         let mut writer = std::io::BufWriter::new(writer);
-        let campaign = campaign
-            .map(bitcode::serialize)
-            .transpose()
-            .map_err(std::io::Error::other)?;
+        let campaign = bitcode::serialize(campaign).map_err(std::io::Error::other)?;
         let header = ReplayHeader {
             mission_id,
             rng_seed,
+            sim_config,
             version: REPLAY_SCHEMA_VERSION,
             total_frames: 0, // unknown until mission ends
             campaign,
@@ -419,7 +419,15 @@ mod tests {
         let path = dir.to_str().unwrap();
 
         {
-            let mut rec = ReplayRecorder::new(path, "test_mission".into(), 42).unwrap();
+            let campaign = crate::campaign::Campaign::default();
+            let mut rec = ReplayRecorder::new(
+                path,
+                "test_mission".into(),
+                42,
+                crate::engine::SimConfig::default(),
+                &campaign,
+            )
+            .unwrap();
 
             // Frame 0: one command
             rec.push(PlayerCommand::SelectAllPcs);
@@ -495,7 +503,15 @@ mod tests {
             .unwrap()
             .to_string();
         {
-            let mut rec = ReplayRecorder::new(&path, "mp_seats".into(), 99).unwrap();
+            let campaign = crate::campaign::Campaign::default();
+            let mut rec = ReplayRecorder::new(
+                &path,
+                "mp_seats".into(),
+                99,
+                crate::engine::SimConfig::default(),
+                &campaign,
+            )
+            .unwrap();
             rec.push(PlayerInput::new(PlayerId(0), PlayerCommand::CrouchDown));
             rec.push(PlayerInput::new(PlayerId(2), PlayerCommand::StandUp));
             rec.end_frame();
@@ -522,20 +538,42 @@ mod tests {
         campaign.values[CampaignValue::Score] = 12_345;
         campaign.ares = 4;
         {
-            let mut rec =
-                ReplayRecorder::new_with_campaign(&path, "campaign".into(), 11, &campaign).unwrap();
+            let mut rec = ReplayRecorder::new_with_campaign(
+                &path,
+                "campaign".into(),
+                11,
+                crate::engine::SimConfig::default(),
+                &campaign,
+            )
+            .unwrap();
             rec.push(PlayerCommand::CrouchDown);
             rec.end_frame();
         }
 
         let data = ReplayData::from_file(&path).unwrap();
-        let bytes = data.header.campaign.as_ref().expect("campaign snapshot");
+        let bytes = &data.header.campaign;
         let restored: Campaign = bitcode::deserialize(bytes).unwrap();
         assert_eq!(restored.values[CampaignValue::Score], 12_345);
         assert_eq!(restored.ares, 4);
         assert_eq!(data.commands_for_frame(0).len(), 1);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn replay_header_requires_a_non_null_campaign_field() {
+        let base = serde_json::json!({
+            "mission_id": "Dem_Lei_MP",
+            "rng_seed": 7,
+            "sim_config": crate::engine::SimConfig::default(),
+            "version": REPLAY_SCHEMA_VERSION,
+            "total_frames": 0,
+        });
+        assert!(serde_json::from_value::<ReplayHeader>(base.clone()).is_err());
+
+        let mut null_campaign = base;
+        null_campaign["campaign"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<ReplayHeader>(null_campaign).is_err());
     }
 
     #[test]
@@ -569,9 +607,10 @@ mod tests {
             header: ReplayHeader {
                 mission_id: "x".into(),
                 rng_seed: 0,
+                sim_config: crate::engine::SimConfig::default(),
                 version: REPLAY_SCHEMA_VERSION,
                 total_frames: 1,
-                campaign: None,
+                campaign: bitcode::serialize(&crate::campaign::Campaign::default()).unwrap(),
             },
             frames,
             hashes: BTreeMap::new(),

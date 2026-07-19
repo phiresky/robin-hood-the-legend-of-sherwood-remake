@@ -1197,8 +1197,12 @@ pub fn apply_projectile_landing_resolution(
 ///
 /// Returns `Some(bias)` if the shot misses (caller adds to velocity),
 /// or `None` if the shot hits.
-pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<WorldVec3D> {
-    let roll: u32 = crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 1..=100);
+pub fn roll_hit_and_compute_bias(
+    sim: &crate::sim_rng::SimulationContext,
+    hit_chance: u32,
+    bow_skill_capacity: u32,
+) -> Option<WorldVec3D> {
+    let roll: u32 = crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 1..=100);
 
     if roll <= hit_chance {
         // Hit!
@@ -1207,11 +1211,11 @@ pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Op
 
     // Miss — compute random bias, scaled by inverse skill.
     let skill_factor = 1.0 - (bow_skill_capacity.min(100) as f32 / 100.0);
-    let bx = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+    let bx = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
-    let by = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+    let by = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
-    let bz = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+    let bz = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
 
     Some(WorldVec3D {
@@ -1711,6 +1715,8 @@ pub struct BowTickEvents {
 /// the shoot animation completes the actor returns to the
 /// AimingWithBow action state.
 pub fn tick_bow_shots(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
 ) -> BowTickEvents {
@@ -1829,6 +1835,7 @@ pub fn tick_bow_shots(
             }
         } else {
             elem.sprite.perform_action(
+                sim,
                 current_order_id,
                 current_order_type,
                 dir_u16,
@@ -2804,19 +2811,27 @@ fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
     }
 }
 
-fn apply_arrow_falling_sprite_visual(proj: &mut ElementProjectile) {
+fn apply_arrow_falling_sprite_visual(
+    sim: &crate::sim_rng::SimulationContext,
+    proj: &mut ElementProjectile,
+) {
     // C++ `RHElementArrow::Refresh` renders falling arrows with
     // `ForceSpriteRow(mubFallingDirection)`,
     // `ForceSprite(mubFallingDirection, (rand() % 3) + 3)`, then rotates
     // the row by -2 sectors for the next refresh.
     let row = proj.projectile.falling_direction;
-    let frame = (crate::sim_rng::u32(crate::sim_rng::RngSite::ArrowFallingFrame, 0..3) as u16) + 3;
+    let frame =
+        (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ArrowFallingFrame, 0..3) as u16) + 3;
     proj.element.sprite.force_sprite_row_raw(row);
     proj.element.sprite.force_sprite(row, frame);
     proj.projectile.falling_direction = (row + 14) % 16;
 }
 
-pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_by_shield: bool) {
+pub(crate) fn make_arrow_falling_down(
+    sim: &crate::sim_rng::SimulationContext,
+    proj: &mut ElementProjectile,
+    thrown_away_by_shield: bool,
+) {
     let sector = current_arrow_orientation_sector(proj);
     proj.projectile.falling = true;
     proj.projectile.flying = true;
@@ -2860,7 +2875,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
     // recomputing the trajectory, so the ricochet visibly advances on
     // the same tick as the shield/target impact.
     proj.advance_trajectory_one_frame();
-    apply_arrow_falling_sprite_visual(proj);
+    apply_arrow_falling_sprite_visual(sim, proj);
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -2873,10 +2888,12 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
 /// or the trajectory runs out, the arrow is flagged for despawn and
 /// the engine applies damage.
 pub fn tick_arrows(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, None, false, &[])
+    tick_arrows_matching(sim, entities, sight_obstacles, None, false, &[])
 }
 
 /// Advance every projectile except the ones listed in `skip_arrow_ids`.
@@ -2885,11 +2902,13 @@ pub fn tick_arrows(
 /// already called `pArrow->Hourglass()` before insertion, and the global
 /// element hourglass pass for that frame has already finished.
 pub fn tick_arrows_excluding(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     skip_arrow_ids: &[EntityId],
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, None, false, skip_arrow_ids)
+    tick_arrows_matching(sim, entities, sight_obstacles, None, false, skip_arrow_ids)
 }
 
 /// Advance and resolve collision for one active projectile.
@@ -2898,11 +2917,13 @@ pub fn tick_arrows_excluding(
 /// `ShootWithBowAt`, which calls `pArrow->Hourglass()` before the
 /// arrow enters the engine element list.
 pub fn tick_arrow(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     arrow_id: EntityId,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true, &[])
+    tick_arrows_matching(sim, entities, sight_obstacles, Some(arrow_id), true, &[])
 }
 
 /// Advance one projectile already present in the engine element array.
@@ -2912,14 +2933,25 @@ pub fn tick_arrow(
 /// creation-ordered entity pass so projectile and PC hourglasses can retain
 /// their relative element-array order.
 pub fn tick_existing_projectile(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     projectile_id: EntityId,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, Some(projectile_id), false, &[])
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        Some(projectile_id),
+        false,
+        &[],
+    )
 }
 
 fn tick_arrows_matching(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     only_arrow_id: Option<EntityId>,
@@ -3320,7 +3352,7 @@ fn tick_arrows_matching(
         // directional sector row and the vertical-pitch frame.
         if matches!(proj.object.object_type, ObjectType::Arrow) {
             if proj.projectile.falling {
-                apply_arrow_falling_sprite_visual(proj);
+                apply_arrow_falling_sprite_visual(sim, proj);
             } else if vx != 0.0 || vy != 0.0 {
                 let norm_sq = vx * vx + vy * vy + vz * vz;
                 if norm_sq > 0.0 {
@@ -3426,7 +3458,7 @@ fn tick_arrows_matching(
             // (no human / FX-target check), so `continue` after
             // reporting.
             if matches!(proj.object.object_type, ObjectType::Arrow) {
-                make_arrow_falling_down(proj, true);
+                make_arrow_falling_down(sim, proj, true);
 
                 results.push(ArrowTickResult {
                     arrow: arrow_id,
@@ -4065,6 +4097,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4093,7 +4127,7 @@ mod tests {
             crate::order::alloc_order_id(&mut next_order_id),
         ));
 
-        let events = tick_bow_shots(&mut entities, &mut sm);
+        let events = tick_bow_shots(sim, &mut entities, &mut sm);
 
         assert!(events.fired.is_empty());
         assert!(events.completed.is_empty());
@@ -4112,6 +4146,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4141,7 +4177,7 @@ mod tests {
                 crate::order::alloc_order_id(&mut next_order_id),
             ));
 
-        let events = tick_bow_shots(&mut entities, &mut sm);
+        let events = tick_bow_shots(sim, &mut entities, &mut sm);
 
         assert!(events.fired.is_empty());
         assert!(events.completed.is_empty());
@@ -4160,6 +4196,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4205,7 +4243,7 @@ mod tests {
         let mut fired = Vec::new();
         let mut completed = Vec::new();
         for _ in 0..64 {
-            let events = tick_bow_shots(&mut entities, &mut sm);
+            let events = tick_bow_shots(sim, &mut entities, &mut sm);
             fired.extend(events.fired);
             completed.extend(events.completed);
             if !entities
@@ -4247,6 +4285,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "active bow shot missing resolved shoot mode")]
     fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4273,7 +4313,7 @@ mod tests {
         shooter.element_data_mut().set_direction_instantly(facing);
         shooter.actor_data_mut().unwrap().active_shot.shoot_mode = None;
 
-        let _ = tick_bow_shots(&mut entities, &mut sm);
+        let _ = tick_bow_shots(sim, &mut entities, &mut sm);
     }
 
     #[test]
@@ -4517,6 +4557,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_keeps_facing_fx_target_cxx_ground_y() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut target = make_arrow_target(50.0, 120.0);
         target.element_data_mut().set_position(WorldPoint3D {
             x: 50.0,
@@ -4549,7 +4591,7 @@ mod tests {
         );
         assert_eq!(result, BeginShotResult::Started);
 
-        tick_bow_shots(&mut entities, &mut sm);
+        tick_bow_shots(sim, &mut entities, &mut sm);
 
         let direction_goal = i16::from(
             entities
@@ -4573,6 +4615,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4603,7 +4647,7 @@ mod tests {
         let mut fired = Vec::new();
         let mut completed = Vec::new();
         for _ in 0..24 {
-            let events = tick_bow_shots(&mut entities, &mut sm);
+            let events = tick_bow_shots(sim, &mut entities, &mut sm);
             fired.extend(events.fired);
             completed.extend(events.completed);
             if !fired.is_empty() {
@@ -4779,6 +4823,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_follows_trajectory_and_hits() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Place a soldier at (50, 0) (belt lives at Z=25, the
         // default belt elevation for an upright human).  The
         // trajectory arcs from the bow height down to belt height at
@@ -4837,7 +4883,11 @@ mod tests {
 
         let mut hit = None;
         for _ in 0..20 {
-            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            let results = tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            );
             for r in &results {
                 if r.hit_target.is_some() {
                     hit = r.hit_target;
@@ -4858,6 +4908,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let traj = vec![
             TrajectoryPoint {
                 position: WorldPoint3D {
@@ -4912,7 +4964,11 @@ mod tests {
 
         let mut hit = None;
         for _ in 0..20 {
-            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            let results = tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            );
             hit = results.into_iter().find(|result| {
                 result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
             });
@@ -4933,6 +4989,8 @@ mod tests {
 
     #[test]
     fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId::Pc(crate::entity_id::PcId(0)),
             bow_point: WorldPoint3D {
@@ -5004,6 +5062,7 @@ mod tests {
         ]);
 
         let results = tick_arrow(
+            sim,
             &mut entities,
             crate::sight_obstacle::ObstacleList::empty(),
             EntityId::Projectile(crate::entity_id::ProjectileId(2)),
@@ -5033,6 +5092,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId::Soldier(crate::entity_id::SoldierId(0)),
             bow_point: WorldPoint3D {
@@ -5079,7 +5140,11 @@ mod tests {
             Some(arrow),
         ]);
 
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
         assert!(
             results
                 .iter()
@@ -5096,6 +5161,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_stationary_projectile_does_not_hit_human() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut arrow_element = ElementData {
             kind: ElementKind::ObjectProjectile,
             active: true,
@@ -5142,7 +5209,11 @@ mod tests {
             Some(arrow),
         ]);
 
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
         assert!(
             results.iter().all(|r| r.hit_target.is_none()),
             "C++ FindHumanVictim returns no victim when projectile is not moving"
@@ -5151,6 +5222,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_without_shooter_does_not_hit_human() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId::Pc(crate::entity_id::PcId(0)),
             bow_point: WorldPoint3D {
@@ -5183,7 +5256,11 @@ mod tests {
         }
         let mut entities = entity_table(vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)]);
 
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
         assert!(
             results.iter().all(|r| r.hit_target.is_none()),
             "C++ FindHumanVictim returns no victim when projectile has no shooter"
@@ -5194,6 +5271,8 @@ mod tests {
     /// yields a `Command::ActivateApple` activation on tick.
     #[test]
     fn tick_arrows_apple_projectile_activates_apple_target() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
         let target_pos = MapPoint { x: 50.0, y: 0.0 };
@@ -5272,7 +5351,11 @@ mod tests {
         let mut activation = None;
         let mut impact = None;
         for _ in 0..20 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
                 if let Some(hit) = r.fx_target_hit {
                     activation = Some(hit);
                     impact = Some((r.impact_fx, r.impact_pos));
@@ -5301,6 +5384,8 @@ mod tests {
     /// that would otherwise land without activating scripted targets.
     #[test]
     fn tick_arrows_arrow_target_uses_current_position_range_gate() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
         let mut target_element = ElementData {
@@ -5361,7 +5446,11 @@ mod tests {
         });
 
         let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
 
         assert!(
             results.iter().any(|r| {
@@ -5383,6 +5472,8 @@ mod tests {
     /// scripted targets from a stopped projectile.
     #[test]
     fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
         let mut target_element = ElementData {
@@ -5443,7 +5534,11 @@ mod tests {
         });
 
         let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
 
         assert!(
             results.iter().all(|r| r.fx_target_hit.is_none()),
@@ -5453,6 +5548,8 @@ mod tests {
 
     #[test]
     fn tick_arrows_has_no_artificial_lifetime_timeout() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let trajectory = (1..=320)
             .map(|i| TrajectoryPoint {
                 position: WorldPoint3D {
@@ -5487,7 +5584,11 @@ mod tests {
 
         let mut despawn_frame = None;
         for frame in 0..260 {
-            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            let results = tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            );
             if results.iter().any(|r| r.despawn) {
                 despawn_frame = Some(frame);
                 break;
@@ -5509,6 +5610,8 @@ mod tests {
     /// launched.
     #[test]
     fn tick_arrows_apple_projectile_ignores_non_apple_target() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
         let mut target_element = ElementData {
@@ -5560,7 +5663,11 @@ mod tests {
         });
 
         let mut entities = entity_table(vec![Some(target), Some(apple)]);
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
         assert!(
             results.is_empty(),
             "C++ FindTargetVictim ignores nonmatching target filters before HitTarget can burst"
@@ -5571,6 +5678,8 @@ mod tests {
     /// counter and despawns after `BURST_ANIMATION_FRAMES` ticks.
     #[test]
     fn tick_arrows_apple_bursts_and_despawns_after_frames() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
         let mut target_element = ElementData {
@@ -5615,8 +5724,11 @@ mod tests {
         let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
         // First tick: apple reaches target, bursts.
-        let impact_results =
-            tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        let impact_results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
         assert!(
             impact_results
                 .iter()
@@ -5638,7 +5750,11 @@ mod tests {
         let mut ticks_until_despawn = 0;
         for _ in 0..20 {
             ticks_until_despawn += 1;
-            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            let results = tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            );
             if results.iter().any(|r| r.despawn) {
                 break;
             }
@@ -5653,6 +5769,8 @@ mod tests {
     /// without shield yields no impact FX (silent).
     #[test]
     fn tick_arrows_impact_fx_per_projectile_type() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         fn spawn_projectile_at_impact(obj: ObjectType) -> Entity {
             let mut element = ElementData {
                 kind: ElementKind::ObjectProjectile,
@@ -5687,7 +5805,11 @@ mod tests {
                 Some(spawn_projectile_at_impact(obj)),
                 Some(make_pc(100.0, 0.0)),
             ]);
-            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            let results = tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            );
             results.into_iter().find_map(|r| r.impact_fx)
         };
         assert_eq!(fx_for(ObjectType::Apple), Some(509));
@@ -5797,9 +5919,9 @@ mod tests {
 
     #[test]
     fn hit_chance_bias_scales_with_skill() {
-        // RNG is seeded via the sim_rng scope — deterministic across runs.
-        crate::sim_rng::with_seed(1, || {
-            if let Some(bias) = roll_hit_and_compute_bias(0, 90) {
+        // The focused fixture supplies an explicit deterministic context.
+        crate::sim_rng::with_seed(1, |sim| {
+            if let Some(bias) = roll_hit_and_compute_bias(sim, 0, 90) {
                 // Miss with 90 skill → very small bias.
                 assert!(bias.x.abs() < 1.0);
                 assert!(bias.y.abs() < 1.0);
@@ -5960,6 +6082,8 @@ mod tests {
 
     #[test]
     fn down_bow_shot_release_keeps_leaning_out_posture() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut pc = make_pc(0.0, 0.0);
         pc.element_data_mut().posture = Posture::LeaningOut;
         bind_test_bow_release_rows(&mut pc, OrderType::ShootingWithBowLeaningOut);
@@ -5985,7 +6109,7 @@ mod tests {
 
         let mut fired = Vec::new();
         for _ in 0..16 {
-            fired.extend(tick_bow_shots(&mut entities, &mut sm).fired);
+            fired.extend(tick_bow_shots(sim, &mut entities, &mut sm).fired);
             if !fired.is_empty() {
                 break;
             }
@@ -6063,6 +6187,8 @@ mod tests {
     /// snapshot.
     #[test]
     fn tick_arrows_skips_lying_victim() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::element::Posture;
 
         let mut soldier = make_soldier(50.0, 0.0);
@@ -6103,7 +6229,11 @@ mod tests {
 
         let mut any_hit = None;
         for _ in 0..10 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
                 if r.hit_target.is_some() {
                     any_hit = r.hit_target;
                     break;
@@ -6123,6 +6253,8 @@ mod tests {
     /// for that gap.
     #[test]
     fn tick_arrows_does_not_hit_when_arcing_overhead() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Arrow stays well above the soldier's belt (Z=25).
         let trajectory = vec![
             TrajectoryPoint {
@@ -6179,7 +6311,11 @@ mod tests {
 
         let mut any_hit = None;
         for _ in 0..20 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
                 if r.hit_target.is_some() {
                     any_hit = r.hit_target;
                 }
@@ -6199,6 +6335,8 @@ mod tests {
     /// past.  Complement to [`tick_arrows_does_not_hit_when_arcing_overhead`].
     #[test]
     fn tick_arrows_hits_through_belt_column() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let trajectory = vec![
             TrajectoryPoint {
                 position: WorldPoint3D {
@@ -6244,7 +6382,11 @@ mod tests {
         ]);
         let mut hit = None;
         for _ in 0..20 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
                 if r.hit_target.is_some() {
                     hit = r.hit_target;
                 }
@@ -6262,7 +6404,7 @@ mod tests {
     /// despawn on the same tick.
     #[test]
     fn tick_arrows_shield_hit_deflects_and_keeps_flying() {
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             use crate::element::ActionState;
 
             // Shield holder facing east (sector 4 = +X), toward the arrow
@@ -6325,7 +6467,11 @@ mod tests {
             let mut shield_hit = None;
             let mut despawn_seen = false;
             for _ in 0..10 {
-                for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+                for r in tick_arrows(
+                    sim,
+                    &mut entities,
+                    crate::sight_obstacle::ObstacleList::empty(),
+                ) {
                     if let Some(holder) = r.shield_hit {
                         shield_hit = Some(holder);
                         despawn_seen = r.despawn;
@@ -6374,7 +6520,7 @@ mod tests {
 
     #[test]
     fn non_shield_arrow_ricochet_advances_immediately() {
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             let trajectory = vec![TrajectoryPoint {
                 position: WorldPoint3D {
                     x: 50.0,
@@ -6410,7 +6556,7 @@ mod tests {
             projectile.element.set_direction_instantly(4);
             let impact_position = projectile.element.position();
 
-            make_arrow_falling_down(&mut projectile, false);
+            make_arrow_falling_down(sim, &mut projectile, false);
 
             assert!(projectile.projectile.falling);
             assert!(projectile.projectile.flying);
@@ -6435,6 +6581,8 @@ mod tests {
     /// stops flying on the landing tick and despawns.
     #[test]
     fn tick_arrows_miss_and_land_despawns() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let trajectory = vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 10.0,
@@ -6468,7 +6616,11 @@ mod tests {
 
         let mut despawn = false;
         for _ in 0..10 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            for r in tick_arrows(
+                sim,
+                &mut entities,
+                crate::sight_obstacle::ObstacleList::empty(),
+            ) {
                 if r.despawn && r.hit_target.is_none() && r.shield_hit.is_none() {
                     despawn = true;
                 }

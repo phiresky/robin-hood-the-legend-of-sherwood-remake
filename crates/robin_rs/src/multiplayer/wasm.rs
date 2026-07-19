@@ -24,6 +24,8 @@ pub struct ClientHandle {
     /// `None` until the asynchronous `Welcome` arrives. Returning a made-up
     /// seed here would let wasm initialize a divergent simulation.
     pub mission_seed: Rc<RefCell<Option<u64>>>,
+    pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
+    pub mission_id: Rc<RefCell<Option<String>>>,
     /// Keeps the message-pump closure live.  The browser only invokes
     /// the closure while the WebSocket is open; we Drop it when the
     /// handle goes away.
@@ -40,6 +42,14 @@ pub struct ClientHandle {
 impl ClientHandle {
     pub fn mission_seed(&self) -> Option<u64> {
         *self.mission_seed.borrow()
+    }
+
+    pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
+        *self.mission_sim_config.borrow()
+    }
+
+    pub fn mission_id(&self) -> Option<String> {
+        self.mission_id.borrow().clone()
     }
 
     pub fn shutdown(&mut self) {
@@ -82,6 +92,8 @@ pub fn connect_client(
 
     let assigned_seat = Rc::new(RefCell::new(None::<PlayerId>));
     let mission_seed = Rc::new(RefCell::new(None::<u64>));
+    let mission_sim_config = Rc::new(RefCell::new(None::<robin_engine::engine::SimConfig>));
+    let mission_id = Rc::new(RefCell::new(None::<String>));
 
     let on_open = {
         let socket = socket.clone();
@@ -101,6 +113,8 @@ pub fn connect_client(
         let incoming_tx = incoming_tx.clone();
         let assigned_seat = Rc::clone(&assigned_seat);
         let mission_seed_slot = Rc::clone(&mission_seed);
+        let mission_sim_config_slot = Rc::clone(&mission_sim_config);
+        let mission_id_slot = Rc::clone(&mission_id);
         Closure::<dyn FnMut(_)>::new(move |ev: web_sys::MessageEvent| {
             let data = ev.data();
             let bytes = if let Some(buf) = data.dyn_ref::<js_sys::ArrayBuffer>() {
@@ -112,7 +126,9 @@ pub fn connect_client(
             match decode_msg(&bytes) {
                 Ok(NetMsg::Welcome {
                     your_seat,
+                    mission_id,
                     mission_seed,
+                    sim_config,
                     host_nickname,
                 }) => {
                     tracing::info!(
@@ -123,8 +139,14 @@ pub fn connect_client(
                     );
                     *assigned_seat.borrow_mut() = Some(your_seat);
                     *mission_seed_slot.borrow_mut() = Some(mission_seed);
+                    *mission_sim_config_slot.borrow_mut() = Some(sim_config);
+                    *mission_id_slot.borrow_mut() = Some(mission_id.clone());
                     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
-                    let _ = incoming_tx.send(NetEvent::MissionSeed(mission_seed));
+                    let _ = incoming_tx.send(NetEvent::MissionConfig {
+                        mission_id,
+                        rng_seed: mission_seed,
+                        sim_config,
+                    });
                 }
                 Ok(NetMsg::InitialSnapshot {
                     frame,
@@ -189,7 +211,11 @@ pub fn connect_client(
         let incoming_tx = incoming_tx.clone();
         Closure::<dyn FnMut(_)>::new(move |ev: web_sys::CloseEvent| {
             tracing::info!(code = ev.code(), reason = %ev.reason(), "wasm-mp: socket closed");
-            let _ = incoming_tx.send(NetEvent::Disconnected);
+            let _ = incoming_tx.send(NetEvent::Fatal(format!(
+                "browser multiplayer connection closed (code {}, reason `{}`); automatic reconnect is unavailable",
+                ev.code(),
+                ev.reason(),
+            )));
         })
     };
     socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
@@ -224,6 +250,8 @@ pub fn connect_client(
     Ok(ClientHandle {
         assigned_seat,
         mission_seed,
+        mission_sim_config,
+        mission_id,
         _on_message: on_message,
         _on_open: on_open,
         _on_close: on_close,

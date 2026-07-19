@@ -89,8 +89,9 @@ pub(super) struct ReplayAndRollback {
 /// deterministically later.  Pass `--record <path>` to override the
 /// destination, or `--replay <path>` to disable recording entirely.
 ///
-/// Seeds the engine RNG from the replay header when playing back so
-/// the deterministic stream matches the recording bit-for-bit.
+/// Replay seed/config/campaign metadata has already been applied before
+/// Engine construction; this function only attaches playback/recording and
+/// rollback instrumentation to that frame-0 state.
 pub(super) fn init_replay_and_rollback(
     engine: &mut Engine,
     assets: Arc<LevelAssets>,
@@ -98,17 +99,20 @@ pub(super) fn init_replay_and_rollback(
     _mission_idx: usize,
     mission_id: &str,
     engine_rng_seed: u64,
+    engine_sim_config: robin_engine::engine::SimConfig,
     is_multiplayer: bool,
 ) -> ReplayAndRollback {
-    // A `load-replay` RPC call normally gets converted into
-    // `args.replay_data` before mission construction. Keep this
-    // fallback for true mid-session / restart flows that queue a
-    // replay against an already-built mission.
-    let pending = crate::http_server::take_pending_replay();
-    let pending_paused = pending.as_ref().is_some_and(|p| p.paused);
+    // Every queued replay must be converted into `args.replay_data` before
+    // mission construction. Reseeding an already-built Engine cannot recreate
+    // random draws performed during level initialization.
+    assert!(
+        crate::http_server::peek_pending_replay_mission_id().is_none(),
+        "pending replay must be consumed and supplied before mission Engine construction"
+    );
+    let pending_paused = false;
 
     // No recording while playing back (either source).
-    let is_playing_back = pending.is_some() || args.replay_data.is_some() || args.replay.is_some();
+    let is_playing_back = args.replay_data.is_some() || args.replay.is_some();
     #[cfg(not(target_arch = "wasm32"))]
     let replay_path = if is_playing_back {
         None
@@ -182,11 +186,12 @@ pub(super) fn init_replay_and_rollback(
                 primary,
                 mirror: rpc_buffer.clone(),
             });
-            match ReplayRecorder::with_writer_and_campaign(
+            match ReplayRecorder::with_writer(
                 writer,
                 mission_id.to_string(),
                 engine_rng_seed,
-                Some(engine.campaign()),
+                engine_sim_config,
+                engine.campaign(),
             ) {
                 Ok(rec) => Some(rec),
                 Err(e) => {
@@ -197,16 +202,7 @@ pub(super) fn init_replay_and_rollback(
         })
     };
 
-    let player = if let Some(p) = pending {
-        tracing::info!(
-            "Loaded replay (pending): {} frames, seed {}, paused={}",
-            p.data.frame_count(),
-            p.data.header.rng_seed,
-            p.paused,
-        );
-        engine.restore_rng_from_seed(p.data.header.rng_seed);
-        Some(ReplayPlayer::new(p.data))
-    } else if let Some(data) = args.replay_data.clone() {
+    let player = if let Some(data) = args.replay_data.clone() {
         tracing::info!(
             "Loaded replay (decoded): mission `{}`, {} frames, seed {}",
             data.header.mission_id,

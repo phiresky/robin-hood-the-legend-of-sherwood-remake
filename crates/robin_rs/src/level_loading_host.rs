@@ -30,7 +30,7 @@ use robin_engine::sprite_variant::SpriteVariant;
 /// `FrameHolder`.  Lives host-side because the engine crate no longer
 /// references `FrameHolder`.
 pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
-    let bypass_fog_sprites_crash = host.application_context.options().bypass_fog_sprites_crash;
+    let bypass_fog_sprites_crash = engine.sim_config().bypass_fog_sprites_crash;
     let fh = host.frame_holder_mut();
     // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
     // Night and Fog dictionaries regardless of ambiance and skip the

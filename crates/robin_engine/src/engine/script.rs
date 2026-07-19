@@ -39,6 +39,7 @@ impl EngineInner {
     /// `EngineInner`, including while nested callbacks resume the outer VM.
     pub(super) fn with_script_session<R>(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         callback: impl FnOnce(
             &mut MissionScript,
@@ -63,6 +64,7 @@ impl EngineInner {
             script.assert_no_active_call_frames();
             let campaign = &mut mission_domain.campaign;
             let capabilities = crate::natives::NativeSessionCapabilities::new(
+                sim,
                 &mut world.entities,
                 &mut ai.global,
                 &mut world.fast_grid,
@@ -84,7 +86,7 @@ impl EngineInner {
             script.assert_no_active_call_frames();
             result
         };
-        self.drain_script_effects(assets);
+        self.drain_script_effects(sim, assets);
         Some(result)
     }
 
@@ -101,7 +103,11 @@ impl EngineInner {
     /// The queue batch is removed under a short `ScriptRuntime` borrow before
     /// any effect is executed. Handlers can therefore re-enter the same live
     /// VM synchronously without a take/restore ownership transaction.
-    pub(crate) fn drain_script_effects(&mut self, assets: &LevelAssets) {
+    pub(crate) fn drain_script_effects(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let effects = match self.scripts.mission.as_mut() {
             Some(script) => PendingScriptEffects::drain(script),
             None => return,
@@ -285,7 +291,7 @@ impl EngineInner {
                 }
                 crate::natives::DeferredCommand::HandleDeath { actor } => {
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.handle_death(assets, id);
+                        self.handle_death(sim, assets, id);
                     }
                 }
                 crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
@@ -300,7 +306,7 @@ impl EngineInner {
                 }
                 crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.apply_scripted_life_points(assets, id, amount);
+                        self.apply_scripted_life_points(sim, assets, id, amount);
                     }
                 }
                 crate::natives::DeferredCommand::SetScriptedConcussion {
@@ -318,7 +324,7 @@ impl EngineInner {
                 }
                 crate::natives::DeferredCommand::QuitSwordfight { actor } => {
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.quit_swordfight(assets, id);
+                        self.quit_swordfight(sim, assets, id);
                     }
                 }
                 crate::natives::DeferredCommand::RemoveUnconsciousStars { actor } => {
@@ -535,7 +541,7 @@ impl EngineInner {
                     // mid-segment instead of waiting for the next
                     // waypoint pickup.
                     if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                        self.relaunch_path_at_new_speed(assets, id);
+                        self.relaunch_path_at_new_speed(sim, assets, id);
                     }
                 }
                 crate::natives::DeferredCommand::SetPatrolShouldRun {
@@ -560,18 +566,18 @@ impl EngineInner {
                     patch_index,
                     effects,
                 } => {
-                    self.process_patch_effects(assets, patch_index, effects);
+                    self.process_patch_effects(sim, assets, patch_index, effects);
                 }
                 _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
             }
         }
 
         for (actor, message, arg1, arg2) in script_messages {
-            self.launch_script_send_message(assets, actor, message, arg1, arg2);
+            self.launch_script_send_message(sim, assets, actor, message, arg1, arg2);
         }
 
         if !engine_commands.is_empty() {
-            self.apply_host_commands(assets, engine_commands);
+            self.apply_host_commands(sim, assets, engine_commands);
         }
     }
 
@@ -586,6 +592,7 @@ impl EngineInner {
     /// SendMessage element changes from `Todo` to `Terminated`.
     pub(super) fn launch_script_send_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor: i32,
         message: i32,
@@ -650,7 +657,7 @@ impl EngineInner {
             } => {
                 assert_eq!(Some(action_owner), owner);
                 assert_eq!(action_sequence_id, sequence_id);
-                self.dispatch_sequence_messages(assets, &[(actor, message, arg1, arg2)], &[]);
+                self.dispatch_sequence_messages(sim, assets, &[(actor, message, arg1, arg2)], &[]);
             }
             crate::sequence::SequenceAction::ExecuteImmediateEngine {
                 sequence_id: action_sequence_id,
@@ -658,7 +665,7 @@ impl EngineInner {
             } => {
                 assert!(owner.is_none());
                 assert_eq!(action_sequence_id, sequence_id);
-                self.dispatch_sequence_messages(assets, &[], &[(message, arg1, arg2)]);
+                self.dispatch_sequence_messages(sim, assets, &[], &[(message, arg1, arg2)]);
             }
             other => panic!(
                 "SendMessage sequence {:?} registered unexpected action {:?}",
@@ -728,6 +735,7 @@ impl EngineInner {
     /// `assets.hiking_paths`.
     pub(crate) fn initialize_mission_script_with(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seed: i32,
         hiking_paths: &[crate::level_data::RawHikingPath],
@@ -790,7 +798,7 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             // ── Phase 1: Per-actor Initialize ──
             // Each actor's script class gets a ScriptInstance that persists for the
             // actor's lifetime — the heap (member variables) survives across calls
@@ -940,7 +948,7 @@ impl EngineInner {
         }
 
         // ── Phase 3: Zone script Initialize ──
-        self.initialize_zone_scripts(assets);
+        self.initialize_zone_scripts(sim, assets);
 
         // ── Phase 3b: Apply SectorProduction registrations from StartUp::Initialize.
         // RegisterAsProductionSector / AddProductionPoint queue through the
@@ -949,13 +957,18 @@ impl EngineInner {
         self.apply_production_registrations(assets);
 
         // ── Phase 4: Populate initial zone occupants ──
-        self.initialize_zone_occupants(assets);
+        self.initialize_zone_occupants(sim, assets);
     }
 
     /// Finalize the mission script (called on mission end).
     /// `abandoned` is true if the player quit/interrupted.
-    pub(crate) fn finalize_mission_script(&mut self, assets: &LevelAssets, abandoned: bool) {
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+    pub(crate) fn finalize_mission_script(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        abandoned: bool,
+    ) {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             if let Err(e) = script.finalize(abandoned, script_domains, capabilities) {
                 tracing::warn!("Script Finalize failed: {e}");
             }
@@ -970,7 +983,11 @@ impl EngineInner {
     /// Calls `ActionChange` when the current animation differs from
     /// `old_action`.  Called once per frame from `perform_hourglass`,
     /// after all animation updates.
-    pub(crate) fn dispatch_actor_action_changes(&mut self, assets: &LevelAssets) {
+    pub(crate) fn dispatch_actor_action_changes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.scripts.mission.is_none() {
             return;
         }
@@ -1024,7 +1041,7 @@ impl EngineInner {
         }
 
         // Phase 2: Dispatch to scripts in collection order.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for (handle, new_anim, old_anim) in &changes {
                 if let Err(e) = script.call_actor_function(
                     *handle,
@@ -1051,7 +1068,11 @@ impl EngineInner {
     /// Sprite frame advance for scrolls lives in the generic animation
     /// tick; this function only handles the per-25-tick script
     /// callback dispatched alongside the frame advance.
-    pub(crate) fn dispatch_scroll_hourglasses(&mut self, assets: &LevelAssets) {
+    pub(crate) fn dispatch_scroll_hourglasses(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         const SCRIPT_HOURGLASS_TIMEOUT: u32 = 25;
 
         if self.scripts.mission.is_none() {
@@ -1088,7 +1109,7 @@ impl EngineInner {
 
         // Phase 2: dispatch in scroll slot order. Per-scroll `Hourglass` is
         // distinct from the engine callback and passes the literal zero.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for handle in &ready {
                 if let Err(e) = script.call_scroll_function(
                     *handle,
@@ -1123,6 +1144,7 @@ impl EngineInner {
     /// script-bracketed `IsTaken` dispatch with a single call.
     pub fn scroll_is_taken(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         scroll_id: crate::element::EntityId,
         pc_id: crate::element::EntityId,
@@ -1160,7 +1182,7 @@ impl EngineInner {
         // Step 3 — dispatch via the SetScrollExecutingScript bracket.
         let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
         let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
+            .with_script_session(sim, assets, |script, script_domains, capabilities| {
                 script.call_scroll_function(
                     handle,
                     "IsTaken",
@@ -1194,7 +1216,11 @@ impl EngineInner {
     /// Creates `ScriptInstance`s for each script zone that has a `script_class`,
     /// runs `Initialize()`, and stores them in `MissionScript::zone_instances`.
     /// Called during mission init, after script sectors are registered on the grid.
-    pub(crate) fn initialize_zone_scripts(&mut self, assets: &LevelAssets) {
+    pub(crate) fn initialize_zone_scripts(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let classes: Vec<(usize, String)> = self
             .script_domains
             .zones
@@ -1209,7 +1235,7 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             let mut init_count = 0u32;
             for (zone_idx, class_name) in classes {
                 let class_idx = match script.manager.find_class(&class_name) {
@@ -1412,7 +1438,11 @@ impl EngineInner {
     /// can't be safely done without a full mission-script playthrough.
     /// The refresh path (`refresh_zone_occupants_silent`) uses the
     /// silent helpers and skips the dispatch.
-    pub(crate) fn initialize_zone_occupants(&mut self, assets: &LevelAssets) {
+    pub(crate) fn initialize_zone_occupants(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if assets.scripts.zone_grid_indices.is_empty() {
             return;
         }
@@ -1425,7 +1455,7 @@ impl EngineInner {
         self.apply_zone_occupant_entries(&entries);
 
         // Phase 3: Dispatch EnterZone to zone scripts.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for &(zone_idx, _, handle) in &entries {
                 if let Err(e) = script.call_zone_function(
                     zone_idx,
@@ -1453,7 +1483,11 @@ impl EngineInner {
     /// script when occupancy changes.
     ///
     /// Called once per frame from `perform_hourglass`, after movement tick.
-    pub(crate) fn tick_zone_occupants(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_zone_occupants(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if assets.scripts.zone_grid_indices.is_empty() || self.scripts.mission.is_none() {
             return;
         }
@@ -1559,7 +1593,7 @@ impl EngineInner {
 
         // Phase 3: Dispatch enters before exits, preserving the original
         // batch order used by this port.
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for &(zone_idx, _, handle) in &enter_events {
                 if let Err(e) = script.call_zone_function(
                     zone_idx,
@@ -1773,11 +1807,12 @@ impl EngineInner {
     /// `IActorScript::ProcessMessage`.
     pub(super) fn dispatch_sequence_messages(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         per_actor: &[(i32, i32, i32, i32)],
         engine_level: &[(i32, i32, i32)],
     ) {
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             // Per-actor ProcessMessage
             for &(handle, msg, arg1, arg2) in per_actor {
                 if let Err(e) = script.call_actor_function(
@@ -1846,13 +1881,14 @@ impl EngineInner {
     /// is bound for the target.
     pub(super) fn dispatch_target_activations(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         calls: &[(i32, i32, &str)],
     ) {
         if calls.is_empty() {
             return;
         }
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for &(target_handle, pc_handle, fn_name) in calls {
                 if let Err(e) = script.call_target_function(
                     target_handle,
@@ -1875,12 +1911,13 @@ impl EngineInner {
     /// engine-level path.
     pub(crate) fn dispatch_startup_message(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         msg: i32,
         arg1: i32,
         arg2: i32,
     ) {
-        self.dispatch_sequence_messages(assets, &[], &[(msg, arg1, arg2)]);
+        self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
     }
 
     // ─── AI event filter precompute ─────────────────────────────
@@ -1911,6 +1948,7 @@ impl EngineInner {
     /// a script actor handle; other info variants become 0 (originally NULL).
     pub fn filter_stimulus(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         handle: i32,
         stimulus: &crate::ai::Stimulus,
@@ -1936,7 +1974,7 @@ impl EngineInner {
         }
 
         let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
+            .with_script_session(sim, assets, |script, script_domains, capabilities| {
                 script.call_actor_function(
                     handle,
                     "FilterAIEvent",
@@ -1980,6 +2018,7 @@ impl EngineInner {
     /// `EnemyAi::think_*` cascades if this assumption ever breaks.
     pub(crate) fn dispatch_filtered_stimulus(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
@@ -1987,7 +2026,7 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
     ) -> bool {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
-        if !self.filter_stimulus(assets, handle, stimulus) {
+        if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
         }
         // Hoist the canonical door slice before grabbing the mutable
@@ -2000,6 +2039,7 @@ impl EngineInner {
         };
         if let Some(enemy_ai) = entity.enemy_ai_mut() {
             enemy_ai.think(
+                sim,
                 stimulus,
                 ai_global,
                 ctx,
@@ -2008,6 +2048,7 @@ impl EngineInner {
             )
         } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
             friendly_ai.think(
+                sim,
                 stimulus,
                 ai_global,
                 ctx,
@@ -2033,7 +2074,11 @@ impl EngineInner {
     /// transitions inside a single `think()` (e.g.
     /// `Default → Wondering → Attacking`) each fire their own
     /// notification — synchronous per-substate behaviour.
-    pub(crate) fn dispatch_ai_state_change_notifications(&mut self, assets: &LevelAssets) {
+    pub(crate) fn dispatch_ai_state_change_notifications(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.scripts.mission.is_none() {
             return;
         }
@@ -2074,7 +2119,7 @@ impl EngineInner {
             return;
         }
 
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for (handle, source, code) in &notifications {
                 // Return value ignored — notification only.
                 let _ = script.call_actor_function(
@@ -2099,10 +2144,9 @@ impl EngineInner {
     /// Called from `Engine::new` when `EngineArgs::level` is set.
     pub(crate) fn initialize_from_campaign(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &mut LevelAssets,
         staging: &mut LevelLoadStaging,
-        script_enabled: bool,
-        highlander2: bool,
         loaded: crate::level_data::LoadedLevel,
         level_directory: &str,
         bg_pixel_dims: (f32, f32),
@@ -2119,10 +2163,9 @@ impl EngineInner {
         let location = profile.location;
 
         self.initialize_from_mission(
+            sim,
             assets,
             staging,
-            script_enabled,
-            highlander2,
             &mission_filename,
             &proto_level_filename,
             loaded,
@@ -2204,6 +2247,7 @@ impl EngineInner {
     /// Called after each script tick (Hourglass / CheckVictoryCondition).
     pub(crate) fn apply_host_commands(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         commands: Vec<crate::natives::EngineCommand>,
     ) {
@@ -2709,7 +2753,7 @@ impl EngineInner {
                         );
                         continue;
                     }
-                    self.actor_make_crouched(eid);
+                    self.actor_make_crouched(sim, eid);
                 }
                 EngineCommand::SetMobileActive {
                     mobile_index,
@@ -3150,6 +3194,8 @@ mod script_context_tests {
 
     #[test]
     fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(empty_mission_script());
         engine
@@ -3163,6 +3209,7 @@ mod script_context_tests {
         let patch_index = crate::patch::PatchIndex::new(0).expect("zero is a valid patch index");
 
         engine.process_patch_effects(
+            sim,
             &LevelAssets::default(),
             patch_index,
             vec![crate::patch::PatchEffect::SwapBackground { applied: true }],
@@ -3171,6 +3218,7 @@ mod script_context_tests {
 
         engine.feedback.pending_side_effects.invalidate_background = false;
         engine.process_patch_effects(
+            sim,
             &LevelAssets::default(),
             patch_index,
             vec![crate::patch::PatchEffect::RestoreBackground],
@@ -3180,14 +3228,21 @@ mod script_context_tests {
 
     #[test]
     fn external_this_actor_success_keeps_canonical_entity_ownership() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = crate::campaign::Campaign::default();
         engine.world.entities.push(None);
         engine.scripts.mission = Some(empty_mission_script());
         engine.attach_script_bindings(&LevelAssets::new());
 
-        let result =
-            engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
+        let result = engine.call_external_native_with_this(
+            sim,
+            &LevelAssets::new(),
+            "ThisActor",
+            &[],
+            Some(99),
+        );
 
         assert_eq!(result, Ok(99));
         assert_eq!(engine.world.entities.len(), 1);
@@ -3201,6 +3256,8 @@ mod script_context_tests {
 
     #[test]
     fn native_mutation_writes_the_canonical_script_domains_in_place() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::interp::{HostFunctions, NativeStack};
         use crate::natives::NativeFn;
 
@@ -3221,30 +3278,31 @@ mod script_context_tests {
         let canonical_entities = std::ptr::from_ref(&engine.world.entities);
         let door = crate::natives::ScriptHandleCodec::door_handle_from_index(0);
 
-        let result = engine.with_script_session(&assets, |script, script_domains, capabilities| {
-            assert_eq!(
-                std::ptr::from_mut(script_domains),
-                canonical_domains,
-                "the native capability must borrow EngineInner's allocation"
-            );
-            assert_eq!(
-                capabilities.entities_owner_ptr(),
-                canonical_entities,
-                "the entity capability must borrow EngineInner's canonical allocation"
-            );
-            let mut stack = NativeStack::default();
-            stack.push_i32(door);
-            stack.push_i32(0);
-            let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.game_host,
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-            );
-            HostFunctions::call(&mut context, NativeFn::SetDoorLockedPC as u32, &mut stack)
-                .expect_return("SetDoorLockedPC is synchronous")
-        });
+        let result =
+            engine.with_script_session(sim, &assets, |script, script_domains, capabilities| {
+                assert_eq!(
+                    std::ptr::from_mut(script_domains),
+                    canonical_domains,
+                    "the native capability must borrow EngineInner's allocation"
+                );
+                assert_eq!(
+                    capabilities.entities_owner_ptr(),
+                    canonical_entities,
+                    "the entity capability must borrow EngineInner's canonical allocation"
+                );
+                let mut stack = NativeStack::default();
+                stack.push_i32(door);
+                stack.push_i32(0);
+                let mut context = crate::natives::NativeContext::with_bindings(
+                    &mut script.game_host,
+                    &mut script.state,
+                    script_domains,
+                    &script.bindings,
+                    capabilities,
+                );
+                HostFunctions::call(&mut context, NativeFn::SetDoorLockedPC as u32, &mut stack)
+                    .expect_return("SetDoorLockedPC is synchronous")
+            });
 
         assert_eq!(result, Some(0));
         assert!(!engine.script_domains.interactables.doors[0].locked_pc);
@@ -3252,6 +3310,8 @@ mod script_context_tests {
 
     #[test]
     fn native_ai_mutation_writes_engine_inner_directly() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::interp::{HostFunctions, NativeStack};
         use crate::natives::NativeFn;
 
@@ -3274,7 +3334,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let canonical_ai_global = std::ptr::addr_of_mut!(engine.ai.global);
 
-        let result = engine.with_script_session(&assets, |script, script_domains, queries| {
+        let result = engine.with_script_session(sim, &assets, |script, script_domains, queries| {
             let mut context = crate::natives::NativeContext::with_bindings(
                 &mut script.game_host,
                 &mut script.state,
@@ -3305,15 +3365,24 @@ mod script_context_tests {
     #[test]
     #[should_panic(expected = "native dispatch requires live level attachments")]
     fn external_native_rejects_a_detached_live_script() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(empty_mission_script());
 
-        let _ =
-            engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
+        let _ = engine.call_external_native_with_this(
+            sim,
+            &LevelAssets::new(),
+            "ThisActor",
+            &[],
+            Some(99),
+        );
     }
 
     #[test]
     fn script_session_normal_return_restores_state_and_hash() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = crate::campaign::Campaign::default();
         engine.world.entities.push(None);
@@ -3323,7 +3392,7 @@ mod script_context_tests {
         let hash_before = robin_util::state_hash::compute(&engine);
         let canonical_entities = std::ptr::from_ref(&engine.world.entities);
 
-        let result = engine.with_script_session(&assets, |script, _, capabilities| {
+        let result = engine.with_script_session(sim, &assets, |script, _, capabilities| {
             assert_eq!(capabilities.entities_owner_ptr(), canonical_entities);
             script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |script| {
                 assert_eq!(script.active_call_frame_count(), 1);
@@ -3340,6 +3409,8 @@ mod script_context_tests {
 
     #[test]
     fn script_callback_error_keeps_canonical_owners_in_place() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = crate::campaign::Campaign::default();
         engine.world.entities.push(None);
@@ -3348,7 +3419,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
 
         let result: Result<(), &'static str> = engine
-            .with_script_session(&assets, |script, _, _capabilities| {
+            .with_script_session(sim, &assets, |script, _, _capabilities| {
                 script.with_call_frame(crate::natives::ScriptCallFrame::actor(99), |_| {
                     Err("simulated script error")
                 })
@@ -3364,6 +3435,8 @@ mod script_context_tests {
     #[test]
     #[should_panic(expected = "simulated script panic")]
     fn script_callback_unwind_keeps_canonical_owners_in_place() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         struct VerifyRestoredOnUnwind(*const EngineInner);
 
         impl Drop for VerifyRestoredOnUnwind {
@@ -3394,7 +3467,7 @@ mod script_context_tests {
         engine.attach_script_bindings(&assets);
         let _verify = VerifyRestoredOnUnwind(&engine);
 
-        let _ = engine.with_script_session(&assets, |script, script_domains, capabilities| {
+        let _ = engine.with_script_session(sim, &assets, |script, script_domains, capabilities| {
             script_domains.mission_ui.outline_display = true;
             {
                 let mut context = crate::natives::NativeContext::with_bindings(
@@ -3415,11 +3488,14 @@ mod script_context_tests {
 
     #[test]
     fn external_native_early_returns_without_touching_callback_state() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine.world.entities.push(None);
         engine.scripts.mission = Some(empty_mission_script());
 
         let result = engine.call_external_native_with_this(
+            sim,
             &LevelAssets::new(),
             "NotAnOriginalNative",
             &[],
@@ -3576,17 +3652,19 @@ impl EngineInner {
     /// for the duration of the call. Pass `None` for a receiver-free frame.
     pub fn call_external_native(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         native_name: &str,
         args: &[i32],
     ) -> Result<i32, String> {
-        self.call_external_native_with_this(assets, native_name, args, None)
+        self.call_external_native_with_this(sim, assets, native_name, args, None)
     }
 
     /// Like [`Self::call_external_native`], but with an explicit
     /// `ThisActor` receiver installed in the transient call frame.
     pub fn call_external_native_with_this(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         native_name: &str,
         args: &[i32],
@@ -3617,7 +3695,7 @@ impl EngineInner {
             return Err("no mission script loaded (no mission running)".into());
         }
 
-        self.with_script_session(assets, |script, script_domains, capabilities| {
+        self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             let frame = this_actor.map_or_else(
                 crate::natives::ScriptCallFrame::default,
                 crate::natives::ScriptCallFrame::actor,

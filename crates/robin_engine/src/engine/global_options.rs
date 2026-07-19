@@ -23,6 +23,9 @@ pub struct SimConfig {
     pub golden_eye: bool,
     pub ignore_default_loose: bool,
     pub bypass_fog_sprites_crash: bool,
+    /// Active player-profile speech density. This affects authoritative
+    /// chorus suppression and deterministic speech timing.
+    pub amount_of_speaking: u16,
 }
 
 impl SimConfig {
@@ -34,6 +37,7 @@ impl SimConfig {
             golden_eye: options.golden_eye,
             ignore_default_loose: options.ignore_default_loose,
             bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
+            amount_of_speaking: 5,
         }
     }
 }

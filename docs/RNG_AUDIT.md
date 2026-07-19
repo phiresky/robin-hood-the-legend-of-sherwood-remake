@@ -19,12 +19,25 @@ on line numbers.
 
 ## Snapshot contract
 
-`EngineInner::rng: SimulationRng` owns the stream at every snapshot boundary.
+`EngineInner::control.rng: SimulationRng` owns the stream at every snapshot boundary.
 It serializes the complete `fastrand::Rng::get_seed()` state and participates
 in `StateHash`; `Engine`, save-game, multiplayer, replay, and rollback clones
 therefore all carry the exact next draw. `perform_hourglass`, post-initialize,
-level ingestion, SCB startup, and Sherwood production enter explicit Engine
-RNG scopes. In the table, **E** means this complete Engine serialization/hash
+level ingestion, SCB startup, and Sherwood production receive an explicit
+Engine-derived `SimulationContext`; no production RNG is installed in TLS.
+Campaign mission selection occurs before the loaded Engine exists, so
+`Engine::select_next_mission` temporarily owns the campaign in a bare
+`EngineInner`, advances that same `SimulationRng`, and hands the complete next
+seed and existing `SimConfig` to `EngineArgs`. A finished mission returns its
+next RNG seed and `SimConfig` with the campaign for the following selection.
+Save loads preflight the serialized mission-construction seed/config, while
+the existing campaign restart snapshot carries its paired pre-selection
+seed/config. Replays require campaign, seed, and config in their version-5
+header; network version 11 announces mission identity with the same seed and
+config before Engine construction. This preserves the original
+single process-wide sequence (`launcher.cpp:763-765`, `RHCampaign.cpp`) rather
+than creating identically seeded campaign and mission streams.
+In the table, **E** means this complete Engine serialization/hash
 coverage. Initial-load draws happen before the frame-zero Engine snapshot and
 are consequently covered by that snapshot.
 
@@ -132,28 +145,18 @@ sequences; the table records those conditions and their internal order.
 
 This category is deterministic and gameplay-visible, but is deliberately
 separate from the serialized draw stream. A temporary generator is seeded
-from the current Engine RNG state; it cannot advance `EngineInner::rng`.
+from the current Engine RNG state; it cannot advance `EngineInner::control.rng`.
 Snapshot coverage is instead provided by the authoritative output written to
 campaign state.
 
 | Auxiliary site | Uses | Rust location / function | Range and draw order | Original provenance | Owner / phase | Snapshot coverage |
 | --- | ---: | --- | --- | --- | --- | --- |
-| `AuxiliaryRngSite::PeasantNames` | 1 | `robin_rs/ui_panel.rs`: `generate_peasant_names` | For `MerryManA`, `B`, then `C`, skip a kind with a localized name; otherwise draw firstname `[0,firstnames.len())` then surname `[0,surnames.len())` per attempt, stopping at the first unused full name or after ten pairs. | Rust campaign/UI integration; no corresponding gameplay `rand()` caller was found in the reviewed Original sources. | Level setup, after localized name tables are loaded | The ephemeral auxiliary RNG is not serialized. Each accepted result is applied as `RegisterPeasantName`, entering serialized and state-hashed `campaign.peasant_names`; its seed is derived deterministically from `EngineInner::rng` without consuming it. |
+| `AuxiliaryRngSite::PeasantNames` | 1 | `robin_rs/ui_panel.rs`: `generate_peasant_names` | For `MerryManA`, `B`, then `C`, skip a kind with a localized name; otherwise draw firstname `[0,firstnames.len())` then surname `[0,surnames.len())` per attempt, stopping at the first unused full name or after ten pairs. | Rust campaign/UI integration; no corresponding gameplay `rand()` caller was found in the reviewed Original sources. | Level setup, after localized name tables are loaded | The ephemeral auxiliary RNG is not serialized. Each accepted result is applied as `RegisterPeasantName`, entering serialized and state-hashed `campaign.peasant_names`; its seed is derived deterministically from `EngineInner::control.rng` without consuming it. |
 
 Guarded auxiliary total: **1 semantic site and 1 reviewed source use**. Its
 draw count is data-dependent on localized-name availability, prior registered
 names, and collision attempts. These inputs and the fixed character order
 must remain deterministic.
-
-## Authoritative bootstrap seed
-
-`robin_rs/game_session/multiplayer.rs` may generate a mission seed from a
-host-local `fastrand::Rng::new()` when the host was not given one. This is not
-a gameplay draw or a second in-session stream: the seed is synchronized to
-all peers before Engine construction and becomes `EngineArgs::rng_seed`.
-Thereafter the Engine-owned stream and its snapshots/hash are authoritative.
-The source guard inventories this exact bootstrap expression while rejecting
-unreviewed ambient RNG elsewhere.
 
 ## Host-only randomness
 
@@ -170,9 +173,9 @@ the Engine snapshot.
 
 ## Verified fixes and remainder
 
-- Mission ingestion, SCB initialization, and Sherwood production now run in
-  explicit Engine RNG scopes; direct dereferencing of `SimulationRng` was
-  removed.
+- Mission ingestion, SCB initialization, and Sherwood production now receive
+  explicit Engine-derived contexts; direct dereferencing or TLS installation
+  of `SimulationRng` was removed.
 - Returning Sherwood PCs now consume two position draws and one direction draw
   in team order before the 100 two-draw beam-me swaps, matching
   `RHCampaign::CreateMissionCharacters`.

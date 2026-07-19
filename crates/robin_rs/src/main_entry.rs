@@ -68,6 +68,17 @@ fn parse_replay_spec(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
+fn requested_replay_data(args: &CliArgs) -> Result<Option<engine_replay::ReplayData>, String> {
+    if let Some(data) = args.replay_data.clone() {
+        return Ok(Some(data));
+    }
+    args.replay
+        .as_deref()
+        .map(crate::replay_format::load_replay_spec)
+        .transpose()
+        .map_err(|error| format!("failed to load replay: {error}"))
+}
+
 /// Robin Hood — The Legend of Sherwood (Rust port)
 #[derive(Parser, Debug, Clone, Deserialize)]
 #[command(version, about)]
@@ -449,7 +460,10 @@ mod tests {
     use clap::error::ErrorKind;
     use robin_engine::profiles::ProfileManager;
 
-    use super::{current_mission_id, required_mission_id, try_parse_cli_from};
+    use super::{
+        current_mission_id, preflight_or_use_decoded_load, requested_replay_data,
+        required_mission_id, try_parse_cli_from, validate_save_mission,
+    };
     use robin_engine::campaign::Campaign;
 
     #[test]
@@ -494,6 +508,34 @@ mod tests {
     }
 
     #[test]
+    fn decoded_replay_payload_wins_over_the_original_spec() {
+        use robin_engine::replay::{ReplayFile, ReplayHeader};
+        use std::collections::BTreeMap;
+
+        let data = ReplayFile {
+            header: ReplayHeader {
+                mission_id: "MissionA".into(),
+                rng_seed: 0x55aa,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
+                total_frames: 0,
+                campaign: bitcode::serialize(&Campaign::default()).unwrap(),
+            },
+            frames: BTreeMap::new(),
+            hashes: BTreeMap::new(),
+        }
+        .into();
+        let args = super::CliArgs {
+            replay: Some("this-path-must-never-be-read".into()),
+            replay_data: Some(data),
+            ..Default::default()
+        };
+
+        let selected = requested_replay_data(&args).unwrap().unwrap();
+        assert_eq!(selected.header.rng_seed, 0x55aa);
+    }
+
+    #[test]
     fn proto_requires_mission() {
         let err = try_parse_cli_from(["robin", "--proto", "Leicester"]).unwrap_err();
 
@@ -510,6 +552,108 @@ mod tests {
     #[should_panic(expected = "current_mission_id: campaign must have a valid current mission")]
     fn current_mission_id_rejects_missing_current_mission() {
         current_mission_id(&Campaign::default(), &ProfileManager::new());
+    }
+
+    #[test]
+    fn save_preflight_rejects_header_campaign_mission_mismatch() {
+        use robin_engine::engine::{Engine, LevelAssets};
+        use robin_engine::mission::Mission;
+        use robin_engine::profiles::MissionProfile;
+
+        let mut profiles = ProfileManager::new();
+        profiles.missions = vec![
+            MissionProfile {
+                id: 10,
+                ..Default::default()
+            },
+            MissionProfile {
+                id: 20,
+                ..Default::default()
+            },
+        ];
+        let mut campaign = Campaign::default();
+        campaign.missions = vec![
+            Mission {
+                profile_idx: Some(0),
+                ..Default::default()
+            },
+            Mission {
+                profile_idx: Some(1),
+                ..Default::default()
+            },
+        ];
+        campaign.current_mission_idx = Some(0);
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(profiles.clone());
+        let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
+        let host = crate::host::Host::scratch(800.0, 600.0);
+        let save = crate::save_file::GameSaveFile::capture(&engine, &host, 20, "mismatch".into());
+
+        let error = validate_save_mission(&save, &profiles).unwrap_err();
+        assert!(error.contains("current mission Some(0)"));
+        assert!(error.contains("mission id 20 at index 1"));
+    }
+
+    #[test]
+    fn save_preflight_rejects_malformed_campaign_profile_index() {
+        use robin_engine::engine::{Engine, LevelAssets};
+        use robin_engine::mission::Mission;
+        use robin_engine::profiles::MissionProfile;
+
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 10,
+            ..Default::default()
+        });
+        let mut assets = LevelAssets::new();
+        let mut engine =
+            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
+        let mut malformed = Campaign::default();
+        malformed.missions.push(Mission {
+            profile_idx: Some(999),
+            ..Default::default()
+        });
+        malformed.current_mission_idx = Some(0);
+        malformed
+            .snapshot_preselected_with_simulation(7, robin_engine::engine::SimConfig::default());
+        engine.replace_campaign_from_console(malformed);
+        let host = crate::host::Host::scratch(800.0, 600.0);
+        let save = crate::save_file::GameSaveFile::capture(&engine, &host, 10, "malformed".into());
+
+        let error = validate_save_mission(&save, &profiles).unwrap_err();
+        assert!(error.contains("out-of-range profile_idx 999"));
+    }
+
+    #[test]
+    fn decoded_save_payload_and_slot_survive_file_replacement_after_preflight() {
+        use robin_engine::engine::{Engine, LevelAssets};
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager =
+            crate::savegame::SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        let slot = manager.create("slot".into(), 1);
+        let mut assets = LevelAssets::new();
+        let mut original =
+            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
+        original.test_set_frame_counter(111);
+        let host = crate::host::Host::scratch(800.0, 600.0);
+        crate::save_file::GameSaveFile::capture(&original, &host, 1, "original".into())
+            .write_to(&manager.save_path(slot))
+            .unwrap();
+        let (decoded_slot, decoded) = manager.preflight_load(Some(slot)).unwrap().unwrap();
+
+        let mut replacement = original.clone();
+        replacement.test_set_frame_counter(222);
+        crate::save_file::GameSaveFile::capture(&replacement, &host, 1, "replacement".into())
+            .write_to(&manager.save_path(slot))
+            .unwrap();
+
+        let (resolved_slot, resolved) =
+            preflight_or_use_decoded_load(&manager, Some(decoded_slot), Some(decoded))
+                .unwrap()
+                .unwrap();
+        assert_eq!(resolved_slot, slot);
+        assert_eq!(resolved.engine.frame_counter(), 111);
     }
 }
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
@@ -749,15 +893,7 @@ fn rust_init_finish(
     let application_context =
         ApplicationContext::complete(options, player_profiles, key_configs, shipping)?;
 
-    // Compatibility boundary only: DifficultyLevel::current and the
-    // remaining engine-owned difficulty/speech consumers still read the
-    // PlayerProfileManager singleton. Host, menu, loading, rendering, and
-    // session setup code must continue to use ApplicationContext directly.
-    // TODO(app-context): delete this mirror once every engine difficulty and
-    // sound-setting consumer accepts explicit SimConfig/profile inputs.
-    application_context.install_engine_profile_compatibility_mirror()?;
-
-    let campaign = Campaign::create(&profiles);
+    let campaign = Campaign::create(&profiles, application_context.sim_config().difficulty);
 
     Ok((campaign, profiles, application_context))
 }
@@ -903,12 +1039,15 @@ pub(crate) struct RustCallbacks {
 
 /// Save-slot bookkeeping passed from an in-mission "load" click through
 /// the `GameCode::LevelLoad` exit back into the outer session loop.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct PendingLevelLoad {
     /// Save-slot index in [`crate::savegame::SaveGameManager`].
     pub slot: usize,
     /// Mission profile ID the save's header reports.
     pub target_mission_id: u32,
+    /// Already-decoded payload. It is moved into the destination load request
+    /// so the bytes preflighted before Engine construction are the bytes applied.
+    pub save: crate::save_file::GameSaveFile,
 }
 
 /// Slot-type-dependent post-load state the frame loop must apply once
@@ -930,7 +1069,7 @@ pub enum SaveBannerKind {
 
 /// Pending save/load intent set by the state machine and consumed
 /// outside the callback boundary by `game_session`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SaveLoadRequest {
     /// Persist the current engine state to the caller-provided slot.
     /// `None` slot = write the Continue auto-save.
@@ -949,6 +1088,9 @@ pub enum SaveLoadRequest {
     Load {
         slot: Option<usize>,
         mission_id: u32,
+        /// Preflighted payload for initial/cross-mission loads. `None` only
+        /// before the request reaches its preconstruction boundary.
+        save: Option<crate::save_file::GameSaveFile>,
     },
     /// Write the Restart auto-save (pre-restart snapshot), called once
     /// per mission right after level init finishes. The live campaign
@@ -1020,6 +1162,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
         self.pending = Some(SaveLoadRequest::Load {
             slot: None,
             mission_id,
+            save: None,
         });
     }
     fn serialize_for_restart(&mut self, write: bool) {
@@ -1147,6 +1290,62 @@ pub(crate) fn current_mission_id(
             .map(|m| m.profile(profiles).id),
         "current_mission_id: campaign must have a valid current mission",
     )
+}
+
+/// Validate the mission identity embedded redundantly in a save header and
+/// its authoritative campaign snapshot before any destination Engine exists.
+pub(crate) fn validate_save_mission(
+    save: &crate::save_file::GameSaveFile,
+    profiles: &engine_profiles::ProfileManager,
+) -> Result<usize, String> {
+    let mission_id = save.header.mission_id;
+    let campaign = save.engine.campaign();
+    let mut mission_idx = None;
+    for (index, mission) in campaign.missions.iter().enumerate() {
+        let profile_idx = mission
+            .profile_idx
+            .ok_or_else(|| format!("save campaign mission at index {index} has no profile_idx"))?
+            as usize;
+        let profile = profiles.missions.get(profile_idx).ok_or_else(|| {
+            format!(
+                "save campaign mission at index {index} references out-of-range profile_idx {profile_idx}"
+            )
+        })?;
+        if profile.id == mission_id && mission_idx.is_none() {
+            mission_idx = Some(index);
+        }
+    }
+    let mission_idx = mission_idx
+        .ok_or_else(|| format!("save mission id {mission_id} is absent from its campaign"))?;
+    if campaign.current_mission_idx != Some(mission_idx) {
+        return Err(format!(
+            "save campaign current mission {:?} does not match header mission id {mission_id} at index {mission_idx}",
+            campaign.current_mission_idx,
+        ));
+    }
+    if !campaign.has_restart_simulation_checkpoint() {
+        return Err("save campaign is missing its mission restart checkpoint".to_string());
+    }
+    Ok(mission_idx)
+}
+
+/// Consume an already-decoded save with its exact preflighted slot, or do the
+/// one allowed disk read for a not-yet-preflighted request. Once `save` is
+/// present this function never asks the manager to resolve or read a path.
+pub(crate) fn preflight_or_use_decoded_load(
+    save_manager: &crate::savegame::SaveGameManager,
+    slot: Option<usize>,
+    save: Option<crate::save_file::GameSaveFile>,
+) -> anyhow::Result<Option<(usize, crate::save_file::GameSaveFile)>> {
+    match save {
+        Some(save) => {
+            let slot = slot.ok_or_else(|| {
+                anyhow::anyhow!("preflighted load is missing its exact decoded slot")
+            })?;
+            Ok(Some((slot, save)))
+        }
+        None => save_manager.preflight_load(slot),
+    }
 }
 
 /// Execute queued game-flow effects against the narrow host facilities they
@@ -1300,37 +1499,46 @@ pub(crate) fn perform_pending_save_load(
                 }
             }
         }
-        SaveLoadRequest::Load { slot, mission_id } => {
+        SaveLoadRequest::Load {
+            slot,
+            mission_id,
+            save,
+        } => {
             // If the save targets a different mission than the one currently
             // running, stash a `PendingLevelLoad` and let the session loop
             // switch missions before re-applying. This replaces the previous
             // warn-and-apply behaviour, which corrupted engine state when
             // the payload's mission didn't match the active level.
-            let target = callbacks.save_manager.find_load_target(slot);
-            match target {
-                Some(idx) => {
-                    if mission_id != 0 {
-                        let target_mission_id = callbacks.save_manager.slot_mission_id(idx);
-                        if let Some(target_mission_id) = target_mission_id
-                            && target_mission_id != mission_id
-                        {
-                            tracing::info!(
-                                "Load slot {idx}: cross-mission load (header={}, current={}) — \
-                                 routing through session LevelLoad",
-                                target_mission_id,
-                                mission_id,
-                            );
-                            callbacks.pending_level_load = Some(PendingLevelLoad {
-                                slot: idx,
-                                target_mission_id,
-                            });
-                            return true;
-                        }
+            let resolved = match preflight_or_use_decoded_load(&callbacks.save_manager, slot, save)
+            {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    tracing::error!("Load preflight failed: {error:#}");
+                    return true;
+                }
+            };
+            match resolved {
+                Some((idx, save)) => {
+                    if let Err(error) = validate_save_mission(&save, profiles) {
+                        tracing::error!("Load preflight rejected slot {idx}: {error}");
+                        return true;
                     }
-                    match callbacks
-                        .save_manager
-                        .load_save_into_engine(idx, engine, host, game, assets)
-                    {
+                    if mission_id != 0 && save.header.mission_id != mission_id {
+                        let target_mission_id = save.header.mission_id;
+                        tracing::info!(
+                            "Load slot {idx}: cross-mission load (header={}, current={}) — \
+                             routing through session LevelLoad",
+                            target_mission_id,
+                            mission_id,
+                        );
+                        callbacks.pending_level_load = Some(PendingLevelLoad {
+                            slot: idx,
+                            target_mission_id,
+                            save,
+                        });
+                        return true;
+                    }
+                    match save.apply_to_with_game(engine, host, game, assets) {
                         Err(err) => {
                             tracing::error!("Load failed: {err:#}");
                         }
@@ -1659,7 +1867,7 @@ fn force_mission_launch(
     tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
-    campaign.reset(profiles_mut);
+    campaign.reset(profiles_mut, application_context.sim_config().difficulty);
     if args.mission_start_map_output.is_some() {
         // A forced mission otherwise inherits Campaign::reset's Robin-only
         // gang. That is not a valid start state for missions whose first
@@ -1673,7 +1881,11 @@ fn force_mission_launch(
         let export_pcs = detect_demo_mode_with_context(application_context)
             .filter(|(demo_mission, _, _, _)| demo_mission.eq_ignore_ascii_case(mission_name))
             .map_or("RJTSWMABC", |(_, _, pcs, _)| pcs);
-        campaign.create_gang_from_pcs(export_pcs, profiles_mut);
+        campaign.create_gang_from_pcs(
+            export_pcs,
+            profiles_mut,
+            application_context.sim_config().difficulty,
+        );
     }
     let idx = campaign
         .force_next_mission_by_name(profiles_mut, mission_name, &proto_name, true)
@@ -1743,65 +1955,52 @@ pub async fn run_rust_game(
     // selection without racing a hard-coded default.
     if wait_for_command {
         tracing::info!("--wait-for-command: data loaded, idling until load-replay RPC arrives");
-        let mission_id = wait_for_replay_command(window).await;
-        // Lookup order:
-        //   1. real `.rhm` filename match (new recordings)
-        //   2. legacy `mission_{N}` placeholder — use N as the index
-        //      directly.  Older replays (pre-rust-merge) stamped the
-        //      raw index into the header, and we'd rather load them
-        //      than demand users re-record.
-        let idx = campaign
-            .missions
-            .iter()
-            .position(|m| m.profile(&profiles).mission_filename == mission_id)
-            .or_else(|| {
-                mission_id
-                    .strip_prefix("mission_")
-                    .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|&n| n < campaign.missions.len())
-            });
-        let Some(idx) = idx else {
-            // Drop the queued replay so a subsequent `--wait-for-command`
-            // loop (if any caller reuses the process) doesn't pick
-            // up a stale mission reference.
-            let _ = crate::http_server::take_pending_replay();
-            return Err(format!(
-                "--wait-for-command: replay references mission '{mission_id}' \
-                 which is not in the campaign"
-            ));
-        };
-        let location = campaign.missions[idx].profile(&profiles).location;
-        tracing::info!(
-            "--wait-for-command: launching mission `{mission_id}` (idx={idx}) from queued replay"
-        );
-        // Align exactly with the demo-mode auto-start: reset, build
-        // the gang from the demo's PC roster, add-all-to-team, stamp
-        // `current_mission_idx`.  Deviating from this (eg. calling
-        // `force_next_mission` which also sets `next_mission_idx`)
-        // leaves the campaign in a different state than a fresh
-        // record session produces, causing every tick to `state_hash`
-        // desync at frame 0 vs the recording.
-        campaign.reset(&profiles);
-        if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
-            campaign.create_gang_from_pcs(pcs, &profiles);
-        }
-        campaign.add_all_to_mission_team();
-        campaign.current_mission_idx = Some(idx);
+        wait_for_replay_command(window).await;
         let Some(pending) = crate::http_server::take_pending_replay() else {
             return Err("--wait-for-command: replay disappeared before mission start".into());
         };
-        let mut replay_args = args.clone();
-        replay_args.replay_data = Some(pending.data);
-        replay_args.start_paused = replay_args.start_paused || pending.paused;
+        let (replay_campaign, idx, location, replay_args, replay_rng_seed, replay_sim_config) =
+            crate::game_session::prepare_replay_mission(
+                &profiles,
+                args,
+                pending.data,
+                pending.paused,
+            )?;
         let mut callbacks = RustCallbacks::new(application_context.clone());
         let outcome = run_mission(
             window,
             &mut callbacks,
-            campaign,
+            replay_campaign,
             &profiles,
             idx,
             location,
             &replay_args,
+            replay_rng_seed,
+            replay_sim_config,
+        )
+        .await;
+        outcome.result?;
+        return Ok(0);
+    }
+
+    // Replay metadata is authoritative for mission selection and frame-0
+    // construction, so it must win over direct-mission, demo, and Sherwood
+    // auto-detection.
+    let replay_data = requested_replay_data(args)?;
+    if let Some(data) = replay_data {
+        let (replay_campaign, idx, location, replay_args, rng_seed, sim_config) =
+            crate::game_session::prepare_replay_mission(&profiles, args, data, false)?;
+        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let outcome = run_mission(
+            window,
+            &mut callbacks,
+            replay_campaign,
+            &profiles,
+            idx,
+            location,
+            &replay_args,
+            rng_seed,
+            sim_config,
         )
         .await;
         outcome.result?;
@@ -1823,6 +2022,8 @@ pub async fn run_rust_game(
             idx,
             location,
             args,
+            0,
+            crate::game_session::initial_sim_config(args),
         )
         .await;
         outcome.result?;
@@ -1840,9 +2041,9 @@ pub async fn run_rust_game(
         tracing::info!(
             "Demo mode detected — mission={mission_name}, proto={proto_name}, PCs={pcs}"
         );
-        campaign.reset(&profiles);
+        campaign.reset(&profiles, application_context.sim_config().difficulty);
         // Parse the PC string to build the gang from specific characters.
-        campaign.create_gang_from_pcs(pcs, &profiles);
+        campaign.create_gang_from_pcs(pcs, &profiles, application_context.sim_config().difficulty);
         campaign.add_all_to_mission_team();
         // Demo mission is index 1 (index 0 = Sherwood)
         campaign.current_mission_idx = Some(1);
@@ -1855,6 +2056,8 @@ pub async fn run_rust_game(
             1,
             location,
             args,
+            0,
+            crate::game_session::initial_sim_config(args),
         )
         .await;
         outcome.result?;
@@ -1868,7 +2071,7 @@ pub async fn run_rust_game(
     // menu and Sherwood.
     if args.sherwood {
         tracing::info!("--sherwood: launching directly into the Sherwood HQ mission");
-        campaign.reset(&profiles);
+        campaign.reset(&profiles, application_context.sim_config().difficulty);
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
         let mut callbacks = RustCallbacks::new(application_context.clone());
@@ -1880,70 +2083,12 @@ pub async fn run_rust_game(
             0,
             MissionLocation::Sherwood,
             args,
+            0,
+            crate::game_session::initial_sim_config(args),
         )
         .await;
         outcome.result?;
         return Ok(0);
-    }
-
-    // ── `--replay`: select the mission from the replay header ──
-    // The replay's `mission_id` is the mission's base `.rhm` filename
-    // (e.g. `"Dem_Lei_MP"`). Look it up in the campaign mission table,
-    // force `current_mission_idx` to match, and jump straight into
-    // `run_mission` so the replay drives a fresh engine configured for
-    // the right level. Bypasses the main-menu / campaign-map flow.
-    if let Some(spec) = args.replay.as_ref() {
-        match crate::replay_format::load_replay_spec(spec) {
-            Ok(data) => {
-                let mission_name = data.header.mission_id.clone();
-                let idx = campaign
-                    .missions
-                    .iter()
-                    .position(|m| m.profile(&profiles).mission_filename == mission_name);
-                if let Some(idx) = idx {
-                    let location = campaign.missions[idx].profile(&profiles).location;
-                    tracing::info!(
-                        "--replay: launching mission `{mission_name}` (idx={idx}) from replay header"
-                    );
-                    if let Some(bytes) = data.header.campaign.as_deref() {
-                        campaign = bitcode::deserialize(bytes)
-                            .map_err(|e| format!("failed to restore replay campaign: {e}"))?;
-                        tracing::info!(
-                            bytes = bytes.len(),
-                            "--replay: restored campaign snapshot from replay header"
-                        );
-                    } else {
-                        tracing::warn!(
-                            "--replay: replay header has no campaign snapshot; using reset campaign"
-                        );
-                        campaign.reset(&profiles);
-                    }
-                    campaign.force_next_mission(idx);
-                    campaign.current_mission_idx = Some(idx);
-                    let mut callbacks = RustCallbacks::new(application_context.clone());
-                    let outcome = run_mission(
-                        window,
-                        &mut callbacks,
-                        campaign,
-                        &profiles,
-                        idx,
-                        location,
-                        args,
-                    )
-                    .await;
-                    outcome.result?;
-                    return Ok(0);
-                } else {
-                    tracing::warn!(
-                        "--replay: mission `{mission_name}` not found in campaign; falling through to default startup"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::error!("--replay: failed to load replay spec: {e}");
-                return Err(format!("failed to load replay: {e}"));
-            }
-        }
     }
 
     // ── `--headless` requires a non-menu entry path ──
@@ -1967,7 +2112,7 @@ pub async fn run_rust_game(
         match menu_choice {
             MainMenuChoice::Start => {
                 // Reset campaign for a new game
-                campaign.reset(&profiles);
+                campaign.reset(&profiles, application_context.sim_config().difficulty);
                 tracing::info!("Campaign reset for new game");
 
                 if let Some((mission_name, _proto_name, pcs, location)) =
@@ -1976,7 +2121,11 @@ pub async fn run_rust_game(
                     tracing::info!(
                         "Main menu Start: demo datadir detected, launching `{mission_name}`"
                     );
-                    campaign.create_gang_from_pcs(pcs, &profiles);
+                    campaign.create_gang_from_pcs(
+                        pcs,
+                        &profiles,
+                        application_context.sim_config().difficulty,
+                    );
                     campaign.add_all_to_mission_team();
                     let idx = campaign
                         .missions
@@ -1995,6 +2144,8 @@ pub async fn run_rust_game(
                         idx,
                         location,
                         args,
+                        0,
+                        crate::game_session::initial_sim_config(args),
                     )
                     .await;
                     campaign = outcome.campaign;
@@ -2046,6 +2197,7 @@ pub async fn run_rust_game(
                     Some(SaveLoadRequest::Load {
                         slot: Some(slot),
                         mission_id,
+                        save: None,
                     }),
                 )
                 .await;
@@ -2064,9 +2216,13 @@ pub async fn run_rust_game(
                         launch.mission_id, launch.mission_name
                     ));
                 };
-                campaign.reset(&profiles);
+                campaign.reset(&profiles, application_context.sim_config().difficulty);
                 if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
-                    campaign.create_gang_from_pcs(pcs, &profiles);
+                    campaign.create_gang_from_pcs(
+                        pcs,
+                        &profiles,
+                        application_context.sim_config().difficulty,
+                    );
                 }
                 campaign.force_next_mission(idx);
                 let mut mp_args = args.clone();
@@ -2126,7 +2282,7 @@ pub async fn run_rust_game(
                     }
                 };
                 let profiles_mut = std::sync::Arc::make_mut(&mut profiles);
-                campaign.reset(profiles_mut);
+                campaign.reset(profiles_mut, application_context.sim_config().difficulty);
                 let idx = match campaign.force_next_mission_by_name(
                     profiles_mut,
                     &launch.rhm_basename,
@@ -2151,7 +2307,11 @@ pub async fn run_rust_game(
                 // missions don't dictate roster, they piggyback on
                 // whatever the datadir's campaign would have used.
                 if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
-                    campaign.create_gang_from_pcs(pcs, &profiles);
+                    campaign.create_gang_from_pcs(
+                        pcs,
+                        &profiles,
+                        application_context.sim_config().difficulty,
+                    );
                     campaign.add_all_to_mission_team();
                 }
                 // If the mission ships a Lua companion, hand it off
@@ -2220,15 +2380,23 @@ pub async fn run_rust_game_headless(
 
     tracing::info!("--headless: running without winit, wgpu, renderer, or audio backend");
 
-    let launch = if let Some(launch) =
+    let initial_sim_config = crate::game_session::initial_sim_config(args);
+    let mut prepared_args = None;
+    let replay_data = requested_replay_data(args)?;
+    let launch = if let Some(data) = replay_data {
+        let prepared = crate::game_session::prepare_replay_mission(&profiles, args, data, false)?;
+        campaign = prepared.0;
+        prepared_args = Some(prepared.3);
+        Some((prepared.1, prepared.2, prepared.4, prepared.5))
+    } else if let Some((idx, location)) =
         force_mission_launch(&mut campaign, &mut profiles, &application_context, args)?
     {
-        Some(launch)
+        Some((idx, location, 0, initial_sim_config))
     } else if let Some((mission_name, _proto_name, pcs, location)) =
         detect_demo_mode_with_context(&application_context)
     {
-        campaign.reset(&profiles);
-        campaign.create_gang_from_pcs(pcs, &profiles);
+        campaign.reset(&profiles, application_context.sim_config().difficulty);
+        campaign.create_gang_from_pcs(pcs, &profiles, application_context.sim_config().difficulty);
         campaign.add_all_to_mission_team();
         let idx = campaign
             .missions
@@ -2240,39 +2408,18 @@ pub async fn run_rust_game_headless(
                 )
             })?;
         campaign.current_mission_idx = Some(idx);
-        Some((idx, location))
+        Some((idx, location, 0, initial_sim_config))
     } else if args.sherwood {
-        campaign.reset(&profiles);
+        campaign.reset(&profiles, application_context.sim_config().difficulty);
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
-        Some((0, MissionLocation::Sherwood))
-    } else if let Some(spec) = args.replay.as_ref() {
-        let data = crate::replay_format::load_replay_spec(spec)
-            .map_err(|e| format!("failed to load replay: {e}"))?;
-        let mission_name = data.header.mission_id.clone();
-        let idx = campaign
-            .missions
-            .iter()
-            .position(|m| m.profile(&profiles).mission_filename == mission_name)
-            .ok_or_else(|| format!("--replay: mission `{mission_name}` not found in campaign"))?;
-        if let Some(bytes) = data.header.campaign.as_deref() {
-            campaign = bitcode::deserialize(bytes)
-                .map_err(|e| format!("failed to restore replay campaign: {e}"))?;
-        } else {
-            tracing::warn!(
-                "--replay: replay header has no campaign snapshot; using reset campaign"
-            );
-            campaign.reset(&profiles);
-        }
-        campaign.force_next_mission(idx);
-        campaign.current_mission_idx = Some(idx);
-        let location = campaign.missions[idx].profile(&profiles).location;
-        Some((idx, location))
+        Some((0, MissionLocation::Sherwood, 0, initial_sim_config))
     } else {
         None
     };
+    let mission_args = prepared_args.as_ref().unwrap_or(args);
 
-    let Some((idx, location)) = launch else {
+    let Some((idx, location, rng_seed, sim_config)) = launch else {
         return Err(
             "--headless requires --sherwood, --replay, or a demo data dir; the main menu cannot be navigated without a display."
                 .into(),
@@ -2280,8 +2427,17 @@ pub async fn run_rust_game_headless(
     };
 
     let mut callbacks = RustCallbacks::new(application_context);
-    let outcome =
-        run_mission_headless(&mut callbacks, campaign, &profiles, idx, location, args).await;
+    let outcome = run_mission_headless(
+        &mut callbacks,
+        campaign,
+        &profiles,
+        idx,
+        location,
+        mission_args,
+        rng_seed,
+        sim_config,
+    )
+    .await;
     outcome.result?;
     Ok(0)
 }
@@ -2291,10 +2447,9 @@ pub async fn run_rust_game_headless(
 ///
 /// Paints a dark blue canvas (so the user sees *something* other
 /// than the browser's default white) and pumps window events on a 20 Hz
-/// poll.  The pending-replay slot is peeked, not consumed — the
-/// caller hands control to `run_mission`, which drains the slot
-/// inside `init_replay_and_rollback`.
-async fn wait_for_replay_command(window: &mut GameWindow) -> String {
+/// poll. The pending replay is only peeked here; the caller consumes and
+/// prepares all frame-0 metadata before constructing the mission Engine.
+async fn wait_for_replay_command(window: &mut GameWindow) {
     loop {
         // Pump events — winit needs the app to drain its queue every
         // frame to stay responsive.
@@ -2313,8 +2468,8 @@ async fn wait_for_replay_command(window: &mut GameWindow) -> String {
             a: 1.0,
         });
 
-        if let Some(mission_id) = crate::http_server::peek_pending_replay_mission_id() {
-            return mission_id;
+        if crate::http_server::peek_pending_replay_mission_id().is_some() {
+            return;
         }
 
         crate::window::sleep_ms(50).await;

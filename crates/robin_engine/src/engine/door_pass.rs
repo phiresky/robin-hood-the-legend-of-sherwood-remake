@@ -1079,6 +1079,7 @@ impl EngineInner {
     /// re-enable anti-collision.
     pub(super) fn execute_pass_door(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
@@ -1447,7 +1448,7 @@ impl EngineInner {
         // ── Door patch application ──
         // Toggles the door's background tile patches (e.g. open/close
         // visual).
-        self.apply_door_patch(assets, door_index);
+        self.apply_door_patch(sim, assets, door_index);
 
         // Applying the patch starts a transition animation on the
         // patch's FX entity.  `gate_state` is advanced from `Opening`
@@ -1598,7 +1599,12 @@ impl EngineInner {
     ///
     /// Calls `Patch::apply()` and delegates effect processing to
     /// `process_patch_effects` (patch_effects.rs).
-    fn apply_door_patch(&mut self, assets: &LevelAssets, door_index: crate::gate::DoorIndex) {
+    fn apply_door_patch(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        door_index: crate::gate::DoorIndex,
+    ) {
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
             match self
@@ -1659,7 +1665,7 @@ impl EngineInner {
             "apply_door_patch: patch applied"
         );
 
-        self.process_patch_effects(assets, patch_index, effects);
+        self.process_patch_effects(sim, assets, patch_index, effects);
     }
 
     /// Reset `already_selected` and start a hulk flash on the carrier

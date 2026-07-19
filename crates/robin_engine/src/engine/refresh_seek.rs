@@ -182,7 +182,11 @@ impl crate::engine::EngineInner {
     ///
     /// Runs once per tick before the sequence manager hourglass so the
     /// freshly-launched seek sequence gets picked up in the same tick.
-    pub(super) fn tick_refresh_seeks(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_refresh_seeks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -287,6 +291,7 @@ impl crate::engine::EngineInner {
                 "tick_refresh_seeks: target moved >10u, re-launching seek",
             );
             self.apply_seek_refresh(
+                sim,
                 assets,
                 r.owner,
                 r.seq_id,
@@ -312,6 +317,7 @@ impl crate::engine::EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_seek_refresh(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -327,7 +333,7 @@ impl crate::engine::EngineInner {
         }
 
         if self.try_dispatch_cross_sector_entity_seek(
-            assets, owner, seq_id, elem_idx, target, action, flags, tolerance,
+            sim, assets, owner, seq_id, elem_idx, target, action, flags, tolerance,
         ) {
             return;
         }
@@ -455,6 +461,7 @@ impl crate::engine::EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn try_dispatch_cross_sector_entity_seek(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -578,6 +585,7 @@ impl crate::engine::EngineInner {
         );
 
         self.build_gate_movement_sequence(
+            sim,
             owner,
             gate_path,
             GoalShape::Seek {
@@ -667,6 +675,8 @@ mod tests {
 
     #[test]
     fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = crate::engine::EngineInner::new();
         let assets = LevelAssets::new();
         let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
@@ -716,6 +726,7 @@ mod tests {
             .active_movement = ActiveMovement::new(pass_seq, 0);
 
         engine.apply_seek_refresh(
+            sim,
             &assets,
             owner,
             seek_seq,

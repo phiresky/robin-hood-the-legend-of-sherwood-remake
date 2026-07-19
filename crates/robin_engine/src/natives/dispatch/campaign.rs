@@ -319,8 +319,11 @@ impl NativeContext<'_, '_> {
                 let profiles = self.bindings.profile_manager.clone();
                 if let Some(campaign) = self.campaign.as_mut() {
                     // 1-indexed script → 0-indexed profile.
-                    let char_idx =
-                        campaign.add_new_peasant_to_gang(Some((farmer_type - 1) as u16), &profiles);
+                    let char_idx = campaign.add_new_peasant_to_gang(
+                        self.simulation,
+                        Some((farmer_type - 1) as u16),
+                        &profiles,
+                    );
                     if let Some(desc) = campaign.characters.get_mut(char_idx) {
                         desc.status.human_status.set_capacity(
                             crate::pc_status::SkillName::HandToHand,

@@ -115,7 +115,9 @@ fn call_host_native_with_queries(
     stack: &mut NativeStack,
     queries: TestQueryViews<'_>,
 ) -> i32 {
+    let sim = crate::sim_rng::test_context();
     let capabilities = queries.attach_to(NativeSessionCapabilities::new(
+        &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
@@ -137,7 +139,9 @@ fn call_bound_host_native(
     native: NativeFn,
     stack: &mut NativeStack,
 ) -> i32 {
+    let sim = crate::sim_rng::test_context();
     let capabilities = NativeSessionCapabilities::new(
+        &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
@@ -163,8 +167,9 @@ fn with_campaign_context<R>(
     let mut entities = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
             .with_campaign(campaign, mission_stat);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
@@ -185,7 +190,9 @@ fn with_bound_campaign_context<R>(
     mission_stat: &mut crate::mission_stat::MissionStat,
     f: impl FnOnce(&mut NativeContext<'_, '_>) -> R,
 ) -> R {
+    let sim = crate::sim_rng::test_context();
     let capabilities = NativeSessionCapabilities::new(
+        &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
@@ -233,7 +240,9 @@ struct CampaignGameHost {
 
 impl HostFunctions for CampaignGameHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        let sim = crate::sim_rng::test_context();
         let capabilities = NativeSessionCapabilities::new(
+            &sim,
             &mut self.entities,
             &mut self.ai_global,
             &mut self.fast_grid,
@@ -329,7 +338,9 @@ impl HostFunctions for BoundGameHost {
         let sounds = crate::sound_source::SoundSourceManager::new();
         let weather = crate::engine::WeatherState::default();
         let frame = 0;
+        let sim = crate::sim_rng::test_context();
         let capabilities = NativeSessionCapabilities::new(
+            &sim,
             &mut self.entities,
             &mut self.ai_global,
             &mut self.fast_grid,
@@ -1372,7 +1383,9 @@ fn ai_lock_and_unlock_mutate_canonical_state_in_native_call_order() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
+    let sim = crate::sim_rng::test_context();
     let capabilities = NativeSessionCapabilities::new(
+        &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
@@ -1444,7 +1457,9 @@ fn honolulu_ai_lock_is_visible_to_same_callback_unlock() {
     let sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 17;
+    let sim = crate::sim_rng::test_context();
     let capabilities = NativeSessionCapabilities::new(
+        &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
@@ -1709,8 +1724,9 @@ fn sight_query_view_borrows_canonical_world_arrays() {
     let static_obstacles = vec![crate::sight_obstacle::SightObstacle::new_default(0)];
     let dynamic_obstacles = vec![crate::sight_obstacle::SightObstacle::new_default(1)];
     let static_active = vec![false];
+    let sim = crate::sim_rng::test_context();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
             .with_world_views(&static_obstacles, &dynamic_obstacles, &static_active);
     let context = NativeContext::with_bindings(
         &mut host,
@@ -1956,8 +1972,9 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
     let mut selected = Vec::new();
+    let sim = crate::sim_rng::test_context();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid)
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
             .with_queries(&sequences, &mut selected, &sounds, &weather, &frame)
             .with_campaign(&mut campaign, &mut mission_stat);
     let mut context = NativeContext::with_bindings(

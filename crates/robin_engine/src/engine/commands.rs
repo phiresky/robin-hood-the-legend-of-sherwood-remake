@@ -69,6 +69,7 @@ impl EngineInner {
     /// to see which directions were pressed this frame.
     pub fn apply_commands(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         input: &mut InputState,
         assets: &LevelAssets,
@@ -76,7 +77,7 @@ impl EngineInner {
     ) {
         for inp in commands {
             let seat = self.ensure_seat(inp.player_id);
-            self.apply_command_for_seat(display, input, assets, seat, &inp.command);
+            self.apply_command_for_seat(sim, display, input, assets, seat, &inp.command);
         }
     }
 
@@ -95,8 +96,10 @@ impl EngineInner {
         assets: &LevelAssets,
         commands: &[PlayerCommand],
     ) {
+        let sim = self.control.simulation_context();
+        let sim = &sim;
         for cmd in commands {
-            self.apply_command(display, input, assets, cmd);
+            self.apply_command(sim, display, input, assets, cmd);
         }
     }
 
@@ -107,12 +110,13 @@ impl EngineInner {
     /// the single-player input path and by tests.
     pub fn apply_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         input: &mut InputState,
         assets: &LevelAssets,
         cmd: &PlayerCommand,
     ) {
-        self.apply_command_for_seat(display, input, assets, 0, cmd);
+        self.apply_command_for_seat(sim, display, input, assets, 0, cmd);
     }
 
     /// Apply a single player command issued by `seat`.
@@ -122,6 +126,7 @@ impl EngineInner {
     /// different players don't clobber each other's selections.
     pub fn apply_command_for_seat(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         input: &mut InputState,
         assets: &LevelAssets,
@@ -167,6 +172,7 @@ impl EngineInner {
                 goal_override,
             } => {
                 self.perform_group_move(
+                    sim,
                     assets,
                     actors,
                     *destination,
@@ -304,7 +310,7 @@ impl EngineInner {
                     // of `apply_command`; no append here to avoid
                     // duplicating the dotted-chain step.
                 }
-                self.apply_interaction_with_seek(*actor, *target, *command, *running);
+                self.apply_interaction_with_seek(sim, *actor, *target, *command, *running);
             }
             LaunchGroundTarget {
                 actor,
@@ -423,7 +429,7 @@ impl EngineInner {
                             .set_slot_titbit(slot as usize, tb);
                     }
                 }
-                self.apply_scroll_read_with_seek(*actor, *target, *running);
+                self.apply_scroll_read_with_seek(sim, *actor, *target, *running);
             }
 
             // ── Swordfight ──────────────────────────────────────
@@ -432,7 +438,7 @@ impl EngineInner {
                 target,
                 running,
             } => {
-                self.apply_enter_swordfight(assets, *actor, *target, *running);
+                self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
             }
             SwordStrikeCmd {
                 actor,
@@ -542,8 +548,8 @@ impl EngineInner {
             }
 
             // ── Posture ─────────────────────────────────────────
-            CrouchDown => self.apply_crouch_down(seat),
-            StandUp => self.apply_stand_up(seat),
+            CrouchDown => self.apply_crouch_down(sim, seat),
+            StandUp => self.apply_stand_up(sim, seat),
 
             // ── Selection ───────────────────────────────────────
             SelectPc { pc_id, append } => {
@@ -593,10 +599,10 @@ impl EngineInner {
             // Use the actor-level MakeFast so the pathfinder + queued
             // transitions get rewritten, not just the element-level
             // action.
-            MakePcFast { pc_id } => self.actor_make_fast(*pc_id),
-            MakePcSlow { pc_id } => self.actor_make_slow(*pc_id),
-            MakePcUpright { pc_id } => self.actor_make_upright(*pc_id),
-            MakePcCrouched { pc_id } => self.actor_make_crouched(*pc_id),
+            MakePcFast { pc_id } => self.actor_make_fast(sim, *pc_id),
+            MakePcSlow { pc_id } => self.actor_make_slow(sim, *pc_id),
+            MakePcUpright { pc_id } => self.actor_make_upright(sim, *pc_id),
+            MakePcCrouched { pc_id } => self.actor_make_crouched(sim, *pc_id),
 
             ChangeState(req) => {
                 self.change_state_with_camera_display(seat, *req);
@@ -612,7 +618,7 @@ impl EngineInner {
                 self.stop_recording_macro();
             }
             StartMacro { pc, slot } => {
-                self.apply_start_macro(display, input, assets, *pc, *slot);
+                self.apply_start_macro(sim, display, input, assets, *pc, *slot);
             }
             DeleteMacro { pc, slot } => {
                 self.apply_delete_macro(display, *pc, *slot);
@@ -702,7 +708,7 @@ impl EngineInner {
                 self.register_peasant_name(name.clone());
             }
             DispatchStartupMessage { msg, arg1, arg2 } => {
-                self.dispatch_startup_message(assets, *msg, *arg1, *arg2);
+                self.dispatch_startup_message(sim, assets, *msg, *arg1, *arg2);
             }
             RefreshSelectedPatchDisplayDoors { selected_patch_idx } => {
                 self.refresh_selected_patch_display_doors(*selected_patch_idx);
@@ -724,13 +730,13 @@ impl EngineInner {
                 self.harvest_production_sector_state(assets);
             }
             CampaignConvertSelectedPeasantsToBlazons => {
-                self.convert_selected_peasants_to_blazons(&assets.profile_manager);
+                self.convert_selected_peasants_to_blazons(sim, &assets.profile_manager);
             }
             ApplyQuitMissionUpdates {
                 exit_code,
                 difficulty,
             } => {
-                self.apply_quit_mission_updates(assets, *exit_code, *difficulty);
+                self.apply_quit_mission_updates(sim, assets, *exit_code, *difficulty);
             }
             QuitMissionRequested => {
                 // The flag to set depends on whether the mission is
@@ -1298,6 +1304,7 @@ impl EngineInner {
     /// Recording is stopped first.
     fn apply_start_macro(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         input: &mut InputState,
         assets: &LevelAssets,
@@ -1329,7 +1336,7 @@ impl EngineInner {
         }
 
         for pc_id in &targets {
-            self.replay_macro_slot(display, input, assets, *pc_id, slot);
+            self.replay_macro_slot(sim, display, input, assets, *pc_id, slot);
         }
 
         // When at least one PC tried to launch a macro, jingle either
@@ -1360,6 +1367,7 @@ impl EngineInner {
     /// Extracted so the iteration above can re-borrow `self` between steps.
     fn replay_macro_slot(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         input: &mut InputState,
         assets: &LevelAssets,
@@ -1436,7 +1444,7 @@ impl EngineInner {
                             command,
                             running: false,
                         };
-                        self.apply_command(display, input, assets, &pre_click);
+                        self.apply_command(sim, display, input, assets, &pre_click);
                     }
                     PlayerCommand::LaunchInteraction {
                         actor: pc,
@@ -1525,7 +1533,7 @@ impl EngineInner {
                     // actor helpers instead to keep the replay scoped
                     // to a single PC.
                     if to_crouch {
-                        self.actor_make_crouched(pc);
+                        self.actor_make_crouched(sim, pc);
                     } else {
                         let posture = self
                             .get_entity(pc)
@@ -1533,7 +1541,7 @@ impl EngineInner {
                             .unwrap_or(crate::element::Posture::Upright);
                         match posture {
                             crate::element::Posture::Crouched => {
-                                self.actor_make_upright(pc);
+                                self.actor_make_upright(sim, pc);
                             }
                             crate::element::Posture::SimulatingBeggar => {
                                 let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc));
@@ -1554,7 +1562,7 @@ impl EngineInner {
                     continue;
                 }
             };
-            self.apply_command(display, input, assets, &cmd);
+            self.apply_command(sim, display, input, assets, &cmd);
         }
 
         // Tack a posture-restoration element (EquipBow / CrouchDown /
@@ -1814,6 +1822,7 @@ impl EngineInner {
     /// too far away or in a different sector.
     fn apply_interaction_with_seek(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -1866,7 +1875,7 @@ impl EngineInner {
             .map(|s| s.is_recording())
             .unwrap_or(false);
         if running && !is_recording_macro && is_addinteraction_with_seek_command {
-            self.actor_make_fast(actor);
+            self.actor_make_fast(sim, actor);
             return;
         }
 
@@ -2098,14 +2107,20 @@ impl EngineInner {
     /// thing launches.  When the PC is already in range the composite
     /// launches directly.  The seek uses `USE_POINT` so the arrival
     /// faces the NPC.
-    fn apply_scroll_read_with_seek(&mut self, actor: EntityId, target: EntityId, running: bool) {
+    fn apply_scroll_read_with_seek(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    ) {
         use crate::sequence::{Field, FieldValue};
 
         // `running && !is_recording` is a short-circuit — the PC just
         // gets `MakeFast` and we never build the composite.
         let is_recording = self.is_recording_macro();
         if running && !is_recording {
-            self.actor_make_fast(actor);
+            self.actor_make_fast(sim, actor);
             return;
         }
 
@@ -2350,6 +2365,7 @@ impl EngineInner {
 
     fn apply_enter_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         target_id: EntityId,
@@ -2400,7 +2416,7 @@ impl EngineInner {
                 } else {
                     target_id
                 };
-                self.apply_interaction_with_seek(pc_id, launch_target, cmd, false);
+                self.apply_interaction_with_seek(sim, pc_id, launch_target, cmd, false);
             }
             return;
         }
@@ -2569,6 +2585,7 @@ impl EngineInner {
                 };
 
                 self.build_gate_movement_sequence(
+                    sim,
                     pc_id,
                     path,
                     goal_shape,
@@ -3048,7 +3065,7 @@ impl EngineInner {
         }
     }
 
-    fn apply_crouch_down(&mut self, seat: usize) {
+    fn apply_crouch_down(&mut self, sim: &crate::sim_rng::SimulationContext, seat: usize) {
         // Route through the actor-level MakeCrouched flow so a PC
         // already walking/running gets its queued orders rewritten to
         // crouched variants instead of always launching a fresh
@@ -3065,14 +3082,14 @@ impl EngineInner {
                 recorded_here = true;
                 continue;
             }
-            self.actor_make_crouched(pc_id);
+            self.actor_make_crouched(sim, pc_id);
         }
         if recorded_here {
             self.stop_recording_macro();
         }
     }
 
-    fn apply_stand_up(&mut self, seat: usize) {
+    fn apply_stand_up(&mut self, sim: &crate::sim_rng::SimulationContext, seat: usize) {
         let mut recorded_here = false;
         for &pc_id in &self.players.seats[seat].selection.clone() {
             if self.players.qa_recording_for.contains(&pc_id) {
@@ -3089,7 +3106,7 @@ impl EngineInner {
                     // Try rewriting the active movement sequence
                     // first, falling back to a fresh CrouchUp launch
                     // only when no active sequence is present.
-                    self.actor_make_upright(pc_id);
+                    self.actor_make_upright(sim, pc_id);
                 }
                 crate::element::Posture::SimulatingBeggar => {
                     let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc_id));
@@ -3229,7 +3246,7 @@ pub(super) fn is_pc_takable(
         return false;
     };
 
-    let difficulty = crate::player_profile::DifficultyLevel::current();
+    let difficulty = engine.control.sim_config.difficulty;
 
     // Resolve PC status to read current ammo.  Pulled lazily because
     // not every branch needs it (NoAction returns early above).
@@ -3990,11 +4007,14 @@ mod tests {
 
     #[test]
     fn scroll_read_recording_stores_semantic_step_and_does_not_launch_live_sequence() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, assets, pc_id, npc_id, _scroll_id) = setup_scroll_read_scene();
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
 
         engine.apply_command(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4004,6 +4024,7 @@ mod tests {
             },
         );
         engine.apply_command(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4034,6 +4055,8 @@ mod tests {
 
     #[test]
     fn scroll_read_macro_replay_rebuilds_live_sequence_shape() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, assets, pc_id, npc_id, scroll_id) = setup_scroll_read_scene();
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
@@ -4051,6 +4074,7 @@ mod tests {
         state.stop_recording();
 
         engine.apply_command(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4155,6 +4179,8 @@ mod tests {
 
     #[test]
     fn mapped_interaction_seek_tolerance_uses_sprite_action_distance() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -4170,13 +4196,15 @@ mod tests {
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(pc_id, target_id, Command::SearchCmd, false);
+        engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
 
         assert!((first_seek_tolerance(&engine) - 19.0).abs() < 0.001);
     }
 
     #[test]
     fn shoot_bow_interaction_launches_without_seek() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -4184,7 +4212,7 @@ mod tests {
         }
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(pc_id, target_id, Command::ShootBow, false);
+        engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::ShootBow, false);
 
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
         let sequence = engine
@@ -4203,10 +4231,12 @@ mod tests {
 
     #[test]
     fn mapped_interaction_missing_sprite_action_distance_noops() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(pc_id, target_id, Command::HitCmd, false);
+        engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::HitCmd, false);
 
         assert!(
             engine
@@ -4539,6 +4569,8 @@ mod tests {
 
     #[test]
     fn connect_seat_creates_and_names_peer() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
         let (mut engine, assets, _pc_id) = setup_pc_engine(&[]);
         let mut input = InputState::default();
@@ -4547,6 +4579,7 @@ mod tests {
         // Host issues a ConnectSeat for peer 2.  The dispatch `seat`
         // is HOST (0) but the command's payload targets PlayerId(2).
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4566,6 +4599,8 @@ mod tests {
 
     #[test]
     fn disconnect_then_reconnect_preserves_selection() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
         let (mut engine, assets, _pc_id) = setup_pc_engine(&[]);
         let mut input = InputState::default();
@@ -4573,6 +4608,7 @@ mod tests {
 
         // Connect seat 2, give it a fake selection, disconnect, reconnect.
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4587,6 +4623,7 @@ mod tests {
         ];
 
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4606,6 +4643,7 @@ mod tests {
         );
 
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4628,6 +4666,8 @@ mod tests {
 
     #[test]
     fn set_lock_alt_targets_issuing_seat() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
         let (mut engine, assets, _pc_id) = setup_pc_engine(&[]);
         let mut input = InputState::default();
@@ -4636,6 +4676,7 @@ mod tests {
         // Bring up peer 2 then have it toggle alt-lock — host seat
         // must be unaffected.
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4652,6 +4693,7 @@ mod tests {
 
         // Host toggles its own alt-lock — peer 2 stays on.
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,
@@ -4663,12 +4705,15 @@ mod tests {
 
     #[test]
     fn active_seats_skips_disconnected_peers() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
         let (mut engine, assets, _pc_id) = setup_pc_engine(&[]);
         let mut input = InputState::default();
         let mut display = HostDisplayState::default();
 
         engine.apply_commands(
+            sim,
             &mut display,
             &mut input,
             &assets,

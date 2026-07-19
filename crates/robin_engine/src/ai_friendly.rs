@@ -234,6 +234,7 @@ impl FriendlyAi {
     /// Main entry point for civilian stimulus processing.
     pub fn think(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -251,7 +252,7 @@ impl FriendlyAi {
 
         // Pre-think checks
         if !self.start_think(stimulus, ctx, global.freeze) {
-            self.end_think(global, ctx, tick, grid, doors);
+            self.end_think(sim, global, ctx, tick, grid, doors);
             return true;
         }
 
@@ -272,7 +273,7 @@ impl FriendlyAi {
             | StimulusType::EventMyTalk1
             | StimulusType::EventMyTalk2
             | StimulusType::EventMyTalk3 => {
-                self.think_expected_event(stimulus, global, ctx, tick, grid, doors)
+                self.think_expected_event(sim, stimulus, global, ctx, tick, grid, doors)
             }
 
             // Unexpected events
@@ -285,7 +286,7 @@ impl FriendlyAi {
             | StimulusType::CallYouJustWait
             | StimulusType::EventAppleChaseNear
             | StimulusType::EventNetAway => {
-                self.think_unexpected_event(stimulus, ctx, tick, grid, doors)
+                self.think_unexpected_event(sim, stimulus, ctx, tick, grid, doors)
             }
 
             // Alerting events
@@ -299,7 +300,7 @@ impl FriendlyAi {
             | StimulusType::EventLoseConsciousness
             | StimulusType::EventGetArrow
             | StimulusType::EventPanic
-            | StimulusType::EventStop => self.think_alerting_event(stimulus, ctx, grid, doors),
+            | StimulusType::EventStop => self.think_alerting_event(sim, stimulus, ctx, grid, doors),
 
             // Events not handled for civilians.  The original
             // shipping build silently drops the stimulus and returns
@@ -319,7 +320,7 @@ impl FriendlyAi {
             StimulusType::EventReturnToDuty => {
                 // EVENT_RETURN_TO_DUTY runs the duty hand-off but
                 // Think returns false.
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 false
             }
 
@@ -336,7 +337,7 @@ impl FriendlyAi {
             }
         };
 
-        self.end_think(global, ctx, tick, grid, doors);
+        self.end_think(sim, global, ctx, tick, grid, doors);
         return_value
     }
 
@@ -488,6 +489,7 @@ impl FriendlyAi {
 
     fn end_think(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
         _tick: &AiPerTickData,
@@ -511,7 +513,7 @@ impl FriendlyAi {
                     .self_stimuli
                     .push(StimulusType::EventCouldntReachPoint);
             } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
             }
         }
         if self.base.already_on_point {
@@ -523,7 +525,7 @@ impl FriendlyAi {
                     .self_stimuli
                     .push(StimulusType::EventReachPoint);
             } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
             }
         }
         if self.base.already_turned {
@@ -535,7 +537,7 @@ impl FriendlyAi {
                     .self_stimuli
                     .push(StimulusType::EventDone);
             } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
             }
         }
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
@@ -552,6 +554,7 @@ impl FriendlyAi {
 
     fn think_expected_event(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -568,7 +571,9 @@ impl FriendlyAi {
                     self.fleeing_seen_enemy_counter = 0;
                 }
                 // Falls through to the common-stuff dispatcher.
-                return self.base.think_expected_event_common_stuff(stimulus, ctx);
+                return self
+                    .base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
             }
 
             Substate::DefaultGotoPost
@@ -582,7 +587,9 @@ impl FriendlyAi {
             | Substate::FleeingRunToHide
             | Substate::FleeingRunToDoor
             | Substate::FleeingHiding => {
-                return self.base.think_expected_event_common_stuff(stimulus, ctx);
+                return self
+                    .base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
             }
 
             Substate::DefaultHomeSweetHome => {
@@ -618,7 +625,7 @@ impl FriendlyAi {
                             self.base.launch_timer(200, ctx.frame);
                         }
                         _ => {
-                            self.return_to_duty(DutyFlags::empty(), ctx);
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
                         }
                     }
                 }
@@ -626,21 +633,21 @@ impl FriendlyAi {
 
             Substate::DefaultChildApproachedWhistling => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 }
             }
 
             // ############## W O N D E R I N G #####################
             Substate::WonderingCivilianAdmiringHero => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 }
             }
 
             Substate::WonderingCivilianEnemyReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
                     let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(seek_pos, 0, ctx, grid, doors) {
+                    if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
                         self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
@@ -651,7 +658,7 @@ impl FriendlyAi {
             Substate::WonderingCivilianBodyReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
                     let seek_pos = self.base.seek_position;
-                    if !self.alert_soldier(seek_pos, 0, ctx, grid, doors) {
+                    if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
                         self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
@@ -816,8 +823,8 @@ impl FriendlyAi {
                             // legal analogue since the antagonist
                             // isn't usable either way.
                             let seek_pos = self.base.seek_position;
-                            if !self.alert_soldier(seek_pos, 0, ctx, grid, doors) {
-                                self.return_to_duty(DutyFlags::empty(), ctx);
+                            if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
+                                self.return_to_duty(sim, DutyFlags::empty(), ctx);
                             }
                         }
                     }
@@ -837,7 +844,7 @@ impl FriendlyAi {
                             // Something went wrong (officer got
                             // reassigned / knocked out / script
                             // interrupted) — forget it.
-                            self.return_to_duty(DutyFlags::empty(), ctx);
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
                         }
                     }
                     StimulusType::EventReachPoint => {
@@ -848,7 +855,7 @@ impl FriendlyAi {
                             );
                             self.base.launch_timer(10, ctx.frame);
                         } else {
-                            self.return_to_duty(DutyFlags::empty(), ctx);
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
                         }
                     }
                     _ => {}
@@ -908,7 +915,7 @@ impl FriendlyAi {
 
             Substate::SeekingGotStopEvent => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 }
             }
 
@@ -922,7 +929,7 @@ impl FriendlyAi {
                     }
                     StimulusType::EventReachPoint => {
                         if let Some(pos_goal) =
-                            self.propose_good_apple_chase_flee_destination(ctx, grid)
+                            self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
                         {
                             // If the chaser is still breathing down
                             // our neck (Chebyshev distance < 150),
@@ -986,7 +993,7 @@ impl FriendlyAi {
                     if self.base.lasting_panic_runs > 0 {
                         self.base.lasting_panic_runs -= 1;
                         if let Some(pos_goal) =
-                            self.propose_good_apple_chase_flee_destination(ctx, grid)
+                            self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
                         {
                             let flags = if self.base.lasting_panic_runs > 0 {
                                 GotoFlags::RUN | GotoFlags::DONT_STOP
@@ -1026,7 +1033,7 @@ impl FriendlyAi {
 
             Substate::FleeingChildChasedEnd => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(DutyFlags::empty(), ctx);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 }
             }
 
@@ -1052,6 +1059,7 @@ impl FriendlyAi {
 
     fn think_unexpected_event(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1211,10 +1219,10 @@ impl FriendlyAi {
                                 ctx,
                             );
                         } else {
-                            self.return_to_duty(DutyFlags::empty(), ctx);
+                            self.return_to_duty(sim, DutyFlags::empty(), ctx);
                         }
                     } else {
-                        self.return_to_duty(DutyFlags::empty(), ctx);
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx);
                     }
                     return false;
                 }
@@ -1226,7 +1234,7 @@ impl FriendlyAi {
                     self.base.antagonist = soldier_handle;
 
                     if let Some(pos_goal) =
-                        self.propose_good_apple_chase_flee_destination(ctx, grid)
+                        self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
                     {
                         self.go_to(
                             AiState::Fleeing,
@@ -1258,7 +1266,7 @@ impl FriendlyAi {
                     self.base.antagonist = soldier_handle;
 
                     if let Some(pos_goal) =
-                        self.propose_good_apple_chase_flee_destination(ctx, grid)
+                        self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
                     {
                         self.go_to(
                             AiState::Fleeing,
@@ -1285,9 +1293,10 @@ impl FriendlyAi {
                     if self.base.lasting_panic_runs == 0 {
                         self.fleeing_seen_enemy_counter = 0;
                     }
-                    self.base.think_expected_event_common_stuff(stimulus, ctx);
+                    self.base
+                        .think_expected_event_common_stuff(sim, stimulus, ctx);
                 } else {
-                    self.return_to_duty(DutyFlags::empty(), ctx);
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx);
                 }
             }
 
@@ -1310,7 +1319,7 @@ impl FriendlyAi {
                 self.base.outbox.recovery.inform_resurrection = true;
                 self.base.outbox.recovery.set_eye_status =
                     Some(crate::element::EyeStatus::LookForward);
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
             }
 
             StimulusType::EventOutOfView => {
@@ -1329,6 +1338,7 @@ impl FriendlyAi {
 
     fn think_alerting_event(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -1421,7 +1431,7 @@ impl FriendlyAi {
                         | AiState::Default
                         | AiState::Wondering
                         | AiState::Seeking => {
-                            self.event_hear_standard_procedure(&noise, ctx, grid, doors);
+                            self.event_hear_standard_procedure(sim, &noise, ctx, grid, doors);
                         }
                         AiState::Menacing | AiState::Fleeing | AiState::Attacking => {
                             // Ignore sounds while fighting/fleeing
@@ -1469,7 +1479,12 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
 
     /// Return to default duty behavior.
-    pub fn return_to_duty(&mut self, flags: DutyFlags, ctx: &AiContext) {
+    pub fn return_to_duty(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        flags: DutyFlags,
+        ctx: &AiContext,
+    ) {
         self.fleeing_seen_enemy_counter = 0;
 
         // "Very very busy" gates on a posture that can't be
@@ -1502,7 +1517,7 @@ impl FriendlyAi {
         }
 
         // Call the common return-to-duty method for civilians and villains
-        self.base.return_to_duty_common_stuff(flags, ctx);
+        self.base.return_to_duty_common_stuff(sim, flags, ctx);
     }
 
     /// Standard procedure when a civilian sees a PC.
@@ -1571,6 +1586,7 @@ impl FriendlyAi {
     /// Standard procedure when a civilian hears something.
     pub fn event_hear_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         noise: &Noise,
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -1594,7 +1610,7 @@ impl FriendlyAi {
                 // also Royalist) soldier.
                 let is_royalist = ctx.camp == crate::element::Camp::Royalists;
 
-                if is_royalist || !self.alert_soldier(noise.origin, 0, ctx, grid, doors) {
+                if is_royalist || !self.alert_soldier(sim, noise.origin, 0, ctx, grid, doors) {
                     let pos = self.base.seek_position;
                     self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
                 }
@@ -1656,6 +1672,7 @@ impl FriendlyAi {
 
     pub fn alert_soldier(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         center: Position,
         flags: u16,
         ctx: &AiContext,
@@ -1860,6 +1877,7 @@ impl FriendlyAi {
             self.base.couldnt_reachpoint = false;
             if !check_door_path {
                 return self.alert_soldier(
+                    sim,
                     center,
                     Self::ALERTFLAG_CHECK_DOOR_PATH,
                     ctx,
@@ -1882,7 +1900,12 @@ impl FriendlyAi {
     /// Random ambient speech for civilians.
     ///
     /// Called each frame; only acts every 256 frames (`frame_phase == 0`).
-    pub fn random_speech(&mut self, frame_phase: u8, ctx: &AiContext) {
+    pub fn random_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        frame_phase: u8,
+        ctx: &AiContext,
+    ) {
         if frame_phase != 0 {
             return;
         }
@@ -1896,10 +1919,14 @@ impl FriendlyAi {
             if self.beggar_dont_talk_counter > 0 {
                 self.beggar_dont_talk_counter -= 1;
             } else if self.base.current_remark == Remark::TheSoundOfSilence
-                && crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3) == 0
+                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3)
+                    == 0
             {
-                match crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianBeggarSpeechChoice, 0..5)
-                {
+                match crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::CivilianBeggarSpeechChoice,
+                    0..5,
+                ) {
                     0..=2 => self.base.say(Remark::CivBeggarBegging),
                     3 => self.base.say(Remark::CivUnderNet),
                     4 => self.base.say(Remark::CivCries),
@@ -2011,16 +2038,20 @@ impl FriendlyAi {
     /// duty tail.  The returned [`InitStateSideEffects`] carries the
     /// entity-side mutations the caller must apply on NpcData /
     /// HumanData / ElementData / ActorData.
-    pub fn init_one_ai(&mut self, ctx: &AiContext) -> InitStateSideEffects {
+    pub fn init_one_ai(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) -> InitStateSideEffects {
         // Default civilian life points are set on `NpcData::default()`
         // (in `element.rs`) to the engine's `CIVILIAN_LIFE_POINTS = 100`.
 
-        // `go_to_duty = init_state() && !ai_is_script_locked() && !ai_is_locked()`.
+        // `go_to_duty = init_state(sim, ) && !ai_is_script_locked() && !ai_is_locked()`.
         // The `init_state` call commits the AI-side state
         // transition chosen by the level designer's authored
         // initial action and tells us whether the actor should
         // launch into its duty loop after.
-        let fx = self.base.init_state(ctx);
+        let fx = self.base.init_state(sim, ctx);
 
         // `go_to_duty` is computed *before* the beggar-lock below,
         // so a beggar authored as `WaitingUpright` /
@@ -2044,7 +2075,7 @@ impl FriendlyAi {
         if !self.base.ai_is_locked() && self.base.has_patrol_path {
             self.base.substate_at_last_timer_launch = self.base.current_substate;
             if go_to_duty {
-                self.return_to_duty(DutyFlags::empty(), ctx);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx);
             }
             // `GoTo` checks the think-method recursion depth and
             // either sets `already_on_point` (for the enclosing
@@ -2079,6 +2110,7 @@ impl FriendlyAi {
             // call wins.
             let timer_value = AB_MIN_DEFAULT_LOOK_TIME
                 + crate::sim_rng::i32(
+                    sim,
                     crate::sim_rng::RngSite::CivilianFirstLookTimer,
                     0..AB_DELTA_DEFAULT_LOOK_TIME,
                 );
@@ -2108,6 +2140,7 @@ impl FriendlyAi {
     /// candidate is accepted so callers still get a flee vector.
     pub fn propose_good_apple_chase_flee_destination(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> Option<Position> {
@@ -2119,7 +2152,7 @@ impl FriendlyAi {
         let dy = ctx.position.y - antagonist.position.y;
         let base_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as i32;
         let jitter =
-            crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianPanicDirection, 0..5) as i32;
+            crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CivilianPanicDirection, 0..5) as i32;
         let seed_dir = (base_dir + jitter + 14).rem_euclid(16);
 
         // Relative direction sequence:
@@ -2241,10 +2274,12 @@ mod tests {
 
     #[test]
     fn civilian_return_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         ai.fleeing_seen_enemy_counter = 5;
         ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
-        ai.return_to_duty(DutyFlags::empty(), &AiContext::default());
+        ai.return_to_duty(sim, DutyFlags::empty(), &AiContext::default());
         assert_eq!(ai.base.current_state, AiState::Default);
         // NPC walks back to initial position first, then transitions
         // to DefaultOnPost via EventReachPoint → DefaultGotoPostTurn → EventDone.
@@ -2277,12 +2312,15 @@ mod tests {
 
     #[test]
     fn think_expected_admiring_hero_returns_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let mut global = AiGlobalState::default();
         ai.set_state(AiState::Wondering, Substate::WonderingCivilianAdmiringHero);
 
         let stimulus = Stimulus::new(StimulusType::EventTimer);
         ai.think_expected_event(
+            sim,
             &stimulus,
             &mut global,
             &AiContext::default(),
@@ -2298,6 +2336,8 @@ mod tests {
 
     #[test]
     fn think_alerting_event_panic() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let pos = Position {
             x: 50.0,
@@ -2307,7 +2347,7 @@ mod tests {
         };
         let stimulus = Stimulus::with_position(StimulusType::EventPanic, pos);
 
-        ai.think_alerting_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_alerting_event(sim, &stimulus, &AiContext::default(), None, None);
 
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
@@ -2317,10 +2357,12 @@ mod tests {
 
     #[test]
     fn think_alerting_event_stop() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let stimulus = Stimulus::new(StimulusType::EventStop);
 
-        ai.think_alerting_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_alerting_event(sim, &stimulus, &AiContext::default(), None, None);
 
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingGotStopEvent);
@@ -2329,11 +2371,13 @@ mod tests {
 
     #[test]
     fn think_alerting_event_stop_while_sleeping() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         ai.set_state(AiState::Sleeping, Substate::SleepingForever);
         let stimulus = Stimulus::new(StimulusType::EventStop);
 
-        let result = ai.think_alerting_event(&stimulus, &AiContext::default(), None, None);
+        let result = ai.think_alerting_event(sim, &stimulus, &AiContext::default(), None, None);
 
         // Should return false and NOT change state
         assert!(!result);
@@ -2342,11 +2386,14 @@ mod tests {
 
     #[test]
     fn think_unexpected_couldnt_reachpoint_returns_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
 
         let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
         ai.think_unexpected_event(
+            sim,
             &stimulus,
             &AiContext::default(),
             &AiPerTickData::stub(),
@@ -2361,11 +2408,14 @@ mod tests {
 
     #[test]
     fn think_unexpected_fit_again_returns_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
         ai.think_unexpected_event(
+            sim,
             &stimulus,
             &AiContext::default(),
             &AiPerTickData::stub(),
@@ -2378,6 +2428,8 @@ mod tests {
 
     #[test]
     fn fit_again_queues_resurrection_and_eye_reset() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // EVENT_FITAGAIN must fire the resurrection fan-out and
         // reset the view status to LookForward alongside the
         // return-to-duty hand-off.  Both are surfaced via pending
@@ -2388,6 +2440,7 @@ mod tests {
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
         ai.think_unexpected_event(
+            sim,
             &stimulus,
             &AiContext::default(),
             &AiPerTickData::stub(),
@@ -2408,6 +2461,8 @@ mod tests {
 
     #[test]
     fn fleeing_event_view_uses_directed_panic_from_human_position() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // EVENT_VIEW while fleeing must fire a *directed* panic
         // away from the spotted human.  An earlier port used
         // `panic_undirected` which lost the center and the civilian
@@ -2491,7 +2546,7 @@ mod tests {
         };
 
         let stimulus = Stimulus::with_human(StimulusType::EventView, human_handle);
-        ai.think_alerting_event(&stimulus, &ctx, None, None);
+        ai.think_alerting_event(sim, &stimulus, &ctx, None, None);
 
         assert!(
             ai.base.directed_panic,
@@ -2513,10 +2568,13 @@ mod tests {
 
     #[test]
     fn think_unexpected_net_away_panics() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let stimulus = Stimulus::new(StimulusType::EventNetAway);
 
         ai.think_unexpected_event(
+            sim,
             &stimulus,
             &AiContext::default(),
             &AiPerTickData::stub(),
@@ -2530,6 +2588,8 @@ mod tests {
 
     #[test]
     fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
             crate::entity_id::SoldierId(2),
@@ -2561,7 +2621,7 @@ mod tests {
             },
         );
 
-        ai.think_unexpected_event(&stimulus, &ctx, &tick, None, None);
+        ai.think_unexpected_event(sim, &stimulus, &ctx, &tick, None, None);
         let orders = ai.base.take_pending_orders();
 
         assert_eq!(orders.len(), 1);
@@ -2605,6 +2665,8 @@ mod tests {
 
     #[test]
     fn expected_event_body_reactiontime_alert_fails_panics() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let mut global = AiGlobalState::default();
         ai.set_state(
@@ -2614,6 +2676,7 @@ mod tests {
 
         let stimulus = Stimulus::new(StimulusType::EventTimer);
         ai.think_expected_event(
+            sim,
             &stimulus,
             &mut global,
             &AiContext::default(),
@@ -2630,12 +2693,15 @@ mod tests {
 
     #[test]
     fn expected_event_whistling_child_approaches() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let mut global = AiGlobalState::default();
         ai.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
 
         let stimulus = Stimulus::new(StimulusType::EventTimer);
         ai.think_expected_event(
+            sim,
             &stimulus,
             &mut global,
             &AiContext::default(),
@@ -2654,12 +2720,15 @@ mod tests {
 
     #[test]
     fn fleeing_child_chased_end_returns_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let mut global = AiGlobalState::default();
         ai.set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
 
         let stimulus = Stimulus::new(StimulusType::EventTimer);
         ai.think_expected_event(
+            sim,
             &stimulus,
             &mut global,
             &AiContext::default(),
@@ -2673,6 +2742,8 @@ mod tests {
 
     #[test]
     fn seeking_report_point_done_transitions() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
         let mut global = AiGlobalState::default();
         ai.set_state(
@@ -2682,6 +2753,7 @@ mod tests {
 
         let stimulus = Stimulus::new(StimulusType::EventDone);
         ai.think_expected_event(
+            sim,
             &stimulus,
             &mut global,
             &AiContext::default(),
@@ -2767,6 +2839,8 @@ mod tests {
 
     #[test]
     fn alert_soldier_short_circuits_on_nearby_alerted_friend() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Any same-camp soldier in ATTACKING/MENACING/FLEEING
         // within the 360° view radius short-circuits the alert —
         // no point running to a second soldier when one next door
@@ -2812,7 +2886,7 @@ mod tests {
             ..AiContext::default()
         };
 
-        let ok = ai.alert_soldier(ctx.position, 0, &ctx, None, None);
+        let ok = ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
         assert!(
             !ok,
             "alert_soldier must return false when alerted friend nearby"
@@ -2866,8 +2940,8 @@ mod tests {
             ..AiContext::default()
         };
 
-        crate::sim_rng::with_seed(1, || {
-            let ok = ai.alert_soldier(ctx.position, 0, &ctx, None, None);
+        crate::sim_rng::with_seed(1, |sim| {
+            let ok = ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
             assert!(ok, "alert_soldier must succeed when at least one candidate");
             // Antagonist must be the same-layer one despite being farther.
             assert_eq!(ai.base.antagonist, 20);
@@ -2911,8 +2985,8 @@ mod tests {
             ..AiContext::default()
         };
 
-        crate::sim_rng::with_seed(1, || {
-            ai.alert_soldier(ctx.position, 0, &ctx, None, None);
+        crate::sim_rng::with_seed(1, |sim| {
+            ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
             let friends: Vec<_> = ai
                 .base
                 .outbox
@@ -2969,8 +3043,8 @@ mod tests {
             ..AiContext::default()
         };
 
-        crate::sim_rng::with_seed(1, || {
-            let dest = ai.propose_good_apple_chase_flee_destination(&ctx, None);
+        crate::sim_rng::with_seed(1, |sim| {
+            let dest = ai.propose_good_apple_chase_flee_destination(sim, &ctx, None);
             assert!(dest.is_some());
             // Flee vector should point away from antagonist at x=100
             // → destination x should be negative.

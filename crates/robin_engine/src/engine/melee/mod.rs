@@ -292,9 +292,12 @@ pub(super) fn enemies_are_blocking_my_movement(
 
 /// Compute the difficulty-dependent delay (in frames) before a special
 /// strike against a PC.
-fn compute_special_strike_preparation_time(fighting_ability: u16) -> u32 {
+fn compute_special_strike_preparation_time(
+    difficulty: crate::player_profile::DifficultyLevel,
+    fighting_ability: u16,
+) -> u32 {
     use crate::player_profile::DifficultyLevel;
-    match DifficultyLevel::current() {
+    match difficulty {
         DifficultyLevel::Easy => 13u32.saturating_sub(fighting_ability as u32 / 10),
         DifficultyLevel::Medium => 10u32.saturating_sub(fighting_ability as u32 / 10),
         DifficultyLevel::Hard => 0,
@@ -453,6 +456,7 @@ impl EngineInner {
                 entity,
                 self.world.weather.is_forest_level,
                 Some(&self.mission_domain.campaign),
+                self.control.sim_config.difficulty,
             ),
             None => ConcussionContext::default(),
         }
@@ -577,11 +581,12 @@ impl EngineInner {
     /// - Skips when `life_points <= 0` (already-dead branch).
     /// - Applies the clamp / invulnerable / Sherwood-PC guards via
     ///   `combat::set_life_points`.
-    /// - Calls `handle_death(assets, …)` synchronously on the kill edge.
+    /// - Calls `handle_death(sim, assets, …)` synchronously on the kill edge.
     /// - For PCs, fires the HERO_DIE / HERO_HURT cues via `say_ouch`
     ///   on any drop, mirroring the PC override.
     pub(crate) fn apply_scripted_life_points(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         amount: i32,
@@ -640,7 +645,7 @@ impl EngineInner {
         }
 
         if died {
-            self.handle_death(assets, entity_id);
+            self.handle_death(sim, assets, entity_id);
         }
     }
 
@@ -653,7 +658,11 @@ impl EngineInner {
     ///
     /// On `WokeUp`: `EventFitAgain` stimulus + the PC/soldier
     /// `BlinkEnemy` redetect loop.
-    pub(crate) fn drain_pending_concussion_side_effects(&mut self, assets: &LevelAssets) {
+    pub(crate) fn drain_pending_concussion_side_effects(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         use crate::combat::ConcussionOutcome;
 
         if self.orders.pending_concussion_side_effects.is_empty() {
@@ -663,7 +672,7 @@ impl EngineInner {
         for (entity_id, outcome) in entries {
             match outcome {
                 ConcussionOutcome::WentUnconscious => {
-                    self.quit_swordfight(assets, entity_id);
+                    self.quit_swordfight(sim, assets, entity_id);
                     self.add_unconscious_star(entity_id);
                     self.dispatch_ai_stimulus(
                         entity_id,
@@ -723,13 +732,17 @@ impl EngineInner {
     /// alert-green, sleeping-forever state, eye close, friend /
     /// missed-friend detectable removal, emoticon clear, and the
     /// dying animation.
-    pub(crate) fn drain_pending_hades_kills(&mut self, assets: &LevelAssets) {
+    pub(crate) fn drain_pending_hades_kills(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.orders.pending_hades_kills.is_empty() {
             return;
         }
         let victims: Vec<EntityId> = std::mem::take(&mut self.orders.pending_hades_kills);
         for victim_id in victims {
-            self.handle_death(assets, victim_id);
+            self.handle_death(sim, assets, victim_id);
         }
     }
 }
@@ -744,6 +757,7 @@ pub(crate) fn concussion_ctx_full(
     entity: &Entity,
     is_forest_level: bool,
     campaign: Option<&crate::campaign::Campaign>,
+    difficulty: crate::player_profile::DifficultyLevel,
 ) -> ConcussionContext {
     let human = entity.human_data();
     let posture = entity.element_data().posture;
@@ -755,6 +769,7 @@ pub(crate) fn concussion_ctx_full(
         _ => false,
     };
     ConcussionContext {
+        difficulty,
         is_invulnerable: human.map(|h| h.invulnerable).unwrap_or(false),
         is_tied: posture == Posture::Tied,
         is_carried: posture == Posture::Carried || posture == Posture::OnShoulders,
@@ -805,10 +820,11 @@ fn get_max_life_points(entity: &Entity) -> i16 {
 }
 
 /// Look up an entity's fighting ability from its character/soldier profile.
-/// For Lacklandist soldiers, applies difficulty scaling via `modify_capacity`.
+/// For Lacklandist soldiers, applies the supplied engine difficulty scaling.
 fn fighting_ability_from_profile(
     entity: &Entity,
     profile_manager: &crate::profiles::ProfileManager,
+    difficulty: crate::player_profile::DifficultyLevel,
 ) -> u16 {
     match entity {
         Entity::Pc(pc) => profile_manager
@@ -821,8 +837,7 @@ fn fighting_ability_from_profile(
                 .map(|p| p.fighting)
                 .unwrap_or(50);
             if s.soldier.cached_camp == crate::element::Camp::Lacklandists {
-                let diff = crate::player_profile::DifficultyLevel::current();
-                diff.modify_capacity(
+                difficulty.modify_capacity(
                     base,
                     crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
                     crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
@@ -2273,6 +2288,8 @@ mod tests {
 
     #[test]
     fn completed_missed_sword_strike_adds_tiredness_once() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2297,7 +2314,7 @@ mod tests {
             actor.active_melee.frames_remaining = 1;
         }
 
-        engine.tick_melee_strikes(&assets);
+        engine.tick_melee_strikes(sim, &assets);
 
         assert_eq!(
             engine
@@ -2313,6 +2330,8 @@ mod tests {
 
     #[test]
     fn empty_true_circle_sweep_advances_until_rotation_complete() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2336,7 +2355,7 @@ mod tests {
             });
         }
 
-        engine.tick_sweep_strikes(&LevelAssets::default());
+        engine.tick_sweep_strikes(sim, &LevelAssets::default());
         assert!(
             engine
                 .get_entity(attacker)
@@ -2348,7 +2367,7 @@ mod tests {
             "true-circle sweep with no victims must still rotate instead of clearing immediately"
         );
 
-        engine.tick_sweep_strikes(&LevelAssets::default());
+        engine.tick_sweep_strikes(sim, &LevelAssets::default());
         assert!(
             engine
                 .get_entity(attacker)
@@ -2388,8 +2407,8 @@ mod tests {
             .unwrap()
             .tiredness = 11;
 
-        crate::sim_rng::with_seed(1, || {
-            engine.launch_sword_damage_now(&assets, victim, attacker, SwordStrike::A, 1);
+        crate::sim_rng::with_seed(1, |sim| {
+            engine.launch_sword_damage_now(sim, &assets, victim, attacker, SwordStrike::A, 1);
         });
 
         assert_eq!(
@@ -2409,6 +2428,8 @@ mod tests {
     /// swordfight switches the primary target.
     #[test]
     fn thrust_a_promotes_clicked_secondary_opponent() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let pc = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2454,6 +2475,7 @@ mod tests {
         let seq_id = engine.launch_sequence(sequence);
 
         engine.dispatch_sword_strike(
+            sim,
             &LevelAssets::default(),
             pc,
             clicked,
@@ -2491,6 +2513,8 @@ mod tests {
     /// soldiers, citing the PC as origin.
     #[test]
     fn domino_propagates_to_actors_in_flight_path() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2529,7 +2553,7 @@ mod tests {
         // stay inside DOMINO_DISTANCE for the front pair.
         give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
 
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         assert_eq!(
             count_domino_hits_for(&engine, mid, hitter),
@@ -2557,6 +2581,8 @@ mod tests {
     /// outside the punch arc and must not take damage.
     #[test]
     fn domino_skips_actors_behind_flight_direction() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2585,7 +2611,7 @@ mod tests {
         ));
 
         give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         assert_eq!(
             count_domino_hits_for(&engine, behind, hitter),
@@ -2599,6 +2625,8 @@ mod tests {
     /// the radius and assert it is skipped.
     #[test]
     fn domino_respects_distance_radius() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2627,7 +2655,7 @@ mod tests {
         ));
 
         give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         assert_eq!(
             count_domino_hits_for(&engine, far, hitter),
@@ -2640,6 +2668,8 @@ mod tests {
     /// already on the ground and the upright-only filter rejects them.
     #[test]
     fn domino_skips_non_upright_actors() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2669,7 +2699,7 @@ mod tests {
         let lying = engine.add_entity(lying_entity);
 
         give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         assert_eq!(
             count_domino_hits_for(&engine, lying, hitter),
@@ -2684,6 +2714,8 @@ mod tests {
     /// directly in the flight path.
     #[test]
     fn no_domino_when_flight_has_no_antagonist() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let _hitter = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -2730,7 +2762,7 @@ mod tests {
             });
         }
 
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         let any_hit = engine
             .orders

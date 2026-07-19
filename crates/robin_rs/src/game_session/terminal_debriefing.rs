@@ -267,6 +267,7 @@ fn apply_terminal_debriefing_action(
             context.callbacks.pending = Some(SaveLoadRequest::Load {
                 slot: Some(slot),
                 mission_id,
+                save: None,
             });
             context.game.operation.set(GameCode::LevelInProgress);
             false
@@ -285,6 +286,7 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
 
     // Campaign/stat updates precede both terminal graphical surfaces, matching
     // RHgame.cpp's mission-end operation handling.
+    let difficulty = context.manager.engine.sim_config().difficulty;
     dispatch_local_command(
         context.host,
         &mut context.manager.engine,
@@ -292,7 +294,7 @@ pub(super) async fn drive_tick_exit_modals(mut context: TerminalDebriefingContex
         context.assets,
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
-            difficulty: context.game.global_options.sim_config().difficulty,
+            difficulty,
         },
     );
 

@@ -308,8 +308,12 @@ impl NativeContext<'_, '_> {
             }
             Rand => {
                 let max = stack.pop_i32();
-                crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, max)
-                    .unwrap_or_else(|error| panic!("{error}"))
+                crate::sim_rng::script_rand(
+                    self.simulation,
+                    crate::sim_rng::RngSite::ScriptRand,
+                    max,
+                )
+                .unwrap_or_else(|error| panic!("{error}"))
             }
             PrintConsole => {
                 // Originally blits "%d\n" into the in-game
@@ -512,7 +516,7 @@ impl NativeContext<'_, '_> {
                 }
                 0
             }
-            GetDifficultyLevel => crate::player_profile::DifficultyLevel::current().to_u32() as i32,
+            GetDifficultyLevel => self.simulation.config().difficulty.to_u32() as i32,
             GetSizeOfMissionTeam => self
                 .campaign
                 .as_ref()

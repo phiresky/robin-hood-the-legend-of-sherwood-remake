@@ -78,7 +78,9 @@ mod tests {
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let sim = crate::sim_rng::test_context();
         let capabilities = crate::natives::NativeSessionCapabilities::new(
+            &sim,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,

@@ -18,6 +18,7 @@ impl EnemyAi {
     #[allow(clippy::too_many_arguments)]
     pub fn the_16th_frame(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         frame_phase: u8,
         ctx: &AiContext,
         global: &AiGlobalState,
@@ -62,7 +63,7 @@ impl EnemyAi {
             .unwrap_or_default();
         if self_animation == crate::order::OrderType::WaitingUprightBored
             && self.base.current_state == AiState::Default
-            && crate::sim_rng::u32(crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
         {
             if self.get_rank() == ProfileRank::Officer {
                 self.base.say(Remark::OfficerComplains);

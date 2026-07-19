@@ -353,12 +353,16 @@ impl EngineInner {
     /// `RefreshDetection`. This method does not invoke detection or Think; the
     /// orchestrator below retains that behavioral phase order when consuming
     /// the captured view.
-    pub(super) fn tick_enemy_ai_build_world_view(&mut self, assets: &LevelAssets) -> AiWorldView {
+    pub(super) fn tick_enemy_ai_build_world_view(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> AiWorldView {
         let pcs = self.tick_enemy_ai_build_pc_snapshots(assets);
-        let pc_forecasts = self.tick_enemy_ai_build_pc_forecasts();
+        let pc_forecasts = self.tick_enemy_ai_build_pc_forecasts(sim);
         let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
-        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets);
+        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(sim, assets);
         let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
         AiWorldView {
             pcs,
@@ -596,6 +600,7 @@ impl EngineInner {
     /// the target entity while mutably borrowing the NPC entity.
     pub(super) fn tick_enemy_ai_build_pc_forecasts(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
     ) -> std::collections::HashMap<u32, crate::ai::ForecastedDestination> {
         let doors = self
             .scripts
@@ -608,6 +613,7 @@ impl EngineInner {
             let entity = self.world.entities.get(pc_id)?;
             let input = extract_forecast_input(entity)?;
             let forecast = crate::ai::forecast_destination_for_ia(
+                sim,
                 &input,
                 doors,
                 &self.world.fast_grid.level.sectors,
@@ -686,6 +692,7 @@ impl EngineInner {
     /// so direct self-reads stay consistent with the snapshot view.
     pub(super) fn tick_enemy_ai_build_soldier_snapshots(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
@@ -764,7 +771,7 @@ impl EngineInner {
             let fighting_ability = {
                 let base = soldier_profile.fighting;
                 if s.soldier.cached_camp == Camp::Lacklandists {
-                    let diff = crate::player_profile::DifficultyLevel::current();
+                    let diff = sim.config().difficulty;
                     diff.modify_capacity(
                         base,
                         crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
@@ -883,6 +890,7 @@ impl EngineInner {
                     door_pass,
                 };
                 crate::ai::forecast_destination_for_ia(
+                    sim,
                     &input,
                     doors,
                     &self.world.fast_grid.level.sectors,

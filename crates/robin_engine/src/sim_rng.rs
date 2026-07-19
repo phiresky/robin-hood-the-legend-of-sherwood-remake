@@ -11,30 +11,81 @@
 //!
 //! ## Design
 //!
-//! The authoritative state is [`EngineInner::rng`]. At the start of every tick the
-//! engine installs that RNG into a `thread_local` via [`install`], runs the
-//! tick logic (which calls free functions like [`u32`] / [`usize`] / etc.),
-//! and then takes it back via [`uninstall`] so the updated state persists in
-//! the engine's owned field and participates in snapshots/clone.
-//!
-//! Using a thread-local rather than threading `&mut fastrand::Rng` through
-//! every helper keeps call sites terse and avoids churning dozens of
-//! signatures — rollback determinism only requires that *every* call funnels
-//! through this module, not that the RNG is passed by reference.
+//! The authoritative state is the `SimulationRng` owned by one engine's
+//! `SimulationControl`. Gameplay, AI, scripts, and level setup receive an
+//! explicit [`SimulationContext`] handle to that exact allocation. There is no
+//! ambient RNG scope: a caller that lacks a context cannot draw.
 //!
 //! **Rules:**
-//! - Gameplay code must call `sim_rng::{u32, usize, u8, bool, choose, …}` —
+//! - Gameplay code must call `sim_rng::{u32, usize, u8, bool, …}` with its
+//!   explicit context —
 //!   never `rand::*` or `fastrand::*` globals directly.
 //! - Non-simulation code (audio jitter, menus, loading screens) may still use
 //!   ambient RNG; those must not feed back into simulation state. See
 //!   `sound.rs` / `ingame_menu/*` for examples.
 //! - Authoritative auxiliary randomness that intentionally does not advance
 //!   the serialized stream must use a reviewed [`AuxiliaryRngSite`].
-//! - Code that runs *outside* a tick (e.g. tests, tools) can call
-//!   [`with_seed`] to get a temporary scope.
+//! - Focused tests and tools construct a standalone [`SimulationContext`] with
+//!   [`SimulationContext::with_seed`].
 
-use std::cell::RefCell;
 use std::ops::RangeBounds;
+use std::sync::{Arc, Mutex};
+
+#[cfg(test)]
+use std::cell::RefCell;
+
+/// Explicit capability for authoritative simulation randomness.
+///
+/// The engine only lends this non-`Clone`, non-serializable capability through
+/// synchronous call boundaries. It cannot be detached from the owning
+/// `SimulationRng`; engine snapshot cloning and serialization operate on that
+/// owner, never on the capability.
+pub struct SimulationContext {
+    rng: Arc<Mutex<fastrand::Rng>>,
+    config: crate::engine::SimConfig,
+}
+
+impl SimulationContext {
+    pub(crate) fn new(rng: Arc<Mutex<fastrand::Rng>>, config: crate::engine::SimConfig) -> Self {
+        Self { rng, config }
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    pub fn with_seed(seed: u64) -> Self {
+        Self::with_seed_and_config(seed, crate::engine::SimConfig::default())
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    pub fn with_seed_and_config(seed: u64, config: crate::engine::SimConfig) -> Self {
+        Self {
+            rng: Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))),
+            config,
+        }
+    }
+
+    pub fn config(&self) -> crate::engine::SimConfig {
+        self.config
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.rng
+            .lock()
+            .expect("simulation RNG mutex poisoned")
+            .get_seed()
+    }
+}
+
+/// Construct an explicit deterministic context for one focused call chain.
+/// Unlike the removed legacy helper, this installs no thread-local state.
+pub fn with_seed<R>(seed: u64, f: impl FnOnce(&SimulationContext) -> R) -> R {
+    let context = SimulationContext::with_seed(seed);
+    f(&context)
+}
+
+#[cfg(test)]
+pub(crate) fn test_context() -> SimulationContext {
+    SimulationContext::with_seed(1)
+}
 
 /// Reviewed authoritative gameplay RNG entry points.
 ///
@@ -142,11 +193,6 @@ pub enum AuxiliaryRngSite {
     PeasantNames,
 }
 
-thread_local! {
-    /// The installed simulation RNG for the current tick, if any.
-    static SIM_RNG: RefCell<Option<fastrand::Rng>> = const { RefCell::new(None) };
-}
-
 #[cfg(test)]
 thread_local! {
     static DRAW_TRACE: RefCell<Option<Vec<RngSite>>> = const { RefCell::new(None) };
@@ -163,42 +209,6 @@ pub(crate) fn with_draw_trace<R>(f: impl FnOnce() -> R) -> (R, Vec<RngSite>) {
     (result, trace)
 }
 
-/// Install `rng` as the active simulation RNG for this thread. Panics if an
-/// RNG is already installed (nested tick execution is not supported).
-pub fn install(rng: fastrand::Rng) {
-    SIM_RNG.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        assert!(
-            slot.is_none(),
-            "sim_rng::install called while an RNG is already installed"
-        );
-        *slot = Some(rng);
-    });
-}
-
-/// Take the active simulation RNG back out. Panics if none was installed.
-pub fn uninstall() -> fastrand::Rng {
-    SIM_RNG.with(|cell| {
-        cell.borrow_mut()
-            .take()
-            .expect("sim_rng::uninstall called without an installed RNG")
-    })
-}
-
-/// Run `f` with a freshly seeded RNG installed. Used by tests and tools that
-/// want determinism without going through `EngineInner::perform_hourglass`.
-pub fn with_seed<R>(seed: u64, f: impl FnOnce() -> R) -> R {
-    install(fastrand::Rng::with_seed(seed));
-    struct Guard;
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            let _ = SIM_RNG.with(|cell| cell.borrow_mut().take());
-        }
-    }
-    let _g = Guard;
-    f()
-}
-
 /// Run one reviewed authoritative auxiliary generator from a deterministic
 /// seed without installing or advancing the serialized simulation stream.
 pub fn with_auxiliary_seed<R>(
@@ -210,7 +220,11 @@ pub fn with_auxiliary_seed<R>(
     f(&mut fastrand::Rng::with_seed(seed))
 }
 
-fn with_rng<R>(site: RngSite, f: impl FnOnce(&mut fastrand::Rng) -> R) -> R {
+fn with_rng<R>(
+    context: &SimulationContext,
+    site: RngSite,
+    f: impl FnOnce(&mut fastrand::Rng) -> R,
+) -> R {
     #[cfg(test)]
     DRAW_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
@@ -219,52 +233,46 @@ fn with_rng<R>(site: RngSite, f: impl FnOnce(&mut fastrand::Rng) -> R) -> R {
     });
     #[cfg(not(test))]
     let _ = site;
-    SIM_RNG.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let rng = slot
-            .as_mut()
-            .expect("sim_rng used outside of an installed scope");
-        f(rng)
-    })
+    f(&mut context.rng.lock().expect("simulation RNG mutex poisoned"))
 }
 
 // ─── Range helpers (mirror fastrand's API) ───────────────────────────
 
-pub fn u32(site: RngSite, range: impl RangeBounds<u32>) -> u32 {
-    with_rng(site, |rng| rng.u32(range))
+pub fn u32(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u32>) -> u32 {
+    with_rng(context, site, |rng| rng.u32(range))
 }
 
-pub fn i32(site: RngSite, range: impl RangeBounds<i32>) -> i32 {
-    with_rng(site, |rng| rng.i32(range))
+pub fn i32(context: &SimulationContext, site: RngSite, range: impl RangeBounds<i32>) -> i32 {
+    with_rng(context, site, |rng| rng.i32(range))
 }
 
-pub fn u16(site: RngSite, range: impl RangeBounds<u16>) -> u16 {
-    with_rng(site, |rng| rng.u16(range))
+pub fn u16(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u16>) -> u16 {
+    with_rng(context, site, |rng| rng.u16(range))
 }
 
-pub fn u8(site: RngSite, range: impl RangeBounds<u8>) -> u8 {
-    with_rng(site, |rng| rng.u8(range))
+pub fn u8(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u8>) -> u8 {
+    with_rng(context, site, |rng| rng.u8(range))
 }
 
-pub fn i16(site: RngSite, range: impl RangeBounds<i16>) -> i16 {
-    with_rng(site, |rng| rng.i16(range))
+pub fn i16(context: &SimulationContext, site: RngSite, range: impl RangeBounds<i16>) -> i16 {
+    with_rng(context, site, |rng| rng.i16(range))
 }
 
-pub fn usize(site: RngSite, range: impl RangeBounds<usize>) -> usize {
-    with_rng(site, |rng| rng.usize(range))
+pub fn usize(context: &SimulationContext, site: RngSite, range: impl RangeBounds<usize>) -> usize {
+    with_rng(context, site, |rng| rng.usize(range))
 }
 
-pub fn bool(site: RngSite) -> bool {
-    with_rng(site, |rng| rng.bool())
+pub fn bool(context: &SimulationContext, site: RngSite) -> bool {
+    with_rng(context, site, |rng| rng.bool())
 }
 
-pub fn f32(site: RngSite) -> f32 {
-    with_rng(site, |rng| rng.f32())
+pub fn f32(context: &SimulationContext, site: RngSite) -> f32 {
+    with_rng(context, site, |rng| rng.f32())
 }
 
 /// Shuffle a slice in-place using the simulation RNG.
-pub fn shuffle<T>(site: RngSite, slice: &mut [T]) {
-    with_rng(site, |rng| rng.shuffle(slice));
+pub fn shuffle<T>(context: &SimulationContext, site: RngSite, slice: &mut [T]) {
+    with_rng(context, site, |rng| rng.shuffle(slice));
 }
 
 /// Original's MSVC-era `rand() / RAND_MAX` fraction, including both 0 and 1.
@@ -272,8 +280,8 @@ pub fn shuffle<T>(site: RngSite, slice: &mut [T]) {
 /// The shipped code assumes `RAND_MAX == 32767` at the two authoritative
 /// floating-point call sites.  We retain those range semantics without
 /// attempting to reproduce the libc output sequence.
-pub fn c_rand_unit_inclusive(site: RngSite) -> f32 {
-    u16(site, 0..=32767) as f32 / 32767.0
+pub fn c_rand_unit_inclusive(context: &SimulationContext, site: RngSite) -> f32 {
+    u16(context, site, 0..=32767) as f32 / 32767.0
 }
 
 /// Script `Rand(max)`: exactly one draw in `[0, max)` for a positive bound.
@@ -287,11 +295,15 @@ pub enum ScriptRandError {
     NonPositiveMaximum(i32),
 }
 
-pub fn script_rand(site: RngSite, max: i32) -> Result<i32, ScriptRandError> {
+pub fn script_rand(
+    context: &SimulationContext,
+    site: RngSite,
+    max: i32,
+) -> Result<i32, ScriptRandError> {
     if max <= 0 {
         return Err(ScriptRandError::NonPositiveMaximum(max));
     }
-    Ok(i32(site, 0..max))
+    Ok(i32(context, site, 0..max))
 }
 
 /// `serde` adapters for `fastrand::Rng`.
@@ -301,8 +313,9 @@ pub fn script_rand(site: RngSite, max: i32) -> Result<i32, ScriptRandError> {
 /// [`fastrand::Rng::get_seed`] / [`fastrand::Rng::with_seed`], which
 /// preserves the full internal state (fastrand's PRNG state IS the seed).
 ///
-/// Used by `EngineInner::rng`, so save files, rollback snapshots, network
-/// state-sync, and desync dumps preserve the exact next simulation roll.
+/// Used by the Engine-owned [`crate::engine::SimulationRng`], so save files,
+/// rollback snapshots, network state-sync, and desync dumps preserve the exact
+/// next simulation roll.
 pub mod serde_rng {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -420,13 +433,11 @@ mod tests {
         "f32",
         "i16",
         "i32",
-        "install",
         "script_rand",
         "shuffle",
         "u16",
         "u32",
         "u8",
-        "uninstall",
         "usize",
         "with_auxiliary_seed",
         "with_seed",
@@ -442,10 +453,6 @@ mod tests {
             1,
         ),
         (
-            "crates/robin_rs/src/game_session/multiplayer.rs|fastrand::Rng::new",
-            1,
-        ),
-        (
             "crates/robin_rs/src/ingame_menu/dialogue.rs|fastrand::Rng::new",
             2,
         ),
@@ -454,65 +461,67 @@ mod tests {
 
     #[test]
     fn determinism() {
-        let a = with_seed(42, || {
+        let a = with_seed(42, |sim| {
             (0..10)
-                .map(|_| u32(RngSite::TitbitUpdate, ..))
+                .map(|_| u32(sim, RngSite::TitbitUpdate, ..))
                 .collect::<Vec<_>>()
         });
-        let b = with_seed(42, || {
+        let b = with_seed(42, |sim| {
             (0..10)
-                .map(|_| u32(RngSite::TitbitUpdate, ..))
+                .map(|_| u32(sim, RngSite::TitbitUpdate, ..))
                 .collect::<Vec<_>>()
         });
         assert_eq!(a, b);
     }
 
     #[test]
-    fn serde_rng_roundtrip_preserves_state() {
-        // Advance to a non-trivial state, serialize, deserialize, pull the
-        // same u32 — must match.
-        install(fastrand::Rng::with_seed(0xABCD_EF01));
-        let _ = u32(RngSite::TitbitUpdate, ..);
-        let _ = u32(RngSite::TitbitUpdate, ..);
-        let rng = uninstall();
+    fn simulation_rng_serde_roundtrip_preserves_state() {
+        // Advance the real serialized owner to a non-trivial state, then
+        // verify the restored owner continues with the same draws.
+        let original = crate::engine::SimulationRng::with_seed(0xABCD_EF01);
+        let original_context = original.context(crate::engine::SimConfig::default());
+        let _ = u32(&original_context, RngSite::TitbitUpdate, ..);
+        let _ = u32(&original_context, RngSite::TitbitUpdate, ..);
+        let encoded = serde_json::to_string(&original).expect("serialize simulation RNG owner");
+        let restored: crate::engine::SimulationRng =
+            serde_json::from_str(&encoded).expect("deserialize simulation RNG owner");
+        let restored_context = restored.context(crate::engine::SimConfig::default());
 
-        let seed = rng.get_seed();
-        let mut restored = fastrand::Rng::with_seed(seed);
-        let mut original = rng;
-
-        assert_eq!(original.u32(..), restored.u32(..));
-        assert_eq!(original.u32(..), restored.u32(..));
+        assert_eq!(
+            u32(&original_context, RngSite::TitbitUpdate, ..),
+            u32(&restored_context, RngSite::TitbitUpdate, ..)
+        );
+        assert_eq!(
+            u32(&original_context, RngSite::TitbitUpdate, ..),
+            u32(&restored_context, RngSite::TitbitUpdate, ..)
+        );
     }
 
     #[test]
-    fn install_uninstall_roundtrip() {
-        install(fastrand::Rng::with_seed(7));
-        let _ = u32(RngSite::TitbitUpdate, ..);
-        let rng = uninstall();
-        // Install again and verify the returned RNG continues state forward.
-        install(rng);
-        let x1 = u32(RngSite::TitbitUpdate, ..);
-        let _advanced = uninstall();
-        install(fastrand::Rng::with_seed(7));
-        let _ = u32(RngSite::TitbitUpdate, ..);
-        let x2 = u32(RngSite::TitbitUpdate, ..);
+    fn explicit_context_advances_one_owned_stream() {
+        let first = SimulationContext::with_seed(7);
+        let _ = u32(&first, RngSite::TitbitUpdate, ..);
+        let x1 = u32(&first, RngSite::TitbitUpdate, ..);
+        let second = SimulationContext::with_seed(7);
+        let _ = u32(&second, RngSite::TitbitUpdate, ..);
+        let x2 = u32(&second, RngSite::TitbitUpdate, ..);
         assert_eq!(x1, x2);
-        let _ = uninstall();
     }
 
     #[test]
     fn script_rand_range_and_invalid_bounds() {
-        with_seed(0xA036, || {
-            assert_eq!(script_rand(RngSite::ScriptRand, 1), Ok(0));
+        with_seed(0xA036, |sim| {
+            assert_eq!(script_rand(sim, RngSite::ScriptRand, 1), Ok(0));
             for _ in 0..4096 {
-                let value = script_rand(RngSite::ScriptRand, 7).expect("positive script bound");
+                let value =
+                    script_rand(sim, RngSite::ScriptRand, 7).expect("positive script bound");
                 assert!((0..7).contains(&value));
             }
         });
 
         for invalid in [0, -1, i32::MIN] {
-            let (result, trace) = with_seed(1, || {
-                with_draw_trace(|| script_rand(RngSite::ScriptRand, invalid))
+            let (result, trace) = with_seed(1, |sim| {
+                with_draw_trace(|| script_rand(sim, RngSite::ScriptRand, invalid))
             });
             assert_eq!(result, Err(ScriptRandError::NonPositiveMaximum(invalid)));
             assert!(trace.is_empty(), "invalid Rand must not consume a draw");
@@ -521,22 +530,22 @@ mod tests {
 
     #[test]
     fn integer_and_float_helpers_preserve_reviewed_range_shapes() {
-        with_seed(0x3600, || {
+        with_seed(0x3600, |sim| {
             let mut saw_inclusive_min = false;
             let mut saw_inclusive_max = false;
             for _ in 0..4096 {
-                let half_open = i32(RngSite::SoldierFreedRotation, -8..9);
+                let half_open = i32(sim, RngSite::SoldierFreedRotation, -8..9);
                 assert!((-8..9).contains(&half_open));
 
-                let inclusive = u16(RngSite::SwordDamageProtection, 1..=3);
+                let inclusive = u16(sim, RngSite::SwordDamageProtection, 1..=3);
                 assert!((1..=3).contains(&inclusive));
                 saw_inclusive_min |= inclusive == 1;
                 saw_inclusive_max |= inclusive == 3;
 
-                let unit = f32(RngSite::LuaMathRandom);
+                let unit = f32(sim, RngSite::LuaMathRandom);
                 assert!((0.0..1.0).contains(&unit));
 
-                let c_unit = c_rand_unit_inclusive(RngSite::ReinforcementJitter);
+                let c_unit = c_rand_unit_inclusive(sim, RngSite::ReinforcementJitter);
                 assert!((0.0..=1.0).contains(&c_unit));
             }
             assert!(saw_inclusive_min && saw_inclusive_max);
@@ -560,14 +569,12 @@ mod tests {
         };
         assert_eq!(generate(), generate());
 
-        install(fastrand::Rng::with_seed(0xA036));
+        let simulation = SimulationContext::with_seed(0xA036);
         let _ = generate();
-        let actual_next = u32(RngSite::TitbitUpdate, ..);
-        let _ = uninstall();
+        let actual_next = u32(&simulation, RngSite::TitbitUpdate, ..);
 
-        install(fastrand::Rng::with_seed(0xA036));
-        let expected_next = u32(RngSite::TitbitUpdate, ..);
-        let _ = uninstall();
+        let expected = SimulationContext::with_seed(0xA036);
+        let expected_next = u32(&expected, RngSite::TitbitUpdate, ..);
         assert_eq!(actual_next, expected_next);
     }
 
@@ -690,12 +697,13 @@ mod tests {
             if is_draw {
                 let labelled = node
                     .args
-                    .first()
+                    .iter()
+                    .nth(1)
                     .and_then(|expr| Self::site_name(expr, "RngSite"))
                     .is_some();
                 let forwarded_sprite_site = self.file.ends_with("sprite.rs")
                     && helper == "u16"
-                    && node.args.first().is_some_and(
+                    && node.args.iter().nth(1).is_some_and(
                         |arg| matches!(arg, syn::Expr::Path(path) if path.path.is_ident("site")),
                     );
                 if !labelled && !forwarded_sprite_site {

@@ -92,12 +92,16 @@ impl EngineInner {
     /// unlocked NPC whose timer elapsed, stop it and dispatch
     /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
     /// original post-dispatch combat-stance and civilian-panic effects.
-    pub(crate) fn tick_ai_normal_timers(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_ai_normal_timers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
 
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let current_frame = self.control.frame_counter;
         let mut panic_calls: Vec<EntityId> = Vec::new();
 
@@ -114,6 +118,7 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_pursuit_approach_timer_for_npc(
+                sim,
                 npc_id,
                 assets,
                 &scratch,
@@ -165,7 +170,7 @@ impl EngineInner {
             }
 
             // Civilian panic.
-            self.nearby_civilians_panic(assets, enemy);
+            self.nearby_civilians_panic(sim, assets, enemy);
         }
     }
 
@@ -183,6 +188,7 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_pursuit_approach_timer_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         scratch: &SimScratch,
@@ -257,7 +263,7 @@ impl EngineInner {
         // candidates, avenger-on-roof wait position, and seeded
         // enemy_sq_distances.  Matches (and supersedes) the
         // bespoke hand-roll this block used to do.
-        let tick_data = self.build_npc_tick_data(npc_id, scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, scratch, assets);
 
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -283,6 +289,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx.enter_swordfight_pending = self
@@ -299,7 +306,7 @@ impl EngineInner {
         };
 
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
-        self.dispatch_think_with_drain(npc_id, &timer_stimulus, &ctx, &tick_data, assets);
+        self.dispatch_think_with_drain(sim, npc_id, &timer_stimulus, &ctx, &tick_data, assets);
 
         // Post-think: detect swordfight entry so the caller can fire
         // `nearby_civilians_panic` + combat-stance bookkeeping below.
@@ -318,10 +325,14 @@ impl EngineInner {
     /// AI decisions set flags on `AiController`; we consume them here
     /// after all think calls are done, since they require engine-side
     /// entity mutations (opponent lists, sequences).
-    pub(super) fn tick_enemy_ai_drain_swordfight_requests(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_ai_drain_swordfight_requests(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.drain_pending_for_npc(npc_id, assets);
+            self.drain_pending_for_npc(sim, npc_id, assets);
         }
     }
 
@@ -332,10 +343,14 @@ impl EngineInner {
     /// `AiController::outbox.detection.stimuli` by `dispatch_ai_stimulus()`
     /// during the combat tick.  We defer them to avoid re-entrant
     /// borrow issues, then replay them now.
-    pub(super) fn tick_enemy_ai_drain_pending_stimuli(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_ai_drain_pending_stimuli(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, None);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
         }
     }
 
@@ -345,6 +360,7 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn tick_enemy_ai_drain_pending_stimuli_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
@@ -366,7 +382,7 @@ impl EngineInner {
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
             // its predecessor rather than the tick-start entity-view map.
-            let scratch = self.build_sim_scratch(assets);
+            let scratch = self.build_sim_scratch(sim, assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.world.entities.get(npc_id) else {
@@ -389,6 +405,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
@@ -438,8 +455,13 @@ impl EngineInner {
                         npc_id.index()
                     ),
                 };
-                let mut live =
-                    self.build_npc_tick_data_for_target(npc_id, &scratch, assets, Some(target_id));
+                let mut live = self.build_npc_tick_data_for_target(
+                    sim,
+                    npc_id,
+                    &scratch,
+                    assets,
+                    Some(target_id),
+                );
                 overlay_final_detection_scan(&mut live, &aggregate);
                 live
             } else {
@@ -463,9 +485,9 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                self.build_npc_tick_data_for_target(npc_id, &scratch, assets, target_override)
+                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, target_override)
             };
-            self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
         if let Some(override_data) = enemy_detection_tick_data {
             assert_eq!(
@@ -479,7 +501,11 @@ impl EngineInner {
     /// Drain stimuli retained by `start_think` while an NPC was AI- or
     /// script-locked. This is the final unlocked phase of
     /// `RHElementActorNPC::Hourglass`, after both timer kinds.
-    pub(crate) fn tick_ai_queued_stimuli(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_ai_queued_stimuli(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -508,7 +534,7 @@ impl EngineInner {
                 // Every retained Think is a fresh synchronous boundary. An
                 // earlier replay may mutate positions, latches, or targets
                 // consumed by the next retained stimulus.
-                let scratch = self.build_sim_scratch(assets);
+                let scratch = self.build_sim_scratch(sim, assets);
                 let in_uninterruptible_command = self.is_very_very_busy(npc_id);
                 let ctx = {
                     let Some(entity) = self.world.entities.get(npc_id) else {
@@ -528,6 +554,7 @@ impl EngineInner {
                         &self.world.fast_grid,
                         &assets.hiking_paths,
                         &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
                     );
                     ctx.in_uninterruptible_command = in_uninterruptible_command;
                     ctx
@@ -546,8 +573,13 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                let mut tick_data =
-                    self.build_npc_tick_data_for_target(npc_id, &scratch, assets, target_override);
+                let mut tick_data = self.build_npc_tick_data_for_target(
+                    sim,
+                    npc_id,
+                    &scratch,
+                    assets,
+                    target_override,
+                );
                 if matches!(
                     stimulus.stimulus_type,
                     crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
@@ -558,7 +590,7 @@ impl EngineInner {
                         &mut tick_data,
                     );
                 }
-                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+                self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
             }
         }
     }

@@ -41,6 +41,7 @@ impl EngineInner {
     /// - Deferred command processing (script.rs) — for script ApplyPatch/ResetPatch
     pub(crate) fn process_patch_effects(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         patch_index: crate::patch::PatchIndex,
         effects: Vec<PatchEffect>,
@@ -96,7 +97,7 @@ impl EngineInner {
                     applied,
                     forced_reset,
                 } => {
-                    self.execute_swap_objects(assets, &ctx, applied, forced_reset);
+                    self.execute_swap_objects(sim, assets, &ctx, applied, forced_reset);
                 }
                 PatchEffect::StartAnimation { anim, reverse } => {
                     self.execute_start_animation(&ctx, anim, reverse);
@@ -172,6 +173,7 @@ impl EngineInner {
     /// and pathfinder state.
     fn execute_swap_objects(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         ctx: &PatchContext,
         applied: bool,
@@ -251,6 +253,7 @@ impl EngineInner {
 
             if !forced_reset {
                 self.invalidate_paths_and_kill_crushed(
+                    sim,
                     ctx.pathfinder_layer,
                     ctx.pathfinder_sector,
                     &appeared,
@@ -289,6 +292,7 @@ impl EngineInner {
     /// `AppearedObstacle` payload).
     fn invalidate_paths_and_kill_crushed(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         layer: u16,
         sector: u16,
         appeared: &[crate::pathfinder::AppearedObstacle],
@@ -400,7 +404,7 @@ impl EngineInner {
                 {
                     actor.active_movement.clear();
                 }
-                match self.try_dispatch_move_path(id, seq_id, elem_idx, dest, action) {
+                match self.try_dispatch_move_path(sim, id, seq_id, elem_idx, dest, action) {
                     MovePathOutcome::Success => {}
                     MovePathOutcome::Pending => {}
                     MovePathOutcome::ActorGone => {

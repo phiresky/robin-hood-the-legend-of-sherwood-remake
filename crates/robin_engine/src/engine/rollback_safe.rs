@@ -9,7 +9,7 @@
 //!
 //! Each exposed mutator is either:
 //!
-//! * a tick call (`apply_command(s)`, `perform_hourglass`) — the normal
+//! * a tick call (`apply_command(sim, s)`, `perform_hourglass`) — the normal
 //!   per-frame sim-state mutation point,
 //! * a one-shot setup / level-load / lifecycle hook, or
 //! * a drain of a side-effect queue filled during the tick and consumed
@@ -20,6 +20,7 @@
 
 use std::ops::Deref;
 
+use super::SimConfig;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, InputState, LevelAssets, LevelLoadStaging,
     SideEffects,
@@ -174,25 +175,41 @@ pub struct EngineArgs<'a> {
     /// SP↔MP-host divergence from RNG-consuming work between the
     /// two restore points.
     pub rng_seed: u64,
-    /// Whether the mission VM and StartUp binding are enabled for this
-    /// engine instance. Kept per-construction so concurrent sessions cannot
-    /// observe a process-global script mode.
-    pub script_enabled: bool,
-    /// Whether newly loaded NPCs start invulnerable for this engine instance.
-    /// This is the construction-time `-highlander2` mode.
-    pub highlander2: bool,
-    /// AI GoldenEye cheat flag.  Set on the engine before any AI
-    /// init runs.  Threaded as a constructor param (rather than a
-    /// post-init `SetGoldenEyeMode` dispatch) so the local engine's
-    /// frame-0 state matches what `InitialSnapshot` captures and
-    /// what joining peers adopt — bypassing the
-    /// `dispatch_local_command` wire-delay path that previously
-    /// caused MP-host's frame-0 hash to lag the recording by
-    /// `INPUT_DELAY_FRAMES`.
-    pub goldeneye: bool,
+    /// Complete deterministic configuration captured before level setup.
+    /// Keeping the existing [`SimConfig`] intact prevents construction,
+    /// rollback, replay, and network adoption from rebuilding only a subset
+    /// of gameplay-affecting options.
+    pub sim_config: SimConfig,
 }
 
 impl Engine {
+    /// Run pre-level campaign mission selection on the same authoritative
+    /// stream that the selected mission will receive at construction.
+    ///
+    /// The original process uses one `rand()` sequence across campaign and
+    /// mission code. This temporary bare engine owns that sequence while no
+    /// loaded mission engine exists; the returned seed is the complete next
+    /// RNG state and must be passed to [`EngineArgs::rng_seed`].
+    pub fn select_next_mission(
+        campaign: Campaign,
+        profiles: &crate::profiles::ProfileManager,
+        rng_seed: u64,
+        sim_config: SimConfig,
+    ) -> (Campaign, usize, u64, SimConfig) {
+        let mut inner = EngineInner::new_with_campaign(campaign);
+        inner.control.sim_config = sim_config;
+        inner.restore_rng_from_seed(rng_seed);
+        let mission_idx = inner.with_simulation_context(|inner, sim| {
+            inner
+                .mission_domain
+                .required_campaign_mut("selecting the next mission")
+                .determine_next_mission(sim, profiles)
+        });
+        let rng_seed = inner.rng_seed();
+        let sim_config = inner.control.sim_config;
+        (inner.into_campaign(), mission_idx, rng_seed, sim_config)
+    }
+
     /// Create a fully-initialised engine for mission play.
     ///
     /// The host is expected to have:
@@ -230,12 +247,15 @@ impl Engine {
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let mut inner = EngineInner::new_with_campaign(args.campaign);
+        inner.control.sim_config = args.sim_config;
+        inner.control.mission_start_rng_seed = args.rng_seed;
+        inner.control.mission_start_sim_config = args.sim_config;
         // Seed the PRNG and apply engine-global cheat flags FIRST,
         // before any setup that might draw from the RNG or branch on
         // the cheat flag.  See `EngineArgs::rng_seed` /
-        // `EngineArgs::goldeneye` docs for the rationale.
+        // `EngineArgs::sim_config` docs for the rationale.
         inner.restore_rng_from_seed(args.rng_seed);
-        inner.set_golden_eye_mode(args.goldeneye);
+        inner.set_golden_eye_mode(args.sim_config.golden_eye);
         if let Some(gm) = args.ground_mark_sprite {
             inner.set_ground_mark_sprite_data(
                 gm.half_w,
@@ -265,12 +285,11 @@ impl Engine {
         // spawns) so that beam-me sector validation and downstream
         // sector-handle resolution see the populated grid.
         let mut staging = LevelLoadStaging::default();
-        if let Err(error) = inner.with_sim_rng(|inner| {
+        if let Err(error) = inner.with_simulation_context(|inner, sim| {
             inner.initialize_from_campaign(
+                sim,
                 assets,
                 &mut staging,
-                args.script_enabled,
-                args.highlander2,
                 loaded,
                 level_directory,
                 bg_pixel_dims,
@@ -296,8 +315,8 @@ impl Engine {
 
         // Mission script StartUp::Initialize — `hiking_paths` was
         // just populated by the level loader.
-        inner.with_sim_rng(|inner| {
-            inner.initialize_mission_script_with(assets, 0, &assets.hiking_paths)
+        inner.with_simulation_context(|inner, sim| {
+            inner.initialize_mission_script_with(sim, assets, 0, &assets.hiking_paths)
         });
 
         // Sherwood-only: spawn production bonuses at the registered
@@ -310,14 +329,14 @@ impl Engine {
                 == crate::profiles::MissionLocation::Sherwood
         });
         if is_sherwood {
-            inner.with_sim_rng(|inner| {
-                inner.apply_production_sector_data(assets);
+            inner.with_simulation_context(|inner, sim| {
+                inner.apply_production_sector_data(sim, assets);
                 // Fire the "production-sector data is ready" hook
                 // (`SendMessage(0, 1001)`) the Sherwood StartUp script
                 // listens for on fresh Sherwood entry.  The LevelLoad twin
                 // is handled via the post-load fixup path; this arm covers
                 // fresh entry only.
-                inner.dispatch_startup_message(assets, 1001, 0, 0);
+                inner.dispatch_startup_message(sim, assets, 1001, 0, 0);
             });
         }
         inner
@@ -342,7 +361,16 @@ impl Engine {
         campaign: Campaign,
         assets: &mut LevelAssets,
     ) -> Result<Self, super::EngineError> {
-        Self::new_for_test_with_level_size(screen_width, screen_height, campaign, assets, 0.0, 0.0)
+        Self::new_for_test_with_level_size_and_simulation(
+            screen_width,
+            screen_height,
+            campaign,
+            assets,
+            0.0,
+            0.0,
+            0,
+            SimConfig::default(),
+        )
     }
 
     /// Variant of [`Engine::new_for_test`] that lets the caller set
@@ -355,6 +383,50 @@ impl Engine {
         assets: &mut LevelAssets,
         map_width: f32,
         map_height: f32,
+    ) -> Result<Self, super::EngineError> {
+        Self::new_for_test_with_level_size_and_simulation(
+            _screen_width,
+            _screen_height,
+            campaign,
+            assets,
+            map_width,
+            map_height,
+            0,
+            SimConfig::default(),
+        )
+    }
+
+    /// Test fixture variant that supplies the exact mission-construction
+    /// seed/config used by replay, save preflight, and multiplayer tests.
+    pub fn new_for_test_with_simulation(
+        screen_width: f32,
+        screen_height: f32,
+        campaign: Campaign,
+        assets: &mut LevelAssets,
+        rng_seed: u64,
+        sim_config: SimConfig,
+    ) -> Result<Self, super::EngineError> {
+        Self::new_for_test_with_level_size_and_simulation(
+            screen_width,
+            screen_height,
+            campaign,
+            assets,
+            0.0,
+            0.0,
+            rng_seed,
+            sim_config,
+        )
+    }
+
+    fn new_for_test_with_level_size_and_simulation(
+        _screen_width: f32,
+        _screen_height: f32,
+        campaign: Campaign,
+        assets: &mut LevelAssets,
+        map_width: f32,
+        map_height: f32,
+        rng_seed: u64,
+        sim_config: SimConfig,
     ) -> Result<Self, super::EngineError> {
         use crate::mission::Mission;
         use crate::profiles::MissionProfile;
@@ -394,10 +466,8 @@ impl Engine {
             },
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
-            rng_seed: 0,
-            script_enabled: true,
-            highlander2: false,
-            goldeneye: false,
+            rng_seed,
+            sim_config,
         })
     }
 
@@ -439,7 +509,8 @@ impl Engine {
         cmd: &PlayerCommand,
     ) {
         self.require_live_campaign("applying a player command");
-        self.inner.apply_command(display, input, assets, cmd);
+        let sim = self.inner.control.simulation_context();
+        self.inner.apply_command(&sim, display, input, assets, cmd);
     }
 
     /// Apply a batch of player commands, as used by the replay driver
@@ -452,7 +523,9 @@ impl Engine {
         cmds: &[PlayerInput],
     ) {
         self.require_live_campaign("applying replay or network commands");
-        self.inner.apply_commands(display, input, assets, cmds);
+        let sim = self.inner.control.simulation_context();
+        self.inner
+            .apply_commands(&sim, display, input, assets, cmds);
     }
 
     /// Apply a batch of locally-sourced commands (live single-player
@@ -498,16 +571,17 @@ impl Engine {
     }
 
     /// Run a host-side mission-script extension against the live `GameHost`
-    /// while the Engine-owned simulation RNG is installed.
+    /// with the Engine-owned simulation context attached.
     ///
     /// Spellforge startup is outside the normal engine tick but its native
     /// shims can still draw from `sim_rng`; using this boundary advances the
-    /// one authoritative stream instead of panicking for lack of a scope or
-    /// inventing a second RNG. The closure must not retain the host reference.
+    /// one authoritative stream without ambient installation or a second RNG.
+    /// The closure must not retain the host reference or context.
     pub fn with_mission_script_game_host_and_rng<R>(
         &mut self,
         assets: &LevelAssets,
         f: impl FnOnce(
+            &crate::sim_rng::SimulationContext,
             Option<(
                 &mut crate::natives::GameHost,
                 &mut crate::natives::ScriptState,
@@ -517,19 +591,22 @@ impl Engine {
             )>,
         ) -> R,
     ) -> R {
-        self.inner.with_sim_rng(|inner| {
+        self.inner.with_simulation_context(|inner, sim| {
             if inner.scripts.mission.is_none() {
-                return f(None);
+                return f(sim, None);
             }
             inner
-                .with_script_session(assets, |script, script_domains, capabilities| {
-                    f(Some((
-                        &mut script.game_host,
-                        &mut script.state,
-                        script_domains,
-                        &script.bindings,
-                        capabilities,
-                    )))
+                .with_script_session(sim, assets, |script, script_domains, capabilities| {
+                    f(
+                        sim,
+                        Some((
+                            &mut script.game_host,
+                            &mut script.state,
+                            script_domains,
+                            &script.bindings,
+                            capabilities,
+                        )),
+                    )
                 })
                 .expect("mission script disappeared while opening the Lua script session")
         })
@@ -538,6 +615,14 @@ impl Engine {
     /// Consume a finished mission engine and return its campaign allocation.
     pub fn into_campaign(self) -> Campaign {
         self.inner.into_campaign()
+    }
+
+    /// Consume a finished mission engine while preserving the complete next
+    /// RNG state for campaign selection before the following engine exists.
+    pub fn into_campaign_and_simulation(self) -> (Campaign, u64, SimConfig) {
+        let rng_seed = self.inner.rng_seed();
+        let sim_config = self.inner.control.sim_config;
+        (self.inner.into_campaign(), rng_seed, sim_config)
     }
 
     fn require_live_campaign(&self, context: &str) {
@@ -559,8 +644,9 @@ impl Engine {
         selected_view_element: &mut Option<EntityId>,
         input: &str,
     ) -> ConsoleResponse {
+        let sim = self.inner.control.simulation_context();
         self.inner
-            .run_console_command(assets, dev, selected_view_element, input)
+            .run_console_command(&sim, assets, dev, selected_view_element, input)
     }
 
     /// Run a console-cheat input with the dev cheat set forced on, even
@@ -582,6 +668,19 @@ impl Engine {
         self.inner.restore_rng_from_seed(seed);
     }
 
+    /// Complete deterministic configuration currently owned by this Engine.
+    pub fn sim_config(&self) -> SimConfig {
+        self.inner.control.sim_config
+    }
+
+    /// Seed and configuration captured before this mission's frame-0 setup.
+    pub fn mission_start_simulation(&self) -> (u64, SimConfig) {
+        (
+            self.inner.control.mission_start_rng_seed,
+            self.inner.control.mission_start_sim_config,
+        )
+    }
+
     /// Invoke a script `NativeFn` from outside the VM (HTTP-RPC, debug
     /// tooling).  See [`EngineInner::call_external_native`] for the full
     /// contract — runs through the same script-session boundary as engine
@@ -594,7 +693,9 @@ impl Engine {
         native_name: &str,
         args: &[i32],
     ) -> Result<i32, String> {
-        self.inner.call_external_native(assets, native_name, args)
+        let sim = self.inner.control.simulation_context();
+        self.inner
+            .call_external_native(&sim, assets, native_name, args)
     }
 
     /// Like [`Self::call_external_native`], but with an explicit transient
@@ -606,8 +707,9 @@ impl Engine {
         args: &[i32],
         this_actor: Option<i32>,
     ) -> Result<i32, String> {
+        let sim = self.inner.control.simulation_context();
         self.inner
-            .call_external_native_with_this(assets, native_name, args, this_actor)
+            .call_external_native_with_this(&sim, assets, native_name, args, this_actor)
     }
 
     /// Refresh render-only patch door highlight flags.
@@ -654,11 +756,12 @@ impl Engine {
         mission_index: usize,
         profiles: &crate::profiles::ProfileManager,
     ) -> Option<bool> {
+        let sim = self.inner.control.simulation_context();
         Some(
             self.inner
                 .mission_domain
                 .campaign
-                .buy_blazon(mission_index, profiles),
+                .buy_blazon(&sim, mission_index, profiles),
         )
     }
 
@@ -940,6 +1043,66 @@ impl Deref for Engine {
 mod tests {
     use super::*;
 
+    #[test]
+    fn campaign_selection_transfers_one_rng_sequence_to_mission_construction() {
+        let mut profiles = crate::profiles::ProfileManager::default();
+        profiles.missions.push(crate::profiles::MissionProfile {
+            id: 0,
+            location: crate::profiles::MissionLocation::Sherwood,
+            life_time: 100,
+            max_ransom: 200_000,
+            max_gang_size: u16::MAX,
+            ..Default::default()
+        });
+        for id in 1..=2 {
+            profiles.missions.push(crate::profiles::MissionProfile {
+                id,
+                mission_type: crate::profiles::MissionType::Rescue,
+                location: crate::profiles::MissionLocation::York,
+                life_time: 100,
+                access_probability: 50,
+                max_ransom: 200_000,
+                max_gang_size: u16::MAX,
+                ..Default::default()
+            });
+        }
+
+        let mut campaign = Campaign::default();
+        for profile_idx in 0..3 {
+            campaign.missions.push(crate::mission::Mission {
+                profile_idx: Some(profile_idx),
+                ..Default::default()
+            });
+        }
+        campaign.accessible_mission_indices = vec![1, 2];
+
+        let seed = 0xCA11_AB1E;
+        let config = SimConfig::default();
+        let reference_context =
+            crate::sim_rng::SimulationContext::with_seed_and_config(seed, config);
+        let mut reference_campaign = campaign.clone();
+        let expected_mission =
+            reference_campaign.determine_next_mission(&reference_context, &profiles);
+        let expected_next_seed = reference_context.seed();
+        let expected_next_draw = crate::sim_rng::u32(
+            &reference_context,
+            crate::sim_rng::RngSite::TitbitUpdate,
+            ..,
+        );
+
+        let (_campaign, mission, next_seed, next_config) =
+            Engine::select_next_mission(campaign, &profiles, seed, config);
+        let mission_context =
+            crate::sim_rng::SimulationContext::with_seed_and_config(next_seed, config);
+        let actual_next_draw =
+            crate::sim_rng::u32(&mission_context, crate::sim_rng::RngSite::TitbitUpdate, ..);
+
+        assert_eq!(mission, expected_mission);
+        assert_eq!(next_seed, expected_next_seed);
+        assert_eq!(next_config, config);
+        assert_eq!(actual_next_draw, expected_next_draw);
+    }
+
     fn scripted_snapshot_fixture() -> (
         Engine,
         LevelAssets,
@@ -1054,9 +1217,7 @@ mod tests {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed: 0,
-            script_enabled: true,
-            highlander2: false,
-            goldeneye: false,
+            sim_config: SimConfig::default(),
         });
 
         let (error, returned) = match result {

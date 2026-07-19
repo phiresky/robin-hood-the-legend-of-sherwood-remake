@@ -275,7 +275,12 @@ impl EngineInner {
     /// - Empty list → quit the swordfight entirely.
     /// - Two or more opponents → re-pick the principal.
     /// - Exactly one → leave the principal where it is.
-    pub(crate) fn evaluate_opponents(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+    pub(crate) fn evaluate_opponents(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
         let count = self
             .get_entity(entity_id)
             .and_then(|e| e.human_data())
@@ -283,9 +288,9 @@ impl EngineInner {
             .unwrap_or(0);
 
         if count == 0 {
-            self.quit_swordfight(assets, entity_id);
+            self.quit_swordfight(sim, assets, entity_id);
         } else if count >= 2 {
-            self.choose_principal_opponent(entity_id);
+            self.choose_principal_opponent(sim, entity_id);
         }
     }
 
@@ -299,7 +304,11 @@ impl EngineInner {
     ///
     /// When the chosen opponent isn't already at index 0, swap them to
     /// the front and take the smalltalk initiative.
-    pub(super) fn choose_principal_opponent(&mut self, entity_id: EntityId) {
+    pub(super) fn choose_principal_opponent(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity_id: EntityId,
+    ) {
         let (self_pos, self_dir, opponents) = {
             let Some(entity) = self.get_entity(entity_id) else {
                 return;
@@ -343,6 +352,7 @@ impl EngineInner {
 
         let new_principal = if !candidates.is_empty() {
             let pick = crate::sim_rng::usize(
+                sim,
                 crate::sim_rng::RngSite::PrincipalOpponent,
                 0..candidates.len(),
             );
@@ -450,12 +460,13 @@ impl EngineInner {
     /// Returns true if swordfight was entered.
     pub(crate) fn enter_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         initiator: EntityId,
         opponent: EntityId,
         sword_hurted: bool,
     ) -> bool {
-        self.enter_swordfight_with_jump_line(assets, initiator, opponent, sword_hurted, None)
+        self.enter_swordfight_with_jump_line(sim, assets, initiator, opponent, sword_hurted, None)
     }
 
     /// Variant of [`enter_swordfight`] that threads the
@@ -465,13 +476,14 @@ impl EngineInner {
     /// the far side.
     pub(crate) fn enter_swordfight_with_jump_line(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         initiator: EntityId,
         opponent: EntityId,
         sword_hurted: bool,
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         if opponent.index() == 0 {
             // Opponent==0 is a legitimate input upstream now — the
             // the `EnterSwordfightRequest::RaiseSword` drain branch in
@@ -557,6 +569,7 @@ impl EngineInner {
                         &self.world.fast_grid,
                         &assets.hiking_paths,
                         &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
                     )
                 };
                 let stimulus = crate::ai::Stimulus::with_human(
@@ -564,12 +577,13 @@ impl EngineInner {
                     initiator.index(),
                 );
                 let tick_data = self.build_npc_tick_data_for_target(
+                    sim,
                     opponent,
                     &scratch,
                     assets,
                     Some(initiator),
                 );
-                self.dispatch_think_with_drain(opponent, &stimulus, &ctx, &tick_data, assets);
+                self.dispatch_think_with_drain(sim, opponent, &stimulus, &ctx, &tick_data, assets);
             }
         }
 
@@ -1043,7 +1057,12 @@ impl EngineInner {
     }
 
     /// Quit swordfight: remove this entity from all opponents' lists.
-    pub(crate) fn quit_swordfight(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+    pub(crate) fn quit_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
         // Collect opponent list first to avoid borrow issues
         let opponents: Vec<EntityId> = self
             .world
@@ -1156,7 +1175,7 @@ impl EngineInner {
                 // Re-pick the principal opponent now that the list
                 // has changed, so the stale principal pointer doesn't
                 // linger on the removed fighter.
-                self.choose_principal_opponent(*opp_id);
+                self.choose_principal_opponent(sim, *opp_id);
             }
 
             // Whenever the survivor is still swordfighting, take
@@ -1285,6 +1304,7 @@ impl EngineInner {
     /// Called from the AI tick when soldiers re-evaluate their combat state.
     pub(crate) fn quit_swordfight_with_far_opponents(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
@@ -1351,9 +1371,9 @@ impl EngineInner {
             remaining
         );
         for opp_id in &removed {
-            self.evaluate_opponents(assets, *opp_id);
+            self.evaluate_opponents(sim, assets, *opp_id);
         }
-        self.evaluate_opponents(assets, entity_id);
+        self.evaluate_opponents(sim, assets, entity_id);
     }
 
     // ─── Experience points ──────────────────────────────────────────
@@ -1379,11 +1399,23 @@ impl EngineInner {
         // Bonus if victim was more skilled than attacker.
         let victim_capacity: u32 = self
             .get_entity(victim_id)
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager) as u32)
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                ) as u32
+            })
             .unwrap_or(0);
         let attacker_capacity: u32 = self
             .get_entity(attacker_id)
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager) as u32)
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                ) as u32
+            })
             .unwrap_or(0);
 
         if victim_capacity > attacker_capacity {
@@ -1425,6 +1457,7 @@ impl EngineInner {
     /// proceed with normal death handling).
     pub(super) fn try_pc_coma_save(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         damage: u16,
@@ -1507,7 +1540,7 @@ impl EngineInner {
             actor.active_melee.clear();
             actor.clear_path();
         }
-        self.quit_swordfight(assets, pc_id);
+        self.quit_swordfight(sim, assets, pc_id);
 
         // Add unconscious star titbit (event-driven creation).
         self.add_unconscious_star(pc_id);

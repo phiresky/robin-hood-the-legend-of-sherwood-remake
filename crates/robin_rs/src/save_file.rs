@@ -366,7 +366,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   missing snapshot fields by default.
 /// - **v46** (2026-07-19, nested engine snapshot): `EngineInner` serializes
 ///   its nine current state owners instead of the historical flat field list.
-pub const SAVE_FORMAT_VERSION: u32 = 46;
+/// - **v47** (2026-07-19, integrated main): prior current-format state changes.
+/// - **v48** (2026-07-19, simulation lifecycle): saves require persistent game
+///   state and serialize full SimConfig plus mission construction/restart RNG
+///   checkpoints.
+pub const SAVE_FORMAT_VERSION: u32 = 48;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,25 +442,21 @@ pub struct GameSaveFile {
     /// the sim-state portion of sound is inside `EngineInner::sound_sim`.
     pub sound: SoundManager,
     /// Host-side persistent Game flags (campaign-map display state,
-    /// widget-enable booleans, men-to-blazon mode).  `Option` so saves
-    /// written before this field existed still round-trip; missing
-    /// values default to the current live `Game` state on load.
-    #[serde(default)]
-    pub game_persistent: Option<GamePersistentState>,
+    /// widget-enable booleans, men-to-blazon mode).
+    pub game_persistent: GamePersistentState,
 }
 
 impl GameSaveFile {
     /// Build a save file from a live engine.
     ///
-    /// `game_persistent` is `None` for callers without a live `Game`
-    /// handle (test-only); the real save/load pipeline threads the
-    /// game state through via [`capture_with_game`](Self::capture_with_game).
+    /// Callers without a live `Game` handle receive the canonical default;
+    /// the real save/load pipeline uses [`capture_with_game`](Self::capture_with_game).
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
         Self {
             header: SaveHeader::new(mission_id, display_text),
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
-            game_persistent: None,
+            game_persistent: GamePersistentState::default(),
         }
     }
 
@@ -477,7 +477,7 @@ impl GameSaveFile {
         // read it cheaply; snapshot it here so the debug toggle
         // round-trips through save/load.
         persistent.draw_hidden = host.input.draw_hidden;
-        save.game_persistent = Some(persistent);
+        save.game_persistent = persistent;
         save
     }
 
@@ -519,18 +519,14 @@ impl GameSaveFile {
         game: &mut crate::game::Game,
         assets: &LevelAssets,
     ) -> std::result::Result<(), SnapshotRestoreError> {
-        let draw_hidden = self.game_persistent.as_ref().map(|p| p.draw_hidden);
+        let draw_hidden = self.game_persistent.draw_hidden;
         let persistent = self.game_persistent.clone();
         self.apply_to(engine, host, assets)?;
-        if let Some(persistent) = persistent {
-            game.persistent = persistent;
-        }
+        game.persistent = persistent;
         // Restore the debug `draw_hidden` toggle.  Must run after
         // `apply_to` because `Host::post_load_reset` may reset
         // transient input state.
-        if let Some(show) = draw_hidden {
-            host.input.draw_hidden = show;
-        }
+        host.input.draw_hidden = draw_hidden;
         Ok(())
     }
 
@@ -684,6 +680,70 @@ mod tests {
     }
 
     #[test]
+    fn save_requires_game_persistent_state() {
+        let (engine, _assets) = fresh_engine();
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "required".into());
+        let mut value = serde_json::to_value(save).unwrap();
+        value.as_object_mut().unwrap().remove("game_persistent");
+
+        assert!(serde_json::from_value::<GameSaveFile>(value).is_err());
+    }
+
+    #[test]
+    fn direct_launch_save_retains_exact_construction_and_restart_checkpoint() {
+        use robin_engine::campaign::Campaign;
+        use robin_engine::engine::SimConfig;
+        use robin_engine::player_profile::DifficultyLevel;
+
+        let mut construction_config = SimConfig::default();
+        construction_config.difficulty = DifficultyLevel::Hard;
+        construction_config.amount_of_speaking = 9;
+        construction_config.golden_eye = true;
+
+        let campaign = crate::game_session::establish_mission_restart_boundary(
+            Campaign::default(),
+            0x3333_4444,
+            construction_config,
+        );
+        let mut assets = engine_api::LevelAssets::new();
+        let engine = Engine::new_for_test_with_simulation(
+            800.0,
+            600.0,
+            campaign,
+            &mut assets,
+            0x3333_4444,
+            construction_config,
+        )
+        .unwrap();
+        let host = Host::scratch(800.0, 600.0);
+        let encoded = serde_json::to_string(&GameSaveFile::capture(
+            &engine,
+            &host,
+            0,
+            "checkpoint".into(),
+        ))
+        .unwrap();
+        let loaded: GameSaveFile = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(
+            loaded.engine.mission_start_simulation(),
+            (0x3333_4444, construction_config)
+        );
+        assert_eq!(
+            loaded.engine.campaign().restart_simulation_checkpoint(),
+            (0x3333_4444, construction_config)
+        );
+        assert!(loaded.engine.campaign().pre_mission_was_preselected);
+        let mut restarted_campaign = loaded.engine.campaign().clone();
+        assert!(restarted_campaign.restore_snapshot());
+        assert_eq!(
+            restarted_campaign.restart_simulation_checkpoint(),
+            (0x3333_4444, construction_config)
+        );
+    }
+
+    #[test]
     fn write_and_read_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_save.json");
@@ -700,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_v45_before_deserializing_flat_engine_payload() {
+    fn read_rejects_old_version_before_deserializing_flat_engine_payload() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("old_save.json");
         let old_save = serde_json::json!({
@@ -723,7 +783,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 46, got 45"
+            "unsupported save file version: expected 48, got 45"
         );
     }
 

@@ -46,11 +46,6 @@ struct ApplicationServices {
     player_profiles: Mutex<PlayerProfileManager>,
     key_configs: Mutex<KeyConfigStore>,
     shipping: Option<Arc<ShippingDatadir>>,
-    /// True only for the process context installed by `rust_init_finish`.
-    /// Test/headless contexts remain isolated from the engine compatibility
-    /// singleton.
-    #[serde(skip)]
-    mirror_profiles_to_engine_global: Mutex<bool>,
 }
 
 /// Explicit application-owned configuration and persistence context.
@@ -101,6 +96,7 @@ impl ApplicationContext {
             .get_active()
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
+        let amount_of_speaking = active.sound_config.amount_of_speaking;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -112,27 +108,27 @@ impl ApplicationContext {
             key_configs.entry_or_default(profile.id);
         }
 
+        let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
+        sim_config.amount_of_speaking = amount_of_speaking;
         Ok(Self {
-            sim_config: Arc::new(Mutex::new(engine_api::SimConfig::from_options(
-                &options, difficulty,
-            ))),
+            sim_config: Arc::new(Mutex::new(sim_config)),
             options,
             services: Some(Arc::new(ApplicationServices {
                 player_profiles: Mutex::new(player_profiles),
                 key_configs: Mutex::new(key_configs),
                 shipping,
-                mirror_profiles_to_engine_global: Mutex::new(false),
             })),
         })
     }
 
     pub fn with_options(mut self, options: engine_api::GlobalOptions) -> Self {
-        let difficulty = self.sim_config().difficulty;
+        let existing = self.sim_config();
+        let mut sim_config = engine_api::SimConfig::from_options(&options, existing.difficulty);
+        sim_config.amount_of_speaking = existing.amount_of_speaking;
         *self
             .sim_config
             .lock()
-            .expect("ApplicationContext sim-config lock poisoned") =
-            engine_api::SimConfig::from_options(&options, difficulty);
+            .expect("ApplicationContext sim-config lock poisoned") = sim_config;
         self.options = options;
         self
     }
@@ -181,22 +177,23 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, profiles_snapshot) = {
+        let (result, difficulty, amount_of_speaking) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
                 .lock()
                 .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
             let result = update(&mut profiles);
-            let difficulty = profiles
-                .get_active()
-                .ok_or_else(|| {
-                    "ApplicationContext profile mutation must leave an active profile".to_string()
-                })?
-                .difficulty;
-            (result, difficulty, profiles.clone())
+            let active = profiles.get_active().ok_or_else(|| {
+                "ApplicationContext profile mutation must leave an active profile".to_string()
+            })?;
+            (
+                result,
+                active.difficulty,
+                active.sound_config.amount_of_speaking,
+            )
         };
-        self.refresh_profile_derived_state(difficulty, profiles_snapshot)?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking)?;
         Ok(result)
     }
 
@@ -210,7 +207,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, profiles_snapshot) = {
+        let (profile_id, difficulty, amount_of_speaking) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -256,6 +253,7 @@ impl ApplicationContext {
             })?;
             let profile_id = active.id;
             let difficulty = active.difficulty;
+            let amount_of_speaking = active.sound_config.amount_of_speaking;
 
             profiles.save().map_err(|error| {
                 format!("failed to persist first-launch player profile: {error}")
@@ -263,26 +261,11 @@ impl ApplicationContext {
             key_configs.save().map_err(|error| {
                 format!("failed to persist first-launch key configuration: {error}")
             })?;
-            (profile_id, difficulty, profiles.clone())
+            (profile_id, difficulty, amount_of_speaking)
         };
 
-        self.refresh_profile_derived_state(difficulty, profiles_snapshot)?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking)?;
         Ok(profile_id)
-    }
-
-    /// Install the temporary engine-facing profile mirror required by legacy
-    /// difficulty and sound-setting reads. Migrated host/menu code must keep
-    /// using this context rather than consulting the mirror.
-    pub(crate) fn install_engine_profile_compatibility_mirror(&self) -> Result<(), String> {
-        let services = self.required_services()?;
-        let profiles = self.player_profiles_snapshot()?;
-        *services
-            .mirror_profiles_to_engine_global
-            .lock()
-            .map_err(|_| "ApplicationContext compatibility-mirror lock poisoned".to_string())? =
-            true;
-        *PlayerProfileManager::global() = Some(profiles);
-        Ok(())
     }
 
     pub(crate) fn active_profile_save_directory(&self) -> Result<std::path::PathBuf, String> {
@@ -351,22 +334,15 @@ impl ApplicationContext {
     fn refresh_profile_derived_state(
         &self,
         difficulty: robin_engine::player_profile::DifficultyLevel,
-        profiles_snapshot: PlayerProfileManager,
+        amount_of_speaking: u16,
     ) -> Result<(), String> {
+        let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
+        sim_config.amount_of_speaking = amount_of_speaking;
         *self
             .sim_config
             .lock()
-            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? =
-            engine_api::SimConfig::from_options(&self.options, difficulty);
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? = sim_config;
 
-        let mirror_enabled = *self
-            .required_services()?
-            .mirror_profiles_to_engine_global
-            .lock()
-            .map_err(|_| "ApplicationContext compatibility-mirror lock poisoned".to_string())?;
-        if mirror_enabled {
-            *PlayerProfileManager::global() = Some(profiles_snapshot);
-        }
         Ok(())
     }
 }
@@ -742,6 +718,9 @@ pub struct HostTransport {
     pub local_seat: engine_player_command::PlayerId,
     pub net: Option<crate::multiplayer::NetChannels>,
     pub mission_seed: Option<u64>,
+    pub mission_sim_config: Option<engine_api::SimConfig>,
+    pub mission_id: Option<String>,
+    pub reconnecting: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1384,6 +1363,27 @@ mod application_context_tests {
         .unwrap();
         assert_eq!(easy.sim_config().difficulty, DifficultyLevel::Medium);
         assert_eq!(hard.sim_config().difficulty, DifficultyLevel::Hard);
+    }
+
+    #[test]
+    fn replacing_launcher_options_preserves_profile_speech_amount() {
+        let context = context(0, DifficultyLevel::Medium, KeyCode::F2, "speech.marker");
+        context
+            .with_player_profiles_mut(|profiles| {
+                profiles
+                    .get_active_mut()
+                    .unwrap()
+                    .sound_config
+                    .amount_of_speaking = 9;
+            })
+            .unwrap();
+
+        let mut options = engine_api::GlobalOptions::default();
+        options.highlander2 = true;
+        let replaced = context.with_options(options);
+
+        assert_eq!(replaced.sim_config().amount_of_speaking, 9);
+        assert!(replaced.sim_config().highlander2);
     }
 
     #[test]

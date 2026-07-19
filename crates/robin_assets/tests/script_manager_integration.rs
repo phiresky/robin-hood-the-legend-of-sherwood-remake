@@ -10,6 +10,10 @@ use robin_engine::natives::{GameHost, NativeContext, NativeSessionCapabilities, 
 use robin_engine::script_manager::{ScriptError, ScriptManager};
 use support::{data_directory, data_file};
 
+fn test_sim() -> robin_engine::sim_rng::SimulationContext {
+    robin_engine::sim_rng::SimulationContext::with_seed(1)
+}
+
 /// Build a minimal .scb byte buffer with one class, one function.
 fn make_scb_bytes(class_name: &str, fn_name: &str, heap_size: i32, quads: &[scb::Quad]) -> Vec<u8> {
     let mut b = Vec::new();
@@ -192,8 +196,9 @@ fn static_area_shared_between_instances() {
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let sim = test_sim();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
     let mut inst = mgr.create_instance("Test").unwrap();
 
     {
@@ -232,8 +237,9 @@ fn native_calls_through_instance() {
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let sim = test_sim();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
     let mut context = NativeContext::new(
         &mut host,
         &mut script_state,
@@ -321,8 +327,9 @@ fn demo_script_via_manager() {
     let mut entities = robin_engine::entities::Entities::new();
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let sim = test_sim();
     let capabilities =
-        NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
 
     // Run PutActorInBuilding (addr 0, the first function).
     // It won't do much with stub natives, but shouldn't crash.

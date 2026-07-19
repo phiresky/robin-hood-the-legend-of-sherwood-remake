@@ -220,7 +220,9 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
     // Bind the target to its script class.  In production this runs
     // during per-target Initialize (see `script.rs:568-584`).
     let handle = crate::natives::ScriptHandleCodec::actor_handle(target_id);
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
         &mut engine.world.fast_grid,

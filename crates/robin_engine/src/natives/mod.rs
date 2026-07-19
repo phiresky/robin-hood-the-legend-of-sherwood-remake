@@ -1002,13 +1002,15 @@ impl NativeContext<'_, '_> {
                     emit_count += 1;
                 }
                 // Random 0..30: source uses `rand() & 15 + rand() & 15`.
-                // Script recording runs under the engine's installed
-                // simulation RNG, so this consumes the same deterministic
-                // stream as runtime gate routing.
+                // Script recording receives the engine's explicit simulation
+                // context, so this consumes the same deterministic stream as
+                // runtime gate routing.
                 let r: u32 = crate::sim_rng::u32(
+                    self.simulation,
                     crate::sim_rng::RngSite::SequenceRecordingBuildingExitWait,
                     0..16,
                 ) + crate::sim_rng::u32(
+                    self.simulation,
                     crate::sim_rng::RngSite::SequenceRecordingBuildingExitWait,
                     0..16,
                 );
@@ -2222,11 +2224,7 @@ impl NativeContext<'_, '_> {
 
             // Maximal ammo reads from the profile and applies difficulty
             // scaling before either live or campaign state is changed.
-            let difficulty = crate::player_profile::PlayerProfileManager::global()
-                .as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.difficulty)
-                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            let difficulty = self.simulation.config().difficulty;
             let Some(profile) = self.bindings.profile_manager.get_character(profile_index) else {
                 tracing::warn!(
                     ?profile_index,

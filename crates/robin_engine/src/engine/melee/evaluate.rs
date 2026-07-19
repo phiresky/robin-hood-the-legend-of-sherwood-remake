@@ -90,13 +90,25 @@ impl EngineInner {
 
         let own_ability = self
             .get_entity(entity_id)
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                )
+            })
             .unwrap_or(50);
 
         let opponents_total: u16 = opponents
             .iter()
             .filter_map(|id| self.get_entity(*id))
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                )
+            })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
 
         let rfa = combat::compute_relative_fighting_ability(own_ability, opponents_total);
@@ -140,6 +152,7 @@ impl EngineInner {
     ///   a reachable slot.
     pub(super) fn update_swordfight_distance(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
     ) -> bool {
@@ -324,9 +337,11 @@ impl EngineInner {
             (dist_map_dx * scale, dist_map_dy * scale)
         } else {
             // Degenerate: pick a random direction.
-            let sector =
-                crate::sim_rng::u16(crate::sim_rng::RngSite::MeleeDegenerateDirection, 0..16)
-                    as i16;
+            let sector = crate::sim_rng::u16(
+                sim,
+                crate::sim_rng::RngSite::MeleeDegenerateDirection,
+                0..16,
+            ) as i16;
             let (dx_s, dy_s) = crate::element::direction_vector_16(sector);
             (dx_s * geo_movement, dy_s * geo_movement)
         };
@@ -422,7 +437,11 @@ impl EngineInner {
     ///   pick remain in `tick_smalltalk`.
     /// - The step-back check is invoked from `tick_smalltalk`
     ///   already.
-    pub(crate) fn tick_evaluate_swordfight(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
+    pub(crate) fn tick_evaluate_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> Vec<EntityId> {
         // legacy implementation runs EvaluateSmalltalkHint() from the WaitingSword execute
         // arm before EvaluateSwordfight().  Keep this as a pre-pass so a
         // stored hint suppresses all normal swordfight evaluation for
@@ -583,8 +602,8 @@ impl EngineInner {
                 Self::remove_opponent(&mut self.world.entities, snap.principal_id, snap.entity_id);
                 self.recompute_relative_fighting_ability(snap.entity_id, assets);
                 self.recompute_relative_fighting_ability(snap.principal_id, assets);
-                self.evaluate_opponents(assets, snap.entity_id);
-                self.evaluate_opponents(assets, snap.principal_id);
+                self.evaluate_opponents(sim, assets, snap.entity_id);
+                self.evaluate_opponents(sim, assets, snap.principal_id);
                 continue;
             }
 
@@ -632,8 +651,8 @@ impl EngineInner {
                 Self::remove_opponent(&mut self.world.entities, snap.principal_id, snap.entity_id);
                 self.recompute_relative_fighting_ability(snap.entity_id, assets);
                 self.recompute_relative_fighting_ability(snap.principal_id, assets);
-                self.evaluate_opponents(assets, snap.entity_id);
-                self.evaluate_opponents(assets, snap.principal_id);
+                self.evaluate_opponents(sim, assets, snap.entity_id);
+                self.evaluate_opponents(sim, assets, snap.principal_id);
                 continue;
             }
 
@@ -655,9 +674,10 @@ impl EngineInner {
             // opponents.  NPCs delegate this to their AI.
             if snap.is_pc
                 && snap.num_opponents >= 2
-                && crate::sim_rng::u32(crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3) == 0
+                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3)
+                    == 0
             {
-                self.choose_principal_opponent(snap.entity_id);
+                self.choose_principal_opponent(sim, snap.entity_id);
                 // Principal may have changed; the rest of this
                 // iteration operates on the snapshot's old principal
                 // — that's acceptable, the swap-to-front updates the
@@ -676,9 +696,10 @@ impl EngineInner {
                 }
                 // Doesn't have the initiative → run distance
                 // maintenance.
-                self.update_swordfight_distance(assets, snap.entity_id);
+                self.update_swordfight_distance(sim, assets, snap.entity_id);
                 continue;
-            } else if crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100) >= 10
+            } else if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100)
+                >= 10
             {
                 continue;
             }
@@ -691,14 +712,14 @@ impl EngineInner {
             let near = (snap.self_max * snap.self_max) >= sq_dist;
             if !near {
                 // Out of range → adjust distance.
-                self.update_swordfight_distance(assets, snap.entity_id);
+                self.update_swordfight_distance(sim, assets, snap.entity_id);
                 continue;
             }
 
             // Non-selected PC autopilot — propose a good sword strike
             // and launch it as a sequence element.
             if snap.is_pc && !snap.is_selected_pc {
-                self.pc_propose_and_launch_strike(assets, snap.entity_id, snap.principal_id);
+                self.pc_propose_and_launch_strike(sim, assets, snap.entity_id, snap.principal_id);
             }
         }
         consumed_smalltalk_hint_actors
@@ -712,6 +733,7 @@ impl EngineInner {
     /// embellishments handled in `tick_enemy_sword_attacks`.
     pub(super) fn pc_propose_and_launch_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         target_id: EntityId,
@@ -880,7 +902,8 @@ impl EngineInner {
         };
 
         let strike =
-            match crate::combat::propose_good_sword_strike(&ctx, &nearby, &mut boredom, false) {
+            match crate::combat::propose_good_sword_strike(sim, &ctx, &nearby, &mut boredom, false)
+            {
                 Some(crate::combat::ProposedCombatAction::Strike(s)) => s,
                 _ => return,
             };
@@ -926,6 +949,7 @@ impl EngineInner {
     /// satisfy `is_straight_movement_authorized`.
     pub(super) fn is_step_back_needed(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         entity_id: impl Into<EntityId>,
         assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
@@ -958,7 +982,13 @@ impl EngineInner {
             .unwrap_or_default()
             .iter()
             .filter_map(|id| self.get_entity(*id))
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                )
+            })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
 
         let (dx_dir, dy_dir) =
@@ -991,7 +1021,11 @@ impl EngineInner {
             let sq_range = max_range * max_range;
             let sq_dist = rel_x * rel_x + rel_y * rel_y;
             if sq_dist <= sq_range {
-                let fa = fighting_ability_from_profile(opp, &assets.profile_manager);
+                let fa = fighting_ability_from_profile(
+                    opp,
+                    &assets.profile_manager,
+                    sim.config().difficulty,
+                );
                 opponents_ability = opponents_ability.saturating_add(fa);
             } else {
                 opponents_ability = opponents_ability.saturating_add(1);
@@ -999,7 +1033,7 @@ impl EngineInner {
         }
 
         // `(rand() % 100) * uwOpponentsAbility <= 100 * uwFriendsAbility`
-        let roll = crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeStepBack, 0..100) as u64;
+        let roll = crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeStepBack, 0..100) as u64;
         if roll * opponents_ability as u64 <= 100u64 * friends_ability as u64 {
             return None;
         }
@@ -1084,6 +1118,7 @@ impl EngineInner {
     /// Selected PCs never auto-parry (the player controls their parry).
     pub(super) fn warn_for_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         victims: &[EntityId],
@@ -1104,7 +1139,11 @@ impl EngineInner {
                 } else {
                     None
                 };
-                let ability = fighting_ability_from_profile(victim, &assets.profile_manager);
+                let ability = fighting_ability_from_profile(
+                    victim,
+                    &assets.profile_manager,
+                    sim.config().difficulty,
+                );
                 let action = victim
                     .actor_data()
                     .map(|a| a.action_state)
@@ -1143,13 +1182,13 @@ impl EngineInner {
                         | Some(crate::ai::Substate::AttackingApproachingNewEnemy)
                 );
                 if in_swordfight_substate {
-                    self.consider_to_begin_parade(assets, victim_id, attacker_id, strike);
+                    self.consider_to_begin_parade(sim, assets, victim_id, attacker_id, strike);
                 }
                 continue;
             }
 
             // PC parade/counter-strike via
-            // `propose_good_sword_strike(also_parade=true)`, which
+            // `propose_good_sword_strike(sim, also_parade=true)`, which
             // may produce a counter-strike or a parry fallback.
             //
             // Guard: `is_swordfighting() == false → return`.  That
@@ -1338,6 +1377,7 @@ impl EngineInner {
             };
 
             let proposed = crate::combat::propose_good_sword_strike(
+                sim,
                 &strike_ctx,
                 &nearby,
                 &mut pc_boredom,
@@ -1405,11 +1445,12 @@ impl EngineInner {
     ///   incoming strike isn't recognized, they do nothing.
     /// - **Step-back dodge**: skilled soldiers may dodge backward instead of
     ///   parrying push/circle strikes.
-    /// - **Counter-strike**: `propose_good_sword_strike(also_parade=true)`
+    /// - **Counter-strike**: `propose_good_sword_strike(sim, also_parade=true)`
     ///   may pick an offensive counter-attack.
     /// - **Parade fallback**: if no good counter-strike, fall into parry stance.
     pub(super) fn consider_to_begin_parade(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
@@ -1460,7 +1501,7 @@ impl EngineInner {
         };
 
         // ── 4. Build context and call
-        //   `propose_good_sword_strike(also_parade=true)`. ──
+        //   `propose_good_sword_strike(sim, also_parade=true)`. ──
         // Collect victim state for strike selection
         let (
             victim_weapon_id,
@@ -1657,6 +1698,7 @@ impl EngineInner {
         };
 
         let proposed = crate::combat::propose_good_sword_strike(
+            sim,
             &strike_ctx,
             &nearby,
             &mut victim_boredom,
@@ -1946,7 +1988,13 @@ impl EngineInner {
         let strike_opt = Some(strike);
         let fighting_ability = self
             .get_entity(soldier_id)
-            .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
+            .map(|e| {
+                fighting_ability_from_profile(
+                    e,
+                    &assets.profile_manager,
+                    self.control.sim_config.difficulty,
+                )
+            })
             .unwrap_or(0);
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(soldier_id)

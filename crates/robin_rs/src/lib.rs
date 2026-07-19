@@ -5,10 +5,11 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(test), deny(clippy::print_stdout, clippy::print_stderr))]
-// Rollback multiplayer requires every gameplay RNG pull to come from
-// `Engine::rng` via `crate::sim_rng::*`. See `clippy.toml` for the banned
-// function list. Individual escape hatches (UI, audio jitter, tests) must
-// carry an `#[allow(clippy::disallowed_methods)]` with a comment.
+// Rollback multiplayer requires every gameplay RNG pull to use the explicit
+// context derived from `EngineInner::control.rng` via `robin_engine::sim_rng`.
+// See `clippy.toml` for the banned function list. Individual escape hatches
+// (UI, audio jitter, tests) must carry an
+// `#[allow(clippy::disallowed_methods)]` with a comment.
 #![warn(clippy::disallowed_methods)]
 
 use std::sync::{Mutex, Once, OnceLock};

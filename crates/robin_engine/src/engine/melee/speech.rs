@@ -293,14 +293,7 @@ impl EngineInner {
     ) {
         use crate::sound::ExclamationGroup;
 
-        // Get SoundConfig amount_of_speaking
-        let amount_of_speaking = {
-            let ppm = crate::player_profile::PlayerProfileManager::global();
-            ppm.as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.sound_config.amount_of_speaking)
-                .unwrap_or(5)
-        };
+        let amount_of_speaking = self.control.sim_config.amount_of_speaking;
 
         // Priority filtering — the cascade returns hard with no
         // priority exemption.  `SPEECH_ALWAYS` bypasses only the
@@ -405,7 +398,11 @@ impl EngineInner {
     /// change to `None` (id 0) is MotionState::Done.  Filtering
     /// (chorus / forbidden / amount-of-speaking) is applied inside
     /// `hero_speaking`.
-    pub(super) fn tick_pc_combat_anim_speech(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_pc_combat_anim_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         use crate::order::OrderType as OT;
 
         // Collect transitions first to avoid borrow conflicts with hero_speaking.
@@ -490,7 +487,7 @@ impl EngineInner {
         }
         for (id, expr) in start_eventual {
             // 50% chance.
-            if crate::sim_rng::bool(crate::sim_rng::RngSite::HeroSpeech) {
+            if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::HeroSpeech) {
                 self.hero_speaking(assets, id, expr);
             }
         }

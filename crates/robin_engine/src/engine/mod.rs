@@ -198,6 +198,7 @@ struct QuitMissionContext<'a> {
 impl QuitMissionContext<'_> {
     fn apply_won_updates(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         profiles: &crate::profiles::ProfileManager,
         living: u32,
         dead: u32,
@@ -223,7 +224,7 @@ impl QuitMissionContext<'_> {
         // so replay and multiplayer execution cannot consult ambient state.
         let recruited = self
             .campaign
-            .recruit_post_mission_peasants(living, dead, difficulty, profiles);
+            .recruit_post_mission_peasants(sim, living, dead, difficulty, profiles);
         self.mission_stat.new_peasant_count = recruited;
         tracing::info!("Post-mission warcrime recruitment: {recruited} new peasants");
 
@@ -414,7 +415,7 @@ impl EngineInner {
             // `original-code/launcher.cpp:762-766` calls `srand(0)`.
             // `Engine::new` replaces this bare-engine test seed with the
             // replay/match seed before level setup draws.
-            control: SimulationControl::new(0),
+            control: SimulationControl::new(0, SimConfig::default()),
             ai: AiRuntime::new(),
             world: WorldState::new(),
             script_domains: state::ScriptDomains::default(),
@@ -431,22 +432,27 @@ impl EngineInner {
     ///
     /// Called from `Engine::new` after level loading is complete.
     pub(crate) fn initialize(&mut self, assets: &mut LevelAssets) {
-        self.with_sim_rng(|engine| engine.initialize_inner(assets));
+        self.with_simulation_context(|engine, sim| engine.initialize_inner(assets, sim));
     }
 
     /// Run non-tick simulation work against the engine's authoritative RNG.
     ///
     /// This is also used by focused tests that invoke a normally tick-owned
-    /// subsystem directly. A panic is fatal to the simulation and may leave
-    /// the thread-local installed, matching `perform_hourglass` semantics.
-    pub(crate) fn with_sim_rng<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.control.enter_rng_scope();
-        let result = f(self);
-        self.control.leave_rng_scope();
-        result
+    /// subsystem directly. The capability remains tied to this engine's one
+    /// serialized stream and cannot be omitted by a downstream caller.
+    pub(crate) fn with_simulation_context<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self, &crate::sim_rng::SimulationContext) -> R,
+    ) -> R {
+        let sim = self.control.simulation_context();
+        f(self, &sim)
     }
 
-    fn initialize_inner(&mut self, assets: &mut LevelAssets) {
+    fn initialize_inner(
+        &mut self,
+        assets: &mut LevelAssets,
+        sim: &crate::sim_rng::SimulationContext,
+    ) {
         // Called from `Engine::new` after the motion stage
         // has built out `fast_grid` (grid size + map bbox + motion
         // lines) and loaded the pathfinder graph.  Everything the
@@ -465,7 +471,7 @@ impl EngineInner {
         // script Init (pending the scroll script subsystem port) +
         // `ForceRandomSpriteFrame` so each scroll starts on a random
         // frame of its waving animation.
-        self.initialize_all_scrolls();
+        self.initialize_all_scrolls(sim);
 
         // Pathfinder obstacle states now that the graph is loaded.
         if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
@@ -486,7 +492,7 @@ impl EngineInner {
         // populated so `spawn_soldier`'s move_box ends up at the real
         // profile-sized pathfinder box instead of the `(-1,-1,1,1)`
         // fallback.
-        self.init_ai(assets);
+        self.init_ai(sim, assets);
 
         // Update player's ears position.
         self.update_sound_listener_position();
@@ -539,7 +545,7 @@ impl EngineInner {
     /// subsystem port) and then `ForceRandomSpriteFrame` so every
     /// scroll starts on a random frame of its fluttering animation
     /// instead of all waving in lockstep.
-    fn initialize_all_scrolls(&mut self) {
+    fn initialize_all_scrolls(&mut self, sim: &crate::sim_rng::SimulationContext) {
         for (_, scroll) in self.world.entities.scrolls_mut() {
             // Original: `RHElementScroll::Initialize` in
             // `original-code/RHElementScroll.cpp:153-171` calls
@@ -547,7 +553,7 @@ impl EngineInner {
             scroll
                 .element
                 .sprite
-                .force_random_sprite_frame(crate::sim_rng::RngSite::ScrollInitialFrame);
+                .force_random_sprite_frame(sim, crate::sim_rng::RngSite::ScrollInitialFrame);
         }
     }
 
@@ -625,6 +631,7 @@ impl EngineInner {
     ///
     pub(crate) fn apply_quit_mission_updates(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         exit_code: crate::game_operation::GameCode,
         difficulty: crate::player_profile::DifficultyLevel,
@@ -655,7 +662,7 @@ impl EngineInner {
             // totals onto the campaign.
             let tied_score = self.score_tied_unconscious_soldiers();
             self.quit_mission_context()
-                .apply_won_updates(profiles, living, dead, tied_score, difficulty);
+                .apply_won_updates(sim, profiles, living, dead, tied_score, difficulty);
         } else {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
@@ -3228,6 +3235,7 @@ impl EngineInner {
     /// `game_session.rs` on the Sherwood "StartMission" button path.
     pub(crate) fn convert_selected_peasants_to_blazons(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         profiles: &crate::profiles::ProfileManager,
     ) {
         let campaign = &self.mission_domain.campaign;
@@ -3281,6 +3289,7 @@ impl EngineInner {
             // `rand() % (LIFEPOINTS_PC << 1) < life_points`; healthier
             // peasants survive into reservists, frailer ones die outright.
             let roll = crate::sim_rng::u32(
+                sim,
                 crate::sim_rng::RngSite::PeasantReservistSurvival,
                 0..LIFEPOINTS_PC_X2,
             ) as i32;
@@ -3415,7 +3424,11 @@ impl EngineInner {
     /// The serialized flag keeps both live play and rollback replay
     /// idempotent; [`EngineInner::perform_post_initialize`] owns the
     /// original post-refresh host boundary.
-    pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
+    pub(crate) fn run_post_initialize_if_needed(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let Some(script) = self.scripts.mission.as_mut() else {
             return;
         };
@@ -3425,7 +3438,7 @@ impl EngineInner {
         script.post_initialized = true;
 
         let result = self
-            .with_script_session(assets, |script, script_domains, capabilities| {
+            .with_script_session(sim, assets, |script, script_domains, capabilities| {
                 script.post_initialize(script_domains, capabilities)
             })
             .expect("PostInitialize mission script disappeared before dispatch");
@@ -3776,6 +3789,8 @@ mod campaign_lifecycle_tests {
 
     #[test]
     fn quit_updates_preserve_the_campaign_allocation() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut campaign = marked_campaign();
         campaign.production_sectors.reserve_exact(257);
         assert!(!campaign.production_sectors.is_empty());
@@ -3784,6 +3799,7 @@ mod campaign_lifecycle_tests {
         let mut engine = EngineInner::new_with_campaign(campaign);
 
         engine.apply_quit_mission_updates(
+            sim,
             &LevelAssets::default(),
             GameCode::LevelFailed,
             DifficultyLevel::Medium,
@@ -3800,6 +3816,8 @@ mod campaign_lifecycle_tests {
 
     #[test]
     fn successful_quit_updates_keep_original_order_and_state() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut campaign, assets) = active_historical_mission();
         campaign.values[CampaignValue::LivingSoldiers] = 7;
         campaign.values[CampaignValue::DeadSoldiers] = 11;
@@ -3810,6 +3828,7 @@ mod campaign_lifecycle_tests {
         engine.mission_domain.mission_stat.total_soldier_count = 5;
         engine.mission_domain.mission_stat.new_peasant_count = 99;
         engine.apply_quit_mission_updates(
+            sim,
             &assets,
             GameCode::LevelSucceeded,
             DifficultyLevel::Medium,
@@ -3826,6 +3845,8 @@ mod campaign_lifecycle_tests {
 
     #[test]
     fn serialized_quit_command_applies_deterministically() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (campaign, assets) = active_historical_mission();
         let mut first = EngineInner::new_with_campaign(campaign.clone());
         let mut second = EngineInner::new_with_campaign(campaign);
@@ -3841,7 +3862,7 @@ mod campaign_lifecycle_tests {
         for engine in [&mut first, &mut second] {
             let mut display = super::HostDisplayState::default();
             let mut input = super::InputState::default();
-            engine.apply_command(&mut display, &mut input, &assets, &decoded);
+            engine.apply_command(sim, &mut display, &mut input, &assets, &decoded);
         }
 
         assert_eq!(

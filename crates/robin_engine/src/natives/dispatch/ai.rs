@@ -488,7 +488,7 @@ impl NativeContext<'_, '_> {
                 //       has_patrol_path = true;
                 //   }
                 //   if (state == Default) {
-                //       return_to_duty();
+                //       return_to_duty(sim, );
                 //   }
                 let actor = stack.pop_i32();
                 let hiking_paths = self.bindings.hiking_paths.clone();

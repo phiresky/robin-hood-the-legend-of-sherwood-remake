@@ -540,6 +540,8 @@ mod tests {
 
     #[test]
     fn unconscious_hold_terminates_after_wakeup() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut sequence_manager = crate::sequence::SequenceManager::new();
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
@@ -555,6 +557,7 @@ mod tests {
         };
 
         let outcome = dispatch_arm_completion(
+            sim,
             OrderType::BeingUnconsciousSword,
             MotionState::InProgress,
             &mut ctx,
@@ -568,6 +571,8 @@ mod tests {
 
     #[test]
     fn unconscious_hold_consumes_while_unconscious() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut sequence_manager = crate::sequence::SequenceManager::new();
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
@@ -583,6 +588,7 @@ mod tests {
         };
 
         let outcome = dispatch_arm_completion(
+            sim,
             OrderType::BeingUnconsciousSword,
             MotionState::Terminated,
             &mut ctx,
@@ -634,11 +640,14 @@ mod tests {
 
     #[test]
     fn lying_stuck_under_net_start_sets_original_states_for_alive_free_actor() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Upright);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
         apply_under_net_cycle_side_effect(
+            sim,
             &mut entity,
             OrderType::LyingStuckUnderNet,
             MotionState::Start,
@@ -662,8 +671,9 @@ mod tests {
                 crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(7)));
         }
 
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             apply_under_net_cycle_side_effect(
+                sim,
                 &mut entity,
                 OrderType::WriggleUnderNet,
                 MotionState::Start,
@@ -684,6 +694,8 @@ mod tests {
 
     #[test]
     fn wriggle_under_net_terminated_clears_soldier_emoticon() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entity = weak_soldier_at_action_done(0);
         if let Entity::Soldier(soldier) = &mut entity {
             soldier.npc.ai_brain =
@@ -695,6 +707,7 @@ mod tests {
             .set_emoticon(crate::ai::EmoticonType::Thunderstorm);
 
         apply_under_net_cycle_side_effect(
+            sim,
             &mut entity,
             OrderType::WriggleUnderNet,
             MotionState::Terminated,
@@ -708,6 +721,8 @@ mod tests {
 
     #[test]
     fn wriggle_under_net_terminated_mutates_back_and_consumes() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WriggleUnderNet);
         let original_id = sequence_manager
             .get_element(seq_id, 0)
@@ -730,6 +745,7 @@ mod tests {
         };
 
         let outcome = dispatch_arm_completion(
+            sim,
             OrderType::WriggleUnderNet,
             MotionState::Terminated,
             &mut ctx,
@@ -750,8 +766,8 @@ mod tests {
     fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
         let seed = (0..1000)
             .find(|seed| {
-                crate::sim_rng::with_seed(*seed, || {
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0
+                crate::sim_rng::with_seed(*seed, |sim| {
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0
                 })
             })
             .expect("test should find a 1/31 roll seed");
@@ -769,8 +785,9 @@ mod tests {
             side_outcomes: &mut side_outcomes,
         };
 
-        let outcome = crate::sim_rng::with_seed(seed, || {
+        let outcome = crate::sim_rng::with_seed(seed, |sim| {
             dispatch_arm_completion(
+                sim,
                 OrderType::LyingStuckUnderNet,
                 MotionState::InProgress,
                 &mut ctx,
@@ -2337,6 +2354,8 @@ fn apply_sword_parry_side_effect(
 }
 
 fn apply_under_net_cycle_side_effect(
+    sim: &crate::sim_rng::SimulationContext,
+
     entity: &mut Entity,
     anim_type: OrderType,
     motion: MotionState,
@@ -2366,7 +2385,7 @@ fn apply_under_net_cycle_side_effect(
 
     match (anim_type, motion) {
         (OT::WriggleUnderNet, MS::Start) => {
-            match crate::sim_rng::u32(crate::sim_rng::RngSite::WriggleDirection, ..3) {
+            match crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WriggleDirection, ..3) {
                 0 => {
                     let direction = (entity.element_data().direction() + 1) & 15;
                     entity.element_data_mut().set_direction_instantly(direction);
@@ -2540,6 +2559,8 @@ struct ArmCtx<'a> {
 }
 
 fn dispatch_arm_completion(
+    sim: &crate::sim_rng::SimulationContext,
+
     anim_type: OrderType,
     motion: MotionState,
     ctx: &mut ArmCtx<'_>,
@@ -2563,8 +2584,11 @@ fn dispatch_arm_completion(
             if is_wait_cmd {
                 let next_type = match anim_type {
                     OT::WaitingUprightBored => {
-                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BoredAnimationChoice, ..10)
-                            == 0
+                        if crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::BoredAnimationChoice,
+                            ..10,
+                        ) == 0
                         {
                             OT::WaitingUprightBoredRandom
                         } else {
@@ -2594,7 +2618,7 @@ fn dispatch_arm_completion(
     // on every motion state (the roll runs before the motion-state
     // switch), then always return InProgress.
     if matches!(anim_type, OT::LyingStuckUnderNet) {
-        if crate::sim_rng::u32(crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0 {
+        if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0 {
             if let Some(elem) = ctx
                 .sequence_manager
                 .get_element_mut(ctx.seq_id, ctx.elem_idx)
@@ -2706,6 +2730,7 @@ impl EngineInner {
     ///   (need EventAfterCombatInjury dispatch for soldiers).
     pub(super) fn tick_entity_animations(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::types::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>, AnimCompletionOutcomes) {
         if self.actors_frozen() {
@@ -2801,7 +2826,7 @@ impl EngineInner {
 
             // Actors: animate based on current action state
             if let Some(actor) = entity.actor_data() {
-                // Moving actors are animated in tick_entity_movement(),
+                // Moving actors are animated in tick_entity_movement(sim, ),
                 // which computes per-frame combat directional anims
                 // (WalkingSword / StrafingRightSword / …) for the
                 // sword/shield variants rather than using the Move
@@ -3032,6 +3057,7 @@ impl EngineInner {
                         let sprite_motion = {
                             let sprite = &mut entity.element_data_mut().sprite;
                             sprite.perform_action(
+                                sim,
                                 order_id,
                                 effective_anim,
                                 direction,
@@ -3208,7 +3234,14 @@ impl EngineInner {
                                     FrameProgression::Default,
                                 )
                             };
-                            Some(sprite.perform_action(order_id, played, row, progression, false))
+                            Some(sprite.perform_action(
+                                sim,
+                                order_id,
+                                played,
+                                row,
+                                progression,
+                                false,
+                            ))
                         });
                         // While still turning, the arm returns
                         // InProgress regardless of what the
@@ -3339,7 +3372,7 @@ impl EngineInner {
                             motion_state,
                             principal_frames_from_now,
                         );
-                        apply_under_net_cycle_side_effect(entity, anim_type, motion_state);
+                        apply_under_net_cycle_side_effect(sim, entity, anim_type, motion_state);
                         apply_smalltalk_start_and_recovery_side_effect(
                             entity,
                             anim_type,
@@ -3436,7 +3469,7 @@ impl EngineInner {
                         side_outcomes: &mut completion_outcomes.execute_sides,
                     };
                     let outcome =
-                        motion.map(|m| dispatch_arm_completion(anim_type, m, &mut arm_ctx));
+                        motion.map(|m| dispatch_arm_completion(sim, anim_type, m, &mut arm_ctx));
                     let forwarded = match outcome {
                         Some(ExecuteOutcome::Forward(m)) => Some(m),
                         Some(ExecuteOutcome::Consumed) | None => None,
@@ -3552,7 +3585,7 @@ impl EngineInner {
 
                     let motion = {
                         let elem = entity.element_data_mut();
-                        elem.sprite.perform_virgin_increment(progression)
+                        elem.sprite.perform_virgin_increment(sim, progression)
                     };
 
                     // When transition animation finishes, queue the
@@ -3579,7 +3612,7 @@ impl EngineInner {
                     entity
                         .element_data_mut()
                         .sprite
-                        .perform_virgin_increment(progression);
+                        .perform_virgin_increment(sim, progression);
                 }
                 continue;
             }
@@ -3604,7 +3637,7 @@ impl EngineInner {
                 } else {
                     FrameProgression::FreezeWhenTerminated
                 };
-                p.element.sprite.perform_virgin_increment(progression);
+                p.element.sprite.perform_virgin_increment(sim, progression);
                 continue;
             }
 
@@ -3624,7 +3657,7 @@ impl EngineInner {
             entity
                 .element_data_mut()
                 .sprite
-                .increment_frame(FrameProgression::Cyclically);
+                .increment_frame(sim, FrameProgression::Cyclically);
         }
 
         // Process completed patch transitions (deferred to avoid borrow
@@ -3673,7 +3706,7 @@ impl EngineInner {
                 "Patch transition animation completed → ApplyFinal"
             );
 
-            self.process_patch_effects(assets, patch_idx, effects);
+            self.process_patch_effects(sim, assets, patch_idx, effects);
         }
 
         // Drain `non_interruptable_lifts` after the entity loop ends.

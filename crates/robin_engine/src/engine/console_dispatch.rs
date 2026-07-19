@@ -48,6 +48,7 @@ impl EngineInner {
     /// Returns `ConsoleResponse::Unknown` if the input doesn't parse.
     pub(crate) fn run_console_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         dev: &mut DevState,
         selected_view_element: &mut Option<EntityId>,
@@ -84,7 +85,7 @@ impl EngineInner {
             return ConsoleResponse::Unknown;
         };
         dev.console.push_history(input);
-        self.dispatch_console_command(assets, dev, selected_view_element, &cmd)
+        self.dispatch_console_command(sim, assets, dev, selected_view_element, &cmd)
     }
 
     /// Dev-forced entry for out-of-band cheat sources (HTTP RPC, debug
@@ -102,7 +103,8 @@ impl EngineInner {
     ) -> ConsoleResponse {
         let saved = dev.console.use_final;
         dev.console.use_final = false;
-        let resp = self.run_console_command(assets, dev, selected_view_element, input);
+        let sim = self.control.simulation_context();
+        let resp = self.run_console_command(&sim, assets, dev, selected_view_element, input);
         dev.console.use_final = saved;
         resp
     }
@@ -118,6 +120,7 @@ impl EngineInner {
     /// can write back.
     pub fn dispatch_console_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         dev: &mut DevState,
         selected_view_element: &mut Option<EntityId>,
@@ -174,8 +177,11 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!("{amount} amulets set."))
             }
             AddPeasant => {
-                self.campaign_mut_or_panic()
-                    .add_new_peasant_to_gang(None, &assets.profile_manager);
+                self.campaign_mut_or_panic().add_new_peasant_to_gang(
+                    sim,
+                    None,
+                    &assets.profile_manager,
+                );
                 ConsoleResponse::Ok("New member!".to_string())
             }
             CampaignReport => {
@@ -226,8 +232,10 @@ impl EngineInner {
                     // Per-mission rescue-PC table — adds recruits
                     // matching the current mission filename (e.g.
                     // S01_Not_VL → Stutely + Paysan A/B/C).
-                    let added =
-                        campaign.rescue_pcs_for_current_mission_win(&assets.profile_manager);
+                    let added = campaign.rescue_pcs_for_current_mission_win(
+                        &assets.profile_manager,
+                        self.control.sim_config.difficulty,
+                    );
                     if added > 0 {
                         tracing::info!("WIN cheat: rescued {added} PC(s)");
                     }
@@ -1354,26 +1362,32 @@ mod tests {
 
     #[test]
     fn unknown_input_returns_unknown() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert_eq!(
-            engine.run_console_command(&assets(), &mut dev, &mut None, "XYZZY"),
+            engine.run_console_command(sim, &assets(), &mut dev, &mut None, "XYZZY"),
             ConsoleResponse::Unknown
         );
     }
 
     #[test]
     fn parsed_input_pushes_history() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
-        let _ = engine.run_console_command(&assets(), &mut dev, &mut None, "NUKE");
+        let _ = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE");
         assert_eq!(dev.console.history.last().map(String::as_str), Some("NUKE"));
     }
 
     #[test]
     fn big_brother_toggles_rendered_entity_ids() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "BIG BROTHER");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "BIG BROTHER");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actor infos displayed !".to_string())
@@ -1381,7 +1395,7 @@ mod tests {
         assert!(dev.debug.actor_info_display);
         assert!(dev.debug.entity_ids);
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "BIG BROTHER");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "BIG BROTHER");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actors infos hidden !".to_string())
@@ -1389,7 +1403,7 @@ mod tests {
         assert!(!dev.debug.actor_info_display);
         assert!(!dev.debug.entity_ids);
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "IDS");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "IDS");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Actor infos displayed !".to_string())
@@ -1400,16 +1414,18 @@ mod tests {
 
     #[test]
     fn sprite_masks_toggles_overlay() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "SPRITEMASKS");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "SPRITEMASKS");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Sprite masks displayed.".to_string())
         );
         assert!(dev.debug.sprite_masks_display);
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "SPRITE MASKS");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "SPRITE MASKS");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Sprite masks hidden.".to_string())
@@ -1419,11 +1435,13 @@ mod tests {
 
     #[test]
     fn give_money_mutates_campaign() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
         let before = Some(&engine.mission_domain.campaign)
             .unwrap()
             .get_value(CampaignValue::Ransom);
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "EZB 500");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "EZB 500");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Money !\n500 gold added.".to_string())
@@ -1436,32 +1454,38 @@ mod tests {
 
     #[test]
     fn lose_mission_sets_quit_lost() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let (mut engine, mut dev) = engine_with_campaign();
         assert!(!engine.mission_domain.state.quit_lost);
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "LOOSE");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "LOOSE");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
         assert!(engine.mission_domain.state.quit_lost);
     }
 
     #[test]
     fn freeze_toggles_ai_global_flag() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert!(!engine.ai.global.freeze);
-        engine.run_console_command(&assets(), &mut dev, &mut None, "FREEZE");
+        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "FREEZE");
         assert!(engine.ai.global.freeze);
-        engine.run_console_command(&assets(), &mut dev, &mut None, "FREEZE");
+        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "FREEZE");
         assert!(!engine.ai.global.freeze);
     }
 
     #[test]
     fn ubiquity_reveals_all_blipped_npcs() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         let id_blipped = engine.add_entity(soldier(true));
         let id_plain = engine.add_entity(soldier(false));
 
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "UBIQUITY");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UBIQUITY");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
 
         assert!(
@@ -1476,6 +1500,8 @@ mod tests {
 
     #[test]
     fn highlander2_marks_enemy_npcs_invulnerable() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         let id = engine.add_entity(soldier(false));
@@ -1489,7 +1515,7 @@ mod tests {
                 .invulnerable
         );
 
-        engine.run_console_command(&assets(), &mut dev, &mut None, "HIGHLANDER2");
+        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "HIGHLANDER2");
 
         assert!(
             engine
@@ -1503,24 +1529,30 @@ mod tests {
 
     #[test]
     fn elevation_is_debug_toggle() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         assert!(!dev.debug.elevation_display);
-        engine.run_console_command(&assets(), &mut dev, &mut None, "ELEVATION");
+        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "ELEVATION");
         assert!(dev.debug.elevation_display);
     }
 
     #[test]
     fn level_text_routes_by_option() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.run_console_command(&assets(), &mut dev, &mut None, "LEVEL TEXT DB");
+        engine.run_console_command(sim, &assets(), &mut dev, &mut None, "LEVEL TEXT DB");
         assert!(dev.debug.all_debriefings);
         assert!(!dev.debug.all_dialogues);
     }
 
     #[test]
     fn roter_alarm_launches_enter_attentive_sequence_on_every_soldier() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         let id = engine.add_entity(soldier(false));
@@ -1530,7 +1562,7 @@ mod tests {
             assert!(!e.will_be_attentive);
         }
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "ROTER ALARM");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "ROTER ALARM");
         // ROTER ALARM is a silent cheat — emits no console text.
         assert_eq!(resp, ConsoleResponse::Ok(String::new()));
         // The sequence element launch flips `will_be_attentive` immediately;
@@ -1543,12 +1575,14 @@ mod tests {
 
     #[test]
     fn nuke_launches_damage_on_every_soldier() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         engine.add_entity(soldier(false));
         engine.add_entity(soldier(false));
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "NUKE");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Nuking ...\nNuked 2 soldiers".to_string())
@@ -1558,22 +1592,26 @@ mod tests {
 
     #[test]
     fn final_mode_accepts_unblip_alias() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         dev.console.use_final = true;
         engine.add_entity(soldier(true));
-        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "UNBLIP");
+        let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UNBLIP");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
     }
 
     #[test]
     fn final_mode_rejects_dev_only_commands() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         dev.console.use_final = true;
         // NUKE is a dev-only cheat — must not resolve in final mode.
         assert_eq!(
-            engine.run_console_command(&assets(), &mut dev, &mut None, "NUKE"),
+            engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE"),
             ConsoleResponse::Unknown
         );
     }

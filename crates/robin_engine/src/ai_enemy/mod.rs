@@ -421,8 +421,7 @@ impl EnemyAi {
         if ctx.camp != crate::element::Camp::Lacklandists {
             return self.soldier_profile_iq;
         }
-        let diff = crate::player_profile::DifficultyLevel::current();
-        diff.modify_capacity(
+        ctx.difficulty.modify_capacity(
             self.soldier_profile_iq,
             difficulty::EASY_ENEMY_IQ,
             difficulty::HARD_ENEMY_IQ,
@@ -444,8 +443,7 @@ impl EnemyAi {
     /// the soldier's *intelligence* instead of its shooting skill.
     pub fn get_shooting_ability(&self, ctx: &AiContext) -> u16 {
         let mut shooting = if ctx.camp == crate::element::Camp::Lacklandists {
-            let diff = crate::player_profile::DifficultyLevel::current();
-            diff.modify_capacity(
+            ctx.difficulty.modify_capacity(
                 self.soldier_profile_shooting,
                 difficulty::EASY_ENEMY_FIGHTING,
                 difficulty::HARD_ENEMY_FIGHTING,
@@ -924,9 +922,14 @@ impl EnemyAi {
     /// Pops the next queued money-fight victim and approaches it;
     /// returns to duty when the queue drains.  Sets `detected_body`
     /// before going near.
-    fn awake_next_money_fight_victim_if_any(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+    fn awake_next_money_fight_victim_if_any(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
         if self.money_fight_victims.is_empty() {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
         let next = self.money_fight_victims.remove(0);
@@ -1059,12 +1062,16 @@ impl EnemyAi {
     ///     currently silent (the `current_remark == TheSoundOfSilence`
     ///     guard).  The silence guard is also enforced by `say_impl`
     ///     itself, but we keep the explicit check for clarity.
-    pub fn make_special_action_remark(&mut self, is_shield_bearer: bool) {
+    pub fn make_special_action_remark(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        is_shield_bearer: bool,
+    ) {
         if is_shield_bearer {
             self.base
                 .say_with_flags(Remark::SpecialAction, crate::ai::SpeechFlags::ALWAYS);
         } else if self.base.current_remark == Remark::TheSoundOfSilence
-            && crate::sim_rng::u32(crate::sim_rng::RngSite::SpecialActionRemark, 0..3) == 0
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpecialActionRemark, 0..3) == 0
         {
             self.base.say(Remark::SpecialAction);
         }
@@ -1167,6 +1174,7 @@ impl EnemyAi {
     /// (caller should NOT process the stimulus itself).
     fn dispatch_stimulus_to_whole_patrol(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -1268,7 +1276,7 @@ impl EnemyAi {
                  dispatch); scripted actor may see divergent behavior"
             );
         }
-        self.think(&forwarded_stimulus, global, ctx, tick, grid);
+        self.think(sim, &forwarded_stimulus, global, ctx, tick, grid);
 
         // Forward to patrol members that are soldiers and within
         // 360° detection range — non-soldier or out-of-LOS members
@@ -1742,6 +1750,7 @@ impl EnemyAi {
     /// officer's real `Think` return value.
     pub(crate) fn resolve_charly_officer_report(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         accepted: bool,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1755,7 +1764,7 @@ impl EnemyAi {
             self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
             self.base.launch_timer(10, ctx.frame);
         } else {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
     }
 
@@ -1969,6 +1978,7 @@ impl EnemyAi {
     /// battle overview.
     fn out_of_view_seek_handler(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         enemy: HumanHandle,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -1998,6 +2008,7 @@ impl EnemyAi {
             if self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
+                    sim,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
@@ -2072,7 +2083,11 @@ impl EnemyAi {
     /// Called from `think_expected_event` for `EventTimer` on
     /// `DefaultOnPost` before delegating to the base-class common
     /// handler.
-    fn default_bored_standard_procedure(&mut self, ctx: &AiContext) -> bool {
+    fn default_bored_standard_procedure(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) -> bool {
         // Also gate on `self_animation != WaitingUprightBoredRandom`:
         // if the bored-random idle is already playing, the NPC is
         // "bored enough" and we skip the head-turn transition.
@@ -2084,7 +2099,8 @@ impl EnemyAi {
             self.set_state(AiState::Default, Substate::DefaultOnPostLookingSidewards);
             self.base.stop_all();
 
-            let dir = match crate::sim_rng::u32(crate::sim_rng::RngSite::DefaultPostLook, 0..4) {
+            let dir = match crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DefaultPostLook, 0..4)
+            {
                 0 => LookDirection::Left,
                 1 => LookDirection::Right,
                 2 => LookDirection::LeftRight,
@@ -2542,6 +2558,7 @@ impl EnemyAi {
     /// to the appropriate Think sub-method based on its type.
     pub fn think(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -2568,7 +2585,7 @@ impl EnemyAi {
 
         // Pre-think: check locks, queue if busy, etc.
         if !self.start_think(stimulus, ctx, global.freeze) {
-            self.end_think(global, ctx, tick, grid);
+            self.end_think(sim, global, ctx, tick, grid);
             return true;
         }
 
@@ -2577,7 +2594,7 @@ impl EnemyAi {
         // Callers invoke it prior to borrowing the entity for
         // `think()`, so by the time we get here, the stimulus has
         // already passed the script's `filter_ai_event`.  Cascade
-        // `self.think(...)` calls below re-dispatch
+        // `self.think(sim, ...)` calls below re-dispatch
         // internally-generated stimuli and intentionally skip the
         // filter (see the cascade-divergence note on those sites).
 
@@ -2601,7 +2618,7 @@ impl EnemyAi {
             | StimulusType::CallYourTalk1
             | StimulusType::CallYourTalk2
             | StimulusType::CallYourTalk3 => {
-                self.think_expected_event(stimulus, global, ctx, tick, grid)
+                self.think_expected_event(sim, stimulus, global, ctx, tick, grid)
             }
 
             // Unexpected events — may interrupt current behavior
@@ -2634,7 +2651,7 @@ impl EnemyAi {
             | StimulusType::EventGoodStrike
             | StimulusType::EventLethalStrike
             | StimulusType::EventEnemyNear => {
-                self.think_unexpected_event(stimulus, global, ctx, tick, grid)
+                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid)
             }
 
             // Alerting events — high-priority perception
@@ -2657,11 +2674,11 @@ impl EnemyAi {
             | StimulusType::EventSeesShadow
             | StimulusType::EventArrowLaunched
             | StimulusType::EventStop => {
-                self.think_alerting_event(stimulus, global, ctx, tick, grid)
+                self.think_alerting_event(sim, stimulus, global, ctx, tick, grid)
             }
 
             StimulusType::EventReturnToDuty => {
-                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 // This arm never assigns the return value, so it
                 // returns `false` (the default).  Callers test the
                 // bool to decide whether to re-dispatch / continue
@@ -2678,7 +2695,7 @@ impl EnemyAi {
             }
         };
 
-        self.end_think(global, ctx, tick, grid);
+        self.end_think(sim, global, ctx, tick, grid);
         return_value
     }
 
@@ -2873,6 +2890,7 @@ impl EnemyAi {
 
     fn end_think(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2896,7 +2914,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             }
         }
 
@@ -2912,7 +2930,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             }
         }
 
@@ -2928,7 +2946,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             }
         }
 
@@ -2997,7 +3015,13 @@ impl EnemyAi {
     // ReturnToDuty — return to default behavior
     // -----------------------------------------------------------------------
 
-    pub fn return_to_duty(&mut self, flags: DutyFlags, ctx: &AiContext, tick: &AiPerTickData) {
+    pub fn return_to_duty(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        flags: DutyFlags,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
         // DeleteAllDetectables(DETECTABLE_BEGGAR) — queue the scrub so a
         // `BECAUSE_COULDNT_REACHPOINT`-triggered return out of
         // beggar-handling doesn't leave a stale beggar detectable.
@@ -3148,7 +3172,7 @@ impl EnemyAi {
         }
 
         self.initialize_patrol();
-        self.base.return_to_duty_common_stuff(flags, ctx);
+        self.base.return_to_duty_common_stuff(sim, flags, ctx);
     }
 
     // -----------------------------------------------------------------------
@@ -3167,7 +3191,7 @@ impl EnemyAi {
         // Royalist soldiers (also EnemyAi-driven) and Medium difficulty leave
         // the modifier at 1.0. The Easy==Hard copy-paste bug is preserved.
         let modifier = if ctx.camp == crate::element::Camp::Lacklandists {
-            match crate::player_profile::DifficultyLevel::current() {
+            match ctx.difficulty {
                 crate::player_profile::DifficultyLevel::Easy
                 | crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
                 crate::player_profile::DifficultyLevel::Medium => 1.0,
@@ -3429,6 +3453,7 @@ impl EnemyAi {
     /// officer is in ear-shot but a "far officer" exists, the nearest
     pub fn init_one_ai(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> crate::ai::InitStateSideEffects {
@@ -3445,7 +3470,7 @@ impl EnemyAi {
         // initial-action and commit the matching AI-side state
         // transition first — the subclass tail below only runs when
         // the authored action allows it *and* the AI isn't locked.
-        let fx = self.base.init_state(ctx);
+        let fx = self.base.init_state(sim, ctx);
 
         let go_to_duty =
             fx.go_to_duty && !self.base.ai_is_script_locked() && !self.base.ai_is_locked();
@@ -3459,7 +3484,7 @@ impl EnemyAi {
             // the default `Substate::DefaultOnPost`.
             self.base.substate_at_last_timer_launch = self.base.current_substate;
             self.set_state(AiState::Default, Substate::DefaultEnroute);
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
 
         // GoTo checks `think_method_recursion_depth > 0` and
@@ -3678,10 +3703,13 @@ mod tests {
 
     #[test]
     fn charly_inside_view_cone_queues_synchronous_officer_report_without_transitioning() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = charly_heading_to_officer();
         let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
         ai.think_expected_event(
+            sim,
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
             &ctx,
@@ -3702,10 +3730,12 @@ mod tests {
 
     #[test]
     fn accepted_officer_report_enters_seen_and_arms_ten_frame_timer() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = charly_heading_to_officer();
         let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-        ai.resolve_charly_officer_report(true, &ctx, &AiPerTickData::stub());
+        ai.resolve_charly_officer_report(sim, true, &ctx, &AiPerTickData::stub());
 
         assert_eq!(
             ai.base.current_substate,
@@ -3720,10 +3750,12 @@ mod tests {
 
     #[test]
     fn refused_officer_report_returns_charly_to_duty() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = charly_heading_to_officer();
         let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
-        ai.resolve_charly_officer_report(false, &ctx, &AiPerTickData::stub());
+        ai.resolve_charly_officer_report(sim, false, &ctx, &AiPerTickData::stub());
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
@@ -3850,11 +3882,14 @@ mod tests {
 
     #[test]
     fn charly_outside_view_cone_retries_after_ten_frames() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = charly_heading_to_officer();
         // Within the 360-degree radius and unobstructed, but behind Charly.
         let ctx = charly_to_officer_context(test_position(-200.0, 0.0), Vec::new());
 
         ai.think_expected_event(
+            sim,
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
             &ctx,
@@ -3877,11 +3912,14 @@ mod tests {
 
     #[test]
     fn charly_cannot_report_through_opaque_obstruction_and_retries() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = charly_heading_to_officer();
         let ctx =
             charly_to_officer_context(test_position(200.0, 0.0), vec![opaque_wall_across_x_axis()]);
 
         ai.think_expected_event(
+            sim,
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
             &ctx,
@@ -3905,6 +3943,8 @@ mod tests {
         building_full: bool,
         actor_is_rider: bool,
     ) -> EnemyAi {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let center = Position {
             x: 0.0,
             y: 0.0,
@@ -3962,6 +4002,7 @@ mod tests {
                 as u16;
 
         ai.seek_area(
+            sim,
             center,
             0,
             SeekFlags::HOUSE | SeekFlags::LOCATION_FIRST,
@@ -4133,12 +4174,14 @@ mod tests {
 
     #[test]
     fn return_to_duty_resets() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
         ai.current_task_priority = task_priority::ENEMY;
         let ctx = AiContext::default();
         let tick = AiPerTickData::stub();
-        ai.return_to_duty(DutyFlags::empty(), &ctx, &tick);
+        ai.return_to_duty(sim, DutyFlags::empty(), &ctx, &tick);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
     }
@@ -4264,13 +4307,15 @@ mod tests {
 
     #[test]
     fn enter_swordfight_event_does_not_reenter_swordfight() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
         let mut global = AiGlobalState::default();
         let ctx = AiContext::default();
         let tick = AiPerTickData::stub();
         let stimulus = Stimulus::with_human(StimulusType::EventEnterSwordfight, 2);
 
-        let _ = ai.think(&stimulus, &mut global, &ctx, &tick, None);
+        let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, 2);
         assert_eq!(ai.base.current_state, AiState::Attacking);
@@ -4314,6 +4359,8 @@ mod tests {
 
     #[test]
     fn periodic_timer_restart_obeys_static_ai_freeze() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
         ai.base.current_substate = Substate::AttackingObserve;
         let ctx = AiContext::default();
@@ -4323,11 +4370,11 @@ mod tests {
             ..AiGlobalState::default()
         };
 
-        ai.the_16th_frame(0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
         assert!(!ai.base.timer_is_running);
 
         global.freeze = false;
-        ai.the_16th_frame(0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
         assert!(ai.base.timer_is_running);
     }
 
@@ -4378,6 +4425,8 @@ mod tests {
 
     #[test]
     fn watching_for_more_money_skips_looted_victims_and_marks_next() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
         ai.base.me = 1;
         ai.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
@@ -4408,7 +4457,7 @@ mod tests {
         let mut global = AiGlobalState::default();
 
         let stimulus = Stimulus::new(StimulusType::EventDone);
-        let _ = ai.think(&stimulus, &mut global, &ctx, &tick, None);
+        let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
         assert_eq!(ai.base.detected_body, 3);
         assert_eq!(
@@ -4464,13 +4513,13 @@ mod tests {
 
     #[test]
     fn make_battle_predecisions_returns_valid() {
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             let mut ai = EnemyAi::new(1);
             ai.list_them.push(99);
             ai.base.list_us.push(1);
             let ctx = AiContext::default();
             let tick = AiPerTickData::stub();
-            let d = ai.make_battle_predecisions(&ctx, &tick);
+            let d = ai.make_battle_predecisions(sim, &ctx, &tick);
             assert!(d == Decision::PredecisionOffensive || d == Decision::PredecisionDefensive);
         });
     }

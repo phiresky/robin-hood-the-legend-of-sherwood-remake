@@ -1278,6 +1278,7 @@ pub(super) async fn handle_pause_menu_events(
                         SaveLoadMode::Load => SaveLoadRequest::Load {
                             slot: Some(slot),
                             mission_id,
+                            save: None,
                         },
                     });
                     // When the picker returns a slot, close the

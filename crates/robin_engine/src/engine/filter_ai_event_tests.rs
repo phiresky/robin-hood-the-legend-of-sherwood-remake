@@ -8,9 +8,9 @@
 //!
 //! Covered cases:
 //!  * Mapped stimulus, source-dependent branching: filter returns the
-//!    source param, so `dispatch_filtered_stimulus(robin, code)` is
+//!    source param, so `dispatch_filtered_stimulus(sim, robin, code)` is
 //!    allowed (Robin's handle is non-zero) but
-//!    `filter_stimulus(…, {source=0}) == false` (blocked).
+//!    `filter_stimulus(sim, …, {source=0}) == false` (blocked).
 //!  * Unmapped stimulus type: `filter_stimulus` calls the script with the
 //!    original sentinel event code `-2`.
 //!  * Missing FilterAIEvent override: the base class's implicit
@@ -241,7 +241,9 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     let sensitive_handle = crate::natives::ScriptHandleCodec::actor_handle(sensitive_id);
     let noov_handle = crate::natives::ScriptHandleCodec::actor_handle(noov_id);
 
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
         &mut engine.world.fast_grid,
@@ -272,6 +274,8 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
 /// non-zero → allow.
 #[test]
 fn filter_allows_when_script_returns_nonzero_for_actual_source() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, robin_handle, sensitive_handle, _) = build_engine();
     // EventView is code 0.  Stimulus carries Robin as the Human
     // source — the stimulus info encodes a 0-based human handle, so
@@ -281,7 +285,7 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
         .expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
-    let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
     assert!(
         allowed,
         "non-zero source → script returns source → allow (got {allowed})"
@@ -293,12 +297,14 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
 /// failure mode the old `source=0` precompute masked.
 #[test]
 fn filter_blocks_when_script_returns_zero_for_unknown_source() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _, sensitive_handle, _) = build_engine();
     // `Stimulus::new` leaves `info = StimulusInfo::None`, so
     // `filter_stimulus` passes source=0.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
     assert!(!allowed, "source=0 → script returns 0 → block");
 }
 
@@ -306,13 +312,15 @@ fn filter_blocks_when_script_returns_zero_for_unknown_source() {
 /// matching the default switch arm in the original `StartThink`.
 #[test]
 fn filter_runs_for_unmapped_stimulus_type() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _, sensitive_handle, _) = build_engine();
     // EventEnemyNear exists in the original but has no public AI event-code
     // mapping. The test script returns its source parameter, so source=0
     // proves the -2 path invoked the filter when it blocks the stimulus.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventEnemyNear);
 
-    let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
+    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), sensitive_handle, &stim);
     assert!(
         !allowed,
         "unmapped stimulus type must run FilterAIEvent(-2)"
@@ -326,10 +334,12 @@ fn filter_runs_for_unmapped_stimulus_type() {
 /// as a script-blocked stimulus.
 #[test]
 fn filter_allows_when_actor_has_no_filter_override() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _, _, noov_handle) = build_engine();
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
 
-    let allowed = engine.filter_stimulus(&LevelAssets::new(), noov_handle, &stim);
+    let allowed = engine.filter_stimulus(sim, &LevelAssets::new(), noov_handle, &stim);
     assert!(
         allowed,
         "no FilterAIEvent override → base returns 1 → allow"
@@ -340,6 +350,8 @@ fn filter_allows_when_actor_has_no_filter_override() {
 /// unfiltered.  (Most shipped actors aren't scripted.)
 #[test]
 fn filter_allows_when_actor_not_bound_to_any_script() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
@@ -349,7 +361,7 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     assert!(
-        engine.filter_stimulus(&LevelAssets::new(), unbound_handle, &stim),
+        engine.filter_stimulus(sim, &LevelAssets::new(), unbound_handle, &stim),
         "no bound script → allow"
     );
 }
@@ -358,6 +370,8 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
 /// the filter blocks, and should return `false` to the caller.
 #[test]
 fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _, sensitive_handle, _) = build_engine();
 
     // Snapshot AI state pre-dispatch.
@@ -377,6 +391,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let tick_data = crate::ai::AiPerTickData::stub();
 
     let handled = engine.dispatch_filtered_stimulus(
+        sim,
         &LevelAssets::new(),
         sensitive_entity_id,
         &stim,
@@ -798,7 +813,9 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let frame = 41;
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -838,7 +855,9 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -877,7 +896,9 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -915,7 +936,9 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -975,7 +998,9 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -1025,7 +1050,9 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -1064,6 +1091,8 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
 
 #[test]
 fn script_session_preserves_nested_pending_call_resume_and_restoration() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let script = MissionScript::from_scb(build_nested_scb()).expect("scb builds");
     let outer_handle = 1;
     let inner_handle = 2;
@@ -1074,14 +1103,14 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     engine.attach_script_bindings(&assets);
 
     engine
-        .with_script_session(&assets, |script, script_domains, capabilities| {
+        .with_script_session(sim, &assets, |script, script_domains, capabilities| {
             assert!(script.bind_actor(outer_handle, "OuterCaller", script_domains, capabilities));
             assert!(script.bind_actor(inner_handle, "InnerTarget", script_domains, capabilities));
         })
         .expect("mission script stays present");
 
     let result = engine
-        .with_script_session(&assets, |script, script_domains, capabilities| {
+        .with_script_session(sim, &assets, |script, script_domains, capabilities| {
             script.call_actor_function(
                 outer_handle,
                 "FilterAIEvent",
@@ -1109,7 +1138,9 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -1158,7 +1189,9 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     ]);
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -1205,6 +1238,7 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
 
 #[test]
 fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
+    let sim_context = crate::sim_rng::test_context();
     let mut script = MissionScript::from_scb(build_nested_ai_global_mutation_scb())
         .expect("nested AI-global SCB builds");
     let mut script_domains = crate::engine::ScriptDomains::default();
@@ -1214,6 +1248,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim_context,
         &mut entities,
         &mut ai_global,
         &mut fast_grid,
@@ -1244,7 +1279,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     engine.attach_script_bindings(&assets);
 
     let result = engine
-        .with_script_session(&assets, |script, script_domains, queries| {
+        .with_script_session(&sim_context, &assets, |script, script_domains, queries| {
             script.call_actor_function(
                 outer_handle,
                 "FilterAIEvent",
@@ -1276,7 +1311,9 @@ fn prototype_filter_event_unbound_target_uses_original_allow_default() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,

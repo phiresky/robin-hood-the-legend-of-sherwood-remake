@@ -86,7 +86,11 @@ impl EngineInner {
     ///    whose cooldown has expired — check distance, apply damage directly.
     ///
     /// Also ticks concussion healing for all humans.
-    pub(crate) fn tick_melee_combat(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_melee_combat(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -116,16 +120,16 @@ impl EngineInner {
             }
         }
 
-        self.tick_nonstraight_melee_strikes(assets);
-        self.tick_sweep_strikes(assets);
+        self.tick_nonstraight_melee_strikes(sim, assets);
+        self.tick_sweep_strikes(sim, assets);
         self.tick_parry_counters();
-        self.tick_push_flights(assets);
-        self.tick_rider_charges(assets);
-        self.tick_enemy_sword_attacks(assets);
-        let consumed_smalltalk_hint_actors = self.tick_evaluate_swordfight(assets);
-        self.tick_smalltalk(assets, &consumed_smalltalk_hint_actors);
+        self.tick_push_flights(sim, assets);
+        self.tick_rider_charges(sim, assets);
+        self.tick_enemy_sword_attacks(sim, assets);
+        let consumed_smalltalk_hint_actors = self.tick_evaluate_swordfight(sim, assets);
+        self.tick_smalltalk(sim, assets, &consumed_smalltalk_hint_actors);
         self.tick_refresh_hero_mouth();
-        self.tick_pc_combat_anim_speech(assets);
+        self.tick_pc_combat_anim_speech(sim, assets);
         self.tick_refresh_purse_disable(assets);
     }
 
@@ -338,7 +342,12 @@ impl EngineInner {
     /// opponent, choose a smalltalk strike/parry. This drives the
     /// choreographed back-and-forth visible in classic swordfights.
     ///
-    pub(crate) fn tick_smalltalk(&mut self, assets: &LevelAssets, suppressed_actors: &[EntityId]) {
+    pub(crate) fn tick_smalltalk(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        suppressed_actors: &[EntityId],
+    ) {
         let mut pending_smalltalk_strikes: Vec<(EntityId, EntityId, bool)> = Vec::new();
         let mut pending_initiative_transfers: Vec<EntityId> = Vec::new();
         let mut pending_step_backs: Vec<(EntityId, crate::coordinates::MapPoint)> = Vec::new();
@@ -444,7 +453,7 @@ impl EngineInner {
                     .map(|h| h.relative_fighting_ability)
                     .unwrap_or(50);
                 let roll_loses =
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeInitiative, 0..100)
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
                         <= rfa as u32;
                 let out_of_range = self.can_he_kill_me_but_me_not(entity_id, principal_id, assets);
                 if roll_loses || out_of_range {
@@ -464,13 +473,13 @@ impl EngineInner {
             // "we're in range" check and the left/right smalltalk
             // strike pick, and suppresses the strike for this frame
             // when the actor wants to break the encirclement.
-            if let Some(dest) = self.is_step_back_needed(entity_id, assets) {
+            if let Some(dest) = self.is_step_back_needed(sim, entity_id, assets) {
                 pending_step_backs.push((entity_id.into(), dest));
                 continue;
             }
 
             // Pick left or right smalltalk strike
-            let is_left = crate::sim_rng::bool(crate::sim_rng::RngSite::SmalltalkStrikeSide);
+            let is_left = crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide);
             pending_smalltalk_strikes.push((entity_id.into(), principal_id, is_left));
         }
 
@@ -646,7 +655,12 @@ impl EngineInner {
     /// later-created actor before that actor gets its own Hourglass call.  The
     /// remaining sweep/push strike machinery stays in the batched driver until
     /// it has its own ordering oracle.
-    pub(crate) fn tick_straight_melee_for(&mut self, assets: &LevelAssets, attacker_id: EntityId) {
+    pub(crate) fn tick_straight_melee_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -700,6 +714,7 @@ impl EngineInner {
             if let Some(order_id) = order_id {
                 let anim = strike_to_animation(strike);
                 let motion = entity.element_data_mut().sprite.perform_action(
+                    sim,
                     Some(order_id),
                     anim,
                     direction,
@@ -767,10 +782,18 @@ impl EngineInner {
         }
 
         if hit {
-            self.resolve_straight_melee_hit(assets, attacker_id, target_id, strike, profile_idx);
+            self.resolve_straight_melee_hit(
+                sim,
+                assets,
+                attacker_id,
+                target_id,
+                strike,
+                profile_idx,
+            );
         }
         if let Some((sequence_id, element_index)) = completion {
             self.complete_melee_strike(
+                sim,
                 assets,
                 attacker_id,
                 sequence_id,
@@ -783,6 +806,7 @@ impl EngineInner {
 
     fn resolve_straight_melee_hit(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         victim_id: EntityId,
@@ -815,9 +839,16 @@ impl EngineInner {
                 entity.element_data_mut().set_direction_instantly(direction);
             }
             if let Some(profile_idx) = profile_idx {
-                self.launch_sword_damage_now(assets, victim_id, attacker_id, strike, profile_idx);
+                self.launch_sword_damage_now(
+                    sim,
+                    assets,
+                    victim_id,
+                    attacker_id,
+                    strike,
+                    profile_idx,
+                );
             }
-            self.enter_swordfight(assets, victim_id, attacker_id, true);
+            self.enter_swordfight(sim, assets, victim_id, attacker_id, true);
         } else {
             tracing::debug!(
                 attacker = ?attacker_id,
@@ -830,6 +861,7 @@ impl EngineInner {
 
     fn complete_melee_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         sequence_id: Option<crate::sequence::SequenceId>,
@@ -846,7 +878,7 @@ impl EngineInner {
             Vec::new()
         };
         for victim_id in pending_swordfights {
-            self.enter_swordfight(assets, victim_id, actor_id, true);
+            self.enter_swordfight(sim, assets, victim_id, actor_id, true);
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
@@ -903,7 +935,11 @@ impl EngineInner {
     /// creation-ordered entity pass and calls [`Self::tick_nonstraight_melee_strikes`]
     /// afterward for the remaining strike kinds.
     #[cfg(test)]
-    pub(super) fn tick_melee_strikes(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_melee_strikes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let actor_ids: Vec<EntityId> = self
             .world
             .entities
@@ -911,13 +947,17 @@ impl EngineInner {
             .map(|(actor_id, _)| actor_id.into())
             .collect();
         for actor_id in actor_ids {
-            self.tick_straight_melee_for(assets, actor_id);
+            self.tick_straight_melee_for(sim, assets, actor_id);
         }
-        self.tick_nonstraight_melee_strikes(assets);
+        self.tick_nonstraight_melee_strikes(sim, assets);
     }
 
     /// Advance batched non-straight sequence-driven melee strikes.
-    fn tick_nonstraight_melee_strikes(&mut self, assets: &LevelAssets) {
+    fn tick_nonstraight_melee_strikes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // Collect strike results to avoid borrow conflicts
         struct StrikeHit {
             attacker_id: EntityId,
@@ -989,6 +1029,7 @@ impl EngineInner {
                         let elem = entity.element_data_mut();
                         let sprite = &mut elem.sprite;
                         let motion = sprite.perform_action(
+                            sim,
                             Some(order_id),
                             anim,
                             direction,
@@ -1208,6 +1249,7 @@ impl EngineInner {
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = hit.attacker_profile_idx {
                         self.launch_sword_damage_now(
+                            sim,
                             assets,
                             *victim_id,
                             hit.attacker_id,
@@ -1223,6 +1265,7 @@ impl EngineInner {
                 }
             } else {
                 self.resolve_straight_melee_hit(
+                    sim,
                     assets,
                     hit.attacker_id,
                     hit.victim_id,
@@ -1235,6 +1278,7 @@ impl EngineInner {
         // Phase 3: notify sequence manager for completed strikes and clear sweep state
         for completed_strike in completed {
             self.complete_melee_strike(
+                sim,
                 assets,
                 completed_strike.actor_id,
                 completed_strike.sequence_id,
@@ -1355,7 +1399,11 @@ impl EngineInner {
     /// applies damage to any pending victims whose direction from the attacker
     /// now falls within the swept arc.
     ///
-    pub(super) fn tick_sweep_strikes(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_sweep_strikes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         use crate::profiles::WeaponThrustDirection;
 
         // Phase 1: collect active sweeps (clone to avoid borrow conflicts)
@@ -1484,6 +1532,7 @@ impl EngineInner {
             for victim_id in hit_victim_ids {
                 if let Some(profile_idx) = active.sweep.attacker_profile_idx {
                     self.launch_sword_damage_now(
+                        sim,
                         assets,
                         victim_id,
                         active.attacker_id,
@@ -1501,7 +1550,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if should_enter {
-                    self.enter_swordfight(assets, victim_id, active.attacker_id, true);
+                    self.enter_swordfight(sim, assets, victim_id, active.attacker_id, true);
                 }
             }
 
@@ -1542,7 +1591,11 @@ impl EngineInner {
     /// actors in the flight direction and queue a `ReceiveHitDamage`
     /// element citing the original hitter — fired per frame at the
     /// tail of `ExecuteFallingHit` / `ExecuteFallingPushed`.
-    pub(super) fn tick_push_flights(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_push_flights(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // Domino sweeps fire after positions have advanced, so collect
         // (flyer, hitter, post-advance increment) here and dispatch in a
         // second pass — `apply_domino_effect` reads many entities and
@@ -1680,7 +1733,7 @@ impl EngineInner {
         // motion event, before ApplyDominoEffect. The general zone pass ran
         // earlier in the frame, so explicitly reconcile combat landings now.
         if refresh_script_sectors {
-            self.tick_zone_occupants(assets);
+            self.tick_zone_occupants(sim, assets);
         }
 
         for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
@@ -1926,7 +1979,11 @@ impl EngineInner {
     /// 3. Victims inside the hit zone take `SwordStrike::Charge` damage and
     ///    are removed from the candidate list.
     /// 4. When the rider finishes its path, clear the charge state.
-    pub(super) fn tick_rider_charges(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_rider_charges(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         use crate::element::{ActiveRiderCharge, EntityId};
 
         // Phase 1: Initialize any new rider charges.
@@ -2224,6 +2281,7 @@ impl EngineInner {
                 // Launch a SwordstrikeCharge damage element.
                 if let Some(profile_idx) = hit.attacker_profile_idx {
                     self.launch_sword_damage_now(
+                        sim,
                         assets,
                         hit.victim_id,
                         hit.attacker_id,
@@ -2261,7 +2319,11 @@ impl EngineInner {
     ///
     /// Simplified version of the engine-level combat loop where the AI
     /// launches individual `SwordstrikeThrust*` sequence elements.
-    pub(super) fn tick_enemy_sword_attacks(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_sword_attacks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let current_frame = self.control.frame_counter;
 
         // Per-tick reconciliation for `EnemyAi::pending_special_strike`.
@@ -2693,6 +2755,7 @@ impl EngineInner {
                     is_npc: true,
                 };
                 match crate::combat::propose_good_sword_strike(
+                    sim,
                     &ctx,
                     &nearby,
                     &mut attack.boredom,
@@ -2728,7 +2791,10 @@ impl EngineInner {
                     elem.current_outline = crate::element::OutlineColorName::Striking;
                     elem.outline_width = 2;
                 }
-                compute_special_strike_preparation_time(attack.fighting_ability)
+                compute_special_strike_preparation_time(
+                    sim.config().difficulty,
+                    attack.fighting_ability,
+                )
             } else {
                 0
             };
@@ -2855,6 +2921,7 @@ impl EngineInner {
                 entity,
                 self.world.weather.is_forest_level,
                 Some(&self.mission_domain.campaign),
+                self.control.sim_config.difficulty,
             );
 
             // Determine healing speed: per-profile `wake_up` for PCs
@@ -3018,10 +3085,12 @@ mod tests {
 
     #[test]
     fn fatal_push_flight_terminates_dead_back_waiting_sword_and_updates_sector() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(falling_pushed_soldier(true));
 
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().posture, Posture::DeadBack);
@@ -3036,12 +3105,14 @@ mod tests {
 
     #[test]
     fn knockout_push_flight_terminates_lying_waiting_sword() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut entity = falling_pushed_soldier(false);
         entity.human_data_mut().unwrap().unconscious = true;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(entity);
 
-        engine.tick_push_flights(&LevelAssets::default());
+        engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().posture, Posture::Lying);

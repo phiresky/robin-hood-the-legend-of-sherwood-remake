@@ -1,6 +1,7 @@
 //! EngineInner-related type definitions.
 
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 // BTreeMap (not HashMap) so iteration order is deterministic — per-actor
 // script state is part of the rollback simulation snapshot, and any
@@ -21,86 +22,86 @@ use super::{
 
 /// Engine-owned capability for deterministic gameplay randomness.
 ///
-/// At snapshot boundaries this owns the one `fastrand::Rng`. During a
-/// simulation scope the RNG is moved into `crate::sim_rng`, leaving `None`
-/// here. That unavailable state is deliberate: a direct engine-field draw
-/// while ambient simulation consumers are advancing the stream would fork
-/// the RNG timeline. Such access panics instead of silently consuming a
-/// placeholder or a second stream.
+/// This always owns the one `fastrand::Rng`. Gameplay receives an explicit
+/// [`crate::sim_rng::SimulationContext`] handle tied to this allocation;
+/// cloning an engine snapshot deep-copies the current stream state rather than
+/// sharing it with the live engine.
 ///
 /// Original provenance: `original-code/launcher.cpp:763-765` seeds the one
 /// process-wide C RNG, and gameplay consumers call that shared `rand()`
 /// stream. Rust keeps ownership explicit so replay/save snapshots can carry
 /// the exact corresponding state.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct SimulationRng {
     #[serde(with = "simulation_rng_serde")]
-    state: Option<fastrand::Rng>,
+    state: Arc<Mutex<fastrand::Rng>>,
+}
+
+impl Clone for SimulationRng {
+    fn clone(&self) -> Self {
+        Self::with_seed(self.seed())
+    }
 }
 
 impl SimulationRng {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn with_seed(seed: u64) -> Self {
         Self {
-            state: Some(fastrand::Rng::with_seed(seed)),
+            state: Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))),
         }
     }
 
-    /// Move the authoritative stream into the ambient simulation scope.
-    pub(crate) fn enter_scope(&mut self) {
-        let rng = self
-            .state
-            .take()
-            .expect("simulation RNG entered while already active");
-        crate::sim_rng::install(rng);
-    }
-
-    /// Reclaim the advanced stream after a simulation scope.
-    pub(crate) fn leave_scope(&mut self) {
-        assert!(
-            self.state.is_none(),
-            "simulation RNG left while engine still owned a stream"
-        );
-        self.state = Some(crate::sim_rng::uninstall());
+    pub(crate) fn context(
+        &self,
+        config: crate::engine::SimConfig,
+    ) -> crate::sim_rng::SimulationContext {
+        crate::sim_rng::SimulationContext::new(Arc::clone(&self.state), config)
     }
 
     pub(crate) fn seed(&self) -> u64 {
         self.state
-            .as_ref()
-            .expect("simulation RNG seed requested while stream is active")
+            .lock()
+            .expect("simulation RNG mutex poisoned")
             .get_seed()
     }
 
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn reseed(&mut self, seed: u64) {
-        let state = self
-            .state
-            .as_mut()
-            .expect("simulation RNG reseeded while stream is active");
-        *state = fastrand::Rng::with_seed(seed);
+        *self.state.lock().expect("simulation RNG mutex poisoned") = fastrand::Rng::with_seed(seed);
+    }
+}
+
+impl robin_util::state_hash::StateHash for SimulationRng {
+    fn state_hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        robin_util::state_hash::StateHash::state_hash(
+            &*self.state.lock().expect("simulation RNG mutex poisoned"),
+            hasher,
+        );
     }
 }
 
 mod simulation_rng_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::{Arc, Mutex};
 
     pub(super) fn serialize<S: Serializer>(
-        state: &Option<fastrand::Rng>,
+        state: &Arc<Mutex<fastrand::Rng>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        let rng = state.as_ref().ok_or_else(|| {
-            serde::ser::Error::custom("cannot serialize simulation RNG during an active scope")
-        })?;
-        rng.get_seed().serialize(serializer)
+        state
+            .lock()
+            .map_err(|_| serde::ser::Error::custom("simulation RNG mutex poisoned"))?
+            .get_seed()
+            .serialize(serializer)
     }
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Option<fastrand::Rng>, D::Error> {
+    ) -> Result<Arc<Mutex<fastrand::Rng>>, D::Error> {
         let seed = u64::deserialize(deserializer)?;
         #[allow(clippy::disallowed_methods)]
-        Ok(Some(fastrand::Rng::with_seed(seed)))
+        Ok(Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))))
     }
 }
 

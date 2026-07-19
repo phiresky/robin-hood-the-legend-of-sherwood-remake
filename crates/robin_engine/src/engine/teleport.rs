@@ -153,10 +153,13 @@ pub(super) struct SherwoodPlacementRoll {
 
 /// Draw the returning-PC placement before the beam-me shuffle, matching
 /// `RHCampaign::CreateMissionCharacters`' call order.
-pub(super) fn roll_sherwood_placement() -> SherwoodPlacementRoll {
+pub(super) fn roll_sherwood_placement(
+    sim: &crate::sim_rng::SimulationContext,
+) -> SherwoodPlacementRoll {
     const RANDOM_SHERWOOD_POSITION: f32 = 5.0;
     let axis = || {
         (crate::sim_rng::c_rand_unit_inclusive(
+            sim,
             crate::sim_rng::RngSite::SherwoodReturningPcPlacement,
         ) * 2.0
             - 1.0)
@@ -165,7 +168,10 @@ pub(super) fn roll_sherwood_placement() -> SherwoodPlacementRoll {
     SherwoodPlacementRoll {
         dx: axis(),
         dy: axis(),
-        direction: crate::sim_rng::u32(crate::sim_rng::RngSite::SherwoodReturningPcPlacement, 0..16)
-            as i16,
+        direction: crate::sim_rng::u32(
+            sim,
+            crate::sim_rng::RngSite::SherwoodReturningPcPlacement,
+            0..16,
+        ) as i16,
     }
 }

@@ -193,6 +193,21 @@ fn with_attached_session<R>(
     attachment.with_session(f)
 }
 
+pub(crate) fn with_attached_simulation_context<R>(
+    lua: &Lua,
+    f: impl FnOnce(&robin_engine::sim_rng::SimulationContext) -> mlua::Result<R>,
+) -> mlua::Result<R> {
+    with_attached_session(
+        lua,
+        || {
+            mlua::Error::RuntimeError(
+                "robin_lua: random invoked with no simulation context attached".to_owned(),
+            )
+        },
+        |session| f(session.capabilities.simulation_context()),
+    )
+}
+
 fn with_attached_bindings<R>(
     lua: &Lua,
     f: impl FnOnce(&AttachedScriptBindings) -> mlua::Result<R>,
@@ -763,8 +778,13 @@ mod tests {
         let mut entities = Entities::new();
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
-        let capabilities =
-            NativeSessionCapabilities::new(&mut entities, &mut ai_global, &mut fast_grid);
+        let simulation = robin_engine::sim_rng::SimulationContext::with_seed(1);
+        let capabilities = NativeSessionCapabilities::new(
+            &simulation,
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+        );
         let mut session = NativeCallSession::new(
             &mut host,
             &mut script_state,

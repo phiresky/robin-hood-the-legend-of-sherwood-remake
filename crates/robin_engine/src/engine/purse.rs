@@ -58,11 +58,15 @@ impl EngineInner {
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
     #[cfg(test)]
-    pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
+    pub(super) fn tick_purses_and_coins(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+    ) {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(id) = self.world.entities.id_at_legacy_slot(slot as u32) {
-                self.tick_purse_or_coin(assets, id);
+                self.tick_purse_or_coin(sim, assets, id);
             }
             slot += 1;
         }
@@ -73,7 +77,12 @@ impl EngineInner {
     /// `RHEngine::PerformHourglass` rechecks `marrayElements.Size()` after
     /// every virtual call. Keeping this operation per entity lets the main
     /// tick reach coins appended by a purse impact later in the same pass.
-    pub(super) fn tick_purse_or_coin(&mut self, assets: &crate::engine::LevelAssets, id: EntityId) {
+    pub(super) fn tick_purse_or_coin(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        id: EntityId,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -134,7 +143,7 @@ impl EngineInner {
                 .map(|r| r.layer);
             match kind {
                 ImpactKind::PurseLanded { pos, layer } => {
-                    self.burst_purse(assets, id, pos, landed_layer.unwrap_or(layer))
+                    self.burst_purse(sim, assets, id, pos, landed_layer.unwrap_or(layer))
                 }
                 ImpactKind::CoinLanded { pos, layer } => {
                     self.coin_landed(id, pos, landed_layer.unwrap_or(layer))
@@ -189,6 +198,7 @@ impl EngineInner {
     /// coins scattered around the impact point.
     fn burst_purse(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
         purse_id: EntityId,
         impact_pos: WorldPoint3D,
@@ -311,10 +321,11 @@ impl EngineInner {
                 // `original-code/RHElementPurse.cpp:138-181` uses
                 // `rand() & 15` for direction and `10 + (rand() & 31)`
                 // for magnitude on each of seven attempts.
-                let sector = (crate::sim_rng::u32(crate::sim_rng::RngSite::PurseCoinScatter, ..)
-                    & 15) as i16;
+                let sector =
+                    (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 15)
+                        as i16;
                 let magnitude = COIN_SCATTER_MIN
-                    + (crate::sim_rng::u32(crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
+                    + (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
                         as f32;
                 let (ux, uy) = crate::element::direction_vector_16(sector);
                 // Y is compressed by ASPECT_RATIO to match isometric ground.
@@ -542,7 +553,7 @@ mod tests {
     }
 
     fn tick_purses(engine: &mut EngineInner, assets: &crate::engine::LevelAssets) {
-        engine.with_sim_rng(|engine| engine.tick_purses_and_coins(assets));
+        engine.with_simulation_context(|engine, sim| engine.tick_purses_and_coins(sim, assets));
     }
 
     #[test]
@@ -612,8 +623,10 @@ mod tests {
         let mut live_pass = parent_only.clone();
         let assets = crate::engine::LevelAssets::new();
 
-        crate::sim_rng::with_seed(0xC01A, || parent_only.tick_purse_or_coin(&assets, purse_id));
-        crate::sim_rng::with_seed(0xC01A, || live_pass.tick_purses_and_coins(&assets));
+        crate::sim_rng::with_seed(0xC01A, |sim| {
+            parent_only.tick_purse_or_coin(sim, &assets, purse_id)
+        });
+        crate::sim_rng::with_seed(0xC01A, |sim| live_pass.tick_purses_and_coins(sim, &assets));
 
         let child_ids = match parent_only.get_entity(purse_id) {
             Some(Entity::Projectile(purse)) => purse.projectile.purse.child_coins.clone(),

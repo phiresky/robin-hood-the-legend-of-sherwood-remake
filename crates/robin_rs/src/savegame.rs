@@ -413,6 +413,21 @@ impl SaveGameManager {
             .filter(|&i| self.slot_file_exists(i))
     }
 
+    /// Decode and validate the selected save before constructing a
+    /// destination mission Engine. Callers use its campaign, RNG state, and
+    /// SimConfig for level initialization, then apply the full payload once
+    /// the destination's immutable level assets are attached.
+    pub(crate) fn preflight_load(
+        &self,
+        explicit: Option<usize>,
+    ) -> Result<Option<(usize, GameSaveFile)>> {
+        let Some(index) = self.find_load_target(explicit) else {
+            return Ok(None);
+        };
+        let save = GameSaveFile::read_from(&self.save_path(index))?;
+        Ok(Some((index, save)))
+    }
+
     fn save_index_anyhow(&self) -> Result<()> {
         self.save_index().map_err(|e| anyhow::anyhow!(e))
     }

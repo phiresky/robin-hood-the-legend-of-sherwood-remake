@@ -56,8 +56,14 @@ impl MissionWorld {
         }
     }
 
-    pub(super) fn into_campaign(self) -> robin_engine::campaign::Campaign {
-        self.manager.engine.into_campaign()
+    pub(super) fn into_campaign_and_simulation(
+        self,
+    ) -> (
+        robin_engine::campaign::Campaign,
+        u64,
+        robin_engine::engine::SimConfig,
+    ) {
+        self.manager.engine.into_campaign_and_simulation()
     }
 }
 
@@ -202,8 +208,14 @@ impl MissionRuntime {
         }
     }
 
-    pub(super) fn into_campaign(self) -> robin_engine::campaign::Campaign {
-        self.world.into_campaign()
+    pub(super) fn into_campaign_and_simulation(
+        self,
+    ) -> (
+        robin_engine::campaign::Campaign,
+        u64,
+        robin_engine::engine::SimConfig,
+    ) {
+        self.world.into_campaign_and_simulation()
     }
 
     /// Open one host frame at the deterministic pre-command boundary.

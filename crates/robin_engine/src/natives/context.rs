@@ -11,6 +11,7 @@ use crate::element::EntityId;
 /// resume; nested dispatch can then borrow the same owners before resuming the
 /// outer VM. None of these values move into or through [`GameHost`].
 pub struct NativeSessionCapabilities<'a> {
+    simulation: &'a crate::sim_rng::SimulationContext,
     entities: RefCell<&'a mut crate::entities::Entities>,
     ai_global: RefCell<&'a mut crate::ai::AiGlobalState>,
     fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
@@ -26,11 +27,13 @@ pub struct NativeSessionCapabilities<'a> {
 
 impl<'a> NativeSessionCapabilities<'a> {
     pub fn new(
+        simulation: &'a crate::sim_rng::SimulationContext,
         entities: &'a mut crate::entities::Entities,
         ai_global: &'a mut crate::ai::AiGlobalState,
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
     ) -> Self {
         Self {
+            simulation,
             entities: RefCell::new(entities),
             ai_global: RefCell::new(ai_global),
             fast_grid: RefCell::new(fast_grid),
@@ -168,6 +171,14 @@ impl ScriptCallFrame {
 }
 
 impl<'a> NativeSessionCapabilities<'a> {
+    /// The engine-owned deterministic simulation stream for this script
+    /// session. Script runtimes must fail when no session is attached rather
+    /// than substituting an ambient or host RNG.
+    #[doc(hidden)]
+    pub fn simulation_context(&self) -> &crate::sim_rng::SimulationContext {
+        self.simulation
+    }
+
     #[doc(hidden)]
     pub fn sequence_manager_option(&self) -> Option<&'a crate::sequence::SequenceManager> {
         self.sequence_manager
@@ -209,6 +220,7 @@ impl<'a> NativeSessionCapabilities<'a> {
 /// globals, computed locations, and recorder state are borrowed from their
 /// sole owner on `MissionScript` and are never copied into that adapter.
 pub struct NativeContext<'ctx, 'owners: 'ctx> {
+    pub(crate) simulation: &'ctx crate::sim_rng::SimulationContext,
     pub(crate) game_host: &'ctx mut GameHost,
     pub(crate) entities: RefMut<'ctx, crate::entities::Entities>,
     pub(crate) ai_global: RefMut<'ctx, crate::ai::AiGlobalState>,
@@ -235,6 +247,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
+            simulation: capabilities.simulation_context(),
             game_host,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),
@@ -262,6 +275,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
     ) -> Self {
         Self {
+            simulation: capabilities.simulation_context(),
             game_host,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),
@@ -290,6 +304,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         call_frame: ScriptCallFrame,
     ) -> Self {
         Self {
+            simulation: capabilities.simulation_context(),
             game_host,
             entities: capabilities.entities(),
             ai_global: capabilities.ai_global(),

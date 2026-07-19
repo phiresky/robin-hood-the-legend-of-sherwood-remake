@@ -67,8 +67,9 @@ pub(crate) struct MultiplayerRollbackTelemetry {
 ///
 /// Also folds `AssignedLocalSeat` events (late seat-assignment
 /// races) into `host.transport.local_seat` and logs other diagnostic events.
-/// `Disconnected` clears `host.transport.net` so subsequent frames fall back
-/// to single-player.
+/// Native disconnects remain synchronized only while the transport's real
+/// reconnect loop is active. Browser disconnects arrive as `Fatal` because
+/// wasm has no reconnect implementation.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_net_inputs(
     host: &mut Host,
@@ -138,26 +139,42 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
-                tracing::warn!(
-                    "multiplayer: peer disconnected — transport will auto-reconnect; \
-                     local play continues with cached state"
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    tracing::warn!(
+                        "multiplayer: peer disconnected — transport will auto-reconnect; \
+                         simulation is held until an authoritative snapshot arrives"
+                    );
+                    host.transport.reconnecting = true;
+                }
+                #[cfg(target_arch = "wasm32")]
+                panic!(
+                    "fatal multiplayer session error: browser transport disconnected and automatic reconnect is unavailable"
                 );
-                // Don't drop host.transport.net: the I/O thread retries with
-                // backoff and will re-emit Reconnected when it
-                // re-handshakes.  The user can play offline-style
-                // until that lands; late inputs will roll back into
-                // the past as they always do.
             }
             NetEvent::Reconnected => {
-                tracing::info!("multiplayer: transport reconnected");
+                tracing::info!("multiplayer: transport reconnected; awaiting host snapshot");
             }
-            NetEvent::MissionSeed(seed) => {
-                // Wasm path: seed arrives asynchronously after
-                // engine init.  Stash on host so a late re-roll
-                // (e.g. on reconnect to a different mission) can
-                // pick it up if the game loop later needs it.
-                host.transport.mission_seed = Some(seed);
+            NetEvent::MissionConfig {
+                mission_id,
+                rng_seed,
+                sim_config,
+            } => {
+                // Welcome is awaited before Engine construction; retain the
+                // event copy for diagnostics and reconnect validation.
+                if host.transport.mission_id.as_deref() != Some(mission_id.as_str())
+                    || host.transport.mission_seed != Some(rng_seed)
+                    || host.transport.mission_sim_config != Some(sim_config)
+                {
+                    panic!(
+                        "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
+                    );
+                }
+                host.transport.mission_seed = Some(rng_seed);
+                host.transport.mission_sim_config = Some(sim_config);
+                host.transport.mission_id = Some(mission_id);
             }
+            NetEvent::Fatal(message) => panic!("fatal multiplayer session error: {message}"),
             NetEvent::InitialSnapshot {
                 frame,
                 engine_bytes,
@@ -185,6 +202,7 @@ pub(crate) fn drain_net_inputs(
                         Ok((snapshot, _)) => {
                             let snap_hash = robin_engine::replay::state_hash(&snapshot);
                             if local_hash == snap_hash {
+                                host.transport.reconnecting = false;
                                 received_initial_snapshot = true;
                                 tracing::info!(
                                     hash = format!("{local_hash:016x}"),
@@ -197,6 +215,7 @@ pub(crate) fn drain_net_inputs(
                             } else {
                                 match manager.engine.try_adopt_snapshot(snapshot, assets) {
                                     Ok(()) => {
+                                        host.transport.reconnecting = false;
                                         received_initial_snapshot = true;
                                         let adopted_hash =
                                             robin_engine::replay::state_hash(&manager.engine);
@@ -216,19 +235,14 @@ pub(crate) fn drain_net_inputs(
                                             net.send_ready_to_sim(frame);
                                         }
                                     }
-                                    Err(error) => {
-                                        tracing::error!(
-                                            %error,
-                                            "multiplayer: rejected incompatible frame-0 host snapshot"
-                                        );
-                                    }
+                                    Err(error) => panic!(
+                                        "multiplayer: rejected incompatible frame-0 host snapshot: {error}"
+                                    ),
                                 }
                             }
                         }
                         Err(e) => {
-                            tracing::error!(
-                                "multiplayer: failed to deserialize host snapshot: {e}"
-                            );
+                            panic!("multiplayer: failed to deserialize frame-0 host snapshot: {e}")
                         }
                     }
                     continue;
@@ -244,6 +258,7 @@ pub(crate) fn drain_net_inputs(
                     Ok((snapshot, _)) => {
                         match manager.engine.try_adopt_snapshot(snapshot, assets) {
                             Ok(()) => {
+                                host.transport.reconnecting = false;
                                 received_initial_snapshot = true;
                                 let adopted_hash =
                                     robin_engine::replay::state_hash(&manager.engine);
@@ -264,18 +279,14 @@ pub(crate) fn drain_net_inputs(
                                 peer_hashes.retain(|&f, _| f >= frame);
                                 rewrote_sim_state = true;
                             }
-                            Err(error) => {
-                                tracing::error!(
-                                    frame,
-                                    %error,
-                                    "multiplayer: rejected incompatible host snapshot"
-                                );
-                            }
+                            Err(error) => panic!(
+                                "multiplayer: rejected incompatible host snapshot at frame {frame}: {error}"
+                            ),
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("multiplayer: failed to deserialize host snapshot: {e}");
-                    }
+                    Err(e) => panic!(
+                        "multiplayer: failed to deserialize host snapshot at frame {frame}: {e}"
+                    ),
                 }
             }
             NetEvent::PeerStateHash {
@@ -562,9 +573,12 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 ///
 /// Network failures abort multiplayer startup so the caller can return
 /// to the main menu instead of silently launching a different local game.
-pub(super) fn setup_multiplayer_session(
+pub(super) async fn setup_multiplayer_session(
     host: &mut Host,
     args: &crate::main_entry::CliArgs,
+    authoritative_mission_id: &str,
+    authoritative_rng_seed: u64,
+    authoritative_sim_config: robin_engine::engine::SimConfig,
 ) -> Result<(), String> {
     #[cfg(not(target_arch = "wasm32"))]
     use crate::multiplayer::NetEvent;
@@ -573,6 +587,8 @@ pub(super) fn setup_multiplayer_session(
     use crate::multiplayer::{NetChannels, connect_client};
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{Duration, Instant};
+
+    validate_multiplayer_launch_args(args)?;
 
     let nickname = if args.mp_nickname.is_empty() {
         std::env::var("USER")
@@ -596,17 +612,12 @@ pub(super) fn setup_multiplayer_session(
                 addr.to_string()
             };
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
-            // Pick a random mission seed at session start so every
-            // machine in this session simulates the same RNG sequence.
-            // Replays produced on different peers stay byte-identical
-            // because they all share this seed; cross-session replays
-            // pick up whatever seed each session negotiated.
-            #[allow(clippy::disallowed_methods)]
-            let seed = fastrand::Rng::new().u64(..);
             match start_server(
                 &bind_addr,
                 nickname.clone(),
-                seed,
+                authoritative_mission_id.to_string(),
+                authoritative_rng_seed,
+                authoritative_sim_config,
                 in_tx,
                 out_rx,
                 frame_cursor,
@@ -617,13 +628,15 @@ pub(super) fn setup_multiplayer_session(
                     tracing::info!(
                         bind = %bind_addr,
                         nickname = %nickname,
-                        seed,
+                        seed = authoritative_rng_seed,
                         "multiplayer: hosting on {bind_addr}"
                     );
                     host.transport.local_seat = handle.local_seat;
                     channels.attach_runtime(handle);
                     host.transport.net = Some(channels);
-                    host.transport.mission_seed = Some(seed);
+                    host.transport.mission_seed = Some(authoritative_rng_seed);
+                    host.transport.mission_sim_config = Some(authoritative_sim_config);
+                    host.transport.mission_id = Some(authoritative_mission_id.to_string());
                 }
                 Err(e) => {
                     return Err(format!(
@@ -637,9 +650,39 @@ pub(super) fn setup_multiplayer_session(
             NetChannels::new();
         match connect_client(addr, nickname.clone(), in_tx, out_rx) {
             Ok(handle) => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
+                    while (handle.mission_id().is_none()
+                        || handle.mission_seed().is_none()
+                        || handle.mission_sim_config().is_none())
+                        && web_time::Instant::now() < deadline
+                    {
+                        crate::window::sleep_ms(10).await;
+                    }
+                    if handle.mission_id().is_none()
+                        || handle.mission_seed().is_none()
+                        || handle.mission_sim_config().is_none()
+                    {
+                        return Err(
+                            "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
+                                .to_string(),
+                        );
+                    }
+                }
+                let welcomed_mission = handle
+                    .mission_id()
+                    .expect("successful Welcome must include a mission id");
+                if welcomed_mission != authoritative_mission_id {
+                    return Err(format!(
+                        "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
+                    ));
+                }
+                host.transport.mission_id = Some(welcomed_mission.to_string());
                 if let Some(seed) = handle.mission_seed() {
                     host.transport.mission_seed = Some(seed);
                 }
+                host.transport.mission_sim_config = handle.mission_sim_config();
                 tracing::info!(
                     server = %addr,
                     nickname = %nickname,
@@ -680,4 +723,37 @@ pub(super) fn setup_multiplayer_session(
         }
     }
     Ok(())
+}
+
+fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
+    let multiplayer = args.server.is_some() || args.connect.is_some();
+    let replay = args.replay.is_some() || args.replay_data.is_some();
+    if multiplayer && replay {
+        return Err(
+            "multiplayer cannot be combined with replay playback; Welcome mission/seed/SimConfig must be the sole frame-0 authority"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod launch_validation_tests {
+    use super::validate_multiplayer_launch_args;
+
+    #[test]
+    fn multiplayer_rejects_replay_before_engine_construction() {
+        let args = crate::main_entry::CliArgs {
+            connect: Some("127.0.0.1:7878".to_string()),
+            replay: Some("session.rhrec.jsonl".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&args).is_err());
+
+        let multiplayer_only = crate::main_entry::CliArgs {
+            connect: Some("127.0.0.1:7878".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
+    }
 }

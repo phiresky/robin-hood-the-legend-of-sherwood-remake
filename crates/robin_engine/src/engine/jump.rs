@@ -779,6 +779,7 @@ impl EngineInner {
     /// stall.
     pub(super) fn start_jump(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: SequenceId,
@@ -882,7 +883,7 @@ impl EngineInner {
             };
         let is_long_branch = src_line.long_jump_forced || jump_height.abs() < pc_height_est;
         if is_swordfighting && !is_long_branch {
-            self.quit_swordfight(assets, owner);
+            self.quit_swordfight(sim, assets, owner);
         }
 
         let steps = build_jump_steps(

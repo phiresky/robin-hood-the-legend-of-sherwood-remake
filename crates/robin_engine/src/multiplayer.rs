@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 9;
+pub const NET_PROTOCOL_VERSION: u32 = 11;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -73,7 +73,9 @@ pub enum NetMsg {
     /// initialise its sim deterministically.
     Welcome {
         your_seat: PlayerId,
+        mission_id: String,
         mission_seed: u64,
+        sim_config: crate::engine::SimConfig,
         host_nickname: String,
     },
     /// Client → server: an input the client wants applied this tick,
@@ -151,9 +153,15 @@ pub enum NetEvent {
         clock_frame: Option<u32>,
         ms_until_next_frame: Option<u32>,
     },
-    /// Mission RNG seed announced by the server in `Welcome`.  Only
-    /// the wasm path emits this; native captures it synchronously.
-    MissionSeed(u64),
+    /// Mission construction state announced by the server in `Welcome`.
+    /// Only the wasm path emits this; native captures it synchronously.
+    MissionConfig {
+        mission_id: String,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+    },
+    /// Unrecoverable transport/session compatibility failure.
+    Fatal(String),
     /// Authoritative initial-state snapshot from the host.
     InitialSnapshot { frame: u32, engine_bytes: Vec<u8> },
     /// The server released the multiplayer start barrier.
@@ -386,7 +394,9 @@ mod tests {
         };
         let welcome = NetMsg::Welcome {
             your_seat: PlayerId(2),
+            mission_id: "Dem_Lei_MP".into(),
             mission_seed: 42,
+            sim_config: crate::engine::SimConfig::default(),
             host_nickname: "host".into(),
         };
         let h = decode_msg(&encode_msg(&hello)).unwrap();
@@ -399,14 +409,18 @@ mod tests {
                 },
                 NetMsg::Welcome {
                     your_seat,
+                    mission_id,
                     mission_seed,
+                    sim_config,
                     host_nickname,
                 },
             ) => {
                 assert_eq!(protocol_version, NET_PROTOCOL_VERSION);
                 assert_eq!(nickname, "alice");
                 assert_eq!(your_seat, PlayerId(2));
+                assert_eq!(mission_id, "Dem_Lei_MP");
                 assert_eq!(mission_seed, 42);
+                assert_eq!(sim_config, crate::engine::SimConfig::default());
                 assert_eq!(host_nickname, "host");
             }
             _ => panic!("wrong variants"),

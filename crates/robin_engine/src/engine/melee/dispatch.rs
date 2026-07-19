@@ -20,6 +20,7 @@ impl EngineInner {
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     pub(crate) fn dispatch_sword_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,
@@ -129,9 +130,9 @@ impl EngineInner {
         // enemy-walking envelope is included.
         let victims = self.execute_multi_target_strike(assets, owner, strike, owner_weapon, true);
         if !victims.is_empty() {
-            self.warn_for_strike(assets, owner, &victims, strike);
+            self.warn_for_strike(sim, assets, owner, &victims, strike);
         } else {
-            self.warn_for_strike(assets, owner, &[target], strike);
+            self.warn_for_strike(sim, assets, owner, &[target], strike);
         }
 
         tracing::debug!(
@@ -149,6 +150,7 @@ impl EngineInner {
     /// Transitions the entity into sword-fighting action state.
     pub(crate) fn dispatch_enter_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         opponent: Option<EntityId>,
@@ -282,7 +284,7 @@ impl EngineInner {
                     crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(*id),
                     _ => None,
                 });
-            self.enter_swordfight_with_jump_line(assets, owner, opp, false, aggressor_jl);
+            self.enter_swordfight_with_jump_line(sim, assets, owner, opp, false, aggressor_jl);
         }
         self.orders
             .sequence_manager
@@ -934,6 +936,7 @@ impl EngineInner {
     /// `ReceiveSwordDamage`, `ReceiveDamage`, `ReceiveHitDamage`, etc.
     pub(crate) fn dispatch_receive_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -983,6 +986,7 @@ impl EngineInner {
         match command {
             Command::ReceiveSwordDamage => {
                 self.apply_sword_damage(
+                    sim,
                     assets,
                     victim_id,
                     origin,
@@ -999,6 +1003,7 @@ impl EngineInner {
             }
             Command::ReceiveDamage | Command::ReceiveMobileDamage => {
                 self.apply_generic_damage(
+                    sim,
                     assets,
                     victim_id,
                     damage,
@@ -1028,6 +1033,7 @@ impl EngineInner {
                     }
                 }
                 self.apply_piercing_damage(
+                    sim,
                     assets,
                     victim_id,
                     damage,
@@ -1038,6 +1044,7 @@ impl EngineInner {
             }
             Command::ReceiveHitDamage => {
                 self.apply_hit_damage(
+                    sim,
                     assets,
                     victim_id,
                     origin,

@@ -1927,6 +1927,8 @@ fn ability_order_type(kind: AbilityKind) -> OrderType {
 /// The engine applies cross-entity effects from these results after the
 /// mutable borrow on `entities` is released.
 pub fn tick_abilities(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sequence_manager: &SequenceManager,
     order_id_counter: &mut u32,
@@ -1935,6 +1937,7 @@ pub fn tick_abilities(
     let mut results = Vec::new();
     for actor_id in actor_ids {
         results.extend(tick_ability(
+            sim,
             entities,
             sequence_manager,
             order_id_counter,
@@ -1950,6 +1953,8 @@ pub fn tick_abilities(
 /// all-actor wrapper remains for focused subsystem tests and non-hourglass
 /// callers.
 pub fn tick_ability(
+    sim: &crate::sim_rng::SimulationContext,
+
     entities: &mut Entities,
     sequence_manager: &SequenceManager,
     order_id_counter: &mut u32,
@@ -2009,6 +2014,7 @@ pub fn tick_ability(
             let motion = {
                 let elem = entity.element_data_mut();
                 elem.sprite.perform_action(
+                    sim,
                     order_id,
                     order_type,
                     direction,
@@ -2100,6 +2106,7 @@ pub fn tick_ability(
             let motion = {
                 let elem = entity.element_data_mut();
                 elem.sprite.perform_action(
+                    sim,
                     order_id,
                     order_type,
                     direction,
@@ -2172,6 +2179,7 @@ pub fn tick_ability(
         let motion = {
             let elem = entity.element_data_mut();
             elem.sprite.perform_action(
+                sim,
                 order_id,
                 order_type,
                 direction,

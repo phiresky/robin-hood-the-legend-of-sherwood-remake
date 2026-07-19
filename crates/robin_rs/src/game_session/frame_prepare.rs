@@ -126,6 +126,9 @@ fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
         *manual_pause = true;
     }
+    if host.transport.reconnecting {
+        *manual_pause = true;
+    }
     if host.transport.net.is_some()
         && host.transport.local_seat != engine_player_command::PlayerId::HOST
         && let Some((clock_frame, ms_until_next_frame)) = net_drain.latest_host_clock_sample
@@ -347,6 +350,9 @@ fn drain_pre_tick_network(
         tracing::info!("multiplayer: initial snapshot received; client ready for start barrier");
     }
     if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
+        *manual_pause = true;
+    }
+    if host.transport.reconnecting {
         *manual_pause = true;
     }
     if host.transport.net.is_some()

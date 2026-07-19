@@ -136,7 +136,9 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
     let handle = ScriptHandleCodec::actor_handle(receiver);
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut engine.world.entities,
         &mut engine.ai.global,
         &mut engine.world.fast_grid,
@@ -166,6 +168,8 @@ fn integer_property(element: &SequenceElement, field: Field) -> u32 {
 
 #[test]
 fn script_send_message_sequence_does_not_preempt_current_actor_element() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
 
@@ -204,7 +208,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
             arg2: -7,
         });
     let frame_before = engine.control.frame_counter;
-    engine.drain_script_effects(&assets);
+    engine.drain_script_effects(sim, &assets);
 
     assert_eq!(
         engine.control.frame_counter, frame_before,
@@ -238,13 +242,15 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
 
 #[test]
 fn script_send_message_callback_completes_before_sequence_launch_returns() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
 
     // Original: RHScript::SendMessage calls LaunchSequenceElement, whose
     // RHCOMMAND_SEND_MESSAGE ExecutedImmediately path invokes ProcessMessage
     // inline (RHScript.cpp:6846-6865; RHsequenceelement.cpp:736-777).
-    engine.launch_script_send_message(&assets, handle, 314, 0, 0);
+    engine.launch_script_send_message(sim, &assets, handle, 314, 0, 0);
 
     assert_eq!(
         engine
@@ -274,6 +280,8 @@ fn script_send_message_callback_completes_before_sequence_launch_returns() {
 
 #[test]
 fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let (mut engine, _receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     let frame_before = engine.control.frame_counter;
@@ -297,7 +305,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
         arg2: 0,
     });
 
-    engine.drain_script_effects(&assets);
+    engine.drain_script_effects(sim, &assets);
 
     assert_eq!(engine.control.frame_counter, frame_before);
     assert_eq!(

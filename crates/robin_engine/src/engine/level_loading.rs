@@ -1489,10 +1489,9 @@ impl EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn initialize_from_mission(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &mut LevelAssets,
         staging: &mut LevelLoadStaging,
-        script_enabled: bool,
-        highlander2: bool,
         mission_name: &str,
         proto_level_name: &str,
         mut loaded: crate::level_data::LoadedLevel,
@@ -1500,6 +1499,9 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
+        let config = sim.config();
+        let script_enabled = config.script_enabled;
+        let highlander2 = config.highlander2;
         let level_builder = MissionLevelBuilder::new(mission_name, script_enabled, &loaded);
         self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
@@ -2678,7 +2680,7 @@ impl EngineInner {
             // stars and meant rescue PCs were not flagged `instanced` at
             // spawn.
             let profile_idx = crate::profiles::CharacterProfileIdx(raw.profile_index);
-            let difficulty = crate::player_profile::DifficultyLevel::current();
+            let difficulty = config.difficulty;
             let char_idx = {
                 let profile = char_profile
                     .unwrap_or_else(|| panic!("rescue PC profile {} not found", raw.profile_index));
@@ -2795,7 +2797,7 @@ impl EngineInner {
             if cached_camp == crate::element::Camp::Lacklandists
                 && !soldier_profile.map(|p| p.vip).unwrap_or(false)
             {
-                let diff = crate::player_profile::DifficultyLevel::current();
+                let diff = config.difficulty;
                 cached_max_lp = diff.modify_capacity(
                     cached_max_lp as u16,
                     crate::player_profile::difficulty_params::EASY_ENEMY_LIFEPOINTS,
@@ -3254,7 +3256,10 @@ impl EngineInner {
                 // within its current row.  Sequencing must be
                 // force_animation → force_random_sprite_frame because
                 // `force_animation` resets `current_frame` to 0.
-                sprite.force_random_sprite_frame(crate::sim_rng::RngSite::LevelBonusInitialFrame);
+                sprite.force_random_sprite_frame(
+                    sim,
+                    crate::sim_rng::RngSite::LevelBonusInitialFrame,
+                );
             }
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
@@ -3349,7 +3354,7 @@ impl EngineInner {
             // scroll active on Medium/Hard even when its presence flag
             // was cleared, which the render / focus paths would then
             // happily expose.
-            let difficulty = crate::player_profile::DifficultyLevel::current();
+            let difficulty = config.difficulty;
             let difficulty_idx = difficulty as usize;
             let is_to_be_replaced_by_amulet =
                 difficulty == crate::player_profile::DifficultyLevel::Easy && !raw.presence[0];
@@ -3593,7 +3598,8 @@ impl EngineInner {
                     instanced[ti] = true;
                     // Original creates and randomizes every remembered PC
                     // before consuming the 200 beam-me shuffle draws.
-                    sherwood_placement_rolls[ti] = Some(super::teleport::roll_sherwood_placement());
+                    sherwood_placement_rolls[ti] =
+                        Some(super::teleport::roll_sherwood_placement(sim));
                 }
 
                 // Shuffle the free beam-mes 100 times.  Both the
@@ -3606,7 +3612,7 @@ impl EngineInner {
                 // sim RNG so replay / rollback stay reproducible.
                 let n = loaded.mission.beam_mes.len();
                 if n > 0 {
-                    shuffle_sherwood_slots(n, |a, b| {
+                    shuffle_sherwood_slots(sim, n, |a, b| {
                         if a != b {
                             loaded.mission.beam_mes.swap(a, b);
                             assignments.swap(a, b);
@@ -4258,7 +4264,7 @@ impl EngineInner {
                 sprite_ids.push(self.add_entity(entity));
             }
 
-            let mobile = crate::mobile::MobileElement::from_raw(raw_mobile, &path, sprite_ids)
+            let mobile = crate::mobile::MobileElement::from_raw(sim, raw_mobile, &path, sprite_ids)
                 .unwrap_or_else(|e| panic!("failed to initialize mobile {mobile_index}: {e}"));
             let active = mobile.active;
             let animation_speed = mobile.animation_speed();
@@ -4466,9 +4472,7 @@ impl EngineInner {
         use crate::sprite_variant::SpriteVariant;
         // Force Day regardless of ambiance when the fog-sprites-crash
         // workaround is enabled.
-        if let Some(opts) = crate::engine::GlobalOptions::global().as_ref()
-            && opts.bypass_fog_sprites_crash
-        {
+        if self.control.sim_config.bypass_fog_sprites_crash {
             return SpriteVariant::Day;
         }
         match self.world.weather.ambiance {
@@ -6678,7 +6682,11 @@ impl EngineInner {
     /// Must be called AFTER `apply_production_registrations` so production
     /// points are populated, and only when the current level is Sherwood.
     /// Called from `Engine::new` when Sherwood is the current mission.
-    pub(crate) fn apply_production_sector_data(&mut self, assets: &mut LevelAssets) {
+    pub(crate) fn apply_production_sector_data(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &mut LevelAssets,
+    ) {
         use crate::sector_production::Type as PT;
 
         // Resolve last-mission info — drives UpdateAmount/Experience/LifePoints.
@@ -6900,6 +6908,7 @@ impl EngineInner {
                         continue;
                     }
                     sprite.force_random_sprite_frame(
+                        sim,
                         crate::sim_rng::RngSite::SherwoodProductionBonusFrame,
                     );
                     sprite.apply_placement(
@@ -6963,7 +6972,10 @@ impl EngineInner {
                         );
                         continue;
                     }
-                    sprite.force_random_sprite_frame(crate::sim_rng::RngSite::SherwoodRelicFrame);
+                    sprite.force_random_sprite_frame(
+                        sim,
+                        crate::sim_rng::RngSite::SherwoodRelicFrame,
+                    );
                     sprite.apply_placement(
                         MapPoint::new(point.x, point.y),
                         point.layer,
@@ -7131,14 +7143,18 @@ impl EngineInner {
     }
 }
 
-fn shuffle_sherwood_slots(n: usize, mut swap: impl FnMut(usize, usize)) {
+fn shuffle_sherwood_slots(
+    sim: &crate::sim_rng::SimulationContext,
+    n: usize,
+    mut swap: impl FnMut(usize, usize),
+) {
     assert!(
         n > 0,
         "Sherwood beam-me shuffle requires a non-empty slot list"
     );
     for _ in 0..100 {
-        let a = crate::sim_rng::usize(crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
-        let b = crate::sim_rng::usize(crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
+        let a = crate::sim_rng::usize(sim, crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
+        let b = crate::sim_rng::usize(sim, crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
         swap(a, b);
     }
 }
@@ -7150,10 +7166,10 @@ mod rng_order_tests {
 
     #[test]
     fn returning_pc_placement_draws_precede_all_beam_me_shuffle_draws() {
-        crate::sim_rng::with_seed(0xA036, || {
+        crate::sim_rng::with_seed(0xA036, |sim| {
             let (_, trace) = crate::sim_rng::with_draw_trace(|| {
-                let _ = super::super::teleport::roll_sherwood_placement();
-                shuffle_sherwood_slots(4, |_, _| {});
+                let _ = super::super::teleport::roll_sherwood_placement(sim);
+                shuffle_sherwood_slots(sim, 4, |_, _| {});
             });
             assert_eq!(trace.len(), 203);
             assert_eq!(

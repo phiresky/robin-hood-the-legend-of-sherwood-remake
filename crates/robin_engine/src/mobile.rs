@@ -45,6 +45,8 @@ pub struct MobileTick {
 
 impl MobileElement {
     pub fn from_raw(
+        sim: &crate::sim_rng::SimulationContext,
+
         raw: &RawMobileElement,
         path: &RawHikingPath,
         sprite_ids: Vec<EntityId>,
@@ -96,7 +98,7 @@ impl MobileElement {
             goal: position,
         };
 
-        mobile.execute_waypoint(path)?;
+        mobile.execute_waypoint(sim, path)?;
         Ok(mobile)
     }
 
@@ -200,7 +202,11 @@ impl MobileElement {
         self.position != self.old_position
     }
 
-    pub fn hourglass(&mut self, path: &RawHikingPath) -> Result<MobileTick, String> {
+    pub fn hourglass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        path: &RawHikingPath,
+    ) -> Result<MobileTick, String> {
         if !self.active || self.stopped {
             return Ok(MobileTick::default());
         }
@@ -231,7 +237,7 @@ impl MobileElement {
         let mut active_changed = false;
         if reached {
             let was_active = self.active;
-            self.execute_waypoint(path)?;
+            self.execute_waypoint(sim, path)?;
             active_changed = was_active != self.active;
         }
 
@@ -241,7 +247,11 @@ impl MobileElement {
         })
     }
 
-    fn execute_waypoint(&mut self, path: &RawHikingPath) -> Result<(), String> {
+    fn execute_waypoint(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        path: &RawHikingPath,
+    ) -> Result<(), String> {
         let waypoint = path
             .waypoints
             .get(usize::from(self.current_waypoint))
@@ -256,7 +266,7 @@ impl MobileElement {
                     "mobile waypoint scripts are unsupported (class '{class}')"
                 ));
             }
-            WaypointCommand::Macro(data) => self.execute_shipped_macro(data, path)?,
+            WaypointCommand::Macro(data) => self.execute_shipped_macro(sim, data, path)?,
         }
 
         self.advance_path(path)?;
@@ -294,7 +304,12 @@ impl MobileElement {
         Ok(())
     }
 
-    fn execute_shipped_macro(&mut self, data: &[u8], path: &RawHikingPath) -> Result<(), String> {
+    fn execute_shipped_macro(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        data: &[u8],
+        path: &RawHikingPath,
+    ) -> Result<(), String> {
         let directions = read_u16(data, 0)? as usize;
         if directions == 0 || directions > 2 {
             return Err(format!("invalid mobile macro direction count {directions}"));
@@ -327,8 +342,11 @@ impl MobileElement {
             return Err("mobile macro has no probability blocks".into());
         }
         // The C++ code consumes rand() even for a single 100% block.
-        let mut roll =
-            crate::sim_rng::u8(crate::sim_rng::RngSite::MobileWaypointProbability, 1..=100);
+        let mut roll = crate::sim_rng::u8(
+            sim,
+            crate::sim_rng::RngSite::MobileWaypointProbability,
+            1..=100,
+        );
         let mut commands = None;
         for _ in 0..probability_blocks {
             let probability = *data
@@ -503,18 +521,19 @@ mod tests {
 
     #[test]
     fn shipped_speed_acceleration_and_terminal_stop_match_cpp() {
-        crate::sim_rng::with_seed(7, || {
+        crate::sim_rng::with_seed(7, |sim| {
             let path = path();
-            let mut mobile = MobileElement::from_raw(&raw_mobile(), &path, Vec::new()).unwrap();
+            let mut mobile =
+                MobileElement::from_raw(sim, &raw_mobile(), &path, Vec::new()).unwrap();
             assert_eq!(mobile.speed, 5.0);
             assert!((mobile.acceleration - -0.105).abs() < 0.000_01);
             assert_eq!(mobile.current_waypoint, 1);
 
-            let first = mobile.hourglass(&path).unwrap();
+            let first = mobile.hourglass(sim, &path).unwrap();
             assert!((first.movement.x - 4.895).abs() < 0.000_01);
 
             for _ in 0..200 {
-                mobile.hourglass(&path).unwrap();
+                mobile.hourglass(sim, &path).unwrap();
                 if !mobile.active {
                     break;
                 }
@@ -530,8 +549,8 @@ mod tests {
 
     #[test]
     fn motion_sector_builds_closed_lines_and_corner_points() {
-        crate::sim_rng::with_seed(9, || {
-            let mobile = MobileElement::from_raw(&raw_mobile(), &path(), Vec::new()).unwrap();
+        crate::sim_rng::with_seed(9, |sim| {
+            let mobile = MobileElement::from_raw(sim, &raw_mobile(), &path(), Vec::new()).unwrap();
             assert_eq!(mobile.repulsive_lines().len(), 3);
             assert_eq!(mobile.repulsive_points().len(), 3);
             assert!(mobile.contains_point(MapPoint::new(2.0, 2.0)));
@@ -547,12 +566,13 @@ mod tests {
 
     #[test]
     fn stopped_mobile_freezes_master_motion() {
-        crate::sim_rng::with_seed(11, || {
+        crate::sim_rng::with_seed(11, |sim| {
             let path = path();
-            let mut mobile = MobileElement::from_raw(&raw_mobile(), &path, Vec::new()).unwrap();
+            let mut mobile =
+                MobileElement::from_raw(sim, &raw_mobile(), &path, Vec::new()).unwrap();
             let position = mobile.position;
             mobile.stop();
-            assert_eq!(mobile.hourglass(&path).unwrap().movement, MapVec::ZERO);
+            assert_eq!(mobile.hourglass(sim, &path).unwrap().movement, MapVec::ZERO);
             assert_eq!(mobile.position, position);
         });
     }

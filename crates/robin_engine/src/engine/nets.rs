@@ -81,7 +81,12 @@ impl EngineInner {
     /// broadcast, and `EventNet` AI stimulus run on the next frame
     /// inside [`EngineInner::apply_net`] (`engine/melee.rs`) when the
     /// queued `Command::ReceiveNet` damage element dispatches.
-    pub(crate) fn apply_net_falling_effect(&mut self, assets: &LevelAssets, net_id: EntityId) {
+    pub(crate) fn apply_net_falling_effect(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
         // ── Snapshot the net's state up front ──────────────────────
         let (already_crumpled, landing_pos, mut victims_snapshot) = match self.get_entity(net_id) {
             Some(Entity::Net(n)) => (n.net.crumpled, n.projectile.end, n.net.victims.clone()),
@@ -222,7 +227,7 @@ impl EngineInner {
                 crate::combat::increment_stuck_under_net(human);
             }
 
-            self.quit_swordfight(assets, victim_id);
+            self.quit_swordfight(sim, assets, victim_id);
 
             // Launch a ReceiveNet damage element (damage/concussion = 0
             // — the handler reads only the origin pointer).
@@ -415,7 +420,12 @@ impl EngineInner {
     ///   net-antagonist pickup, and the pickup branch in
     ///   `engine/tick.rs` calls [`EngineInner::unapply_net_effect`] +
     ///   despawns the net.
-    pub(crate) fn tick_net(&mut self, assets: &LevelAssets, net_id: EntityId) {
+    pub(crate) fn tick_net(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -532,7 +542,7 @@ impl EngineInner {
 
         // Phase 2: apply effects (mutable engine borrow released above).
         if apply {
-            self.apply_net_falling_effect(assets, net_id);
+            self.apply_net_falling_effect(sim, assets, net_id);
         }
         if just_landed {
             self.apply_projectile_landing_resolution(assets, net_id);
@@ -1093,6 +1103,8 @@ mod tests {
 
     #[test]
     fn net_captures_three_normal_soldiers() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1115,7 +1127,7 @@ mod tests {
             })
             .collect();
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1155,6 +1167,8 @@ mod tests {
 
     #[test]
     fn ordered_net_dispatch_applies_landing_capture_inline() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1171,7 +1185,7 @@ mod tests {
         let net_id = engine.add_entity(net);
         let victim_id = engine.add_entity(make_soldier(landing, 0, false));
 
-        engine.tick_net(&assets, net_id);
+        engine.tick_net(sim, &assets, net_id);
 
         assert_eq!(
             engine
@@ -1188,6 +1202,8 @@ mod tests {
 
     #[test]
     fn second_apply_pass_does_not_double_capture() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // The capture sweep runs every frame the net is descending
         // within the apply threshold of landing — the dedup guard
         // ensures each victim is only captured once.
@@ -1209,9 +1225,9 @@ mod tests {
             false,
         ));
 
-        engine.apply_net_falling_effect(&assets, net_id);
-        engine.apply_net_falling_effect(&assets, net_id);
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1233,6 +1249,8 @@ mod tests {
 
     #[test]
     fn net_crumples_when_only_rider_in_range() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1251,7 +1269,7 @@ mod tests {
             true, // rider
         ));
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1267,6 +1285,8 @@ mod tests {
 
     #[test]
     fn net_crumples_on_vip_soldier_alone() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1286,7 +1306,7 @@ mod tests {
             false,
         ));
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1299,6 +1319,8 @@ mod tests {
 
     #[test]
     fn net_with_existing_victim_ignores_new_rider() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Pre-existing victim simulates a previous capture-sweep
         // call's captures; a Rider seen on a subsequent sweep triggers
         // the "new arrivants won't be caught" branch — the net does
@@ -1335,7 +1357,7 @@ mod tests {
             n.net.victims.push(existing_id);
         }
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1354,6 +1376,8 @@ mod tests {
 
     #[test]
     fn net_skips_humans_outside_radius() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1382,7 +1406,7 @@ mod tests {
             false,
         ));
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1395,6 +1419,8 @@ mod tests {
 
     #[test]
     fn net_crumples_on_stuteley_pc() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1413,7 +1439,7 @@ mod tests {
             1,
         ));
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let net = match engine.get_entity(net_id).unwrap() {
             Entity::Net(n) => n,
@@ -1425,6 +1451,8 @@ mod tests {
 
     #[test]
     fn unapply_clears_victims_and_releases_counters() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
         let landing = WorldPoint3D {
@@ -1450,7 +1478,7 @@ mod tests {
         // damage handler). We don't run the per-tick dispatcher in
         // this unit test, so set the posture by hand to simulate the
         // post-dispatch state.
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
         if let Some(entity) = engine.world.entities.get_mut(victim_id) {
             entity.set_posture_stuck_under_net_for_human();
         }
@@ -1483,6 +1511,8 @@ mod tests {
 
     #[test]
     fn vip_soldier_says_vip_net_no_remark() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // The VipNetNo remark fires for VIP soldiers in the crumple
         // radius. We populate an EnemyAi brain so the say() call has
         // somewhere to land.
@@ -1513,7 +1543,7 @@ mod tests {
         }
         let vip_id = engine.add_entity(vip);
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let entity = engine.get_entity(vip_id).unwrap();
         let remark = entity
@@ -1526,6 +1556,8 @@ mod tests {
 
     #[test]
     fn capture_sets_victim_display_order_behind_net() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Capture should mark the victim's sprite as
         // `display_order_ref = Some(net_id)` + `behind = true`.
         let mut engine = make_engine();
@@ -1548,7 +1580,7 @@ mod tests {
         // The victim already has a default Sprite (non-Option).
         let victim_id = engine.add_entity(victim);
 
-        engine.apply_net_falling_effect(&assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
 
         let sprite = engine.get_entity(victim_id).unwrap().sprite();
         assert_eq!(sprite.display_order_ref, Some(net_id));

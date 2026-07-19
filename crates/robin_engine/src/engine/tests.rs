@@ -206,8 +206,8 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
 fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
     let mut live = EngineInner::new();
     live.restore_rng_from_seed(0xA036_5EED_CAFE_BEEF);
-    live.with_sim_rng(|_| {
-        let _ = crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 97)
+    live.with_simulation_context(|_, sim| {
+        let _ = crate::sim_rng::script_rand(sim, crate::sim_rng::RngSite::ScriptRand, 97)
             .expect("positive script bound");
     });
 
@@ -222,19 +222,19 @@ fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
         crate::replay::state_hash(&restored)
     );
 
-    let next_live = live.with_sim_rng(|_| {
+    let next_live = live.with_simulation_context(|_, sim| {
         (
-            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 101)
+            crate::sim_rng::script_rand(sim, crate::sim_rng::RngSite::ScriptRand, 101)
                 .expect("positive script bound"),
-            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 17)
+            crate::sim_rng::script_rand(sim, crate::sim_rng::RngSite::ScriptRand, 17)
                 .expect("positive script bound"),
         )
     });
-    let next_restored = restored.with_sim_rng(|_| {
+    let next_restored = restored.with_simulation_context(|_, sim| {
         (
-            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 101)
+            crate::sim_rng::script_rand(sim, crate::sim_rng::RngSite::ScriptRand, 101)
                 .expect("positive script bound"),
-            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 17)
+            crate::sim_rng::script_rand(sim, crate::sim_rng::RngSite::ScriptRand, 17)
                 .expect("positive script bound"),
         )
     });
@@ -577,6 +577,8 @@ fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
 
 #[test]
 fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::bow_shot::{SpawnArrowParams, spawn_arrow};
     use crate::coordinates::{WorldPoint3D, WorldVec3D};
     use crate::element::{ActionState, Command, Posture, TrajectoryPoint};
@@ -714,6 +716,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         .element_data_mut()
         .sprite
         .perform_action(
+            sim,
             Some(order_id),
             OrderType::ShootingWithBow,
             shoot_direction as u16,
@@ -727,6 +730,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         .element_data_mut()
         .sprite
         .perform_action(
+            sim,
             Some(order_id),
             OrderType::ShootingWithBow,
             shoot_direction as u16,
@@ -735,9 +739,9 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         );
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
-    let (_, visited) = engine.with_sim_rng(|engine| {
+    let (_, visited) = engine.with_simulation_context(|engine, sim| {
         capture_ordered_gameplay_entities(|| {
-            engine.hourglass_phase_gameplay_systems(&mut display, &assets)
+            engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets)
         })
     });
 
@@ -770,6 +774,8 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 
 #[test]
 fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
@@ -808,7 +814,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
 
     let mut display = HostDisplayState::default();
     let assets = LevelAssets::new();
-    engine.tick_ability_for(&mut display, &assets, first);
+    engine.tick_ability_for(sim, &mut display, &assets, first);
 
     assert_ne!(
         engine
@@ -834,6 +840,8 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
 
 #[test]
 fn melee_completion_precedes_a_later_ability_dispatch() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
@@ -894,7 +902,7 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
         .element_in_progress(ability_sequence, 0);
 
     let assets = LevelAssets::new();
-    engine.tick_melee_completion_for(&assets, attacker);
+    engine.tick_melee_completion_for(sim, &assets, attacker);
 
     assert_eq!(
         engine
@@ -997,8 +1005,8 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     };
     let mut display = HostDisplayState::default();
 
-    crate::sim_rng::with_seed(0xA_B_C, || {
-        engine.hourglass_phase_gameplay_systems(&mut display, &assets);
+    crate::sim_rng::with_seed(0xA_B_C, |sim| {
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine
@@ -1085,6 +1093,8 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
 
 #[test]
 fn fade_to_black_presents_without_advancing_simulation_timers() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
@@ -1107,6 +1117,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
         });
 
     engine.apply_host_commands(
+        sim,
         &assets,
         vec![crate::natives::EngineCommand::FadeToBlack { speed: 3 }],
     );
@@ -1343,8 +1354,8 @@ fn rollback_clone_stays_in_sync() {
 
     // Double-check: re-cloning the original snapshot and replaying the
     // SAME number of ticks a second time must also match — guarding
-    // against state that silently leaks across clones (e.g. a
-    // thread-local that wasn't properly re-seeded on install).
+    // against state that silently leaks across clones (e.g. an RNG allocation
+    // accidentally shared between the snapshot and the live engine).
     let mut second_replay = snapshot;
     for _ in 0..50 {
         second_replay.perform_hourglass(&mut display, &assets, &mut dev);
@@ -2138,6 +2149,8 @@ fn ground_mark_hourglass_freezes_off_screen_marks() {
 
 #[test]
 fn mission_stat_resets_on_new_mission() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut assets = LevelAssets::new();
     let mut staging = LevelLoadStaging::default();
     let mut engine = EngineInner::new();
@@ -2147,10 +2160,9 @@ fn mission_stat_resets_on_new_mission() {
 
     let loaded = crate::level_data::LoadedLevel::empty_for_test();
     let _ = engine.initialize_from_mission(
+        sim,
         &mut assets,
         &mut staging,
-        true,
-        false,
         "test_mission",
         "test_proto",
         loaded,
@@ -2555,6 +2567,8 @@ fn sort_for_minimap_priority_order() {
 
 #[test]
 fn swordfight_los_ignores_crossing_motion_line() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, Posture};
     use crate::element_kinds::ActionState;
@@ -2614,7 +2628,7 @@ fn swordfight_los_ignores_crossing_motion_line() {
         "fixture must contain a movement barrier between the fighters"
     );
 
-    engine.tick_evaluate_swordfight(&assets);
+    engine.tick_evaluate_swordfight(sim, &assets);
 
     assert_eq!(
         engine
@@ -2701,8 +2715,8 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     }
 
     engine.control.frame_counter = 15;
-    crate::sim_rng::with_seed(1, || {
-        engine.tick_smalltalk(&assets, &[]);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_smalltalk(sim, &assets, &[]);
     });
 
     let attacker_human = engine
@@ -2735,6 +2749,8 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 
 #[test]
 fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity, Posture, SmalltalkHint,
@@ -2792,7 +2808,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
 
-    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(&assets);
+    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(sim, &assets);
 
     let pc_human = engine
         .get_entity(pc_id)
@@ -2813,6 +2829,8 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
 
 #[test]
 fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_actor() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorSoldier, Command, ElementData, ElementKind, Entity, Posture, SmalltalkHint,
@@ -2927,9 +2945,9 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .push(free_attacker_id);
     }
 
-    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(&assets);
-    crate::sim_rng::with_seed(1, || {
-        engine.tick_smalltalk(&assets, &consumed_smalltalk_hint_actors);
+    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(sim, &assets);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_smalltalk(sim, &assets, &consumed_smalltalk_hint_actors);
     });
 
     assert_eq!(consumed_smalltalk_hint_actors, vec![hinted_id]);
@@ -3222,6 +3240,8 @@ fn scroll_default_hourglass_counter_is_zero() {
 /// is a no-op and doesn't touch scroll state.
 #[test]
 fn dispatch_scroll_hourglasses_no_script_is_noop() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let scroll = Entity::Scroll(crate::element::ElementScroll {
         element: crate::element::ElementData {
@@ -3235,7 +3255,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
-    engine.dispatch_scroll_hourglasses(&assets);
+    engine.dispatch_scroll_hourglasses(sim, &assets);
     let entity = engine.get_entity(scroll_id);
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
@@ -3249,6 +3269,8 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 /// returns `false`.
 #[test]
 fn scroll_is_taken_without_script_returns_false_and_opens() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use super::scroll_reveal::ScrollStatus;
 
     let mut engine = EngineInner::new();
@@ -3277,7 +3299,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     let pc_id = engine.add_entity(pc);
 
     let assets = crate::engine::LevelAssets::new();
-    let accepted = engine.scroll_is_taken(&assets, scroll_id, pc_id);
+    let accepted = engine.scroll_is_taken(sim, &assets, scroll_id, pc_id);
     assert!(!accepted);
     // Without `mission_script`, the status store isn't populated
     // either — the setter early-returns.  Covering the "happens to
@@ -3506,6 +3528,8 @@ fn selection_mark_skips_hidden_and_building_pcs() {
 
 #[test]
 fn enter_swordfight_clears_pending_bow_shot_list() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
@@ -3520,7 +3544,7 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     let shot_seq = engine.orders.sequence_manager.launch_element(shot);
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
-    let _ = engine.enter_swordfight(&LevelAssets::new(), pc, opponent, false);
+    let _ = engine.enter_swordfight(sim, &LevelAssets::new(), pc, opponent, false);
 
     assert_eq!(
         engine
@@ -3599,6 +3623,8 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
 }
 
 fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::EyeStatus;
 
@@ -3651,7 +3677,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         officer.set_state(officer_state, Substate::DefaultOnPost);
     }
 
-    let scratch = engine.build_sim_scratch(&assets);
+    let scratch = engine.build_sim_scratch(sim, &assets);
     let ctx = {
         let entity = engine
             .get_entity(charly_id)
@@ -3668,11 +3694,13 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             &engine.world.fast_grid,
             &assets.hiking_paths,
             &engine.ai.global.all_soldier_handles,
+            engine.control.sim_config.difficulty,
         )
     };
     assert!(ctx.is_night_or_fog);
-    let tick = engine.build_npc_tick_data(charly_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(sim, charly_id, &scratch, &assets);
     engine.dispatch_think_with_drain(
+        sim,
         charly_id,
         &Stimulus::new(StimulusType::EventTimer),
         &ctx,
@@ -3725,6 +3753,8 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
 
 #[test]
 fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
@@ -3735,7 +3765,7 @@ fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
     };
     soldier.element.active = false;
 
-    let scratch = engine.build_sim_scratch(&LevelAssets::new());
+    let scratch = engine.build_sim_scratch(sim, &LevelAssets::new());
     let view = scratch
         .ai_entity_views
         .get(&soldier_id.index())
@@ -3805,6 +3835,8 @@ fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
 
 #[test]
 fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::ai::{StimulusType, Substate};
 
     let mut engine = EngineInner::new();
@@ -3819,7 +3851,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.drain_pending_self_stimuli(&assets);
+    engine.drain_pending_self_stimuli(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -3847,6 +3879,8 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
 
 #[test]
 fn condolation_reenters_think_before_dispatch_returns() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::ai::Substate;
     use crate::element::Command;
     use crate::sequence::SequenceElement;
@@ -3866,7 +3900,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
     engine.orders.sequence_manager.element_terminated(seq_id, 0);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.dispatch_condolations(&assets);
+    engine.dispatch_condolations(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -3891,6 +3925,8 @@ fn condolation_reenters_think_before_dispatch_returns() {
 
 #[test]
 fn condolation_followup_arbitrates_before_parent_sequence_successor() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::ai::{AiState, Substate};
     use crate::element::Command;
     use crate::sequence::{Sequence, SequenceAction, SequenceElement};
@@ -3918,7 +3954,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
         .element_terminated(parent_id, 0);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.dispatch_condolations(&assets);
+    engine.dispatch_condolations(sim, &assets);
 
     let commands: Vec<_> = engine
         .orders
@@ -3972,6 +4008,8 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
 
 #[test]
 fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::element::Command;
     use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceState};
 
@@ -4006,7 +4044,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
         .orders
         .sequence_manager
         .element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
-    engine.dispatch_condolations_for_npc(first, &LevelAssets::new());
+    engine.dispatch_condolations_for_npc(sim, first, &LevelAssets::new());
 
     for (idx, owner) in [(1, second), (2, third)] {
         assert_eq!(
@@ -4236,7 +4274,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
             ..Detectable::default()
         });
 
-        crate::sim_rng::with_seed(0xA013, || engine.tick_enemy_ai(&assets));
+        crate::sim_rng::with_seed(0xA013, |sim| engine.tick_enemy_ai(sim, &assets));
 
         let attacker_ai = engine
             .get_entity(attacker_id)
@@ -4401,7 +4439,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0EAD, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0EAD, |sim| engine.tick_enemy_ai(sim, &assets));
 
     assert_eq!(
         engine
@@ -4609,7 +4647,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0B22, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0B22, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let observer = engine
         .get_entity(observer_id)
@@ -4741,7 +4779,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     observer.npc.detectable_lists[DetectableType::Enemy as usize][0].shadow_seen_last_frame = true;
 
     engine.ai.global.freeze = true;
-    crate::sim_rng::with_seed(0xA013_0B24, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0B24, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let observer = engine
         .get_entity(observer_id)
@@ -4923,7 +4961,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
         observer.npc.maximal_detection_suspect = 777;
 
-        crate::sim_rng::with_seed(0xA013_1A51, || engine.tick_enemy_ai(&assets));
+        crate::sim_rng::with_seed(0xA013_1A51, |sim| engine.tick_enemy_ai(sim, &assets));
 
         let observer = engine
             .get_entity(observer_id)
@@ -5041,7 +5079,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
             .element_data_mut()
             .active = false;
 
-        crate::sim_rng::with_seed(0xA013_B11F, || engine.tick_enemy_ai(&assets));
+        crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
 
         assert_eq!(
             engine
@@ -5151,7 +5189,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     ai.base.locks_flag_field = AiLockFlags::BUSY;
     ai.base.max_visibility = 0.75;
 
-    crate::sim_rng::with_seed(0xA013_D00F, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_D00F, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let Entity::Soldier(observer) = engine
         .get_entity(observer_id)
@@ -5190,6 +5228,8 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
 
 #[test]
 fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
@@ -5208,7 +5248,7 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.control.frame_counter = 1;
-    engine.tick_enemy_ai(&assets);
+    engine.tick_enemy_ai(sim, &assets);
     assert!(
         engine
             .get_entity(observer_id)
@@ -5218,7 +5258,7 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     );
 
     engine.control.frame_counter = 16;
-    engine.tick_enemy_ai(&assets);
+    engine.tick_enemy_ai(sim, &assets);
     assert!(
         !engine
             .get_entity(observer_id)
@@ -5230,6 +5270,8 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
 
 #[test]
 fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::ai::{AiLockFlags, AiState, Substate};
     use crate::ai_enemy::task_priority;
     use crate::element::{Camp, Detectable, DetectableType, Entity};
@@ -5307,7 +5349,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
         });
     }
 
-    crate::sim_rng::with_seed(0xA013_0B23, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0B23, |sim| engine.tick_enemy_ai(sim, &assets));
     let ai = engine
         .get_entity(observer_id)
         .and_then(Entity::enemy_ai)
@@ -5320,7 +5362,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
         .and_then(Entity::ai_controller_mut)
         .expect("queued replay observer retains controller")
         .locks_flag_field = AiLockFlags::empty();
-    engine.tick_ai_queued_stimuli(&assets);
+    engine.tick_ai_queued_stimuli(sim, &assets);
 
     let ai = engine
         .get_entity(observer_id)
@@ -5447,7 +5489,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0A7, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0A7, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let soldier = engine
         .get_entity(soldier_id)
@@ -5570,7 +5612,7 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
             });
         }
 
-        crate::sim_rng::with_seed(0xA013_0B1E, || engine.tick_enemy_ai(&assets));
+        crate::sim_rng::with_seed(0xA013_0B1E, |sim| engine.tick_enemy_ai(sim, &assets));
 
         let soldier = engine
             .get_entity(soldier_id)
@@ -5704,7 +5746,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
         ..Detectable::default()
     });
 
-    crate::sim_rng::with_seed(0xA013_0B1F, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0B1F, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let ai = engine
         .get_entity(soldier_id)
@@ -5833,7 +5875,7 @@ fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
             "listener fixture must start on a closed Royalist NPC detection gate"
         );
-        crate::sim_rng::with_seed(0xA013_0B20, || engine.tick_enemy_ai(&assets));
+        crate::sim_rng::with_seed(0xA013_0B20, |sim| engine.tick_enemy_ai(sim, &assets));
         assert!(
             !engine
                 .get_entity(target_id)
@@ -5988,7 +6030,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         });
     }
 
-    crate::sim_rng::with_seed(0xA013_0B21, || engine.tick_enemy_ai(&assets));
+    crate::sim_rng::with_seed(0xA013_0B21, |sim| engine.tick_enemy_ai(sim, &assets));
 
     let observer = engine
         .get_entity(observer_id)
@@ -6263,6 +6305,8 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     }
 
     fn observe(seeker_before_target: bool) -> Observation {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         let target_before_movement = MapPoint::new(10.0, 0.0);
         let target_destination = MapPoint::new(30.0, 0.0);
@@ -6305,8 +6349,8 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         // advancing on a newly-seen order. Prime that start tick, then use
         // the next production movement tick as the ordering observation.
         let assets = LevelAssets::new();
-        engine.tick_entity_movement(&assets);
-        engine.tick_entity_movement(&assets);
+        engine.tick_entity_movement(sim, &assets);
+        engine.tick_entity_movement(sim, &assets);
 
         Observation {
             seeker_slot: seeker_id.index(),
@@ -6353,6 +6397,8 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
 
 #[test]
 fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
@@ -6454,8 +6500,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     // On the next tick the destination is within one animation step. The
     // original game still applies actor repulsion before checking arrival.
     let assets = LevelAssets::new();
-    engine.tick_entity_movement(&assets);
-    engine.tick_entity_movement(&assets);
+    engine.tick_entity_movement(sim, &assets);
+    engine.tick_entity_movement(sim, &assets);
 
     let mover_position = engine
         .get_entity(mover_id)
@@ -6525,6 +6571,8 @@ fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
 
 #[test]
 fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
@@ -6539,7 +6587,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
         crate::ai::StimulusType::EventAfterCombatInjury,
     ));
 
-    engine.tick_ai_queued_stimuli(&assets);
+    engine.tick_ai_queued_stimuli(sim, &assets);
     assert_eq!(
         engine
             .get_entity(soldier_id)
@@ -6556,7 +6604,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
         .and_then(|entity| entity.ai_controller_mut())
         .unwrap()
         .locks_flag_field = crate::ai::AiLockFlags::empty();
-    engine.tick_ai_queued_stimuli(&assets);
+    engine.tick_ai_queued_stimuli(sim, &assets);
     assert!(
         engine
             .get_entity(soldier_id)
@@ -6578,6 +6626,8 @@ fn pending_specific_blinks(engine: &EngineInner, npc_id: EntityId) -> Vec<Entity
 
 #[test]
 fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
     use crate::element::{Camp, Posture};
 
@@ -6590,7 +6640,7 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
         .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(&LevelAssets::new());
+    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
     assert_eq!(
         pending_specific_blinks(&engine, same_camp_npc),
@@ -6604,6 +6654,8 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
 
 #[test]
 fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
     use crate::element::Camp;
 
@@ -6618,7 +6670,7 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
         .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(&LevelAssets::new());
+    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
     assert_eq!(
         pending_specific_blinks(&engine, waker),
@@ -6636,6 +6688,8 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
 
 #[test]
 fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
     use crate::element::Camp;
 
@@ -6647,7 +6701,7 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
         .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
-    engine.drain_pending_concussion_side_effects(&LevelAssets::new());
+    engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
     assert_eq!(
         pending_specific_blinks(&engine, opposite_camp_npc),
@@ -7214,7 +7268,9 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -7259,7 +7315,9 @@ fn call_waypoint_function_dispatches_and_falls_back() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -7341,6 +7399,8 @@ fn execute_waypoint_script_queues_pending_dispatch() {
 /// registers instances keyed by `(path_idx, wp_idx)`.
 #[test]
 fn initialize_mission_script_binds_waypoint_classes() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let scb = scripted_waypoint_scb();
@@ -7381,7 +7441,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     ];
 
     let assets = crate::engine::LevelAssets::new();
-    engine.initialize_mission_script_with(&assets, 0, &paths);
+    engine.initialize_mission_script_with(sim, &assets, 0, &paths);
 
     let script = engine.scripts.mission.as_ref().expect("mission_script");
     // Two `Script` waypoints, both bound.
@@ -7456,7 +7516,9 @@ fn waypoint_script_heap_round_trips_through_serde() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
@@ -7743,6 +7805,8 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
 
 #[test]
 fn waking_up_done_clears_target_concussion_and_waits() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::combat::CONCUSSION_THRESHOLD;
     use crate::element::{ActionState, Posture};
@@ -7768,7 +7832,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         },
         ..Default::default()
     };
-    engine.process_anim_completion_outcomes(outcomes, &LevelAssets::new());
+    engine.process_anim_completion_outcomes(sim, outcomes, &LevelAssets::new());
 
     let target_entity = engine.get_entity(target).expect("target present");
     assert_eq!(target_entity.element_data().posture, Posture::Lying);
@@ -8136,6 +8200,8 @@ fn abort_quick_action_clears_slot_and_titbit() {
 /// without tetris; all-PC variant drops + collapses.
 #[test]
 fn delete_macro_command_matches_original_single_vs_all() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut display = HostDisplayState::default();
     use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
@@ -8158,6 +8224,7 @@ fn delete_macro_command_matches_original_single_vs_all() {
     // Single-PC delete: only pc_a slot 0 cleared; no tetris → pc_a slot 1
     // stays in slot 1.
     engine.apply_command(
+        sim,
         &mut display,
         &mut input,
         &assets,
@@ -8174,6 +8241,7 @@ fn delete_macro_command_matches_original_single_vs_all() {
     // All-PC delete on slot 0: pc_b slot 0 cleared, tetris collapses
     // remaining slots so pc_a/pc_b slot 0 now hold what used to be slot 1.
     engine.apply_command(
+        sim,
         &mut display,
         &mut input,
         &assets,
@@ -8191,6 +8259,8 @@ fn delete_macro_command_matches_original_single_vs_all() {
 /// PC had a macro, tetris collapses the strip.
 #[test]
 fn start_macro_plays_back_move_steps_and_tetris_collapses() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut display = HostDisplayState::default();
     use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
@@ -8216,6 +8286,7 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     // All-PC StartMacro on slot 0: both PCs launch → slot 0 emptied for
     // both, then tetris shifts slot 1 → slot 0.
     engine.apply_command(
+        sim,
         &mut display,
         &mut input,
         &assets,
@@ -8237,6 +8308,8 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
 /// `StartMacro` on an empty slot is a no-op: no dispatch, no tetris.
 #[test]
 fn start_macro_empty_slot_is_noop() {
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
     let mut display = HostDisplayState::default();
     use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
@@ -8253,6 +8326,7 @@ fn start_macro_empty_slot_is_noop() {
     let assets = crate::engine::LevelAssets::new();
 
     engine.apply_command(
+        sim,
         &mut display,
         &mut input,
         &assets,

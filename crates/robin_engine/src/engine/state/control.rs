@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{SimulationGateState, SimulationRng};
+use crate::engine::{SimConfig, SimulationGateState, SimulationRng};
 
 /// Deterministic clock, random stream, and global simulation-rate controls.
 ///
@@ -14,11 +14,16 @@ pub(crate) struct SimulationControl {
     pub(crate) speed_int: u16,
     pub(crate) chorus_timer: u16,
     pub(crate) rng: SimulationRng,
+    pub(crate) sim_config: SimConfig,
+    /// Exact construction checkpoint used when a loaded save later requests
+    /// a full mission restart. Unlike `rng`, this never advances.
+    pub(crate) mission_start_rng_seed: u64,
+    pub(crate) mission_start_sim_config: SimConfig,
     pub(crate) fast_forward: bool,
 }
 
 impl SimulationControl {
-    pub(crate) fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64, sim_config: SimConfig) -> Self {
         Self {
             frame_counter: 0,
             simulation_gates: SimulationGateState::default(),
@@ -26,16 +31,15 @@ impl SimulationControl {
             speed_int: 0,
             chorus_timer: 0,
             rng: SimulationRng::with_seed(seed),
+            sim_config,
+            mission_start_rng_seed: seed,
+            mission_start_sim_config: sim_config,
             fast_forward: false,
         }
     }
 
-    pub(crate) fn enter_rng_scope(&mut self) {
-        self.rng.enter_scope();
-    }
-
-    pub(crate) fn leave_rng_scope(&mut self) {
-        self.rng.leave_scope();
+    pub(crate) fn simulation_context(&self) -> crate::sim_rng::SimulationContext {
+        self.rng.context(self.sim_config)
     }
 
     pub(crate) fn engine_locked(&self) -> bool {
@@ -75,7 +79,7 @@ mod tests {
 
     #[test]
     fn new_control_has_the_canonical_running_state() {
-        let control = SimulationControl::new(17);
+        let control = SimulationControl::new(17, SimConfig::default());
 
         assert_eq!(control.frame_counter, 0);
         assert!(!control.engine_locked());

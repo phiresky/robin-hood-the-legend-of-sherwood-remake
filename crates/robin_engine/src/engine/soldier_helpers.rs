@@ -74,6 +74,7 @@ impl EngineInner {
     /// last cycle finishes.
     pub(super) fn dispatch_receive_wasp_sting(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: SequenceId,
@@ -95,7 +96,7 @@ impl EngineInner {
         // Random rotation offset, applied to direction_goal so the
         // soldier rotates during the animation.  Range is `rand(0..17) - 8`.
         let rotation =
-            crate::sim_rng::i32(crate::sim_rng::RngSite::SoldierFreedRotation, 0..17) - 8;
+            crate::sim_rng::i32(sim, crate::sim_rng::RngSite::SoldierFreedRotation, 0..17) - 8;
         let new_goal = {
             let current_goal = i16::from(entity.position_iface().get_direction_goal());
             (current_goal + rotation as i16).rem_euclid(16)
@@ -178,7 +179,11 @@ impl EngineInner {
     ///
     /// Notifications are queued (rather than fired inline) to avoid
     /// re-entrant borrows; this method drains the queue.
-    pub(super) fn dispatch_condolations(&mut self, assets: &LevelAssets) {
+    pub(super) fn dispatch_condolations(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let mut pending: std::collections::VecDeque<_> = self
             .orders
             .sequence_manager
@@ -187,7 +192,7 @@ impl EngineInner {
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
             self.send_condolation_card(dispatch.card, assets);
-            self.drain_self_stimuli_for_npc(owner, assets);
+            self.drain_self_stimuli_for_npc(sim, owner, assets);
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
@@ -211,10 +216,11 @@ impl EngineInner {
     /// queued cards must therefore drain depth-first.
     pub(super) fn dispatch_condolations_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         _npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.dispatch_condolations(assets);
+        self.dispatch_condolations(sim, assets);
     }
 
     /// Dispatch a single `SendCondolationCard` to the owner entity.
@@ -595,6 +601,7 @@ impl EngineInner {
     /// enforced by the caller.
     pub(crate) fn init_battle_before_door(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         door_indices: &[u32],
         fleeing: &[EntityId],
         pursuing: &[EntityId],
@@ -677,10 +684,11 @@ impl EngineInner {
             let mut attacker = center;
             for _ in 0..10 {
                 let jitter =
-                    crate::sim_rng::i32(crate::sim_rng::RngSite::DoorFightDispersion, 0..7) - 3;
+                    crate::sim_rng::i32(sim, crate::sim_rng::RngSite::DoorFightDispersion, 0..7)
+                        - 3;
                 let dd = (base_direction + jitter as i16).rem_euclid(16);
                 let magnitude = 30.0
-                    + crate::sim_rng::u32(crate::sim_rng::RngSite::DoorFightDispersion, 0..64)
+                    + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DoorFightDispersion, 0..64)
                         as f32;
                 // Apply the isometric aspect ratio to the Y component
                 // — `direction_vector_16` returns a pure unit vector,
@@ -728,6 +736,7 @@ impl EngineInner {
                 // (`dispersed_direction ^ 8`).  Pursuer follows and
                 // provokes.
                 self.send_before_door_to_fight(
+                    sim,
                     fleeing[i],
                     defender_pos,
                     (dispersed_direction ^ 8) as u16,
@@ -735,6 +744,7 @@ impl EngineInner {
                     None,
                 );
                 self.send_before_door_to_fight(
+                    sim,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -745,10 +755,12 @@ impl EngineInner {
                 // Extra pursuers pick a random fleeing guy as their
                 // duel target.
                 let target_idx = crate::sim_rng::u32(
+                    sim,
                     crate::sim_rng::RngSite::DoorFightTarget,
                     0..num_fleeing as u32,
                 ) as usize;
                 self.send_before_door_to_fight(
+                    sim,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -776,6 +788,7 @@ impl EngineInner {
     /// Any other entity kind reaching this helper is a wiring bug.
     pub(crate) fn send_before_door_to_fight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         actor_id: EntityId,
         goal: Position,
         direction: u16,
@@ -789,7 +802,7 @@ impl EngineInner {
             .map(|e| (e.is_pc(), e.is_soldier()));
         match kind {
             Some((true, _)) => {
-                self.send_before_door_to_fight_pc(actor_id, goal, direction, delay, adversary);
+                self.send_before_door_to_fight_pc(sim, actor_id, goal, direction, delay, adversary);
             }
             Some((_, true)) => {
                 let info = DoorCombatInfo {
@@ -826,6 +839,7 @@ impl EngineInner {
     /// cached enemy-AI VIP flag; civilians use the cached civilian type.
     fn send_before_door_to_fight_pc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         pc_id: EntityId,
         goal: Position,
         direction: u16,
@@ -909,6 +923,7 @@ impl EngineInner {
                 && !path.is_empty()
             {
                 self.build_gate_movement_sequence(
+                    sim,
                     pc_id,
                     path,
                     GoalShape::Point(MapPoint::new(goal.x, goal.y)),

@@ -652,6 +652,8 @@ pub struct ForecastInput {
 ///    predict exit through a random other gate.
 /// 4. Otherwise fall back to the target's current position and direction.
 pub fn forecast_destination_for_ia(
+    sim: &crate::sim_rng::SimulationContext,
+
     input: &ForecastInput,
     doors: &[crate::gate::Door],
     sectors: &[crate::fast_find_grid::GridSector],
@@ -735,7 +737,7 @@ pub fn forecast_destination_for_ia(
             // through a random other gate.
             // Direction uses `(PointOut - PointIn)`.
             if let Some(current_door) = current_door_index
-                && let Some(exit_door) = pick_building_exit_gate(sector, current_door, doors)
+                && let Some(exit_door) = pick_building_exit_gate(sim, sector, current_door, doors)
             {
                 sector = u16::from(exit_door.sector_out);
                 layer = exit_door.layer_out;
@@ -779,12 +781,14 @@ fn find_lift_exit_door(
 
 /// Pick a random building exit gate that isn't the entry door.
 ///
-/// Collects candidates and uses `fastrand` for the random pick.
-fn pick_building_exit_gate(
+/// Collects candidates and draws from the caller's explicit simulation stream.
+fn pick_building_exit_gate<'a>(
+    sim: &crate::sim_rng::SimulationContext,
+
     building_sector: u16,
     exclude_door: crate::gate::DoorIndex,
-    doors: &[crate::gate::Door],
-) -> Option<&crate::gate::Door> {
+    doors: &'a [crate::gate::Door],
+) -> Option<&'a crate::gate::Door> {
     let exclude = u32::from(exclude_door);
     let candidates: Vec<&crate::gate::Door> = doors
         .iter()
@@ -797,6 +801,7 @@ fn pick_building_exit_gate(
     } else {
         Some(
             candidates[crate::sim_rng::usize(
+                sim,
                 crate::sim_rng::RngSite::BuildingExitGate,
                 ..candidates.len(),
             )],
@@ -1715,7 +1720,7 @@ pub enum StimulusType {
     CallYourTalk0,
     EventStop,
     NoEvent,
-    /// Script-triggered: force AI to run battle_decisions() immediately.
+    /// Script-triggered: force AI to run battle_decisions(sim, ) immediately.
     ForceBattleDecision,
 }
 
@@ -2981,14 +2986,17 @@ impl SeekPoint {
     /// Uses `sim_rng` for deterministic RNG (port-wide choice) and
     /// initialises `last_calculated_interest = 100` — see `from_direction`
     /// above.
-    pub fn from_position(pos: Position) -> Self {
-        let directions =
-            match crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointDirectionPattern, 0..4) {
-                0 => vec![0, 3, 7, 11],
-                1 => vec![2, 5, 10, 14],
-                2 => vec![2, 7, 13],
-                _ => vec![4, 10, 15],
-            };
+    pub fn from_position(sim: &crate::sim_rng::SimulationContext, pos: Position) -> Self {
+        let directions = match crate::sim_rng::u8(
+            sim,
+            crate::sim_rng::RngSite::SeekPointDirectionPattern,
+            0..4,
+        ) {
+            0 => vec![0, 3, 7, 11],
+            1 => vec![2, 5, 10, 14],
+            2 => vec![2, 7, 13],
+            _ => vec![4, 10, 15],
+        };
         Self {
             position: pos,
             directions,
@@ -3271,6 +3279,7 @@ pub(crate) fn cache_npc_villain_authorized_direct(door: &crate::gate::Door) -> b
 /// changes every frame (position, direction, posture, etc.).
 #[derive(Debug, Clone, Default)]
 pub struct AiContext {
+    pub difficulty: crate::player_profile::DifficultyLevel,
     pub position: Position,
     pub frame: u32,
     pub direction: u16,
@@ -3834,7 +3843,7 @@ impl AiPerTickData {
     /// makes the loss-of-fidelity visible at every dispatch site.
     ///
     /// Most engine-side dispatch paths now use the centralized
-    /// `EngineInner::build_npc_tick_data(npc_id)` builder.  Remaining
+    /// `EngineInner::build_npc_tick_data(sim, npc_id)` builder.  Remaining
     /// direct stubs should stay limited to call sites that provably
     /// dispatch non-combat AI paths (init before target selection,
     /// friendly panic, or non-soldier entities); otherwise add a
@@ -4193,6 +4202,7 @@ impl AiGlobalState {
     /// candidate was found and `pos` was overwritten.
     pub fn set_pos_on_near_seek_point(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         me_pos: Position,
         pos: &mut Position,
         distance_factor: f32,
@@ -4218,8 +4228,11 @@ impl AiGlobalState {
         if candidates.is_empty() {
             return false;
         }
-        let pick =
-            crate::sim_rng::usize(crate::sim_rng::RngSite::NearSeekPoint, 0..candidates.len());
+        let pick = crate::sim_rng::usize(
+            sim,
+            crate::sim_rng::RngSite::NearSeekPoint,
+            0..candidates.len(),
+        );
         *pos = self.seek_points[candidates[pick]].position;
         true
     }
@@ -4901,7 +4914,11 @@ impl AiController {
     /// run the standard "walk onto patrol path or launch a bored timer"
     /// tail; `false` — init placed the NPC in a sleeping / dead /
     /// sitting state and the caller must leave it alone.
-    pub fn init_state(&mut self, ctx: &AiContext) -> InitStateSideEffects {
+    pub fn init_state(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) -> InitStateSideEffects {
         use crate::element::{ActionState, EyeStatus, Posture};
         use crate::order::OrderType;
 
@@ -4936,7 +4953,7 @@ impl AiController {
             ) => {
                 self.set_ai_state(AiState::Default);
                 self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(ctx);
+                let bored = self.get_bored_time(sim, ctx);
                 self.launch_timer(bored as u32, ctx.frame);
                 fx.go_to_duty = true;
             }
@@ -4958,7 +4975,7 @@ impl AiController {
             Some(OrderType::Sitting) => {
                 self.set_ai_state(AiState::Default);
                 self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(ctx);
+                let bored = self.get_bored_time(sim, ctx);
                 self.launch_timer(bored as u32, ctx.frame);
                 self.likes_to_sit_around = true;
                 fx.set_posture = Some(Posture::Sitting);
@@ -5019,7 +5036,7 @@ impl AiController {
                 );
                 self.set_ai_state(AiState::Default);
                 self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(ctx);
+                let bored = self.get_bored_time(sim, ctx);
                 self.launch_timer(bored as u32, ctx.frame);
                 fx.go_to_duty = true;
             }
@@ -5317,6 +5334,8 @@ impl AiController {
     /// score in `[0, MAX_ATT_VALUE]` — pass `MAX_ATT_VALUE as u8` for
     /// an un-biased sample.
     pub fn random_value(
+        sim: &crate::sim_rng::SimulationContext,
+
         dist: ProbabilityDistribution,
         min_val: i16,
         max_val: i16,
@@ -5338,7 +5357,11 @@ impl AiController {
                 // Half-open `[min, max)` matches the original
                 // `rand() % (max-min)` shape.
                 min_val
-                    + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueRectangle, 0..range)
+                    + crate::sim_rng::i16(
+                        sim,
+                        crate::sim_rng::RngSite::AiRandomValueRectangle,
+                        0..range,
+                    )
             }
             ProbabilityDistribution::GaussHighVariance => {
                 // `range*0.333` truncated (three samples) and
@@ -5348,14 +5371,17 @@ impl AiController {
                 let mut val: i32 = 0;
                 if third > 0 {
                     val = crate::sim_rng::i16(
+                        sim,
                         crate::sim_rng::RngSite::AiRandomValueGaussHigh,
                         0..third,
                     ) as i32
                         + crate::sim_rng::i16(
+                            sim,
                             crate::sim_rng::RngSite::AiRandomValueGaussHigh,
                             0..third,
                         ) as i32
                         + crate::sim_rng::i16(
+                            sim,
                             crate::sim_rng::RngSite::AiRandomValueGaussHigh,
                             0..third,
                         ) as i32;
@@ -5370,12 +5396,21 @@ impl AiController {
                 let quarter = ((range as f32) * 0.25) as i16;
                 let mut val: i32 = 0;
                 if sixth > 0 {
-                    val = crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
-                        as i32
-                        + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
-                            as i32
-                        + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
-                            as i32;
+                    val = crate::sim_rng::i16(
+                        sim,
+                        crate::sim_rng::RngSite::AiRandomValueGauss,
+                        0..sixth,
+                    ) as i32
+                        + crate::sim_rng::i16(
+                            sim,
+                            crate::sim_rng::RngSite::AiRandomValueGauss,
+                            0..sixth,
+                        ) as i32
+                        + crate::sim_rng::i16(
+                            sim,
+                            crate::sim_rng::RngSite::AiRandomValueGauss,
+                            0..sixth,
+                        ) as i32;
                 }
                 val += gauss_curve_top as i32 - quarter as i32;
                 (val.clamp(min_val as i32, max_val as i32)) as i16
@@ -5406,7 +5441,7 @@ impl AiController {
     /// Returns the time until this NPC gets bored and does something.
     /// Officers and high-pride soldiers use longer intervals; everyone
     /// else uses the short default.
-    pub fn get_bored_time(&self, ctx: &AiContext) -> u16 {
+    pub fn get_bored_time(&self, sim: &crate::sim_rng::SimulationContext, ctx: &AiContext) -> u16 {
         use crate::profiles::ProfileRank;
         const AI_MIN_DEFAULT_BORED_INTERVAL: u16 = 70;
         const AI_DELTA_DEFAULT_BORED_INTERVAL: u16 = 70;
@@ -5433,6 +5468,7 @@ impl AiController {
         };
         // P_RECTANGLE ignores `lambda`; pass MAX_ATT_VALUE for the un-biased sample.
         min + (Self::random_value(
+            sim,
             ProbabilityDistribution::Rectangle,
             0,
             delta as i16,
@@ -5701,22 +5737,22 @@ impl AiController {
     /// Random value in `[1, 100]` for macro section-selection.
     /// Consumes the cached forecast if present, otherwise rolls a
     /// fresh value.
-    pub fn calculate_macro_rand(&mut self) -> u8 {
+    pub fn calculate_macro_rand(&mut self, sim: &crate::sim_rng::SimulationContext) -> u8 {
         if self.next_macro_rand_forecasted {
             self.next_macro_rand_forecasted = false;
             self.next_macro_rand
         } else {
-            (crate::sim_rng::u32(crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1
+            (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1
         }
     }
 
     /// Forecast the next return value of `calculate_macro_rand` without
     /// consuming it. Called when one NPC needs to peek at another's
     /// upcoming roll (section-selection coherence).
-    pub fn forecast_macro_rand(&mut self) -> u8 {
+    pub fn forecast_macro_rand(&mut self, sim: &crate::sim_rng::SimulationContext) -> u8 {
         if !self.next_macro_rand_forecasted {
             self.next_macro_rand =
-                (crate::sim_rng::u32(crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1;
+                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1;
             self.next_macro_rand_forecasted = true;
         }
         self.next_macro_rand
@@ -5976,7 +6012,12 @@ impl AiController {
     /// `false` if the waypoint should be skipped via
     /// `proceed_on_path` (no matching direction block, or all
     /// probability weights fell below the roll).
-    pub fn launch_waypoint_macro(&mut self, macro_data: &[u8], ctx: &AiContext) -> bool {
+    pub fn launch_waypoint_macro(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        macro_data: &[u8],
+        ctx: &AiContext,
+    ) -> bool {
         tracing::trace!(
             me = self.me,
             macro_len = macro_data.len(),
@@ -6059,7 +6100,7 @@ impl AiController {
         }
 
         // Roll [1, 100] and walk the probability table.
-        let initial_roll = self.calculate_macro_rand();
+        let initial_roll = self.calculate_macro_rand(sim);
         let mut roll = initial_roll;
         let mut section_idx: Option<usize> = None;
         let weights: Vec<u8> = (0..num_sections as usize)
@@ -6131,7 +6172,7 @@ impl AiController {
         self.set_ai_state(AiState::Default);
         self.current_substate = Substate::DefaultInMacro;
         self.macro_started_in_this_frame = true;
-        self.execute_next_macro_command(ctx);
+        self.execute_next_macro_command(sim, ctx);
         true
     }
 
@@ -6144,7 +6185,11 @@ impl AiController {
     /// would tail-call back into the VM to consume the next byte. We
     /// flatten that into an explicit `'vm: loop` so the stack doesn't
     /// grow with macro length, and so `&mut self` aliasing is trivial.
-    pub fn execute_next_macro_command(&mut self, ctx: &AiContext) {
+    pub fn execute_next_macro_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) {
         // If we're still in STATE_DEFAULT, make sure the substate
         // reflects that we're inside the VM.
         if self.current_state == AiState::Default {
@@ -6258,7 +6303,7 @@ impl AiController {
                         if !ctx.self_is_soldier {
                             tracing::warn!("NPC {}: CMD_CHECK_4 is illegal for civilians", self.me);
                         }
-                        self.initialize_friend_check(friend_id, frames, u16::MAX, ctx);
+                        self.initialize_friend_check(sim, friend_id, frames, u16::MAX, ctx);
                         self.macro_started_in_this_frame = false;
                         return;
                     }
@@ -6283,7 +6328,7 @@ impl AiController {
                                 self.me
                             );
                         }
-                        self.initialize_friend_check(friend_id, frames, index, ctx);
+                        self.initialize_friend_check(sim, friend_id, frames, index, ctx);
                         self.macro_started_in_this_frame = false;
                         return;
                     }
@@ -6484,7 +6529,7 @@ impl AiController {
                         // regular bored timer. The wake must come via
                         // `launch_macro_timer`'s `bMacroTimer = true`
                         // path so it's delivered by `ProceedMacro` as a
-                        // direct `execute_next_macro_command()` call —
+                        // direct `execute_next_macro_command(sim, )` call —
                         // bypassing Think entirely. A regular
                         // `launch_timer` here would fire an EventTimer
                         // that `DefaultInMacro` never handles
@@ -6513,7 +6558,7 @@ impl AiController {
                     let hiking_paths = &ctx.hiking_paths;
                     self.set_ai_state(AiState::Default);
                     self.current_substate = Substate::DefaultEnroute;
-                    let will_stop = self.will_stop_at_next_waypoint(hiking_paths);
+                    let will_stop = self.will_stop_at_next_waypoint(sim, hiking_paths);
                     let mut walk_flags = self.default_path_walking_flags;
                     if !will_stop {
                         walk_flags |= GotoFlags::DONT_STOP;
@@ -6531,7 +6576,7 @@ impl AiController {
                     {
                         self.go_to(next_wp, walk_flags, ctx);
                     } else {
-                        self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                        self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                     }
                     self.macro_in_progress = false;
                     self.timer_is_running = false;
@@ -6588,6 +6633,7 @@ impl AiController {
     ///      `RightLeft` direction.
     pub fn initialize_friend_check(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         friend_id: u16,
         frames: u16,
         index: u16,
@@ -6608,7 +6654,7 @@ impl AiController {
             );
             self.set_checkpoint_charly(0);
             self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(ctx);
+            self.execute_next_macro_command(sim, ctx);
             return;
         }
         let target = match ctx.all_soldier_handle(friend_id) {
@@ -6623,7 +6669,7 @@ impl AiController {
                 );
                 self.set_checkpoint_charly(0);
                 self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(ctx);
+                self.execute_next_macro_command(sim, ctx);
                 return;
             }
         };
@@ -6648,7 +6694,7 @@ impl AiController {
                 );
                 self.set_checkpoint_charly(0);
                 self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(ctx);
+                self.execute_next_macro_command(sim, ctx);
                 return;
             }
         };
@@ -6668,7 +6714,7 @@ impl AiController {
         if self.missed_in_action.contains(&target) {
             self.set_checkpoint_charly(0);
             self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(ctx);
+            self.execute_next_macro_command(sim, ctx);
             return;
         }
 
@@ -6679,7 +6725,7 @@ impl AiController {
         {
             self.set_checkpoint_charly(0);
             self.current_substate = Substate::DefaultInMacro;
-            self.execute_next_macro_command(ctx);
+            self.execute_next_macro_command(sim, ctx);
             return;
         }
 
@@ -6745,13 +6791,13 @@ impl AiController {
             } else {
                 // Friend not in STATE_DEFAULT or dead → forget it.
                 self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(ctx);
+                self.execute_next_macro_command(sim, ctx);
                 return;
             };
 
             if friend_is_already_there {
                 self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(ctx);
+                self.execute_next_macro_command(sim, ctx);
             } else {
                 // Not yet there — wait, register us.
                 self.outbox.reentrant.cross_npc_actions.push(
@@ -6828,7 +6874,7 @@ impl AiController {
                     ctx.position.y
                 );
                 self.current_substate = Substate::DefaultInMacro;
-                self.execute_next_macro_command(ctx);
+                self.execute_next_macro_command(sim, ctx);
                 return;
             }
         }
@@ -6853,7 +6899,7 @@ impl AiController {
         self.delta_sorrow_level = 1000 / looks_for_div;
         self.current_substate = Substate::DefaultLookingSidewardsForCharly;
         self.outbox.actor.look_sidewards = Some(
-            if crate::sim_rng::u32(crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
+            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
                 LookDirection::LeftRight
             } else {
                 LookDirection::RightLeft
@@ -7493,7 +7539,12 @@ impl AiController {
     // -- Return to duty (common) --
 
     /// Common return-to-duty logic shared by soldiers and civilians.
-    pub fn return_to_duty_common_stuff(&mut self, flags: DutyFlags, ctx: &AiContext) {
+    pub fn return_to_duty_common_stuff(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        flags: DutyFlags,
+        ctx: &AiContext,
+    ) {
         // Start with `SetAlertStatus(GREEN)` — no `BreakMacro` /
         // `RetrogradeAmnesia` here, those are called by their own
         // call-sites elsewhere in the state machine. Route through the
@@ -7656,7 +7707,7 @@ impl AiController {
                 });
                 if let Some(dest) = dest {
                     let mut walk_flags = self.default_path_walking_flags;
-                    if !self.will_stop_at_next_waypoint(hiking_paths) {
+                    if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
                         walk_flags |= GotoFlags::DONT_STOP;
                     }
                     self.go_to(dest, walk_flags, ctx);
@@ -7673,7 +7724,7 @@ impl AiController {
                 // Already on sitting place.
                 self.set_ai_state(AiState::Default);
                 self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(ctx);
+                let bored = self.get_bored_time(sim, ctx);
                 self.launch_timer(bored as u32, ctx.frame);
             } else {
                 // Return to sitting place.
@@ -7692,7 +7743,7 @@ impl AiController {
                 // Already on leisure place.
                 self.set_ai_state(AiState::Default);
                 self.current_substate = Substate::DefaultOnPost;
-                let bored = self.get_bored_time(ctx);
+                let bored = self.get_bored_time(sim, ctx);
                 self.launch_timer(bored as u32, ctx.frame);
             } else {
                 // Return to leisure place.
@@ -7723,6 +7774,7 @@ impl AiController {
     /// without consuming).
     pub fn will_stop_at_next_waypoint(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         hiking_paths: &[crate::level_data::RawHikingPath],
     ) -> bool {
         use crate::level_data::WaypointCommand;
@@ -7796,7 +7848,7 @@ impl AiController {
         }
 
         // Peek (don't consume) the next macro-rand for section selection.
-        let mut roll = self.forecast_macro_rand();
+        let mut roll = self.forecast_macro_rand(sim);
         let mut section_idx: Option<usize> = None;
         for i in 0..num_sections as usize {
             let entry_off = section_table_off + 2 + i * 3;
@@ -7974,6 +8026,7 @@ impl AiController {
     /// and fleeing behavior.
     pub fn think_expected_event_common_stuff(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
     ) -> bool {
@@ -8018,7 +8071,7 @@ impl AiController {
                     }
                     self.set_ai_state(AiState::Default);
                     self.current_substate = Substate::DefaultOnPost;
-                    let bored = self.get_bored_time(ctx);
+                    let bored = self.get_bored_time(sim, ctx);
                     self.launch_timer(bored as u32, ctx.frame);
                 }
             }
@@ -8031,7 +8084,7 @@ impl AiController {
                     // The override only exists for soldier AI (friendlies
                     // return false), so the base-class fall-through is
                     // correct: re-launch the bored timer.
-                    let bored = self.get_bored_time(ctx);
+                    let bored = self.get_bored_time(sim, ctx);
                     self.launch_timer(bored as u32, ctx.frame);
                 }
             }
@@ -8062,14 +8115,14 @@ impl AiController {
                                 self.face_direction(sector as u16, ctx);
                             } else {
                                 // No previous waypoint, skip turn.
-                                self.think_event_done_on_self(ctx);
+                                self.think_event_done_on_self(sim, ctx);
                             }
                         } else {
                             // Single waypoint path — skip turn.
-                            self.think_event_done_on_self(ctx);
+                            self.think_event_done_on_self(sim, ctx);
                         }
                     } else {
-                        self.think_event_done_on_self(ctx);
+                        self.think_event_done_on_self(sim, ctx);
                     }
                 }
             }
@@ -8085,7 +8138,7 @@ impl AiController {
                     if let Some(ref mut path) = self.patrol_path {
                         if path.size == 0 {
                             // Path was eliminated (by script?) — return to duty.
-                            self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                            self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                             return false;
                         }
 
@@ -8152,10 +8205,14 @@ impl AiController {
                                         self.has_patrol_path = false;
                                         self.initial_position = ctx.position;
                                         self.initial_view_direction = ctx.direction & 0x0F;
-                                        self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                                        self.return_to_duty_common_stuff(
+                                            sim,
+                                            DutyFlags::empty(),
+                                            ctx,
+                                        );
                                     } else {
                                         let mut walk_flags = self.default_path_walking_flags;
-                                        if !self.will_stop_at_next_waypoint(hiking_paths) {
+                                        if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
                                             walk_flags |= GotoFlags::DONT_STOP;
                                         }
                                         if is_enroute {
@@ -8173,7 +8230,7 @@ impl AiController {
                                     }
                                 } else {
                                     // No next waypoint — done.
-                                    self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                                 }
                             }
                             crate::level_data::WaypointCommand::Script(_script) => {
@@ -8195,15 +8252,15 @@ impl AiController {
                                 // no section matched this traversal
                                 // direction / roll — proceed along the
                                 // path like a simple waypoint.
-                                let launched = self.launch_waypoint_macro(&macro_data, ctx);
+                                let launched = self.launch_waypoint_macro(sim, &macro_data, ctx);
                                 if !launched {
-                                    self.proceed_on_path(hiking_paths, ctx);
+                                    self.proceed_on_path(sim, hiking_paths, ctx);
                                 }
                             }
                         }
                     } else {
                         // No patrol path — fall back to post.
-                        self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                        self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                         return false;
                     }
                 }
@@ -8216,7 +8273,7 @@ impl AiController {
 
             Substate::DefaultInMacroWaitingForDone => {
                 if stimulus_type == StimulusType::EventDone {
-                    self.execute_next_macro_command(ctx);
+                    self.execute_next_macro_command(sim, ctx);
                 }
             }
 
@@ -8235,7 +8292,7 @@ impl AiController {
                         level: 0,
                     });
                     let hiding_time =
-                        300 + crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, ..200); // AI_MIN + delta
+                        300 + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, ..200); // AI_MIN + delta
                     self.launch_timer(hiding_time, ctx.frame);
                 }
             }
@@ -8266,7 +8323,8 @@ impl AiController {
                     } else {
                         // Look in a random direction.
                         self.face_direction(
-                            crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..16) as u16,
+                            crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16)
+                                as u16,
                             ctx,
                         );
                     }
@@ -8277,6 +8335,7 @@ impl AiController {
                     // explicitly.
                     let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                         + crate::sim_rng::u32(
+                            sim,
                             crate::sim_rng::RngSite::AiPanic,
                             0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                         );
@@ -8291,7 +8350,8 @@ impl AiController {
 
                     let sector_index = if !self.directed_panic {
                         // Undirected panic — any direction.
-                        (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..16) & 15) as u8
+                        (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) & 15)
+                            as u8
                     } else {
                         // Directed panic — run away from panic center.
                         let dx = ctx.position.x - self.panic_center_x;
@@ -8301,7 +8361,8 @@ impl AiController {
                         if self.first_try {
                             // ±2 sector jitter around the base.
                             let jitter =
-                                (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..5) as i32
+                                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..5)
+                                    as i32
                                     - 2)
                                 .rem_euclid(16) as u8;
                             base.wrapping_add(jitter) & 15
@@ -8315,7 +8376,8 @@ impl AiController {
                             // bit.
                             let side = if self.me & 1 != 0 { 4 } else { 12 };
                             let jitter =
-                                (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..7) as i32
+                                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
+                                    as i32
                                     - 3)
                                 .rem_euclid(16) as u8;
                             base.wrapping_add(side).wrapping_add(jitter) & 15
@@ -8325,6 +8387,7 @@ impl AiController {
                     let (vx, vy) = crate::element::direction_vector_16(sector_index as i16);
                     let segment = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
                         + crate::sim_rng::u32(
+                            sim,
                             crate::sim_rng::RngSite::AiPanic,
                             0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
                         )) as f32;
@@ -8363,7 +8426,7 @@ impl AiController {
 
             Substate::FleeingHiding => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
+                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                 }
             }
 
@@ -8382,6 +8445,7 @@ impl AiController {
     /// Called when a waypoint's command is handled (or skipped).
     fn proceed_on_path(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         hiking_paths: &[crate::level_data::RawHikingPath],
         ctx: &AiContext,
     ) {
@@ -8404,7 +8468,7 @@ impl AiController {
                 // path-finder). Without this, the engine's movement
                 // layer falls through to the routed direction branch.
                 let mut walk_flags = self.default_path_walking_flags | GotoFlags::STRAIGHT;
-                if !self.will_stop_at_next_waypoint(hiking_paths) {
+                if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
                     walk_flags |= GotoFlags::DONT_STOP;
                 }
                 let dest = Position {
@@ -8419,9 +8483,13 @@ impl AiController {
     }
 
     /// Dispatch an EventDone to ourselves (used when skipping a turn).
-    fn think_event_done_on_self(&mut self, ctx: &AiContext) {
+    fn think_event_done_on_self(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) {
         let done_stimulus = Stimulus::new(StimulusType::EventDone);
-        self.think_expected_event_common_stuff(&done_stimulus, ctx);
+        self.think_expected_event_common_stuff(sim, &done_stimulus, ctx);
     }
 }
 
@@ -8848,10 +8916,10 @@ mod tests {
         // `WaitingUpright` → OnPost + bored timer + `go_to_duty = true`.
         // This is the hot path — the vast majority of NPCs are
         // authored with this action.
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             let mut ai = AiController::new(1);
             ai.initial_action = crate::order::OrderType::WaitingUpright as u32;
-            let fx = ai.init_state(&AiContext::default());
+            let fx = ai.init_state(sim, &AiContext::default());
 
             assert!(fx.go_to_duty);
             assert_eq!(ai.current_state, AiState::Default);
@@ -8865,6 +8933,8 @@ mod tests {
 
     #[test]
     fn init_state_sleeping_upright_closes_eyes_and_emoticon() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // `SleepingUpright` → SleepingNapping, eyes closed, Zzz
         // emoticon, upright posture + Sleeping action state.
         // `go_to_duty = false` — the NPC stays asleep until something
@@ -8872,7 +8942,7 @@ mod tests {
         use crate::element::{ActionState, EyeStatus, Posture};
         let mut ai = AiController::new(1);
         ai.initial_action = crate::order::OrderType::SleepingUpright as u32;
-        let fx = ai.init_state(&AiContext::default());
+        let fx = ai.init_state(sim, &AiContext::default());
 
         assert!(!fx.go_to_duty);
         assert_eq!(ai.current_state, AiState::Sleeping);
@@ -8889,10 +8959,10 @@ mod tests {
         // `likes_to_sit_around = true` so `return_to_duty_common_stuff`
         // routes back to this place with the sitting-specific posture
         // gate.
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             let mut ai = AiController::new(1);
             ai.initial_action = crate::order::OrderType::Sitting as u32;
-            let fx = ai.init_state(&AiContext::default());
+            let fx = ai.init_state(sim, &AiContext::default());
 
             assert!(!fx.go_to_duty);
             assert_eq!(ai.current_state, AiState::Default);
@@ -8904,12 +8974,14 @@ mod tests {
 
     #[test]
     fn init_state_special_flags_special_action() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // `Special` → Leisure posture, flips `special_action = true`.
         // Pairs with the corresponding branch in
         // `return_to_duty_common_stuff`.
         let mut ai = AiController::new(1);
         ai.initial_action = crate::order::OrderType::Special as u32;
-        let fx = ai.init_state(&AiContext::default());
+        let fx = ai.init_state(sim, &AiContext::default());
 
         assert!(!fx.go_to_duty);
         assert!(ai.special_action);
@@ -8918,11 +8990,13 @@ mod tests {
 
     #[test]
     fn init_state_being_unconscious_queues_max_concussion() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // `BeingUnconscious` → SleepingUnconscious, Lying posture,
         // concussion/unconscious side effect.
         let mut ai = AiController::new(1);
         ai.initial_action = crate::order::OrderType::BeingUnconscious as u32;
-        let fx = ai.init_state(&AiContext::default());
+        let fx = ai.init_state(sim, &AiContext::default());
 
         assert!(!fx.go_to_duty);
         assert_eq!(ai.current_state, AiState::Sleeping);
@@ -8933,6 +9007,8 @@ mod tests {
 
     #[test]
     fn init_state_being_dead_zeroes_life_points() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // `BeingDead{FallenBack}` → SleepingForever,
         // `zero_life_points` side effect. Two variants differ only in
         // posture.
@@ -8948,7 +9024,7 @@ mod tests {
         ] {
             let mut ai = AiController::new(1);
             ai.initial_action = raw;
-            let fx = ai.init_state(&AiContext::default());
+            let fx = ai.init_state(sim, &AiContext::default());
 
             assert!(!fx.go_to_duty);
             assert_eq!(ai.current_substate, Substate::SleepingForever);
@@ -8959,6 +9035,8 @@ mod tests {
 
     #[test]
     fn init_state_in_building_stays_at_home() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         // Indoor NPCs short-circuit to `is_stay_at_home=true` +
         // DefaultHomeSweetHome, regardless of `initial_action`.
         // `go_to_duty = false`.
@@ -8969,7 +9047,7 @@ mod tests {
             building_sector: SectorHandle::new(7),
             ..AiContext::default()
         };
-        let fx = ai.init_state(&ctx);
+        let fx = ai.init_state(sim, &ctx);
 
         assert!(!fx.go_to_duty);
         assert!(ai.is_stay_at_home);
@@ -8983,14 +9061,14 @@ mod tests {
         // flags from a prior call.  Guards against level-editor
         // authored sequences that change `initial_action` between
         // init passes (e.g. respawn via script).
-        crate::sim_rng::with_seed(1, || {
+        crate::sim_rng::with_seed(1, |sim| {
             let mut ai = AiController::new(1);
             ai.likes_to_sit_around = true;
             ai.special_action = true;
             ai.is_stay_at_home = true;
             ai.initial_action = crate::order::OrderType::WaitingUpright as u32;
 
-            let fx = ai.init_state(&AiContext::default());
+            let fx = ai.init_state(sim, &AiContext::default());
 
             assert!(fx.go_to_duty);
             assert!(!ai.likes_to_sit_around);

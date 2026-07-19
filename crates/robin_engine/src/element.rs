@@ -3558,17 +3558,9 @@ impl Human for ActorSoldier {
         self.npc.life_points
     }
     fn max_life_points(&self) -> i16 {
-        if self.soldier.cached_camp == Camp::Lacklandists {
-            let diff = crate::player_profile::DifficultyLevel::current();
-            diff.modify_capacity(
-                self.soldier.cached_max_life_points as u16,
-                crate::player_profile::difficulty_params::EASY_ENEMY_LIFEPOINTS,
-                crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS,
-                10000,
-            ) as i16
-        } else {
-            self.soldier.cached_max_life_points
-        }
+        // Level initialization already applies the difficulty modifier when
+        // populating this cache. Scaling again here inflated Lacklandist HP.
+        self.soldier.cached_max_life_points
     }
     fn camp(&self) -> Camp {
         self.soldier.cached_camp

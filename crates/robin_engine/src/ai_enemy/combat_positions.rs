@@ -1344,6 +1344,7 @@ impl EnemyAi {
     /// processes these after our think() returns.
     fn break_phalanx(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1408,7 +1409,7 @@ impl EnemyAi {
         self.phalanx_aborted = true;
 
         // Go on with single-fighter AI
-        self.battle_decisions(global, ctx, tick, grid);
+        self.battle_decisions(sim, global, ctx, tick, grid);
     }
 
     /// PhalanxReinitializeThemList. Rebuild the shared enemy list for
@@ -1492,6 +1493,7 @@ impl EnemyAi {
     /// Returns `true` if the substate was changed.
     pub(super) fn reconsider_phalanx(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1507,7 +1509,7 @@ impl EnemyAi {
             let d = pos_diff(&snap.position, &ctx.position);
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
             if square_norm(d) < atk_dist * atk_dist {
-                self.break_phalanx(global, ctx, tick, grid);
+                self.break_phalanx(sim, global, ctx, tick, grid);
                 return true;
             }
         }
@@ -1612,7 +1614,7 @@ impl EnemyAi {
             0 | 1 | 15 => {
                 // Within tolerance
                 if self.phalanx_is_encircled_by_enemies(&phalanx_center, ideal_direction, tick) {
-                    self.break_phalanx(global, ctx, tick, grid);
+                    self.break_phalanx(sim, global, ctx, tick, grid);
                     return true;
                 }
                 (true, false) // unused when enemies_in_front
@@ -1626,7 +1628,7 @@ impl EnemyAi {
         if enemies_in_front {
             // Try to advance with the whole phalanx
             if !self.phalanx_is_protecting_archers(tick)
-                && (crate::sim_rng::u32(crate::sim_rng::RngSite::PhalanxAdvance, 0..3) == 0)
+                && (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PhalanxAdvance, 0..3) == 0)
             {
                 let half = phalanx_size / 2;
 
@@ -1778,7 +1780,7 @@ impl EnemyAi {
 
             if !found_pivot {
                 // Not enough space to hold the phalanx — break formation
-                self.break_phalanx(global, ctx, tick, grid);
+                self.break_phalanx(sim, global, ctx, tick, grid);
                 return true;
             }
 
@@ -2136,6 +2138,7 @@ impl EnemyAi {
 
     pub fn reconsider_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         enemy_weak: bool,
         global: &mut AiGlobalState,
         ctx: &AiContext,
@@ -2171,7 +2174,7 @@ impl EnemyAi {
                      behavior"
                 );
             }
-            self.think(&quit_stimulus, global, ctx, tick, grid);
+            self.think(sim, &quit_stimulus, global, ctx, tick, grid);
             return;
         }
 
@@ -2230,6 +2233,7 @@ impl EnemyAi {
             {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
+                    sim,
                     self.base.seek_position,
                     parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
                     SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
@@ -2371,9 +2375,9 @@ impl EnemyAi {
 
         // Drunk soldiers freeze.
         if self.base.blood_alcohol > 0
-            && (crate::sim_rng::u16(crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+            && (crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
                 <= self.base.blood_alcohol as u16
-                || crate::sim_rng::u16(crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+                || crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
                     <= self.base.blood_alcohol as u16)
         {
             return;
@@ -2417,7 +2421,7 @@ impl EnemyAi {
         // fights and combat-trainer mode).
         let do_reposition = !self.combat_trainer
             && (number_of_friends != 1 || number_of_swordfighting_enemies != 1)
-            && crate::sim_rng::u32(crate::sim_rng::RngSite::CombatReposition, 0..3) == 0;
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0;
 
         if do_reposition {
             let new_combat_position = self.propose_good_combat_position(ctx, tick, grid);
@@ -2606,6 +2610,7 @@ impl EnemyAi {
     ///   10. fall through to `observe_and_step` for repositioning
     pub(super) fn reconsider_swordfight_observation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -2714,7 +2719,7 @@ impl EnemyAi {
         //     panic flee. The reference deliberately does not return
         //     here; the attack-opportunity and observe-step blocks below
         //     may immediately override the defensive move.
-        if self.make_battle_predecisions(ctx, tick) == Decision::PredecisionDefensive {
+        if self.make_battle_predecisions(sim, ctx, tick) == Decision::PredecisionDefensive {
             let enemy_pos = self
                 .find_fighter(new_primary, tick)
                 .map(|f| f.position)
@@ -2805,7 +2810,7 @@ impl EnemyAi {
         }
 
         // (10) Repositioning + fallback stay-in-place.
-        self.observe_and_step(ctx, tick, grid);
+        self.observe_and_step(sim, ctx, tick, grid);
     }
 
     // -----------------------------------------------------------------------
@@ -2818,6 +2823,7 @@ impl EnemyAi {
     /// `battle_decisions` didn't produce a state change.
     fn observe_and_step(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2883,7 +2889,7 @@ impl EnemyAi {
         }
 
         // Distance is OK — maybe a step sideways?
-        if !b_move && crate::sim_rng::bool(crate::sim_rng::RngSite::CombatObserveSideStep) {
+        if !b_move && crate::sim_rng::bool(sim, crate::sim_rng::RngSite::CombatObserveSideStep) {
             let prefer_left = self.propose_step_direction_while_observing_combat(ctx, tick);
 
             for i in 0..2u8 {

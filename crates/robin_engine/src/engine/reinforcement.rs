@@ -31,18 +31,27 @@ impl EngineInner {
     /// Reinforcement-PC sprites are preloaded at level-load by
     /// [`EngineInner::preload_campaign_peasant_sprites`], so this path
     /// only reads the scriptor cache (`&LevelAssets`).
-    pub(crate) fn drain_pending_reinforcements(&mut self, assets: &LevelAssets) {
+    pub(crate) fn drain_pending_reinforcements(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.orders.pending_reinforcements.is_empty() {
             return;
         }
         let requests: Vec<Option<EntityId>> =
             std::mem::take(&mut self.orders.pending_reinforcements);
         for dead_pc in requests {
-            self.create_reinforcement(assets, dead_pc);
+            self.create_reinforcement(sim, assets, dead_pc);
         }
     }
 
-    fn create_reinforcement(&mut self, assets: &LevelAssets, dead_pc: Option<EntityId>) {
+    fn create_reinforcement(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        dead_pc: Option<EntityId>,
+    ) {
         // Pick a random reinforcement door.
         let door_count = self.ai.global.reinforcement_doors.len();
         if door_count == 0 {
@@ -53,7 +62,11 @@ impl EngineInner {
             self.scripts.mission.is_some(),
             "queued reinforcement requires an installed mission script"
         );
-        let pick = crate::sim_rng::usize(crate::sim_rng::RngSite::ReinforcementDoor, 0..door_count);
+        let pick = crate::sim_rng::usize(
+            sim,
+            crate::sim_rng::RngSite::ReinforcementDoor,
+            0..door_count,
+        );
         let door_index = self.ai.global.reinforcement_doors[pick].door_index;
 
         // Snapshot canonical door geometry before touching entities or the
@@ -86,9 +99,11 @@ impl EngineInner {
         let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
             return;
         };
-        let Some(char_idx) =
-            campaign.get_random_peasant_from_gang(preferred_profile_idx, &assets.profile_manager)
-        else {
+        let Some(char_idx) = campaign.get_random_peasant_from_gang(
+            sim,
+            preferred_profile_idx,
+            &assets.profile_manager,
+        ) else {
             tracing::info!("REINFORCEMENT: no eligible peasant in gang.");
             return;
         };
@@ -253,11 +268,13 @@ impl EngineInner {
             let dx = -50.0
                 + 100.0
                     * crate::sim_rng::c_rand_unit_inclusive(
+                        sim,
                         crate::sim_rng::RngSite::ReinforcementJitter,
                     );
             let dy = -50.0
                 + 100.0
                     * crate::sim_rng::c_rand_unit_inclusive(
+                        sim,
                         crate::sim_rng::RngSite::ReinforcementJitter,
                     );
             let candidate = pin + MapVec::new(dx, dy);
@@ -389,6 +406,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "queued reinforcement requires an installed mission script")]
     fn queued_reinforcement_rejects_missing_mission_script() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut engine = EngineInner::new();
         engine
             .ai
@@ -409,6 +428,6 @@ mod tests {
                 point_in: MapPoint::new(0.0, 0.0),
             });
 
-        engine.create_reinforcement(&LevelAssets::new(), None);
+        engine.create_reinforcement(sim, &LevelAssets::new(), None);
     }
 }

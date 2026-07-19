@@ -561,6 +561,7 @@ impl EngineInner {
     /// over the animation duration.
     pub(super) fn apply_push_effect(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
@@ -947,20 +948,20 @@ impl EngineInner {
                 } else {
                     false
                 };
-                self.quit_swordfight(assets, victim_id);
+                self.quit_swordfight(sim, assets, victim_id);
                 if is_pc {
                     // Run the PC kill cascade (gang removal, trumpet,
                     // new-PC stat decrement, macro burn, dead_pc
                     // gate) for the push-fatal path so it matches the
                     // damage-element death path.
-                    self.apply_pc_kill_cascade(assets, victim_id);
+                    self.apply_pc_kill_cascade(sim, assets, victim_id);
                 }
             } else if is_unconscious {
                 let attacker_is_pc = self
                     .get_entity(attacker_id)
                     .map(|e| e.kind().is_pc())
                     .unwrap_or(false);
-                self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, false);
+                self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
             }
 
             self.try_queue_roll(assets, victim_id, damage_element);
@@ -990,9 +991,9 @@ impl EngineInner {
                 } else {
                     false
                 };
-                self.quit_swordfight(assets, victim_id);
+                self.quit_swordfight(sim, assets, victim_id);
                 if is_pc {
-                    self.apply_pc_kill_cascade(assets, victim_id);
+                    self.apply_pc_kill_cascade(sim, assets, victim_id);
                 }
             }
             if is_unconscious {
@@ -1000,7 +1001,7 @@ impl EngineInner {
                     .get_entity(attacker_id)
                     .map(|e| e.kind().is_pc())
                     .unwrap_or(false);
-                self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, true);
+                self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, true);
             }
             if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)
                 && let Some(entity) = self.world.entities.get_mut(victim_id)

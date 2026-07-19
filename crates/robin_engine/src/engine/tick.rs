@@ -2935,10 +2935,10 @@ impl EngineInner {
     /// - not paused
     /// - not in LEVEL_NEXT or LEVEL_LOAD state
     ///
-    /// Wraps [`EngineInner::perform_hourglass_inner`] with simulation-RNG
-    /// install/uninstall and the deferred sound-queue drain so all
-    /// gameplay-affecting randomness is pulled from the owned
-    /// [`EngineInner::rng`] (deterministic across clients) and all audio is
+    /// Supplies [`EngineInner::perform_hourglass_inner`] with an explicit
+    /// simulation context and drains the deferred sound queue so all
+    /// gameplay-affecting randomness is pulled from the engine-owned stream
+    /// (deterministic across clients) and all audio is
     /// flushed *after* the sim is done (letting rollback replay the tick
     /// without duplicating playback).
     pub fn perform_hourglass(
@@ -2951,7 +2951,7 @@ impl EngineInner {
 
         // RHScript::FadeToBlack presents its ramp in a tight loop without
         // calling PerformHourglass. Drain the corresponding presentation
-        // count before installing the sim RNG or touching any simulation,
+        // count before lending the explicit simulation context or touching any simulation,
         // display-state, or sound timer. A frame-counter deadline cannot
         // represent this: advancing that clock would mature every deadline
         // that is supposed to remain frozen during the blocking native.
@@ -2963,16 +2963,10 @@ impl EngineInner {
             return fx;
         }
 
-        // Lend the one engine-owned stream to the simulation scope. The
-        // capability is deliberately unavailable on `EngineInner` until it
-        // is reclaimed, so no direct consumer can fork the timeline.
-        //
-        // A panic inside the tick will leak the RNG in the thread-local
-        // for this thread — acceptable because a sim-tick panic is already
-        // fatal to the running game.
-        self.control.rng.enter_scope();
+        let sim = self.control.simulation_context();
+        let sim = &sim;
 
-        let code = self.perform_hourglass_inner(display, assets, dev);
+        let code = self.perform_hourglass_inner(sim, display, assets, dev);
 
         // Post-tick sim mutations that used to live in `game_session`
         // between the hourglass and the render pass. They have to run
@@ -3034,6 +3028,7 @@ impl EngineInner {
                 // immediately after a play decision.
                 if src.delay_stepping > 0 && src.max_delay > src.min_delay {
                     let step = crate::sim_rng::u32(
+                        sim,
                         crate::sim_rng::RngSite::DelayedSoundTimer,
                         0..src.delay_stepping as u32,
                     ) as u16;
@@ -3058,8 +3053,6 @@ impl EngineInner {
         // versa.
         self.feedback.cutscene_camera.display.frame_scrolled = [false; 4];
         display.frame_scrolled = [false; 4];
-
-        self.control.rng.leave_scope();
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = code;
@@ -3094,15 +3087,14 @@ impl EngineInner {
             return None;
         }
 
-        // PostInitialize can call randomising natives.  It used to run
-        // under perform_hourglass's RNG installation, so preserve that
-        // deterministic stream while moving only the scheduling boundary.
-        self.control.rng.enter_scope();
+        // PostInitialize can call randomising natives, so keep it on the same
+        // engine-owned deterministic stream while moving only the scheduling
+        // boundary.
+        let sim = self.control.simulation_context();
+        let sim = &sim;
 
-        self.run_post_initialize_if_needed(assets);
-        self.drain_pending_immediate_actions_sync(display, assets);
-
-        self.control.rng.leave_scope();
+        self.run_post_initialize_if_needed(sim, assets);
+        self.drain_pending_immediate_actions_sync(sim, display, assets);
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = GameCode::LevelInProgress;
@@ -3182,40 +3174,41 @@ impl EngineInner {
 
     fn perform_hourglass_inner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> GameCode {
         trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
-        let pc_guarded = self.hourglass_phase_deferred_effects_start(assets);
+        let pc_guarded = self.hourglass_phase_deferred_effects_start(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::MissionAndMessages);
         if let Some(code) =
-            self.hourglass_phase_mission_and_messages(display, assets, dev, pc_guarded)
+            self.hourglass_phase_mission_and_messages(sim, display, assets, dev, pc_guarded)
         {
             return code;
         }
 
         trace_hourglass_phase(HourglassPhase::NpcOrders);
-        self.hourglass_phase_npc_orders(assets);
+        self.hourglass_phase_npc_orders(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Paths);
-        self.hourglass_phase_paths(assets);
+        self.hourglass_phase_paths(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Entities);
-        let was_swordfighting = self.hourglass_phase_entities(assets);
+        let was_swordfighting = self.hourglass_phase_entities(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let positions_before_movement = self.hourglass_phase_entity_systems(assets);
+        let positions_before_movement = self.hourglass_phase_entity_systems(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
-        self.hourglass_phase_npcs(assets, &positions_before_movement);
+        self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
-        self.hourglass_phase_gameplay_systems(display, assets);
+        self.hourglass_phase_gameplay_systems(sim, display, assets);
 
         trace_hourglass_phase(HourglassPhase::Sequences);
-        self.hourglass_phase_sequences(display, assets);
+        self.hourglass_phase_sequences(sim, display, assets);
 
         // `RHSequenceElement::SetState(Terminated)` calls the owner's
         // `SendCondolationCard`, then `RHSequence::Ready`, synchronously
@@ -3225,7 +3218,7 @@ impl EngineInner {
         // its anonymous-timer scan at RHengine.cpp:3755-3771. Rust defers the
         // borrow-reentrant card itself, but this barrier must stay on the
         // sequence-manager side of that scan.
-        self.dispatch_condolations(assets);
+        self.dispatch_condolations(sim, assets);
 
         // `RHSequenceManager::Hourglass` runs before the anonymous-timer
         // scan. If a deferred command terminates and advances its sequence
@@ -3234,10 +3227,10 @@ impl EngineInner {
         // tick. Drain that immediate continuation here so Rust preserves the
         // same launch-frame decrement. Waiting until DeferredEffectsEnd's
         // final drain makes every such timer one frame late.
-        self.drain_pending_immediate_actions_sync(display, assets);
+        self.drain_pending_immediate_actions_sync(sim, display, assets);
 
         trace_hourglass_phase(HourglassPhase::DeferredEffectsEnd);
-        self.hourglass_phase_deferred_effects_end(display, assets, was_swordfighting);
+        self.hourglass_phase_deferred_effects_end(sim, display, assets, was_swordfighting);
 
         GameCode::LevelInProgress
     }
@@ -3249,7 +3242,11 @@ impl EngineInner {
     /// `RHEngine::PerformHourglass` with host/widget and mission-state work.
     /// These Rust-owned queues have no one-to-one original equivalent; their
     /// relative placement is retained from the pre-decomposition Rust tick.
-    fn hourglass_phase_deferred_effects_start(&mut self, assets: &LevelAssets) -> bool {
+    fn hourglass_phase_deferred_effects_start(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> bool {
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
@@ -3259,11 +3256,11 @@ impl EngineInner {
         // scriptor cache via `&LevelAssets` and the whole flow lives
         // inside `perform_hourglass` — keeping the "sim mutation only
         // during perform_hourglass" invariant intact.
-        self.drain_pending_reinforcements(assets);
-        self.drain_pending_scroll_amulets(assets);
+        self.drain_pending_reinforcements(sim, assets);
+        self.drain_pending_scroll_amulets(sim, assets);
         self.drain_pending_hero_speeches(assets);
-        self.drain_pending_hades_kills(assets);
-        self.drain_pending_concussion_side_effects(assets);
+        self.drain_pending_hades_kills(sim, assets);
+        self.drain_pending_concussion_side_effects(sim, assets);
 
         // Drain matured exclamations into `finished_exclamations` so the
         // AI MYTALK handler (later in this tick) sees them. Used to be
@@ -3346,6 +3343,7 @@ impl EngineInner {
     /// loss checks, and reinforcement notification in this order.
     fn hourglass_phase_mission_and_messages(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
         dev: &mut DevState,
@@ -3382,7 +3380,7 @@ impl EngineInner {
         // Each of the three quit branches displays the full minimap.
         if self.mission_domain.state.quit_won {
             display.minimap.display_map(false, true);
-            self.finalize_mission_script(assets, false);
+            self.finalize_mission_script(sim, assets, false);
             return Some(GameCode::LevelSucceeded);
         }
         if self.mission_domain.state.quit_lost {
@@ -3392,7 +3390,7 @@ impl EngineInner {
         }
         if self.mission_domain.state.quit_interrupted {
             display.minimap.display_map(false, true);
-            self.finalize_mission_script(assets, true);
+            self.finalize_mission_script(sim, assets, true);
             return Some(GameCode::LevelInterrupted);
         }
 
@@ -3411,11 +3409,12 @@ impl EngineInner {
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND) {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
-            let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
-                if let Err(e) = script.hourglass(game_seconds, script_domains, capabilities) {
-                    tracing::warn!("Script Hourglass error: {e}");
-                }
-            });
+            let _ =
+                self.with_script_session(sim, assets, |script, script_domains, capabilities| {
+                    if let Err(e) = script.hourglass(game_seconds, script_domains, capabilities) {
+                        tracing::warn!("Script Hourglass error: {e}");
+                    }
+                });
 
             // Check victory/defeat conditions every 3 game-seconds
             // (or immediately if force_check was set by a native call).
@@ -3425,7 +3424,7 @@ impl EngineInner {
                 self.script_domains.mission_ui.force_check = false;
 
                 if let Some(victory_result) =
-                    self.with_script_session(assets, |script, script_domains, capabilities| {
+                    self.with_script_session(sim, assets, |script, script_domains, capabilities| {
                         script.check_victory_condition(game_seconds, script_domains, capabilities)
                     })
                 {
@@ -3473,10 +3472,7 @@ impl EngineInner {
         // set this flag to true so the default "all PCs dead/guarded /
         // dead-PC / civilian-killed" loss checks are skipped; the
         // script's `CheckVictoryCondition` is the authority instead.
-        let ignore_default_loose = crate::engine::GlobalOptions::global()
-            .as_ref()
-            .map(|o| o.ignore_default_loose)
-            .unwrap_or(false);
+        let ignore_default_loose = self.control.sim_config.ignore_default_loose;
         if !ignore_default_loose {
             // Original: RHEngine::PerformHourglass checks the PC's explicit
             // IsPlayable() flag and guard state. Death paths are responsible
@@ -3958,7 +3954,11 @@ impl EngineInner {
     /// `RHElement::Hourglass` in the original entity loop
     /// (`original-code/RHengine.cpp:3715-3723`). The Rust pre-pass is an
     /// architectural split; its exact parity remains audited separately.
-    fn hourglass_phase_npc_orders(&mut self, assets: &LevelAssets) {
+    fn hourglass_phase_npc_orders(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.control.frame_counter.is_multiple_of(256) {
@@ -3987,10 +3987,10 @@ impl EngineInner {
         // Runs before `process_pending_cross_npc_actions` so the
         // self-stimulus drain at the end of that pass picks up the
         // `EventAfterScriptGoOn` in the same tick.
-        self.dispatch_pending_waypoint_scripts(assets);
+        self.dispatch_pending_waypoint_scripts(sim, assets);
 
         // ── Process cross-NPC actions (phalanx coordination) ────
-        self.process_pending_cross_npc_actions(assets);
+        self.process_pending_cross_npc_actions(sim, assets);
 
         // ── Process NPC turn orders ──────────────────────────────
         // Turning orders (from face_direction / face_position) are queued
@@ -4016,7 +4016,11 @@ impl EngineInner {
     /// Original provenance: `original-code/RHengine.cpp:3715-3723` iterates
     /// `marrayElements`, which `SortForEngine` orders by creation order at
     /// `original-code/RHengine.cpp:7909-7944`, and removes dead elements inline.
-    fn hourglass_phase_entities(&mut self, assets: &LevelAssets) -> bool {
+    fn hourglass_phase_entities(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> bool {
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
         // raise the ignore-mouse-event bracket on the falling edge.
@@ -4038,8 +4042,8 @@ impl EngineInner {
         self.tick_apple_smell();
         self.tick_soldier_track_primary_target();
         if !self.actors_frozen() {
-            let scratch = self.build_sim_scratch(assets);
-            self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
+            let scratch = self.build_sim_scratch(sim, assets);
+            self.tick_attacking_reactiontime_enemy_near(sim, assets, &scratch);
         }
 
         // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
@@ -4049,7 +4053,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_patrol_coordination(assets);
+        self.tick_patrol_coordination(sim, assets);
 
         // ── Element hourglass (per-element update) ───────────────
         #[cfg(test)]
@@ -4083,7 +4087,7 @@ impl EngineInner {
         // Original provenance: `original-code/RHelementactor.cpp:610-625`
         // updates WAIT_TIMER while executing the actor's current order; seek
         // refresh dispatch is in `original-code/RHelementactor.cpp:2720-2728`.
-        self.tick_refresh_seeks(assets);
+        self.tick_refresh_seeks(sim, assets);
         self.tick_actor_wait_timers();
 
         was_swordfighting
@@ -4096,7 +4100,11 @@ impl EngineInner {
     /// `ProcessPathRequests` once before collision and entity hourglasses;
     /// `original-code/RHpathfinder.cpp:710-765` returns at most one completed
     /// request and begins at most one successor at that scheduling point.
-    fn hourglass_phase_paths(&mut self, assets: &LevelAssets) {
+    fn hourglass_phase_paths(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
         let completed = MovementContext::new(
@@ -4114,7 +4122,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                let _ = self.finish_move_path(request, waypoints);
+                let _ = self.finish_move_path(sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -4230,7 +4238,12 @@ impl EngineInner {
     /// Original provenance: `original-code/RHengine.cpp:3726-3727` calls
     /// `RHSequenceManager::Hourglass` after the entity loop; its FIFO `Go()`
     /// drain is in `original-code/RHsequencemanager.cpp:931-943`.
-    fn hourglass_phase_sequences(&mut self, display: &mut HostDisplayState, assets: &LevelAssets) {
+    fn hourglass_phase_sequences(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) {
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements and dispatch actions.
         // We collect actions and process them here in two passes.
@@ -4411,6 +4424,7 @@ impl EngineInner {
                             // thinks they've already arrived.
                             let floored_seek_distance = instr_tolerance.max(4.0);
                             if self.try_dispatch_cross_sector_entity_seek(
+                                sim,
                                 assets,
                                 *owner,
                                 *sequence_id,
@@ -4542,7 +4556,7 @@ impl EngineInner {
             // the same code path is reused by the failed-path retry
             // pass.
 
-            match self.try_dispatch_move_path(owner, seq_id, elem_idx, dest, move_action) {
+            match self.try_dispatch_move_path(sim, owner, seq_id, elem_idx, dest, move_action) {
                 MovePathOutcome::Success => {}
                 MovePathOutcome::Pending => {}
                 MovePathOutcome::ActorGone => {
@@ -4913,7 +4927,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     self.dispatch_sword_strike(
-                                        assets, owner, target_id, strike, seq_id, elem_idx,
+                                        sim, assets, owner, target_id, strike, seq_id, elem_idx,
                                     );
                                 }
                                 None => {
@@ -4932,7 +4946,7 @@ impl EngineInner {
                                 _ => None,
                             };
                             self.dispatch_enter_swordfight(
-                                assets, owner, opponent, seq_id, elem_idx,
+                                sim, assets, owner, opponent, seq_id, elem_idx,
                             );
                         }
                         Command::QuitSwordfight => {
@@ -4958,7 +4972,7 @@ impl EngineInner {
                         | Command::ReceiveHitDamage
                         | Command::ReceiveMobileDamage
                         | Command::ReceiveNet => {
-                            self.dispatch_receive_damage(assets, owner, seq_id, elem_idx);
+                            self.dispatch_receive_damage(sim, assets, owner, seq_id, elem_idx);
                         }
 
                         // ── Shoulder-fall sub-sequence ──────────
@@ -5005,7 +5019,7 @@ impl EngineInner {
 
                         // ── Wasp sting ─────────────────────────
                         Command::ReceiveWaspSting => {
-                            self.dispatch_receive_wasp_sting(assets, owner, seq_id, elem_idx);
+                            self.dispatch_receive_wasp_sting(sim, assets, owner, seq_id, elem_idx);
                         }
 
                         // ── Stealth posture commands ────────────
@@ -6423,7 +6437,7 @@ impl EngineInner {
                         // element is terminated so the sequence
                         // doesn't stall.
                         Command::Jump => {
-                            if self.start_jump(assets, owner, seq_id, elem_idx) {
+                            if self.start_jump(sim, assets, owner, seq_id, elem_idx) {
                                 self.orders
                                     .sequence_manager
                                     .element_in_progress(seq_id, elem_idx);
@@ -6573,6 +6587,7 @@ impl EngineInner {
                     element_index: elem_idx,
                 } => {
                     self.dispatch_engine_or_execute_immediate(
+                        sim,
                         display,
                         assets,
                         seq_id,
@@ -6592,6 +6607,7 @@ impl EngineInner {
         // ── Dispatch deferred ProcessMessage from sequence SendMessage ──
         if !deferred_process_messages.is_empty() || !deferred_engine_messages.is_empty() {
             self.dispatch_sequence_messages(
+                sim,
                 assets,
                 &deferred_process_messages,
                 &deferred_engine_messages,
@@ -6600,7 +6616,7 @@ impl EngineInner {
 
         // ── Dispatch deferred FX-target IElementTargetScript::ActivatedBy*
         // calls collected from Command::Activate* sequence elements.
-        self.dispatch_target_activations(assets, &pending_target_activations);
+        self.dispatch_target_activations(sim, assets, &pending_target_activations);
 
         // TODO(original-parity): confirm whether callbacks queued by
         // SendMessage/ActivatedBy are observable before the first post-sequence
@@ -6615,6 +6631,7 @@ impl EngineInner {
     /// creation-ordered entity loop (`original-code/RHengine.cpp:3715-3723`).
     fn hourglass_phase_entity_systems(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
         // Preserve the position each element exposed before the globally
@@ -6629,7 +6646,7 @@ impl EngineInner {
 
         // ── Per-frame movement tick ─────────────────────────────
         // Advance all entities that have active paths.
-        let (arrived_entities, galopp_entities) = self.tick_entity_movement(assets);
+        let (arrived_entities, galopp_entities) = self.tick_entity_movement(sim, assets);
 
         // RHElementMobile masters precede their RHElementFXMasked children in
         // the original creation-ordered Hourglass loop. Advance the shipped
@@ -6642,7 +6659,7 @@ impl EngineInner {
                 .get(usize::from(path_index))
                 .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
             let tick = self.world.mobile_elements[mobile_index]
-                .hourglass(path)
+                .hourglass(sim, path)
                 .unwrap_or_else(|e| panic!("mobile {mobile_index} hourglass failed: {e}"));
             let active = self.world.mobile_elements[mobile_index].active;
             let animation_speed = self.world.mobile_elements[mobile_index].animation_speed();
@@ -6699,7 +6716,7 @@ impl EngineInner {
                 })
                 .collect();
             for eid in ids_to_check {
-                self.quit_swordfight_with_far_opponents(assets, eid);
+                self.quit_swordfight_with_far_opponents(sim, assets, eid);
             }
         }
 
@@ -6753,7 +6770,7 @@ impl EngineInner {
         // Fires `Think(EVENT_REACHPOINT)` when a MOVE sequence
         // element terminates.
         if !arrived_entities.is_empty() {
-            self.dispatch_reach_point_events(assets, &arrived_entities);
+            self.dispatch_reach_point_events(sim, assets, &arrived_entities);
         }
 
         // ── Dispatch EventGaloppLoopEnd to riders with RIDER_CHARGE flag ──
@@ -6761,17 +6778,17 @@ impl EngineInner {
         // with RIDER_CHARGE, fire `Think(EVENT_GALOPP_LOOP_END)` so
         // the AI can check whether to begin the actual charge pass.
         if !galopp_entities.is_empty() {
-            self.dispatch_galopp_loop_events(assets, &galopp_entities);
+            self.dispatch_galopp_loop_events(sim, assets, &galopp_entities);
         }
 
         // ── Per-frame zone occupant update ─────────────────────
         // After movement, check actors against script zone polygons.
         // Fires EnterZone/ExitZone on zone scripts when occupancy changes.
-        self.tick_zone_occupants(assets);
+        self.tick_zone_occupants(sim, assets);
 
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
-        // Moving actors are animated inside tick_entity_movement().
+        // Moving actors are animated inside tick_entity_movement(sim, ).
         // Advance line-jump sequences: interpolate 3D position for
         // actors currently mid-jump.  Runs before the animation tick
         // so the sprite drawn this frame reflects the new position.
@@ -6795,10 +6812,10 @@ impl EngineInner {
         self.pre_tick_pc_execute_validity(assets);
 
         let (_ai_anim_done, combat_injury_terminated, anim_outcomes) =
-            self.tick_entity_animations(assets);
+            self.tick_entity_animations(sim, assets);
         // Process sequence-element / door-pass animation completions
         // collected this tick (Turn, UnlockDoor, door-pass Transition).
-        self.process_anim_completion_outcomes(anim_outcomes, assets);
+        self.process_anim_completion_outcomes(sim, anim_outcomes, assets);
         // Dispatch EventAfterCombatInjury when a combat-hit /
         // stunned / weak animation terminates on a soldier.
         for entity_id in combat_injury_terminated {
@@ -6834,14 +6851,14 @@ impl EngineInner {
         // After all animations have been updated, check for changes
         // and dispatch ActionChange(newAction, oldAction) to per-actor
         // scripts via the `set_animation` callback.
-        self.dispatch_actor_action_changes(assets);
+        self.dispatch_actor_action_changes(sim, assets);
 
         // ── Per-scroll script Hourglass dispatch ────────────────
         // Every active scroll with a bound script bumps a per-scroll
         // `script_hourglass_timeout` counter; on every 25th active
         // frame the scroll's `IScrollScript::Hourglass(0)` fires
         // (bracketed by `SetScrollExecutingScript` / reset).
-        self.dispatch_scroll_hourglasses(assets);
+        self.dispatch_scroll_hourglasses(sim, assets);
 
         // TODO(original-parity): the followed-target position oracle below
         // proves one movement/NPC-refresh interleaving, but the rest of this
@@ -6859,6 +6876,7 @@ impl EngineInner {
     /// `original-code/RHelementactornpc.cpp:3495-3614`.
     fn hourglass_phase_npcs(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
@@ -6897,13 +6915,13 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_enemy_ai(assets);
+        self.tick_enemy_ai(sim, assets);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_refresh_ambush_points(assets);
+        self.tick_refresh_ambush_points(sim, assets);
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
@@ -6924,9 +6942,9 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_npc_stuck_on_ladder(assets);
+        self.tick_npc_stuck_on_ladder(sim, assets);
 
-        self.tick_civilian_random_speech(assets);
+        self.tick_civilian_random_speech(sim, assets);
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -6950,13 +6968,13 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_periodic_ai(assets);
+        self.tick_periodic_ai(sim, assets);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_normal_timers(assets);
+        self.tick_ai_normal_timers(sim, assets);
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
@@ -6968,19 +6986,19 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_macro_timers(assets);
+        self.tick_ai_macro_timers(sim, assets);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_queued_stimuli(assets);
+        self.tick_ai_queued_stimuli(sim, assets);
 
         // ── Post-AI script state-change notifications ───────────
         // Notify per-actor scripts of AI state transitions via
         // FilterAIEvent(source, AI_STATE_CHANGE_TO_*).  Return value
         // ignored — informational only.
-        self.dispatch_ai_state_change_notifications(assets);
+        self.dispatch_ai_state_change_notifications(sim, assets);
 
         // ── NPC speech ──────────────────────────────────────────
         // Drain pending AI remarks (set by `say` during AI ticks)
@@ -7005,6 +7023,7 @@ impl EngineInner {
     /// consume the entity/sequence/NPC state established above.
     pub(super) fn hourglass_phase_gameplay_systems(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
@@ -7037,12 +7056,12 @@ impl EngineInner {
                     // auto-heal tail. Only one of bow/melee/ability can own
                     // that active order, but dispatching each narrow driver
                     // keeps stale-state cleanup behavior intact.
-                    self.tick_bow_shot_for(assets, entity_id);
-                    self.tick_straight_melee_for(assets, entity_id);
-                    self.tick_melee_completion_for(assets, entity_id);
-                    self.tick_ability_for(display, assets, entity_id);
+                    self.tick_bow_shot_for(sim, assets, entity_id);
+                    self.tick_straight_melee_for(sim, assets, entity_id);
+                    self.tick_melee_completion_for(sim, assets, entity_id);
+                    self.tick_ability_for(sim, display, assets, entity_id);
                     if matches!(entity_id, EntityId::Pc(_)) {
-                        self.tick_pc_auto_heal_for(entity_id);
+                        self.tick_pc_auto_heal_for(sim, entity_id);
                     }
                 }
                 EntityId::Projectile(_) => {
@@ -7052,17 +7071,17 @@ impl EngineInner {
                     };
                     match object_type {
                         crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
-                            self.tick_purse_or_coin(assets, entity_id)
+                            self.tick_purse_or_coin(sim, assets, entity_id)
                         }
                         crate::element::ObjectType::WaspNest
                         | crate::element::ObjectType::BonusWaspNest
                         | crate::element::ObjectType::Wasp => {
-                            self.tick_wasp_nest_or_wasp(assets, entity_id)
+                            self.tick_wasp_nest_or_wasp(sim, assets, entity_id)
                         }
-                        _ => self.tick_existing_projectile(assets, entity_id),
+                        _ => self.tick_existing_projectile(sim, assets, entity_id),
                     }
                 }
-                EntityId::Net(_) => self.tick_net(assets, entity_id),
+                EntityId::Net(_) => self.tick_net(sim, assets, entity_id),
                 _ => {}
             }
             slot += 1;
@@ -7077,7 +7096,7 @@ impl EngineInner {
         // Combat progression without a proven cross-subsystem ordering
         // discrepancy remains batched. Fallback-timed completions already
         // cleared at their owning actor slots above and are skipped here.
-        self.tick_melee_combat(assets);
+        self.tick_melee_combat(sim, assets);
 
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
@@ -7113,6 +7132,7 @@ impl EngineInner {
     /// condolation, self-stimulus, and immediate-action drains.
     fn hourglass_phase_deferred_effects_end(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
         was_swordfighting: bool,
@@ -7140,6 +7160,7 @@ impl EngineInner {
         // expire finished titbits.
         {
             let query = EntityTitbitQuery {
+                sim,
                 entities: &self.world.entities,
                 sequence_manager: &self.orders.sequence_manager,
                 follow_element: self.players.seats[0].follow_element,
@@ -7218,7 +7239,7 @@ impl EngineInner {
         // timer expiry above can itself terminate an owned sequence element
         // and queue another card. Its continuation and immediate successors
         // drain below, after this frame's timer iteration has finished.
-        self.dispatch_condolations(assets);
+        self.dispatch_condolations(sim, assets);
 
         // ── Same-tick re-entrant stimulus dispatch ───────────────
         // The condolation drain calls `Think(EVENT_DONE)` /
@@ -7240,7 +7261,7 @@ impl EngineInner {
         // Without this the substate waits for the full
         // `LaunchTimer(20)` upper bound regardless of which
         // sequence actually completed.
-        self.drain_pending_self_stimuli(assets);
+        self.drain_pending_self_stimuli(sim, assets);
 
         // ── End-of-tick immediate-action drain ──────────────────────
         // Catch any `register_element_to_go` calls that happened
@@ -7250,7 +7271,7 @@ impl EngineInner {
         // effect window before returning control to the host
         // renderer so post-tick state reads see the immediate side
         // effects.
-        self.drain_pending_immediate_actions_sync(display, assets);
+        self.drain_pending_immediate_actions_sync(sim, display, assets);
     }
 
     /// Auto-leave disguise/stealth posture if the entity is in one and
@@ -7736,6 +7757,7 @@ impl EngineInner {
     ///   next Walk step, or Done) can fire.
     pub(super) fn process_anim_completion_outcomes(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         outcomes: super::animation::AnimCompletionOutcomes,
         assets: &LevelAssets,
     ) {
@@ -7859,7 +7881,7 @@ impl EngineInner {
 
             // Fire any PassingDoor triggers that came up during this resume.
             for (eid, door_index, direct, trigger_num) in door_triggers {
-                self.execute_pass_door(assets, eid, door_index, direct, trigger_num);
+                self.execute_pass_door(sim, assets, eid, door_index, direct, trigger_num);
             }
             for (eid, speed) in select_triggers {
                 self.apply_select_hulk(eid, speed);
@@ -7941,7 +7963,7 @@ impl EngineInner {
                         .sequence_manager
                         .element_terminated(seq_id, am.element_index);
                 }
-                self.dispatch_reach_point_events(assets, &[entity_id]);
+                self.dispatch_reach_point_events(sim, assets, &[entity_id]);
             }
 
             let _ = advance;
@@ -8104,7 +8126,7 @@ impl EngineInner {
                 Some(crate::element::Entity::Scroll(_))
             );
             if is_scroll {
-                self.scroll_is_taken(assets, object, taker);
+                self.scroll_is_taken(sim, assets, object, taker);
                 continue;
             }
 
@@ -8139,7 +8161,7 @@ impl EngineInner {
                 // When the script returns non-zero the status
                 // advances to Taken; otherwise it rests at Opened.
                 Some(crate::element::ObjectType::Scroll) => {
-                    self.take_scroll(assets, taker, object);
+                    self.take_scroll(sim, assets, taker, object);
                 }
                 Some(obj_type) if taker_is_pc => {
                     // Snapshot the object's position/layer/quantity/
@@ -8300,7 +8322,7 @@ impl EngineInner {
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(enemy) = npc.ai_brain.enemy_mut()
             {
-                enemy.make_special_action_remark(is_shield_bearer);
+                enemy.make_special_action_remark(sim, is_shield_bearer);
             }
         }
 
@@ -8355,6 +8377,7 @@ impl EngineInner {
     /// loop.
     fn dispatch_immediate_action(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
@@ -8377,6 +8400,7 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => self.dispatch_engine_or_execute_immediate(
+                sim,
                 display,
                 assets,
                 sequence_id,
@@ -8411,6 +8435,7 @@ impl EngineInner {
     /// drains, mirroring the in-hourglass deferral.
     pub(crate) fn drain_pending_immediate_actions_sync(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
     ) {
@@ -8429,6 +8454,7 @@ impl EngineInner {
             }
             for action in actions {
                 self.dispatch_immediate_action(
+                    sim,
                     display,
                     assets,
                     action,
@@ -8439,6 +8465,7 @@ impl EngineInner {
         }
         if !deferred_process_messages.is_empty() || !deferred_engine_messages.is_empty() {
             self.dispatch_sequence_messages(
+                sim,
                 assets,
                 &deferred_process_messages,
                 &deferred_engine_messages,
@@ -8904,6 +8931,7 @@ impl EngineInner {
     /// DisplayPopupText, Freeze[All]).
     fn dispatch_engine_or_execute_immediate(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         seq_id: crate::sequence::SequenceId,
@@ -9124,7 +9152,7 @@ impl EngineInner {
                     (scroll, reader)
                 };
                 if let (Some(scroll), Some(reader)) = (scroll_id, reader_id) {
-                    self.scroll_is_taken(assets, scroll, reader);
+                    self.scroll_is_taken(sim, assets, scroll, reader);
                 } else {
                     tracing::warn!(
                         ?scroll_id,
@@ -9163,13 +9191,15 @@ impl EngineInner {
 /// use a lower increment + factor (they don't wobble as much per
 /// step) than walking soldiers.
 ///
-/// The RNG is drained deterministically from the installed `sim_rng`, so
+/// The RNG is drained deterministically from the explicit caller context, so
 /// replays reproduce the same deviation sequence. Original provenance:
 /// `RHElementActorSoldier::PostProcessPath` in
 /// `original-code/RHelementactorsoldier.cpp:1688-1771` uses two draws for
 /// each of up to three candidate deviations per segment.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
+    sim: &crate::sim_rng::SimulationContext,
+
     mut waypoints: Vec<crate::coordinates::MapPoint>,
     origin: crate::coordinates::MapPoint,
     blood_alcohol: u8,
@@ -9208,10 +9238,10 @@ pub(super) fn apply_drunken_path_deviation(
                 // `rand() & 15` — pick a random 16-sector direction
                 // and scale by another 0..15 random magnitude.
                 let dir_sector =
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
                         as i16;
                 let magnitude =
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
                         as f32;
                 let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
@@ -9245,6 +9275,7 @@ pub(super) fn apply_drunken_path_deviation(
 /// queries live entity state.  Replaces the old `StubQuery` that kept
 /// all titbits alive unconditionally.
 struct EntityTitbitQuery<'a> {
+    sim: &'a crate::sim_rng::SimulationContext,
     entities: &'a crate::entities::Entities,
     sequence_manager: &'a crate::sequence::SequenceManager,
     follow_element: Option<EntityId>,
@@ -9322,7 +9353,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     }
 
     fn random_u32(&self) -> u32 {
-        crate::sim_rng::u32(crate::sim_rng::RngSite::TitbitUpdate, ..)
+        crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::TitbitUpdate, ..)
     }
 }
 

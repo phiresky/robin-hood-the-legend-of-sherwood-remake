@@ -164,6 +164,7 @@ impl DamageEvent {
 /// Entity state needed by concussion/KO logic that lives outside `HumanData`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConcussionContext {
+    pub difficulty: crate::player_profile::DifficultyLevel,
     pub is_invulnerable: bool,
     pub is_tied: bool,
     pub is_carried: bool,
@@ -441,6 +442,8 @@ pub struct SwordDamageParams<'a> {
 /// Returns a `SwordDamageResult` indicating which damage components
 /// were applied, or empty if no damage was dealt.
 pub fn receive_sword_damage(
+    sim: &crate::sim_rng::SimulationContext,
+
     human: &mut HumanData,
     life_points: &mut i16,
     params: &SwordDamageParams<'_>,
@@ -481,7 +484,7 @@ pub fn receive_sword_damage(
                 defender.elevation,
             );
             let roll: u16 =
-                crate::sim_rng::u16(crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
+                crate::sim_rng::u16(sim, crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > protection {
                 let cutting = get_strike_cutting_effect(
                     attacker_profile,
@@ -505,7 +508,7 @@ pub fn receive_sword_damage(
             // --- Stunning damage ---
             let bludgeon_prot = def_profile.bludgeon_protection;
             let roll: u16 =
-                crate::sim_rng::u16(crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
+                crate::sim_rng::u16(sim, crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > bludgeon_prot {
                 let stunning = attacker_profile.thrusts[*strike as usize].stunning;
                 if stunning > 0 {
@@ -674,8 +677,7 @@ pub fn receive_hit_damage(
     // On Hard difficulty, scale concussion by HARD_ENEMY_LIFEPOINTS so
     // knockout is still effective despite enemies having 1.5x HP.
     let concussion = if is_lacklandist
-        && crate::player_profile::DifficultyLevel::current()
-            == crate::player_profile::DifficultyLevel::Hard
+        && ctx.difficulty == crate::player_profile::DifficultyLevel::Hard
     {
         (concussion as f32 * crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS) as u16
     } else {
@@ -1280,6 +1282,8 @@ const PARRY_STARTUP_FRAMES: i16 = 10;
 /// `sword_strike_boredom` will be grown to `NUM_NORMAL_SWORD_STRIKES`
 /// entries if undersized.
 pub fn propose_good_sword_strike(
+    sim: &crate::sim_rng::SimulationContext,
+
     ctx: &StrikeSelectionContext,
     nearby: &[NearbyVictim],
     sword_strike_boredom: &mut Vec<u16>,
@@ -1296,13 +1300,14 @@ pub fn propose_good_sword_strike(
     // special strike. `(rand() % 100) >= max(50, fighting_ability)`.
     let threshold = ctx.fighting_ability.max(50) as u32;
     let mut only_parade = false;
-    if crate::sim_rng::u32(crate::sim_rng::RngSite::SwordStrikeSelection, 0..100) >= threshold {
+    if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SwordStrikeSelection, 0..100) >= threshold
+    {
         if also_parade {
             // NPCs always get parade fallback. PCs need a second
             // fighting_ability roll — higher skill means they're more likely
             // to retry a strike next time rather than fall back to parry.
             if ctx.is_npc
-                || crate::sim_rng::u32(crate::sim_rng::RngSite::SwordStrikeSelection, 0..100)
+                || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SwordStrikeSelection, 0..100)
                     >= ctx.fighting_ability as u32
             {
                 only_parade = true;
@@ -1729,6 +1734,8 @@ mod tests {
 
     #[test]
     fn sword_damage_parry_blocks() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut h = make_human();
         let mut lp: i16 = 100;
         let profile = make_hth_profile();
@@ -1747,6 +1754,7 @@ mod tests {
         let ctx = default_ctx();
 
         let (result, cutting) = receive_sword_damage(
+            sim,
             &mut h,
             &mut lp,
             &SwordDamageParams {
@@ -1766,6 +1774,8 @@ mod tests {
 
     #[test]
     fn sword_damage_no_armor_full_damage() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut h = make_human();
         let mut lp: i16 = 100;
         let profile = make_hth_profile();
@@ -1784,6 +1794,7 @@ mod tests {
         let ctx = default_ctx();
 
         let (result, _cutting) = receive_sword_damage(
+            sim,
             &mut h,
             &mut lp,
             &SwordDamageParams {

@@ -38,7 +38,11 @@ use super::EngineInner;
 
 impl EngineInner {
     /// Upgrade walking to running for `entity`.
-    pub(crate) fn actor_make_fast(&mut self, entity: EntityId) {
+    pub(crate) fn actor_make_fast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+    ) {
         // Early-out: cannot run when carrying a corpse / on shoulders,
         // or when standing in a motion sector that forces crouched
         // movement.
@@ -62,15 +66,19 @@ impl EngineInner {
         let touched = self.sequence_manager_has_movement(entity);
         if touched {
             self.orders.sequence_manager.make_fast(entity);
-            self.after_make_rewrite(entity);
+            self.after_make_rewrite(sim, entity);
         }
     }
 
     /// Downgrade running to walking for `entity`.
-    pub(crate) fn actor_make_slow(&mut self, entity: EntityId) {
+    pub(crate) fn actor_make_slow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+    ) {
         if self.sequence_manager_has_movement(entity) {
             self.orders.sequence_manager.make_slow(entity);
-            self.after_make_rewrite(entity);
+            self.after_make_rewrite(sim, entity);
         }
     }
 
@@ -83,11 +91,15 @@ impl EngineInner {
     /// Only when the active element is itself a movement do we skip
     /// the `CROUCH_UP` fallback and run the path-rewrite tail
     /// (`after_make_rewrite`) instead.
-    pub(crate) fn actor_make_upright(&mut self, entity: EntityId) {
+    pub(crate) fn actor_make_upright(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+    ) {
         if self.sequence_manager_has_active_element(entity) {
             self.orders.sequence_manager.make_upright(entity);
             if self.sequence_manager_has_movement(entity) {
-                self.after_make_rewrite(entity);
+                self.after_make_rewrite(sim, entity);
                 return;
             }
         }
@@ -99,10 +111,14 @@ impl EngineInner {
     }
 
     /// Crouch the actor down.
-    pub(crate) fn actor_make_crouched(&mut self, entity: EntityId) {
+    pub(crate) fn actor_make_crouched(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+    ) {
         if self.sequence_manager_has_movement(entity) {
             self.orders.sequence_manager.make_crouched(entity);
-            self.after_make_rewrite(entity);
+            self.after_make_rewrite(sim, entity);
         } else {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             self.launch_element(elem);
@@ -116,7 +132,7 @@ impl EngineInner {
     /// Path resolution is synchronous here, so there is no queued
     /// async path request to rewrite — only the in-progress movement
     /// element gets touched.
-    fn after_make_rewrite(&mut self, entity: EntityId) {
+    fn after_make_rewrite(&mut self, sim: &crate::sim_rng::SimulationContext, entity: EntityId) {
         let (seq_id, elem_idx) = match self.find_active_movement_element(entity) {
             Some(pair) => pair,
             None => return,
@@ -127,14 +143,20 @@ impl EngineInner {
         // pathfind time (tick.rs); this call re-wobbles the remaining
         // waypoints when a drunken soldier transitions walk ↔ run
         // mid-path.
-        self.reapply_drunken_deviation(entity, seq_id, elem_idx);
+        self.reapply_drunken_deviation(sim, entity, seq_id, elem_idx);
     }
 
     /// Re-apply drunken path deviation to a soldier's remaining
     /// waypoints after a speed change.  Uses the actor's current
     /// position as the segment origin and the matching drunken factor
     /// for the new movement animation.
-    fn reapply_drunken_deviation(&mut self, entity: EntityId, seq_id: SequenceId, elem_idx: usize) {
+    fn reapply_drunken_deviation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
         let Some(ent) = self.get_entity(entity) else {
             return;
         };
@@ -218,6 +240,7 @@ impl EngineInner {
         }
 
         let deviated = crate::engine::tick::apply_drunken_path_deviation(
+            sim,
             waypoints,
             position,
             blood_alcohol,

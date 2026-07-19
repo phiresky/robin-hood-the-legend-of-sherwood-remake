@@ -82,6 +82,7 @@ impl EnemyAi {
     #[allow(clippy::too_many_arguments)]
     pub fn seek_area(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         center: Position,
         standard_radius: u16,
         flags: SeekFlags,
@@ -100,13 +101,13 @@ impl EnemyAi {
 
         // Royalists just return to duty.
         if ctx.camp == crate::element::Camp::Royalists {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
 
         // Company 100 (combat trainer dummy) just returns to duty.
         if self.company_number == 100 {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
 
@@ -276,6 +277,7 @@ impl EnemyAi {
                     as u16;
 
                 expected_points = crate::sim_rng::u16(
+                    sim,
                     crate::sim_rng::RngSite::SeekPointSelection,
                     min..=expected_points,
                 );
@@ -290,7 +292,7 @@ impl EnemyAi {
                     break;
                 }
                 let interest = global.seek_points[idx].calculate_interest(current_frame);
-                if crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointSelection, 0..100)
+                if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100)
                     < interest
                 {
                     // Unconditionally call rand on every accepted
@@ -299,6 +301,7 @@ impl EnemyAi {
                     // Match the RNG-step count exactly for replay
                     // determinism — no `is_empty()` short-circuit.
                     let insert_pos = crate::sim_rng::usize(
+                        sim,
                         crate::sim_rng::RngSite::SeekPointSelection,
                         0..=selected_random.len(),
                     );
@@ -357,7 +360,7 @@ impl EnemyAi {
                 sp.id = 1111;
                 sp
             } else {
-                let mut sp = SeekPoint::from_position(self.seek_center);
+                let mut sp = SeekPoint::from_position(sim, self.seek_center);
                 sp.id = 1111;
                 sp
             };
@@ -368,7 +371,7 @@ impl EnemyAi {
         if flags.contains(SeekFlags::LOCATION_END) || self.my_seek_points.is_empty() {
             // Create personal_seek_point_2 from the (possibly
             // door-adjusted) seek_center, not the original parameter.
-            let mut sp = SeekPoint::from_position(self.seek_center);
+            let mut sp = SeekPoint::from_position(sim, self.seek_center);
             sp.id = 2222;
             self.personal_seek_point_2 = Some(sp);
             self.my_seek_points.push(2222);
@@ -384,7 +387,7 @@ impl EnemyAi {
         );
 
         if !ctx.in_building {
-            self.seek_next_point(global, ctx, tick);
+            self.seek_next_point(sim, global, ctx, tick);
         } else {
             // Inside a building: delay before seeking.
             self.seek_point_view_directions.clear();
@@ -472,6 +475,7 @@ impl EnemyAi {
     /// points.
     pub fn seek_next_point(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -539,7 +543,7 @@ impl EnemyAi {
 
         // No more seek points → return to duty
         if self.my_seek_points.is_empty() {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
 
             // Say "ends search" if nothing alarming was found.
             if self.base.my_reconnaissance_report.report_type <= ReportType::Noise
@@ -566,7 +570,7 @@ impl EnemyAi {
                 (sp.locked, sp.last_calculated_interest)
             } else {
                 // Invalid ID — skip
-                self.seek_next_point(global, ctx, tick);
+                self.seek_next_point(sim, global, ctx, tick);
                 return;
             }
         };
@@ -586,10 +590,11 @@ impl EnemyAi {
         };
 
         if is_locked
-            || crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
+            || crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100)
+                >= interest
         {
             // Skip this point — try the next one
-            self.seek_next_point(global, ctx, tick);
+            self.seek_next_point(sim, global, ctx, tick);
             return;
         }
 
@@ -715,6 +720,7 @@ impl EnemyAi {
     #[allow(clippy::too_many_arguments)]
     pub fn dead_body_alert(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         pos_center: Position,
         flags: SeekFlags,
         global: &mut AiGlobalState,
@@ -744,6 +750,7 @@ impl EnemyAi {
                     && self.base.antagonist == 0
                 {
                     self.seek_area(
+                        sim,
                         pos_center,
                         duty_radius,
                         SeekFlags::LOCATION_END
@@ -756,6 +763,7 @@ impl EnemyAi {
                     );
                 } else if !self.alert_officer(pos_center, flags.bits(), ctx, tick) {
                     self.seek_area(
+                        sim,
                         pos_center,
                         duty_radius,
                         SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
@@ -782,6 +790,7 @@ impl EnemyAi {
                     tick,
                 ) {
                     self.seek_area(
+                        sim,
                         pos_center,
                         duty_radius,
                         SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
@@ -795,6 +804,7 @@ impl EnemyAi {
             ProfileRank::Knight => {
                 // Knights search their own vicinity.
                 self.seek_area(
+                    sim,
                     ctx.position,
                     duty_radius,
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
@@ -919,7 +929,12 @@ impl EnemyAi {
     ///
     /// Multi-waypoint sweeps run with `RUN | DONT_STOP` so the seeker
     /// chains waypoints without halting between them.
-    pub fn search_charly(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+    pub fn search_charly(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
         // Officer arm.
@@ -938,11 +953,11 @@ impl EnemyAi {
 
         // No checkpoint → ReturnToDuty.
         if self.base.checkpoint_charly == 0 {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
         let Some(view) = ctx.entity_view(self.base.checkpoint_charly) else {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         };
 
@@ -1009,7 +1024,7 @@ impl EnemyAi {
         };
 
         if waypoints.is_empty() {
-            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
 

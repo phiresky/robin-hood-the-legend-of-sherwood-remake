@@ -1153,6 +1153,7 @@ pub(super) struct LoadedMissionCore {
     pub(super) pre_decoded_background: Option<engine_api::level_loading::PreDecodedBackground>,
     pub(super) pre_decoded_minimap: Option<engine_api::level_loading::PreDecodedMinimap>,
     pub(super) engine_rng_seed: u64,
+    pub(super) engine_sim_config: engine_api::SimConfig,
 }
 
 pub(super) struct MissionLoadError {
@@ -1166,6 +1167,7 @@ impl MissionLoadError {
     }
 }
 
+#[cfg(test)]
 fn initial_rng_seed(
     args: &crate::main_entry::CliArgs,
     multiplayer_seed: Option<u64>,
@@ -1181,6 +1183,12 @@ fn initial_rng_seed(
     } else {
         Ok(multiplayer_seed.unwrap_or(0))
     }
+}
+
+pub(crate) fn initial_sim_config(args: &crate::main_entry::CliArgs) -> engine_api::SimConfig {
+    let mut sim_config = args.global_options.sim_config();
+    sim_config.golden_eye |= args.goldeneye;
+    sim_config
 }
 
 #[cfg(test)]
@@ -1208,6 +1216,8 @@ pub(super) fn load_level_and_sprite_bank(
     ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
     titbit_row_frame_counts: Vec<u16>,
     minimap_widget: Option<engine_api::MinimapWidgetSetup>,
+    authoritative_rng_seed: u64,
+    authoritative_sim_config: engine_api::SimConfig,
 ) -> Result<LoadedMissionCore, MissionLoadError> {
     let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
@@ -1399,11 +1409,9 @@ pub(super) fn load_level_and_sprite_bank(
 
     // Resolve the engine's initial RNG seed before construction so
     // `Engine::new` is the only site that touches RNG state during
-    // setup.  Priority: already-decoded RPC replay > `--replay`
-    // header seed (so the recording's recorded actions reproduce its
-    // recorded state) > the multiplayer-negotiated `mp_mission_seed`
-    // > the hardcoded single-player default of 0.
-    let goldeneye_initial = args.goldeneye || args.global_options.golden_eye;
+    // setup. Campaign selection has already advanced the single-player /
+    // replay sequence. A negotiated multiplayer mission seed remains the
+    // authority for a network mission.
     if let Some(mm) = minimap_widget {
         host.engine_display.setup_minimap_widget(
             engine_coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
@@ -1414,9 +1422,16 @@ pub(super) fn load_level_and_sprite_bank(
         );
     }
 
-    let rng_seed = match initial_rng_seed(args, host.transport.mission_seed) {
-        Ok(seed) => seed,
-        Err(message) => return Err(MissionLoadError::new(campaign, message)),
+    let (rng_seed, sim_config) = if host.transport.net.is_some() {
+        let rng_seed = host.transport.mission_seed.unwrap_or_else(|| {
+            panic!("active multiplayer transport is missing its Welcome mission seed")
+        });
+        let sim_config = host.transport.mission_sim_config.unwrap_or_else(|| {
+            panic!("active multiplayer transport is missing its Welcome SimConfig")
+        });
+        (rng_seed, sim_config)
+    } else {
+        (authoritative_rng_seed, authoritative_sim_config)
     };
     // This is the only point at which setup transfers campaign ownership.
     // Every fallible file/decode step above borrows the session campaign, and
@@ -1438,9 +1453,7 @@ pub(super) fn load_level_and_sprite_bank(
             ground_mark_sprite,
             titbit_row_frame_counts,
             rng_seed,
-            script_enabled: args.global_options.script_enabled,
-            highlander2: args.global_options.highlander2,
-            goldeneye: goldeneye_initial,
+            sim_config,
         }) {
             Ok(engine) => engine,
             Err((error, campaign)) => {
@@ -1484,6 +1497,7 @@ pub(super) fn load_level_and_sprite_bank(
         pre_decoded_background: pre_decoded_bg,
         pre_decoded_minimap: pre_decoded_mm,
         engine_rng_seed: rng_seed,
+        engine_sim_config: sim_config,
     })
 }
 
@@ -1651,9 +1665,10 @@ mod tests {
             header: ReplayHeader {
                 mission_id: "Dem_Lei_MP".into(),
                 rng_seed: seed,
+                sim_config: engine_api::SimConfig::default(),
                 version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
                 total_frames: 0,
-                campaign: None,
+                campaign: bitcode::serialize(&Campaign::default()).unwrap(),
             },
             frames: BTreeMap::new(),
             hashes: BTreeMap::new(),

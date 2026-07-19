@@ -198,7 +198,7 @@ impl EngineInner {
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
                 let mut shooting = if s.soldier.cached_camp == crate::element::Camp::Lacklandists {
-                    let diff = crate::player_profile::DifficultyLevel::current();
+                    let diff = self.control.sim_config.difficulty;
                     diff.modify_capacity(
                         profile.shooting,
                         crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
@@ -228,6 +228,7 @@ impl EngineInner {
     /// machine.
     pub(super) fn tick_bow_shot_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         shooter_id: EntityId,
     ) -> Vec<EntityId> {
@@ -243,7 +244,7 @@ impl EngineInner {
             }
         }
 
-        let spawned = self.tick_bow_shots(assets);
+        let spawned = self.tick_bow_shots(sim, assets);
 
         for (actor_id, active_shot) in detached {
             let actor = self
@@ -264,13 +265,20 @@ impl EngineInner {
     /// shot.  Computes ballistic trajectory, rolls hit chance, and
     /// spawns arrows on the done frame.  Called from the main
     /// hourglass loop.
-    pub(super) fn tick_bow_shots(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
+    pub(super) fn tick_bow_shots(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
         if self.actors_frozen() {
             return spawned_projectiles;
         }
-        let events =
-            bow_shot::tick_bow_shots(&mut self.world.entities, &mut self.orders.sequence_manager);
+        let events = bow_shot::tick_bow_shots(
+            sim,
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+        );
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
@@ -467,7 +475,7 @@ impl EngineInner {
 
             if target_is_human
                 && let Some(bias) =
-                    bow_shot::roll_hit_and_compute_bias(hit_chance, bow_skill_capacity)
+                    bow_shot::roll_hit_and_compute_bias(sim, hit_chance, bow_skill_capacity)
             {
                 // Miss — deflect the velocity.
                 velocity.x += bias.x;
@@ -554,7 +562,7 @@ impl EngineInner {
             // the flying arrow renders its proper sprite instead of the
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
-            self.tick_new_projectile_once(assets, arrow_id);
+            self.tick_new_projectile_once(sim, assets, arrow_id);
             spawned_projectiles.push(arrow_id);
 
             tracing::debug!(
@@ -588,7 +596,11 @@ impl EngineInner {
     /// branch: inverse sector (xor 8), `y * 10`, z velocity zero.  Used
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
-    fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
+    fn start_arrow_ricochet(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        arrow_id: EntityId,
+    ) {
         let Some(entity) = self.world.entities.get_mut(arrow_id) else {
             return;
         };
@@ -596,7 +608,7 @@ impl EngineInner {
             return;
         };
 
-        bow_shot::make_arrow_falling_down(proj, false);
+        bow_shot::make_arrow_falling_down(sim, proj, false);
     }
 
     /// Classify an arrow impact on a candidate victim.
@@ -621,6 +633,7 @@ impl EngineInner {
     /// sequence element.
     fn classify_arrow_hit(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         shooter_id: EntityId,
@@ -728,8 +741,7 @@ impl EngineInner {
         let apply_hurtable_filter = if shooter_is_npc {
             true
         } else if shooter_is_pc {
-            crate::player_profile::DifficultyLevel::current()
-                != crate::player_profile::DifficultyLevel::Hard
+            sim.config().difficulty != crate::player_profile::DifficultyLevel::Hard
         } else {
             false
         };
@@ -765,6 +777,7 @@ impl EngineInner {
             match piercing_protection {
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(
+                        sim,
                         crate::sim_rng::RngSite::ArrowPiercingProtection,
                         0..101,
                     );
@@ -1272,7 +1285,7 @@ impl EngineInner {
             .characters
             .get(usize::from(profile_idx))
             .map(|cp| {
-                let difficulty = crate::player_profile::DifficultyLevel::current();
+                let difficulty = self.control.sim_config.difficulty;
                 crate::inventory::max_ammo_for_action(cp, action, difficulty)
             })
             .unwrap_or(u16::MAX);
@@ -1329,7 +1342,7 @@ impl EngineInner {
             .get(usize::from(profile_idx))
             .cloned()?;
 
-        let difficulty = crate::player_profile::DifficultyLevel::current();
+        let difficulty = self.control.sim_config.difficulty;
 
         // Use the pure-function pickup logic from inventory module.
         let result = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
@@ -1868,6 +1881,7 @@ impl EngineInner {
     /// the virtual entity pass.
     pub(super) fn tick_existing_projectile(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         projectile_id: EntityId,
     ) {
@@ -1881,14 +1895,20 @@ impl EngineInner {
             static_active: &self.world.static_sight_obstacle_active,
         };
         let results = bow_shot::tick_existing_projectile(
+            sim,
             &mut self.world.entities,
             sight_obstacles,
             projectile_id,
         );
-        self.process_projectile_tick_results(assets, results);
+        self.process_projectile_tick_results(sim, assets, results);
     }
 
-    fn tick_new_projectile_once(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
+    fn tick_new_projectile_once(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow_id: EntityId,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -1898,12 +1918,14 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrow(&mut self.world.entities, sight_obstacles, arrow_id);
-        self.process_projectile_tick_results(assets, results);
+        let results =
+            bow_shot::tick_arrow(sim, &mut self.world.entities, sight_obstacles, arrow_id);
+        self.process_projectile_tick_results(sim, assets, results);
     }
 
     fn process_projectile_tick_results(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         results: Vec<bow_shot::ArrowTickResult>,
     ) {
@@ -2042,7 +2064,7 @@ impl EngineInner {
                         // roll failed) → piercing damage.  NPCs that
                         // dodge (VIP or protected soldier) trigger an
                         // EventApple stimulus instead.
-                        self.on_stone_hit_human(assets, result.arrow, victim, shooter);
+                        self.on_stone_hit_human(sim, assets, result.arrow, victim, shooter);
                     }
                     _ => {
                         // ── Arrow path (default) — the 3-way classifier
@@ -2052,7 +2074,7 @@ impl EngineInner {
                         //   * `PassThrough`  — arrow keeps flying, no sound.
                         //   * `Ricochet`     — falling state, silent.
                         //   * `Damage`       — launch damage sequence element.
-                        match self.classify_arrow_hit(assets, victim, shooter) {
+                        match self.classify_arrow_hit(sim, assets, victim, shooter) {
                             ArrowHitOutcome::PassThrough => {
                                 // Friendly-fire / VIP-NPC / civilian-protected
                                 // / PC-with-shield: arrow sails past.
@@ -2080,7 +2102,7 @@ impl EngineInner {
                                     victim = ?victim,
                                     "Arrow ricocheted from armor"
                                 );
-                                self.start_arrow_ricochet(result.arrow);
+                                self.start_arrow_ricochet(sim, result.arrow);
                                 continue;
                             }
                             ArrowHitOutcome::Damage => {}
@@ -2114,6 +2136,7 @@ impl EngineInner {
                             continue;
                         }
                         let died = self.launch_projectile_damage_now(
+                            sim,
                             assets,
                             victim,
                             shooter,
@@ -2248,6 +2271,7 @@ impl EngineInner {
     /// (VIP or armored soldier) receive an EventApple stimulus.
     fn on_stone_hit_human(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         stone: EntityId,
         victim: EntityId,
@@ -2270,6 +2294,7 @@ impl EngineInner {
             ) {
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(
+                        sim,
                         crate::sim_rng::RngSite::StonePiercingProtection,
                         0..100,
                     );
@@ -2306,6 +2331,7 @@ impl EngineInner {
                 return;
             }
             self.launch_projectile_damage_now(
+                sim,
                 assets,
                 victim,
                 _shooter,
@@ -2415,12 +2441,15 @@ impl EngineInner {
     /// and the PC noise bookkeeping in `engine/ai.rs`; this tick only
     /// covers the PC-specific heal branches.
     /// Apply the PC-specific tail of `RHElementActorPC::Hourglass` to one PC.
-    pub(super) fn tick_pc_auto_heal_for(&mut self, pc_id: EntityId) {
+    pub(super) fn tick_pc_auto_heal_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        pc_id: EntityId,
+    ) {
         /// Auto-heal cadence in frames.
         const TIME_AUTO_HEAL: u32 = 100;
 
-        let tick_easy = crate::player_profile::DifficultyLevel::current()
-            == crate::player_profile::DifficultyLevel::Easy
+        let tick_easy = sim.config().difficulty == crate::player_profile::DifficultyLevel::Easy
             && self.control.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
 
         let (lp, immortal, swordfighting, in_coma) = {
@@ -2802,6 +2831,7 @@ impl EngineInner {
     /// edge without moving unproven sweep/AI maintenance.
     pub(super) fn tick_melee_completion_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
@@ -2840,7 +2870,7 @@ impl EngineInner {
             std::mem::take(&mut actor.pending_push_swordfight)
         };
         for victim_id in pending_swordfights {
-            self.enter_swordfight(assets, victim_id, attacker_id, true);
+            self.enter_swordfight(sim, assets, victim_id, attacker_id, true);
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
@@ -2887,6 +2917,7 @@ impl EngineInner {
     /// that actor's creation-order position.
     pub(super) fn tick_ability_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
         actor_id: EntityId,
@@ -2895,6 +2926,7 @@ impl EngineInner {
             return;
         }
         let results = crate::abilities::tick_ability(
+            sim,
             &mut self.world.entities,
             &self.orders.sequence_manager,
             &mut self.orders.next_order_id,
@@ -3681,7 +3713,7 @@ impl EngineInner {
                     // CIV_REMARK_BEGGAR_* speech cue is queued inside
                     // `reveal_scrolls` and later dispatched by
                     // `process_npc_speech`.
-                    match self.reveal_scrolls(display, assets, beggar_id) {
+                    match self.reveal_scrolls(sim, display, assets, beggar_id) {
                         Some(remark) => tracing::debug!(
                             beggar = ?beggar_id,
                             ?remark,

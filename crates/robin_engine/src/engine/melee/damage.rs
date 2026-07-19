@@ -78,6 +78,7 @@ impl EngineInner {
     /// same-tick because the launch + dispatch are inline.
     pub(crate) fn launch_sword_damage_now(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
@@ -123,7 +124,7 @@ impl EngineInner {
         if !self.arbitrate_instruct(seq_id, elem_idx) {
             return;
         }
-        self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
+        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
     }
 
     /// Apply sword damage to a victim.
@@ -141,6 +142,7 @@ impl EngineInner {
     /// always receives a valid `damage_element`.
     pub(super) fn apply_sword_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
@@ -225,7 +227,13 @@ impl EngineInner {
             let def_to_atk = direction_to(&self.world.entities, victim_id, attacker);
             let ability = self
                 .get_entity(attacker)
-                .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
+                .map(|e| {
+                    fighting_ability_from_profile(
+                        e,
+                        &assets.profile_manager,
+                        sim.config().difficulty,
+                    )
+                })
                 .unwrap_or(50);
             let is_rank = self
                 .get_entity(attacker)
@@ -261,6 +269,7 @@ impl EngineInner {
             victim,
             self.world.weather.is_forest_level,
             Some(&self.mission_domain.campaign),
+            self.control.sim_config.difficulty,
         );
 
         // Build params and apply damage
@@ -297,7 +306,7 @@ impl EngineInner {
             None => return,
         };
 
-        let (result, cutting_inflicted) = combat::receive_sword_damage(human, lp, &params);
+        let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
 
         let life_points_after = *lp;
         // Use the attempted damage (not the clamped lp delta) so
@@ -414,6 +423,7 @@ impl EngineInner {
                     max_distance: thrust.maximal_distance as f32,
                 };
                 self.apply_push_effect(
+                    sim,
                     assets,
                     victim_id,
                     attacker,
@@ -503,7 +513,7 @@ impl EngineInner {
                 && self.selected_pc_ids().contains(&atk_id);
             if !attacker_is_selected_pc {
                 let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
-                if crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeProvoke, 0..100)
+                if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100)
                     < provoke_chance
                 {
                     // Launch PROVOKE on the attacker
@@ -633,6 +643,7 @@ impl EngineInner {
         // since apply_push_effect already handled death/KO transitions.
         if !pushed {
             self.handle_post_damage(
+                sim,
                 assets,
                 victim_id,
                 attacker_id,
@@ -758,6 +769,7 @@ impl EngineInner {
     /// Apply generic damage (falling, environmental, mobile collision).
     pub(super) fn apply_generic_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage: u16,
@@ -806,6 +818,7 @@ impl EngineInner {
             victim,
             self.world.weather.is_forest_level,
             Some(&self.mission_domain.campaign),
+            self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
 
@@ -832,7 +845,7 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(assets, victim_id, damage_element);
-            self.handle_post_damage(assets, victim_id, None, false, damage_element, None);
+            self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
             return;
         }
 
@@ -882,7 +895,7 @@ impl EngineInner {
             self.try_queue_roll(assets, victim_id, damage_element);
         }
 
-        self.handle_post_damage(assets, victim_id, None, false, damage_element, None);
+        self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
     }
 
     /// Apply piercing damage (arrows, stones).
@@ -893,6 +906,7 @@ impl EngineInner {
     /// share the same piercing damage math.
     pub(super) fn apply_piercing_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage: u16,
@@ -928,6 +942,7 @@ impl EngineInner {
             victim,
             self.world.weather.is_forest_level,
             Some(&self.mission_domain.campaign),
+            self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
 
@@ -982,7 +997,7 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(assets, victim_id, damage_element);
-            self.handle_post_damage(assets, victim_id, None, false, damage_element, None);
+            self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
             return;
         }
 
@@ -1037,7 +1052,7 @@ impl EngineInner {
             self.try_queue_roll(assets, victim_id, damage_element);
         }
 
-        self.handle_post_damage(assets, victim_id, None, false, damage_element, None);
+        self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
     }
 
     /// Apply hit damage (fist/club, concussion only).
@@ -1049,6 +1064,7 @@ impl EngineInner {
     /// `combat_anim` directly.
     pub(super) fn apply_hit_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
@@ -1068,6 +1084,7 @@ impl EngineInner {
             victim,
             self.world.weather.is_forest_level,
             Some(&self.mission_domain.campaign),
+            self.control.sim_config.difficulty,
         );
         let life_points = get_life_points(victim);
         let is_lacklandist = victim.is_soldier()
@@ -1118,7 +1135,15 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(assets, victim_id, damage_element);
-            self.handle_post_damage(assets, victim_id, attacker_id, false, damage_element, None);
+            self.handle_post_damage(
+                sim,
+                assets,
+                victim_id,
+                attacker_id,
+                false,
+                damage_element,
+                None,
+            );
             return;
         }
 
@@ -1135,7 +1160,15 @@ impl EngineInner {
         // push-path routing.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
             self.translate_ladder_wall_fall(victim_id, damage_element);
-            self.handle_post_damage(assets, victim_id, attacker_id, false, damage_element, None);
+            self.handle_post_damage(
+                sim,
+                assets,
+                victim_id,
+                attacker_id,
+                false,
+                damage_element,
+                None,
+            );
             return;
         }
 
@@ -1151,7 +1184,15 @@ impl EngineInner {
             damage_element,
         );
 
-        self.handle_post_damage(assets, victim_id, attacker_id, false, damage_element, None);
+        self.handle_post_damage(
+            sim,
+            assets,
+            victim_id,
+            attacker_id,
+            false,
+            damage_element,
+            None,
+        );
     }
 
     /// Plays the `FALLING_HIT_*` animation appropriate to the victim's
@@ -1418,6 +1459,7 @@ impl EngineInner {
     /// - Concussion >= threshold → knockout (unconscious, posture Lying)
     pub(super) fn handle_post_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
@@ -1461,12 +1503,13 @@ impl EngineInner {
         if is_dead {
             // Check for PC coma save before death
             let saved = if is_pc {
-                self.try_pc_coma_save(assets, victim_id, life_points.unsigned_abs())
+                self.try_pc_coma_save(sim, assets, victim_id, life_points.unsigned_abs())
             } else {
                 false
             };
             if !saved {
                 self.handle_death_with_damage_element(
+                    sim,
                     assets,
                     victim_id,
                     damage_element,
@@ -1481,7 +1524,7 @@ impl EngineInner {
                 .and_then(|id| self.world.entities.get(id))
                 .map(|e| e.kind().is_pc())
                 .unwrap_or(false);
-            self.handle_knockout(assets, victim_id, damage_element, attacker_is_pc);
+            self.handle_knockout(sim, assets, victim_id, damage_element, attacker_is_pc);
         }
     }
 
@@ -1499,7 +1542,12 @@ impl EngineInner {
     ///
     /// Sets posture to Dead, quits swordfight, closes eyes for NPCs,
     /// and flags the entity as dead for the game state checks.
-    pub(crate) fn handle_death(&mut self, assets: &LevelAssets, victim_id: EntityId) {
+    pub(crate) fn handle_death(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+    ) {
         // Scripted-death entry (e.g. natives `HandleDeath` cheat).
         // Launch a synthetic `ReceiveDamage` element targeting the
         // victim with full life points and dispatch it synchronously
@@ -1526,7 +1574,7 @@ impl EngineInner {
         if !self.arbitrate_instruct(seq_id, elem_idx) {
             return;
         }
-        self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
+        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
     }
 
     /// Launch and synchronously dispatch a projectile damage sequence.
@@ -1538,6 +1586,7 @@ impl EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn launch_projectile_damage_now(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         shooter_id: EntityId,
@@ -1577,7 +1626,7 @@ impl EngineInner {
         if !self.arbitrate_instruct(seq_id, elem_idx) {
             return false;
         }
-        self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
+        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
         was_alive
             && self
                 .get_entity(victim_id)
@@ -1635,7 +1684,12 @@ impl EngineInner {
     ///   trumpet portrait and bump the killed-peasant mission stat.
     /// - Always: decrement the new-PC mission stat.
     /// - Always: burn the three macro slots belonging to the dead PC.
-    pub(super) fn apply_pc_kill_cascade(&mut self, assets: &LevelAssets, victim_id: EntityId) {
+    pub(super) fn apply_pc_kill_cascade(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+    ) {
         let pc_info = self
             .world
             .entities
@@ -1672,7 +1726,7 @@ impl EngineInner {
         if !is_vip {
             let has_replacement = Some(&self.mission_domain.campaign)
                 .and_then(|c| {
-                    c.get_random_peasant_from_gang(Some(profile_idx), &assets.profile_manager)
+                    c.get_random_peasant_from_gang(sim, Some(profile_idx), &assets.profile_manager)
                 })
                 .is_some();
             if has_replacement
@@ -1710,6 +1764,7 @@ impl EngineInner {
 
     pub(crate) fn handle_death_with_damage_element(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
@@ -1874,7 +1929,7 @@ impl EngineInner {
         // PC-only kill cascade — see `apply_pc_kill_cascade`.
         let is_pc = victim.kind().is_pc();
         if is_pc {
-            self.apply_pc_kill_cascade(assets, victim_id);
+            self.apply_pc_kill_cascade(sim, assets, victim_id);
         }
 
         // Clear concussion / unconscious state and drop any
@@ -1907,7 +1962,7 @@ impl EngineInner {
         }
 
         // Quit swordfight (removes from all opponents' lists)
-        self.quit_swordfight(assets, victim_id);
+        self.quit_swordfight(sim, assets, victim_id);
 
         // Queue roll if on a slope.
         self.try_queue_roll(assets, victim_id, damage_element);
@@ -1959,6 +2014,7 @@ impl EngineInner {
     /// Sets posture to Lying, quits swordfight, closes eyes for NPCs.
     pub(super) fn handle_knockout(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
@@ -2010,7 +2066,13 @@ impl EngineInner {
         // was in a posture that doesn't map to one), fall back to
         // the original immediate-lying behavior so downstream code
         // that assumes Lying for unconscious humans still works.
-        self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, falling_anim.is_none());
+        self.apply_knockout_side_effects(
+            sim,
+            assets,
+            victim_id,
+            attacker_is_pc,
+            falling_anim.is_none(),
+        );
 
         // Queue roll if on a slope.
         self.try_queue_roll(assets, victim_id, damage_element);
@@ -2018,6 +2080,7 @@ impl EngineInner {
 
     pub(super) fn apply_knockout_side_effects(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         attacker_is_pc: bool,
@@ -2050,7 +2113,7 @@ impl EngineInner {
         }
 
         // Quit swordfight (removes from all opponents' lists).
-        self.quit_swordfight(assets, victim_id);
+        self.quit_swordfight(sim, assets, victim_id);
 
         // Dispatch EventLoseConsciousness to the downed NPC's own AI.
         self.dispatch_ai_stimulus(

@@ -46,7 +46,12 @@ impl EnemyAi {
     /// - Already-targeted penalty (10000 per existing attacker)
     /// - Minimum distance check (enemies < 100px get no random scatter)
     /// - Merry-man-forest randomisation
-    pub fn propose_shot_target(&mut self, ctx: &AiContext, tick: &AiPerTickData) -> HumanHandle {
+    pub fn propose_shot_target(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> HumanHandle {
         let my_pos = &ctx.position;
         // Nose direction vector (not Y-stretched).
         let nose = sector_to_vector(ctx.direction);
@@ -148,7 +153,7 @@ impl EnemyAi {
             // If not too near, optionally scatter for forest.
             if sq_distance > 100.0 * 100.0 && is_forest {
                 sq_distance +=
-                    crate::sim_rng::u32(crate::sim_rng::RngSite::ArcherForestTarget, 0..10000)
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ArcherForestTarget, 0..10000)
                         as f32;
             }
 

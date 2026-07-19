@@ -41,8 +41,15 @@ fn main() {
     let profiles = std::sync::Arc::new(pm);
 
     let mut campaign = robin_engine::campaign::Campaign::new();
-    campaign.reset(&profiles);
-    campaign.create_gang_from_pcs("RJMT", &profiles);
+    campaign.reset(
+        &profiles,
+        robin_engine::player_profile::DifficultyLevel::Medium,
+    );
+    campaign.create_gang_from_pcs(
+        "RJMT",
+        &profiles,
+        robin_engine::player_profile::DifficultyLevel::Medium,
+    );
     campaign.add_all_to_mission_team();
     campaign.current_mission_idx = Some(1);
 
@@ -100,9 +107,7 @@ fn main() {
         ground_mark_sprite: None,
         titbit_row_frame_counts: Vec::new(),
         rng_seed: 0,
-        script_enabled: true,
-        highlander2: false,
-        goldeneye: false,
+        sim_config: robin_engine::engine::SimConfig::default(),
     })
     .expect("load level");
 

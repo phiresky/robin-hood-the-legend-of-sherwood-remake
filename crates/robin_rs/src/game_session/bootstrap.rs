@@ -27,6 +27,7 @@ use crate::main_entry::{
 };
 use crate::window::GameWindow;
 use robin_engine::campaign::Campaign;
+use robin_engine::engine as engine_api;
 use robin_engine::game_operation::GameCode;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 use serde::{Deserialize, Serialize};
@@ -180,7 +181,7 @@ impl MissionBootstrap {
             );
             self.loaded.engine.with_mission_script_game_host_and_rng(
                 &self.loaded.assets,
-                |native_parts| {
+                |_simulation, native_parts| {
                     lua.run_required_startup_events(
                         native_parts,
                         self.loaded.engine_rng_seed as i32,
@@ -329,6 +330,7 @@ impl MissionBootstrap {
             self.spec.mission_idx,
             &mission_id,
             self.loaded.engine_rng_seed,
+            self.loaded.engine_sim_config,
             self.host.transport.net.is_some(),
         );
         let timeline = TimelineRuntime::new(
@@ -353,8 +355,8 @@ impl MissionBootstrap {
         )
     }
 
-    fn into_campaign(self) -> Campaign {
-        self.loaded.engine.into_campaign()
+    fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
+        self.loaded.engine.into_campaign_and_simulation()
     }
 }
 
@@ -459,7 +461,13 @@ impl InteractiveLoadStage {
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> Result<InteractiveLoadStart, String> {
+        let mission_id = campaign.missions[mission_idx]
+            .profile(profiles)
+            .mission_filename
+            .clone();
         let mut loading = MissionLoadingScreen::open(
             window,
             campaign,
@@ -473,7 +481,9 @@ impl InteractiveLoadStage {
             window.height as f32,
         );
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        if let Err(error) = setup_multiplayer_session(&mut host, args) {
+        if let Err(error) =
+            setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await
+        {
             tracing::error!("{error}; returning to main menu");
             loading.status("Multiplayer connection failed", 1.0);
             if let Some(renderer) = loading.renderer.as_mut() {
@@ -503,6 +513,8 @@ impl InteractiveLoadStage {
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> Result<LoadedInteractiveStage, MissionLoadError> {
         self.loading.status("Loading interface resources...", 0.12);
         let (ground_mark, titbit_rows, minimap_widget) =
@@ -523,6 +535,8 @@ impl InteractiveLoadStage {
             ground_mark,
             titbit_rows,
             minimap_widget,
+            rng_seed,
+            sim_config,
         )?;
         Ok(LoadedInteractiveStage {
             bootstrap: MissionBootstrap::new(
@@ -547,8 +561,8 @@ struct LoadedInteractiveStage {
 }
 
 impl LoadedInteractiveStage {
-    fn into_campaign(self) -> Campaign {
-        self.bootstrap.into_campaign()
+    fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
+        self.bootstrap.into_campaign_and_simulation()
     }
     fn prepare_audio(&mut self, profiles: &ProfileManager) {
         self.loading
@@ -653,7 +667,8 @@ impl BuiltInteractiveMission {
     }
 
     pub(super) fn finish(self, result: Result<GameCode, String>) -> MissionOutcome {
-        MissionOutcome::new(self.mission.runtime.into_campaign(), result)
+        let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
+        MissionOutcome::from_engine(campaign, rng_seed, sim_config, result)
     }
 }
 
@@ -676,13 +691,18 @@ enum HeadlessLoadStart {
 }
 
 impl HeadlessLoadStage {
-    fn begin(
+    async fn begin(
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        mission_id: &str,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> Result<HeadlessLoadStart, String> {
         let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        if let Err(error) = setup_multiplayer_session(&mut host, args) {
+        if let Err(error) =
+            setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await
+        {
             tracing::error!("{error}; aborting headless mission");
             return Ok(HeadlessLoadStart::Finished(GameCode::Quit));
         }
@@ -703,6 +723,8 @@ impl HeadlessLoadStage {
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> Result<MissionBootstrap, MissionLoadError> {
         let (ground_mark, titbit_rows, minimap_widget) =
             self.resources.engine_setup_resources(&mut self.host);
@@ -720,6 +742,8 @@ impl HeadlessLoadStage {
             ground_mark,
             titbit_rows,
             minimap_widget,
+            rng_seed,
+            sim_config,
         )?;
         Ok(MissionBootstrap::new(
             MissionSpec::headless(mission_idx, location),
@@ -745,7 +769,8 @@ impl BuiltHeadlessMission {
     }
 
     pub(super) fn finish(self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
-        MissionOutcome::new(self.mission.runtime.into_campaign(), Ok(outcome.code))
+        let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
+        MissionOutcome::from_engine(campaign, rng_seed, sim_config, Ok(outcome.code))
     }
 }
 
@@ -757,13 +782,15 @@ pub(super) enum HeadlessBuildOutcome {
 pub(super) struct HeadlessMissionBuilder;
 
 impl HeadlessMissionBuilder {
-    pub(super) fn build(
+    pub(super) async fn build(
         callbacks: &mut RustCallbacks,
         campaign: Campaign,
         profiles: &ProfileManager,
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> HeadlessBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
@@ -771,6 +798,8 @@ impl HeadlessMissionBuilder {
         ) {
             return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
+                rng_seed,
+                sim_config,
                 Err(error.to_string()),
             ));
         }
@@ -779,28 +808,56 @@ impl HeadlessMissionBuilder {
             "headless builder requires headless launch mode"
         );
 
-        let loading = match HeadlessLoadStage::begin(location, args) {
-            Err(error) => {
-                return HeadlessBuildOutcome::Finished(MissionOutcome::new(campaign, Err(error)));
-            }
-            Ok(HeadlessLoadStart::Ready(stage)) => stage,
-            Ok(HeadlessLoadStart::Finished(code)) => {
-                return HeadlessBuildOutcome::Finished(MissionOutcome::new(campaign, Ok(code)));
-            }
-        };
-        let mut bootstrap =
-            match loading.load_level(campaign, profiles, mission_idx, location, args) {
-                Ok(bootstrap) => bootstrap,
+        let mission_id = campaign.missions[mission_idx]
+            .profile(profiles)
+            .mission_filename
+            .clone();
+        let loading =
+            match HeadlessLoadStage::begin(location, args, &mission_id, rng_seed, sim_config).await
+            {
                 Err(error) => {
                     return HeadlessBuildOutcome::Finished(MissionOutcome::new(
-                        error.campaign,
-                        Err(error.message),
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(error),
+                    ));
+                }
+                Ok(HeadlessLoadStart::Ready(stage)) => stage,
+                Ok(HeadlessLoadStart::Finished(code)) => {
+                    return HeadlessBuildOutcome::Finished(MissionOutcome::new(
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Ok(code),
                     ));
                 }
             };
+        let mut bootstrap = match loading.load_level(
+            campaign,
+            profiles,
+            mission_idx,
+            location,
+            args,
+            rng_seed,
+            sim_config,
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                return HeadlessBuildOutcome::Finished(MissionOutcome::new(
+                    error.campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error.message),
+                ));
+            }
+        };
         if let Err(error) = bootstrap.start_required_spellforge() {
-            return HeadlessBuildOutcome::Finished(MissionOutcome::new(
-                bootstrap.into_campaign(),
+            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
+            return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
+                campaign,
+                rng_seed,
+                sim_config,
                 Err(error.to_string()),
             ));
         }
@@ -826,6 +883,8 @@ impl InteractiveMissionBuilder {
         mission_idx: usize,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
+        rng_seed: u64,
+        sim_config: engine_api::SimConfig,
     ) -> InteractiveBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
@@ -833,6 +892,8 @@ impl InteractiveMissionBuilder {
         ) {
             return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
+                rng_seed,
+                sim_config,
                 Err(error.to_string()),
             ));
         }
@@ -848,34 +909,56 @@ impl InteractiveMissionBuilder {
             mission_idx,
             location,
             args,
+            rng_seed,
+            sim_config,
         )
         .await
         {
             Ok(InteractiveLoadStart::Ready(stage)) => stage,
             Ok(InteractiveLoadStart::Finished(code)) => {
-                return InteractiveBuildOutcome::Finished(MissionOutcome::new(campaign, Ok(code)));
+                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                    campaign,
+                    rng_seed,
+                    sim_config,
+                    Ok(code),
+                ));
             }
             Err(error) => {
                 return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                     campaign,
+                    rng_seed,
+                    sim_config,
                     Err(error),
                 ));
             }
         };
-        let mut stage =
-            match loading.load_level(window, campaign, profiles, mission_idx, location, args) {
-                Ok(stage) => stage,
-                Err(error) => {
-                    return InteractiveBuildOutcome::Finished(MissionOutcome::new(
-                        error.campaign,
-                        Err(error.message),
-                    ));
-                }
-            };
+        let mut stage = match loading.load_level(
+            window,
+            campaign,
+            profiles,
+            mission_idx,
+            location,
+            args,
+            rng_seed,
+            sim_config,
+        ) {
+            Ok(stage) => stage,
+            Err(error) => {
+                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                    error.campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error.message),
+                ));
+            }
+        };
 
         if let Err(error) = stage.bootstrap.start_required_spellforge() {
-            return InteractiveBuildOutcome::Finished(MissionOutcome::new(
-                stage.into_campaign(),
+            let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
+            return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                campaign,
+                rng_seed,
+                sim_config,
                 Err(error.to_string()),
             ));
         }
@@ -890,8 +973,11 @@ impl InteractiveMissionBuilder {
         )
         .await
         {
-            return InteractiveBuildOutcome::Finished(MissionOutcome::new(
-                stage.into_campaign(),
+            let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
+            return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                campaign,
+                rng_seed,
+                sim_config,
                 Ok(code),
             ));
         }

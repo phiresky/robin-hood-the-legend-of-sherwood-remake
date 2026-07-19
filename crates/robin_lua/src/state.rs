@@ -356,9 +356,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
         }
     }
 
-    // Reroute `math.random` through the engine's `sim_rng`. The host must call
-    // every Lua event through an explicit Engine RNG scope so this advances
-    // the authoritative stream rather than a second generator.
+    // Reroute `math.random` through the explicit simulation context attached
+    // to this Lua event. Calling it outside an engine script session is a hard
+    // error; there is no ambient or fallback generator.
     // Three calling conventions match stock Lua:
     //
     //   math.random()    -> float in [0, 1)
@@ -366,9 +366,10 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
     //   math.random(a,b) -> int in [a, b]
     let math: mlua::Table = globals.get("math")?;
     let rng = lua.create_function(
-        |_, args: mlua::Variadic<i32>| -> mlua::Result<mlua::Value> {
-            match args.len() {
+        |lua, args: mlua::Variadic<i32>| -> mlua::Result<mlua::Value> {
+            crate::natives::with_attached_simulation_context(lua, |simulation| match args.len() {
                 0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32(
+                    simulation,
                     robin_engine::sim_rng::RngSite::LuaMathRandom,
                 ) as f64)),
                 1 => {
@@ -380,6 +381,7 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                     }
                     Ok(mlua::Value::Integer(
                         robin_engine::sim_rng::i32(
+                            simulation,
                             robin_engine::sim_rng::RngSite::LuaMathRandom,
                             1..=n,
                         )
@@ -395,6 +397,7 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                     }
                     Ok(mlua::Value::Integer(
                         robin_engine::sim_rng::i32(
+                            simulation,
                             robin_engine::sim_rng::RngSite::LuaMathRandom,
                             a..=b,
                         )
@@ -404,14 +407,14 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                 n => Err(mlua::Error::RuntimeError(format!(
                     "math.random: expected 0..=2 args, got {n}"
                 ))),
-            }
+            })
         },
     )?;
     math.set("random", rng)?;
 
-    // `math.randomseed(x)` becomes a no-op. The engine seeds `sim_rng` once at
-    // mission start via `EngineArgs::rng_seed`; the script cannot replace the
-    // Engine-owned stream with an untracked generator.
+    // `math.randomseed(x)` becomes a no-op. The engine owns and seeds the
+    // simulation stream once at mission start via `EngineArgs::rng_seed`; the
+    // script cannot replace it with an untracked generator.
     let noop_seed = lua.create_function(|_, _: mlua::Variadic<mlua::Value>| Ok(()))?;
     math.set("randomseed", noop_seed)?;
 
@@ -510,26 +513,32 @@ mod tests {
         }
     }
 
-    /// `math.random` must route through `sim_rng` so all peers
-    /// produce identical rolls. The `with_seed` helper installs a
-    /// fresh deterministic RNG; calling `math.random` twice with
-    /// the same seed must yield the same sequence.
+    /// `math.random` must route through the explicitly attached simulation
+    /// context so all peers produce identical rolls.
     #[test]
     fn math_random_uses_sim_rng() {
         let dir = tempfile::tempdir().unwrap();
         let take5 = |seed: u64| {
-            robin_engine::sim_rng::with_seed(seed, || {
-                let state = MissionLuaState::new(dir.path()).unwrap();
-                (0..5)
-                    .map(|_| {
-                        state
-                            .lua()
-                            .load("return math.random(1, 1000000)")
-                            .eval::<i64>()
-                            .unwrap()
-                    })
-                    .collect::<Vec<_>>()
-            })
+            let state = MissionLuaState::new(dir.path()).unwrap();
+            let mut host = GameHost::new();
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut entities = robin_engine::entities::Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let simulation = robin_engine::sim_rng::SimulationContext::with_seed(seed);
+            let capabilities = NativeSessionCapabilities::new(
+                &simulation,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+            );
+            state
+                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                    (0..5)
+                        .map(|_| lua.load("return math.random(1, 1000000)").eval::<i64>())
+                        .collect::<mlua::Result<Vec<_>>>()
+                })
+                .unwrap()
         };
         // Same seed → same sequence.
         assert_eq!(take5(0xDEAD_BEEF), take5(0xDEAD_BEEF));
@@ -545,26 +554,43 @@ mod tests {
     #[test]
     fn math_randomseed_is_a_noop() {
         let dir = tempfile::tempdir().unwrap();
-        let baseline = robin_engine::sim_rng::with_seed(7, || {
+        let roll = |source: &str| {
             let state = MissionLuaState::new(dir.path()).unwrap();
+            let mut host = GameHost::new();
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut entities = robin_engine::entities::Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let simulation = robin_engine::sim_rng::SimulationContext::with_seed(7);
+            let capabilities = NativeSessionCapabilities::new(
+                &simulation,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+            );
             state
-                .lua()
-                .load("math.randomseed(999); return math.random(1, 1000000)")
-                .eval::<i64>()
+                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                    lua.load(source).eval::<i64>()
+                })
                 .unwrap()
-        });
-        let no_seed = robin_engine::sim_rng::with_seed(7, || {
-            let state = MissionLuaState::new(dir.path()).unwrap();
-            state
-                .lua()
-                .load("return math.random(1, 1000000)")
-                .eval::<i64>()
-                .unwrap()
-        });
+        };
+        let baseline = roll("math.randomseed(999); return math.random(1, 1000000)");
+        let no_seed = roll("return math.random(1, 1000000)");
         assert_eq!(
             baseline, no_seed,
             "math.randomseed must not advance the engine RNG"
         );
+    }
+
+    #[test]
+    fn math_random_without_simulation_session_is_an_error() {
+        let (state, _dir) = make_state();
+        let error = state
+            .lua()
+            .load("return math.random(1, 10)")
+            .eval::<i64>()
+            .expect_err("random without an attached simulation context must fail");
+        assert!(error.to_string().contains("no simulation context attached"));
     }
 
     #[test]

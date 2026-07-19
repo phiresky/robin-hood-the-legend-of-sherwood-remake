@@ -271,6 +271,7 @@ pub(super) fn build_ai_context_from_entity(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
     all_soldier_handles: &std::sync::Arc<Vec<u32>>,
+    difficulty: crate::player_profile::DifficultyLevel,
 ) -> AiContext {
     let elem = entity.element_data();
     let camp = match entity {
@@ -398,6 +399,7 @@ pub(super) fn build_ai_context_from_entity(
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
     AiContext {
+        difficulty,
         position: crate::ai::Position {
             x: elem.position_map().x,
             y: elem.position_map().y,
@@ -701,7 +703,10 @@ pub(super) fn build_my_exit_door_info(
 /// pickup-style bonus entity. Human views include inactive actors because
 /// normal `IsDetecting(human)` ignores activity in its same-building arm;
 /// inactive bonuses and projectile entities remain excluded.
-pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
+pub(super) fn build_entity_views(
+    sim: &crate::sim_rng::SimulationContext,
+    engine: &EngineInner,
+) -> AiEntityViewMap {
     // Scratch views are also built by empty/pre-script engine fixtures.  Door
     // state is intentionally unavailable during that phase; `init_ai` emits a
     // warning when a real level reaches AI initialization without a script.
@@ -815,6 +820,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         ) && let Some(input) = extract_forecast_input(entity)
         {
             let forecast = crate::ai::forecast_destination_for_ia(
+                sim,
                 &input,
                 doors_ref,
                 &engine.world.fast_grid.level.sectors,
@@ -843,9 +849,13 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn build_sim_scratch(&self, assets: &LevelAssets) -> SimScratch {
+    pub(crate) fn build_sim_scratch(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> SimScratch {
         let scratch = SimScratch {
-            ai_entity_views: std::sync::Arc::new(build_entity_views(self)),
+            ai_entity_views: std::sync::Arc::new(build_entity_views(sim, self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         };
         scratch
@@ -886,15 +896,17 @@ impl EngineInner {
     /// tick fields, so the stub is adequate.
     pub(super) fn build_npc_tick_data(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         scratch: &SimScratch,
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
-        self.build_npc_tick_data_for_target(npc_id, scratch, assets, None)
+        self.build_npc_tick_data_for_target(sim, npc_id, scratch, assets, None)
     }
 
     pub(super) fn build_npc_tick_data_for_target(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         scratch: &SimScratch,
         assets: &LevelAssets,
@@ -936,7 +948,7 @@ impl EngineInner {
 
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
-        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch);
+        tick.camp_soldiers = self.build_camp_soldier_tick_infos(sim, npc_id, my_camp, scratch);
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
             && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
@@ -945,6 +957,7 @@ impl EngineInner {
         {
             let doors = self.script_domains.interactables.doors.as_slice();
             tick.missed_pc_forecast = Some(crate::ai::forecast_destination_for_ia(
+                sim,
                 &input,
                 doors,
                 &self.world.fast_grid.level.sectors,
@@ -1014,6 +1027,7 @@ impl EngineInner {
         {
             let doors = self.script_domains.interactables.doors.as_slice();
             tick.primary_target_forecast = Some(crate::ai::forecast_destination_for_ia(
+                sim,
                 &input,
                 doors,
                 &self.world.fast_grid.level.sectors,
@@ -1195,6 +1209,7 @@ impl EngineInner {
 
     fn build_camp_soldier_tick_infos(
         &self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
         scratch: &SimScratch,
@@ -1261,6 +1276,7 @@ impl EngineInner {
                     door_pass,
                 };
                 crate::ai::forecast_destination_for_ia(
+                    sim,
                     &input,
                     doors,
                     &self.world.fast_grid.level.sectors,
@@ -1417,7 +1433,7 @@ impl EngineInner {
             let fighting_ability = {
                 let base = soldier_profile.fighting;
                 if s.soldier.cached_camp == Camp::Lacklandists {
-                    let diff = crate::player_profile::DifficultyLevel::current();
+                    let diff = self.control.sim_config.difficulty;
                     diff.modify_capacity(
                         base,
                         crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
@@ -1833,7 +1849,11 @@ impl EngineInner {
     ///
     /// Called from `initialize()` after level loading, and again after
     /// deserialization when re-initialization is requested.
-    pub(crate) fn init_ai(&mut self, assets: &mut LevelAssets) {
+    pub(crate) fn init_ai(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &mut LevelAssets,
+    ) {
         // Script loading is intentionally recoverable so incomplete developer
         // data can still reach the renderer.  In that mode AI starts without
         // door-derived views, houses, or rally points; make the degraded state
@@ -1902,7 +1922,7 @@ impl EngineInner {
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
         // mostly just reads self position).
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
         // AiContext can resolve script-baked friend IDs.
@@ -1931,6 +1951,7 @@ impl EngineInner {
         let fast_grid = self.world.fast_grid.clone();
         for &npc_id in &npc_ids {
             self.init_one_ai(
+                sim,
                 npc_id,
                 &hiking_paths,
                 &potential_detectables,
@@ -2000,6 +2021,7 @@ impl EngineInner {
     #[allow(clippy::too_many_arguments)]
     fn init_one_ai(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         hiking_paths: &std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
         potential_detectables: &[PotentialDetectable],
@@ -2254,6 +2276,7 @@ impl EngineInner {
                 fast_grid,
                 hiking_paths,
                 all_soldier_handles,
+                self.control.sim_config.difficulty,
             )
         };
 
@@ -2326,9 +2349,9 @@ impl EngineInner {
                     // anyway.  Skip the round-trip and pass stub
                     // directly.
                     let tick = AiPerTickData::stub();
-                    e.init_one_ai(&init_ctx, &tick)
+                    e.init_one_ai(sim, &init_ctx, &tick)
                 }
-                Some(crate::element::AiBrain::Friendly(f)) => f.init_one_ai(&init_ctx),
+                Some(crate::element::AiBrain::Friendly(f)) => f.init_one_ai(sim, &init_ctx),
                 _ => return,
             }
         };
@@ -2769,10 +2792,11 @@ impl EngineInner {
     /// will be drained on the next frame by `process_pending_ai_orders`.
     pub(super) fn dispatch_reach_point_events(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entities: &[EntityId],
     ) {
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let current_frame = self.control.frame_counter;
 
         for &entity_id in entities {
@@ -2795,6 +2819,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
@@ -2804,9 +2829,9 @@ impl EngineInner {
             // friend-swap candidates, avenger-on-roof wait position,
             // and a seeded enemy_sq_distances.  Non-enemy-NPC entities
             // get a stub.
-            let tick_data = self.build_npc_tick_data(entity_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
 
-            self.dispatch_think_with_drain(entity_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -2821,10 +2846,11 @@ impl EngineInner {
     /// if it's close enough to begin the actual charge pass.
     pub(super) fn dispatch_galopp_loop_events(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entities: &[EntityId],
     ) {
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let current_frame = self.control.frame_counter;
 
         for &entity_id in entities {
@@ -2844,6 +2870,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
 
@@ -2852,9 +2879,9 @@ impl EngineInner {
             // towards their primary target — the AI inspects the
             // target position to decide whether to begin the attack
             // pass.  Populate primary-target metadata via the builder.
-            let tick_data = self.build_npc_tick_data(entity_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
 
-            self.dispatch_think_with_drain(entity_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -3987,7 +4014,11 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn tick_enemy_ai(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_ai(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -3996,23 +4027,23 @@ impl EngineInner {
         // ── 1. Build one immutable per-tick AI world view. ────────
         // Snapshot construction does not dispatch behavior. The phase calls
         // below remain in the original soldier/NPC Hourglass order.
-        let world = self.tick_enemy_ai_build_world_view(assets);
+        let world = self.tick_enemy_ai_build_world_view(sim, assets);
 
         // ── 2a. Blip detection (reveal shadows). ────────────────
-        self.tick_enemy_ai_blip_detection(assets, &world);
+        self.tick_enemy_ai_blip_detection(sim, assets, &world);
 
         // ── 3. Creation-ordered per-NPC RefreshDetection loop. ───
         // Acoustic detection + synchronous EVENT_HEAR, Enemy detection,
         // volatile target rebuild, non-Enemy detectable buckets, and the
         // resulting FIFO Think dispatches all finish for one NPC before the
         // next creation slot starts.
-        self.tick_enemy_ai_refresh_detection(assets, &world);
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world);
 
         // ── 6c. Process pending AI swordfight requests. ─────────
-        self.tick_enemy_ai_drain_swordfight_requests(assets);
+        self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
 
         // ── 6d. Drain pending stimuli ────────────────────────────
-        self.tick_enemy_ai_drain_pending_stimuli(assets);
+        self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
         self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
@@ -4032,10 +4063,11 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn drain_pending_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.
@@ -4092,7 +4124,7 @@ impl EngineInner {
 
         // Process quit_swordfight.
         if effects.quit_swordfight {
-            self.quit_swordfight(assets, npc_id);
+            self.quit_swordfight(sim, assets, npc_id);
         }
 
         // Process stop_menace — the explicit `STOP_MENACE` element
@@ -4161,6 +4193,7 @@ impl EngineInner {
                         .enter_swordfight_jump_line
                         .and_then(crate::jump_line::JumpLineIndex::new);
                     self.enter_swordfight_with_jump_line(
+                        sim,
                         assets,
                         npc_id,
                         target_id,
@@ -4584,11 +4617,12 @@ impl EngineInner {
                             &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
                         )
                     };
-                    let tick_data = self.build_npc_tick_data(other_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, other_id, &scratch, assets);
                     self.dispatch_filtered_stimulus(
-                        assets, other_id, &stimulus, &other_ctx, &tick_data,
+                        sim, assets, other_id, &stimulus, &other_ctx, &tick_data,
                     );
                 }
             }
@@ -4602,7 +4636,7 @@ impl EngineInner {
         // site funnel through the same helper, since both use
         // EVENT_PANIC with the same filter.
         if effects.broadcast_panic {
-            self.nearby_civilians_panic(assets, npc_id);
+            self.nearby_civilians_panic(sim, assets, npc_id);
         }
 
         // Process pending launch commands — create and launch
@@ -4969,14 +5003,14 @@ impl EngineInner {
             v
         };
         if in_house_alert {
-            self.dispatch_enemy_in_house_alert(npc_id, assets);
+            self.dispatch_enemy_in_house_alert(sim, npc_id, assets);
         }
 
         // Drain any pending panic request from the enemy AI — the
         // analogue of the civilian-side drain that runs inside
         // `nearby_civilians_panic`.  Without this, an EnemyAi that
         // pushes a `PanicRequest` (e.g. from the fleeing arm of
-        // `think_alerting_event(EVENT_VIEW)` outdoors) stays wedged
+        // `think_alerting_event(sim, EVENT_VIEW)` outdoors) stays wedged
         // in `FleeingPanic` with no door picked.
         let ctx_for_panic = {
             let Some(entity) = self.world.entities.get(npc_id) else {
@@ -4999,14 +5033,15 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             )
         };
         self.process_pending_begin_panic_for(npc_id, &ctx_for_panic);
         self.process_pending_panic_seek_fallback_for(npc_id, &ctx_for_panic);
 
         // Drain any pending script-driven SeekArea request.  Matches
-        // the immediate `start_think(NO_EVENT); seek_area(...);
-        // end_think()` block inside `set_ai_state(STATE_SEEKING)`.
+        // the immediate `start_think(NO_EVENT); seek_area(sim, ...);
+        // end_think(sim, )` block inside `set_ai_state(STATE_SEEKING)`.
         //
         // Only pay the surrounding battle-context cost when the
         // request exists. Keep the cheap pre-check here so the common
@@ -5020,8 +5055,8 @@ impl EngineInner {
             .and_then(|entity| entity.ai_controller())
             .is_some_and(|ai| ai.outbox.actor.script_seek_area.is_some());
         if has_script_seek {
-            let tick_for_seek = self.build_npc_tick_data(npc_id, &scratch, assets);
-            self.process_pending_script_seek_area_for(npc_id, &ctx_for_panic, &tick_for_seek);
+            let tick_for_seek = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.process_pending_script_seek_area_for(sim, npc_id, &ctx_for_panic, &tick_for_seek);
         }
     }
 
@@ -5049,7 +5084,12 @@ impl EngineInner {
     /// `send_before_door_to_fight` per occupant — is ported as
     /// [`EngineInner::init_battle_before_door`] and called below.
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
-    pub(crate) fn dispatch_enemy_in_house_alert(&mut self, source: EntityId, assets: &LevelAssets) {
+    pub(crate) fn dispatch_enemy_in_house_alert(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source: EntityId,
+        assets: &LevelAssets,
+    ) {
         // Find the source NPC's building sector.
         let source_sector = {
             let Some(entity) = self.world.entities.get(source) else {
@@ -5121,7 +5161,7 @@ impl EngineInner {
         // Every live civilian panics.
         let panic_runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
         for civ_id in civilian_ids {
-            self.process_building_civilian_panic(assets, civ_id, panic_runs);
+            self.process_building_civilian_panic(sim, assets, civ_id, panic_runs);
         }
 
         // Outnumbered side flees; the stronger side pursues.
@@ -5131,7 +5171,7 @@ impl EngineInner {
             (royalist_ids, lacklandist_ids)
         };
 
-        self.init_battle_before_door(&door_indices, &fleeing, &pursuing);
+        self.init_battle_before_door(sim, &door_indices, &fleeing, &pursuing);
 
         tracing::debug!(
             source = source.index(),
@@ -5149,11 +5189,12 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(civ = civ_id.index(), runs))]
     fn process_building_civilian_panic(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         civ_id: EntityId,
         runs: u8,
     ) {
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let ctx = {
             let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
@@ -5175,6 +5216,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             )
         };
 
@@ -5203,8 +5245,13 @@ impl EngineInner {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
-    pub(crate) fn nearby_civilians_panic(&mut self, assets: &LevelAssets, source: EntityId) {
-        let scratch = self.build_sim_scratch(assets);
+    pub(crate) fn nearby_civilians_panic(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        source: EntityId,
+    ) {
+        let scratch = self.build_sim_scratch(sim, assets);
         let view_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
         } else {
@@ -5331,6 +5378,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
 
@@ -5341,7 +5389,7 @@ impl EngineInner {
             // Civilian EventPanic: FriendlyAi — no combat tick data
             // consumed, stub is correct.
             let tick_data = AiPerTickData::stub();
-            self.dispatch_filtered_stimulus(assets, npc_id, &stimulus, &ctx, &tick_data);
+            self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
 
             // Drain the resulting `PanicRequest`: find a door, or fall
             // back to the `FleeingPanic` run-segment state machine.
@@ -5359,12 +5407,17 @@ impl EngineInner {
     /// ```ignore
     /// if has_patrol_path && substate in {DefaultGotoRoute, DefaultEnroute} {
     ///     let mut flags = default_path_walking_flags;
-    ///     if !will_stop_at_next_waypoint() { flags |= GotoFlags::DONT_STOP; }
+    ///     if !will_stop_at_next_waypoint(sim, ) { flags |= GotoFlags::DONT_STOP; }
     ///     go_to(current_waypoint_position, flags);
     /// }
     /// ```
-    pub(crate) fn relaunch_path_at_new_speed(&mut self, assets: &LevelAssets, npc_id: EntityId) {
-        let scratch = self.build_sim_scratch(assets);
+    pub(crate) fn relaunch_path_at_new_speed(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        npc_id: EntityId,
+    ) {
+        let scratch = self.build_sim_scratch(sim, assets);
         // Re-check the gate (state may have changed between the
         // native pushing the deferred command and us draining it).
         let (has_path, substate) = {
@@ -5430,6 +5483,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             )
         };
 
@@ -5440,7 +5494,7 @@ impl EngineInner {
         let Some(ai) = entity.ai_controller_mut() else {
             return;
         };
-        let will_stop = ai.will_stop_at_next_waypoint(&assets.hiking_paths);
+        let will_stop = ai.will_stop_at_next_waypoint(sim, &assets.hiking_paths);
         let mut flags = ai.default_path_walking_flags;
         if !will_stop {
             flags |= crate::ai::GotoFlags::DONT_STOP;
@@ -5773,6 +5827,7 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_script_seek_area_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
         tick: &crate::ai::AiPerTickData,
@@ -5800,6 +5855,7 @@ impl EngineInner {
             return;
         };
         enemy_ai.seek_area(
+            sim,
             request.center,
             request.radius,
             crate::ai_enemy::SeekFlags::empty(),
@@ -5828,13 +5884,17 @@ impl EngineInner {
     /// `transform_patrol_ids_to_real_patrol` is no longer part of
     /// this tick — it lives in `EngineInner::init_one_ai`, invoked
     /// once at AI bootstrap.
-    pub(super) fn tick_patrol_coordination(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_patrol_coordination(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
         if self.actors_frozen() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
 
         let frame = self.control.frame_counter;
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
@@ -5885,6 +5945,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             if let Some(ai) = entity.ai_controller_mut() {
                 ai.set_instructed_patrol_direction(direction, &ctx);
@@ -6279,6 +6340,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
 
                 // Instruct facing direction (in-scope mut borrow).
@@ -6293,7 +6355,7 @@ impl EngineInner {
             // populated — patrol minions can be alerted mid-patrol
             // and dispatched into battle decisions without losing
             // their primary target snapshot.
-            let mut tick_data = self.build_npc_tick_data(minion_id, &scratch, assets);
+            let mut tick_data = self.build_npc_tick_data(sim, minion_id, &scratch, assets);
             if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&cmd.minion) {
                 tick_data.patrol_chief_position = chief_pos;
                 tick_data.patrol_chief_state = chief_state;
@@ -6301,7 +6363,7 @@ impl EngineInner {
 
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
-            self.dispatch_filtered_stimulus(assets, minion_id, &stimulus, &ctx, &tick_data);
+            self.dispatch_filtered_stimulus(sim, assets, minion_id, &stimulus, &ctx, &tick_data);
         }
     }
 
@@ -6481,8 +6543,12 @@ impl EngineInner {
     // - SendStimulus (e.g. CALL_COORDINATE to archers)
     // - SetLeft/RightCombatNeighbour for phalanx linking
 
-    pub(super) fn process_pending_cross_npc_actions(&mut self, assets: &LevelAssets) {
-        let scratch = self.build_sim_scratch(assets);
+    pub(super) fn process_pending_cross_npc_actions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
+        let scratch = self.build_sim_scratch(sim, assets);
         // Collect all pending actions first to avoid borrow issues.
         // Both enemy (soldier) and friendly (civilian) AIs can push
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
@@ -6504,7 +6570,7 @@ impl EngineInner {
             // forever and hanging states like
             // `DefaultOnPostLookingSidewards` that wait on `EventDone`
             // to exit.
-            self.drain_pending_self_stimuli(assets);
+            self.drain_pending_self_stimuli(sim, assets);
             return;
         }
 
@@ -6536,6 +6602,7 @@ impl EngineInner {
                             &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
                         );
                         let Entity::Soldier(s) = entity else {
                             unreachable!()
@@ -6551,9 +6618,11 @@ impl EngineInner {
                     // is an enemy soldier.  Build rich tick data so a
                     // subsequent think()-triggered BattleDecisions
                     // sees the target snapshot.
-                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
                     let stimulus = crate::ai::Stimulus::new(StimulusType::CallInstruction);
-                    self.dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
+                    self.dispatch_filtered_stimulus(
+                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
+                    );
                 }
 
                 crate::ai::CrossNpcAction::BreakPhalanx { target } => {
@@ -6576,6 +6645,7 @@ impl EngineInner {
                             &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
                         );
                         let Entity::Soldier(s) = entity else {
                             unreachable!()
@@ -6590,9 +6660,11 @@ impl EngineInner {
                     // CrossNpcAction::BreakPhalanx: target is an
                     // enemy soldier breaking formation — ReturnToDuty
                     // may route through BattleDecisions.
-                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
                     let stimulus = crate::ai::Stimulus::new(StimulusType::EventReturnToDuty);
-                    self.dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
+                    self.dispatch_filtered_stimulus(
+                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
+                    );
                 }
 
                 crate::ai::CrossNpcAction::SendStimulus {
@@ -6628,10 +6700,12 @@ impl EngineInner {
                                         &self.world.fast_grid,
                                         &assets.hiking_paths,
                                         &self.ai.global.all_soldier_handles,
+                                        self.control.sim_config.difficulty,
                                     );
                                     let fallback_tick =
-                                        self.build_npc_tick_data(sender_id, &scratch, assets);
+                                        self.build_npc_tick_data(sim, sender_id, &scratch, assets);
                                     self.dispatch_filtered_stimulus(
+                                        sim,
                                         assets,
                                         sender_id,
                                         &stimulus,
@@ -6654,14 +6728,16 @@ impl EngineInner {
                             &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
                         )
                     };
                     // SendStimulus → enemy soldier target: the
                     // stimulus may be EVENT_VIEW / EVENT_REPORT /
                     // alert-forwarding which feeds BattleDecisions.
-                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
-                    let handled = self
-                        .dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
+                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+                    let handled = self.dispatch_filtered_stimulus(
+                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
+                    );
                     // Fallback: if target couldn't handle the stimulus,
                     // redeliver to the sender (e.g. conversation chains).
                     if !handled && let Some(sender) = fallback_to_sender {
@@ -6684,10 +6760,13 @@ impl EngineInner {
                                 &self.world.fast_grid,
                                 &assets.hiking_paths,
                                 &self.ai.global.all_soldier_handles,
+                                self.control.sim_config.difficulty,
                             )
                         };
-                        let fallback_tick = self.build_npc_tick_data(sender_id, &scratch, assets);
+                        let fallback_tick =
+                            self.build_npc_tick_data(sim, sender_id, &scratch, assets);
                         self.dispatch_filtered_stimulus(
+                            sim,
                             assets,
                             sender_id,
                             &stimulus,
@@ -6935,7 +7014,7 @@ impl EngineInner {
             }
         }
 
-        self.drain_pending_self_stimuli(assets);
+        self.drain_pending_self_stimuli(sim, assets);
     }
 
     /// Dispatch `stimulus` to `npc_id` via
@@ -6958,13 +7037,15 @@ impl EngineInner {
     /// by the drain pass.
     pub(super) fn dispatch_think_with_drain(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
     ) -> bool {
-        let handled = self.dispatch_filtered_stimulus(assets, npc_id, stimulus, ctx, tick_data);
+        let handled =
+            self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data);
 
         // EventViewStandardProcedure explicitly marks an accepted VIEW after
         // all StartThink and handler guards. Mirror that one-shot onto the
@@ -6997,7 +7078,7 @@ impl EngineInner {
         // branches on its bool before returning. Drain this result-bearing
         // cross-NPC call here, inside the originating dispatch, rather than
         // letting it fall into the end-of-frame cross-action batch.
-        self.process_synchronous_officer_reports_for(npc_id, assets);
+        self.process_synchronous_officer_reports_for(sim, npc_id, assets);
 
         // Drain any panic-seek-point fallback the think pushed
         // (FleeingPanic / EventCouldntReachPoint arm).  Needs the
@@ -7009,18 +7090,18 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             // Drain the per-NPC pending-flags pass (launches sequences,
             // commands, turn orders, attentive-mode transitions, etc.).
-            self.drain_pending_for_npc(npc_id, assets);
+            self.drain_pending_for_npc(sim, npc_id, assets);
 
             // EventViewStandardProcedure calls HeyFolksLookThere directly in
             // the original. Deliver only that synchronous cross-NPC family at
             // this Think boundary; phalanx and other coordination actions keep
             // their existing batch until their own ordering is audited.
-            self.process_synchronous_look_there_for(npc_id, assets);
+            self.process_synchronous_look_there_for(sim, npc_id, assets);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
             // push EventDone / EventImpossible into pending_self_stimuli.
-            self.dispatch_condolations_for_npc(npc_id, assets);
+            self.dispatch_condolations_for_npc(sim, npc_id, assets);
 
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.
@@ -7036,7 +7117,7 @@ impl EngineInner {
             if !had_self_stimuli {
                 break;
             }
-            self.drain_self_stimuli_for_npc(npc_id, assets);
+            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
 
             if iter + 1 == MAX_ITERS {
                 tracing::warn!(
@@ -7051,6 +7132,7 @@ impl EngineInner {
 
     fn process_synchronous_look_there_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
@@ -7086,7 +7168,7 @@ impl EngineInner {
                 target
             );
 
-            let scratch = self.build_sim_scratch(assets);
+            let scratch = self.build_sim_scratch(sim, assets);
             let building_sector = self
                 .world
                 .entities
@@ -7111,13 +7193,14 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
-            let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
             let mut stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
-            self.dispatch_think_with_drain(target_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain(sim, target_id, &stimulus, &ctx, &tick_data, assets);
             self.refresh_npc_view_after_synchronous_look_there(target_id);
         }
     }
@@ -7183,6 +7266,7 @@ impl EngineInner {
 
     fn process_synchronous_officer_reports_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
@@ -7204,7 +7288,7 @@ impl EngineInner {
                 "officer report source must be the reporting Charly"
             );
 
-            let scratch = self.build_sim_scratch(assets);
+            let scratch = self.build_sim_scratch(sim, assets);
             let officer_id = EntityId::Soldier(SoldierId(officer));
             let officer_building_sector = self
                 .world
@@ -7228,14 +7312,16 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
-            let officer_tick = self.build_npc_tick_data(officer_id, &scratch, assets);
+            let officer_tick = self.build_npc_tick_data(sim, officer_id, &scratch, assets);
             let officer_stimulus = crate::ai::Stimulus::with_human(
                 crate::ai::StimulusType::CallMrOfficerIAmBack,
                 charly,
             );
             let accepted = self.dispatch_think_with_drain(
+                sim,
                 officer_id,
                 &officer_stimulus,
                 &officer_ctx,
@@ -7267,9 +7353,10 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
-            let charly_tick = self.build_npc_tick_data(charly_id, &scratch, assets);
+            let charly_tick = self.build_npc_tick_data(sim, charly_id, &scratch, assets);
             let entity = self
                 .world
                 .entities
@@ -7278,7 +7365,7 @@ impl EngineInner {
             let enemy = entity
                 .enemy_ai_mut()
                 .unwrap_or_else(|| panic!("reporting Charly {charly} requires enemy AI"));
-            enemy.resolve_charly_officer_report(accepted, &charly_ctx, &charly_tick);
+            enemy.resolve_charly_officer_report(sim, accepted, &charly_ctx, &charly_tick);
         }
     }
 
@@ -7293,10 +7380,14 @@ impl EngineInner {
     /// point so a Think call that recursively fires another self-stimulus
     /// observes that stimulus in the originating frame, matching the
     /// original direct `Think(...)` call.
-    pub(super) fn drain_pending_self_stimuli(&mut self, assets: &LevelAssets) {
+    pub(super) fn drain_pending_self_stimuli(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.drain_self_stimuli_for_npc(npc_id, assets);
+            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
         }
     }
 
@@ -7309,6 +7400,7 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn drain_self_stimuli_for_npc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
@@ -7338,7 +7430,7 @@ impl EngineInner {
                 break;
             }
 
-            let scratch = self.build_sim_scratch(assets);
+            let scratch = self.build_sim_scratch(sim, assets);
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
@@ -7357,6 +7449,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
@@ -7366,8 +7459,8 @@ impl EngineInner {
             // (most common — EventDone from SendCondolationCard,
             // MYTALK callbacks) or civilian.  Builder stubs for
             // non-enemy, populates for enemy.
-            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
-            self.dispatch_filtered_stimulus(assets, npc_id, &stimulus, &ctx, &tick_data);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
             // The re-entered think might have queued a panic-seek
             // fallback (FleeingPanic / EventCouldntReachPoint).
             self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
@@ -7376,8 +7469,8 @@ impl EngineInner {
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc(npc_id, assets);
-            self.dispatch_condolations_for_npc(npc_id, assets);
+            self.drain_pending_for_npc(sim, npc_id, assets);
+            self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
     }
 
@@ -7392,14 +7485,15 @@ impl EngineInner {
     // the waypoint (class missing), the recursive `think` still fires
     // — the "script was a no-op" branch when the bound class doesn't
     // transition state.
-    pub(super) fn dispatch_pending_waypoint_scripts(&mut self, assets: &LevelAssets) {
+    pub(super) fn dispatch_pending_waypoint_scripts(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         // `script_enabled` gate — when scripts are disabled, drain
         // the pending requests but skip both the VM dispatch and the
         // follow-up `EventAfterScriptGoOn` Think.
-        let scripts_enabled = crate::engine::GlobalOptions::global()
-            .as_ref()
-            .map(|o| o.script_enabled)
-            .unwrap_or(true);
+        let scripts_enabled = sim.config().script_enabled;
 
         // Collect requests so we can release the entity borrow before
         // swapping engine state into the script host.  Always take the
@@ -7421,7 +7515,7 @@ impl EngineInner {
         }
 
         // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        let _ = self.with_script_session(assets, |script, script_domains, capabilities| {
+        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
                 match script.call_waypoint_function(
@@ -7459,7 +7553,7 @@ impl EngineInner {
         //
         // Scripts may have spawned / deactivated entities, so refresh
         // the entity-views map before rebuilding per-NPC AiContexts.
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
         let ambiance = self.world.weather.ambiance;
@@ -7489,13 +7583,14 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 )
             };
             let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
             // EventAfterScriptGoOn may re-enter BattleDecisions via
             // ThinkExpectedEventCommonStuff when the AI is attacking.
-            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
-            self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -7505,11 +7600,15 @@ impl EngineInner {
     // `hourglass`, staggered by NPC index so not all soldiers run on
     // the same frame.
 
-    pub(super) fn tick_periodic_ai(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_periodic_ai(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
 
         let current_frame = self.control.frame_counter;
 
@@ -7555,7 +7654,7 @@ impl EngineInner {
 
             // Build the per-tick data first (uses `&self`) before the
             // mutable entity borrow.
-            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
 
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
@@ -7577,12 +7676,14 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
 
             match entity {
                 Entity::Soldier(s) => {
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
                         enemy_ai.the_16th_frame(
+                            sim,
                             frame_phase,
                             &ctx,
                             &self.ai.global,
@@ -7613,7 +7714,11 @@ impl EngineInner {
 
     /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
     /// It sits before the lock gate and only acts at exact phase zero.
-    pub(super) fn tick_civilian_random_speech(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_civilian_random_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let current_frame = self.control.frame_counter;
         let due: Vec<_> = self
             .world
@@ -7628,7 +7733,7 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         for npc_id in due {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
@@ -7645,9 +7750,10 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             if let Some(friendly_ai) = entity.friendly_ai_mut() {
-                friendly_ai.random_speech(0, &ctx);
+                friendly_ai.random_speech(sim, 0, &ctx);
             }
         }
     }
@@ -7660,14 +7766,18 @@ impl EngineInner {
     // slot status vector and may transition the AI substate via
     // `check_ambush_point`.
 
-    pub(super) fn tick_refresh_ambush_points(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_refresh_ambush_points(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
         if self.ai.global.ambush_points.is_empty() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
 
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
@@ -7703,6 +7813,7 @@ impl EngineInner {
                     &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
                 );
                 (ctx, eyes)
             };
@@ -7730,18 +7841,22 @@ impl EngineInner {
     //
     // `hourglass` polls `macro_timer_is_running` each frame and, when
     // the timer has rung and the NPC is still in
-    // `SUBSTATE_DEFAULT_INMACRO`, calls `execute_next_macro_command()`
+    // `SUBSTATE_DEFAULT_INMACRO`, calls `execute_next_macro_command(sim, )`
     // directly — **bypassing** the Think stimulus dispatch so
     // CMD_WAIT / CMD_BEND resume without going through EVENT_TIMER.
     //
     // We iterate both soldier and civilian NPCs because civilians use
     // the common macro opcodes too (REVERSE_PATH, WAIT, GOTO_POINT,
     // FACE_TO, ...).
-    pub(super) fn tick_ai_macro_timers(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_ai_macro_timers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
 
         let current_frame = self.control.frame_counter;
 
@@ -7797,6 +7912,7 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
 
             // Stop the timer and resume the macro VM.  `execute_next_
@@ -7812,7 +7928,7 @@ impl EngineInner {
             if let Some(base) = base_opt {
                 base.macro_timer_is_running = false;
                 if execute {
-                    base.execute_next_macro_command(&ctx);
+                    base.execute_next_macro_command(sim, &ctx);
                 }
             }
         }
@@ -7861,18 +7977,22 @@ impl EngineInner {
     // frame an NPC is on a ladder in a non-building sector with
     // command `Wait`/`MoveWaiting` and not script-locked; otherwise
     // resets to 0.  After 25 frames it calls `force_return_to_duty()`
-    // (== `return_to_duty()`) and resets the counter so
+    // (== `return_to_duty(sim, )`) and resets the counter so
     // outdoor-ladder hangs self-recover.
     //
     // Note: this checks only `script_locked`, *not* `locks_flag_field`
     // — so the freshly-set BUSY lock from the edge detector earlier in
     // the same frame does not suppress this counter (the BUSY lock is
     // exactly what we want to escape from).
-    pub(super) fn tick_npc_stuck_on_ladder(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_npc_stuck_on_ladder(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         if self.actors_frozen() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
+        let scratch = self.build_sim_scratch(sim, assets);
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Snapshot the gating predicates without holding a borrow.
@@ -7923,7 +8043,7 @@ impl EngineInner {
             // `force_return_to_duty == return_to_duty`.  Dispatch via
             // the AI subclass to mirror the virtual call.  Build the
             // ctx + tick data the way `tick_periodic_ai` does.
-            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -7941,17 +8061,23 @@ impl EngineInner {
                 &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             match entity {
                 Entity::Soldier(s) => {
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        enemy_ai.return_to_duty(crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+                        enemy_ai.return_to_duty(
+                            sim,
+                            crate::ai::DutyFlags::empty(),
+                            &ctx,
+                            &tick_data,
+                        );
                     }
                 }
                 Entity::Civilian(c) => {
                     if let Some(friendly_ai) = c.npc.ai_brain.friendly_mut() {
-                        friendly_ai.return_to_duty(crate::ai::DutyFlags::empty(), &ctx);
+                        friendly_ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
                     }
                 }
                 _ => {}

@@ -346,7 +346,7 @@ They should be short orchestration methods, not homes for gameplay rules.
 
 Examples:
 
-- `SimulationControl::{enter_rng_scope, advance_clock, consume_fade_frame}`;
+- `SimulationControl::{simulation_context, advance_clock, consume_fade_frame}`;
 - `MissionRuntime::{record_win, should_exit, finish}`;
 - `WorldState::{entity, entity_mut, add_entity_in_order,
   validate_level_attachments}`;

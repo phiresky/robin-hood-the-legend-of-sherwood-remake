@@ -2091,12 +2091,8 @@ impl EngineInner {
         // "will-hit → HitNoArc, miss → crumpled arc" branch used by
         // arrows/stones/purses.
         if selected_action == crate::profiles::Action::Net {
-            let easy = crate::player_profile::PlayerProfileManager::global()
-                .as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.difficulty)
-                .unwrap_or(crate::player_profile::DifficultyLevel::Medium)
-                == crate::player_profile::DifficultyLevel::Easy;
+            let easy =
+                self.control.sim_config.difficulty == crate::player_profile::DifficultyLevel::Easy;
             if easy {
                 let landing = trajectory
                     .last()

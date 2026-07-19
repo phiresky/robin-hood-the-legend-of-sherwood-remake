@@ -687,11 +687,10 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
         let (hash, replay) = crate::replay_format::decode_compact(trimmed)
             .map_err(|e| format!("decode compact replay: {e}"))?;
         if hash != crate::replay_format::ENGINE_VERSION_HASH {
-            tracing::warn!(
-                "load-replay: replay was recorded on engine `{hash}`, \
-                 current build is `{}` — desyncs possible",
-                crate::replay_format::ENGINE_VERSION_HASH
-            );
+            return Err(format!(
+                "replay engine hash `{hash}` does not match this build `{}`",
+                crate::replay_format::ENGINE_VERSION_HASH,
+            ));
         }
         replay
     } else {

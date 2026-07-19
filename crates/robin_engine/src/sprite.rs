@@ -1286,7 +1286,11 @@ impl Sprite {
     ///
     /// Returns `true` if the animation has reached its natural end (looped
     /// or hit the last frame, depending on mode).
-    pub fn increment_frame(&mut self, progression: FrameProgression) -> bool {
+    pub fn increment_frame(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        progression: FrameProgression,
+    ) -> bool {
         // Placeholder sprite (empty primary `scripts` Arc): nothing to
         // advance.  This is the only runtime fallback needed now that
         // `is_ready()` is gone — every other method either handles
@@ -1332,6 +1336,7 @@ impl Sprite {
                 // RNG so replays match.
                 if (self.current_frame != 0 || self.frame_count != 0)
                     || crate::sim_rng::u32(
+                        sim,
                         crate::sim_rng::RngSite::SpriteBoredStart,
                         ..BORED_ANIM_PROBABILITY,
                     ) == 0
@@ -1353,6 +1358,7 @@ impl Sprite {
                 // Deterministic simulation RNG.
                 if (self.current_frame != 0 || self.frame_count != 0)
                     || crate::sim_rng::u32(
+                        sim,
                         crate::sim_rng::RngSite::SpriteSnakeStart,
                         ..SNAKE_ANIM_PROBABILITY,
                     ) == 0
@@ -1529,8 +1535,12 @@ impl Sprite {
     }
 
     /// Simple frame increment without any order/motion logic.
-    pub fn perform_virgin_increment(&mut self, progression: FrameProgression) -> MotionState {
-        let terminated = self.increment_frame(progression);
+    pub fn perform_virgin_increment(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        progression: FrameProgression,
+    ) -> MotionState {
+        let terminated = self.increment_frame(sim, progression);
 
         let mut state = MotionState::InProgress;
 
@@ -1553,6 +1563,7 @@ impl Sprite {
     /// order-less actions). `direction` is the current facing direction (0–15).
     pub fn perform_action(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         order_id: Option<std::num::NonZeroU32>,
         anim: OrderType,
         direction: u16,
@@ -1614,7 +1625,7 @@ impl Sprite {
         let anim_finished = if state == MotionState::Start {
             false
         } else {
-            self.increment_frame(progression)
+            self.increment_frame(sim, progression)
         };
 
         // Action done?  With C++ start-tick timing above, newly
@@ -1659,6 +1670,7 @@ impl Sprite {
     #[allow(clippy::too_many_arguments)]
     pub fn perform_motion(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         motion_order: Option<MotionOrderContext>,
         anim: OrderType,
         direction: u16,
@@ -1704,7 +1716,7 @@ impl Sprite {
             self.initialize_motion_order(ctx);
         }
 
-        let state = self.perform_action(order_id, anim, direction, progression, force_init);
+        let state = self.perform_action(sim, order_id, anim, direction, progression, force_init);
 
         let mut distance = self.current_frame_distance();
 
@@ -1712,7 +1724,7 @@ impl Sprite {
             if distance != 0.0 {
                 distance *= 2.0;
             }
-            self.increment_frame(progression);
+            self.increment_frame(sim, progression);
             if self.frame_count == 0 {
                 distance += self.distance(self.current_row, self.current_frame) as f32;
                 distance *= 2.0;
@@ -1864,10 +1876,14 @@ impl Sprite {
 
     /// Pick a random starting frame on the current row from the installed
     /// Engine-owned simulation stream.
-    pub fn force_random_sprite_frame(&mut self, site: crate::sim_rng::RngSite) {
+    pub fn force_random_sprite_frame(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        site: crate::sim_rng::RngSite,
+    ) {
         let num = self.num_frames_for_row(self.current_row);
         if num > 0 {
-            self.current_frame = crate::sim_rng::u16(site, 0..num);
+            self.current_frame = crate::sim_rng::u16(sim, site, 0..num);
         }
     }
 
@@ -2045,34 +2061,36 @@ mod tests {
 
     #[test]
     fn test_increment_frame_default() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 0;
         s.frame_count = 0;
 
         // Tick through frame 0's delay (2 ticks)
-        assert!(!s.increment_frame(FrameProgression::Default));
+        assert!(!s.increment_frame(sim, FrameProgression::Default));
         assert_eq!(s.current_frame, 0);
         assert_eq!(s.frame_count, 1);
 
-        assert!(!s.increment_frame(FrameProgression::Default));
+        assert!(!s.increment_frame(sim, FrameProgression::Default));
         assert_eq!(s.current_frame, 0);
         assert_eq!(s.frame_count, 2);
 
         // Next tick advances to frame 1
-        assert!(!s.increment_frame(FrameProgression::Default));
+        assert!(!s.increment_frame(sim, FrameProgression::Default));
         assert_eq!(s.current_frame, 1);
         assert_eq!(s.frame_count, 0);
 
         // Continue to frame 2, 3
         for _ in 0..6 {
-            s.increment_frame(FrameProgression::Default);
+            s.increment_frame(sim, FrameProgression::Default);
         }
         assert_eq!(s.current_frame, 3);
 
         // Last frame, last tick → terminated
         s.frame_count = 2; // at the wait_time
-        let terminated = s.increment_frame(FrameProgression::Default);
+        let terminated = s.increment_frame(sim, FrameProgression::Default);
         // After this tick, frame_count exceeds delay, we advance past
         // the actual terminated detection depends on exact state
         // The point is the logic works
@@ -2081,12 +2099,14 @@ mod tests {
 
     #[test]
     fn test_increment_frame_frozen() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 2;
         s.frame_count = 1;
 
-        let terminated = s.increment_frame(FrameProgression::Frozen);
+        let terminated = s.increment_frame(sim, FrameProgression::Frozen);
         assert!(!terminated);
         assert_eq!(s.current_frame, 2); // unchanged
         assert_eq!(s.frame_count, 1); // unchanged
@@ -2094,13 +2114,15 @@ mod tests {
 
     #[test]
     fn test_increment_frame_cyclically() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 3; // last frame
         s.frame_count = 2; // at delay
 
         // Should advance past delay, go to frame 0, never return terminated
-        let terminated = s.increment_frame(FrameProgression::Cyclically);
+        let terminated = s.increment_frame(sim, FrameProgression::Cyclically);
         assert!(!terminated);
         // Frame should have wrapped
         assert!(s.current_frame == 0 || s.frame_count > 0);
@@ -2108,33 +2130,37 @@ mod tests {
 
     #[test]
     fn test_increment_frame_freeze_when_terminated() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 3; // last frame (index 3 of 4 frames)
         s.frame_count = 0;
 
         // Should not advance past the last frame
-        let terminated = s.increment_frame(FrameProgression::FreezeWhenTerminated);
+        let terminated = s.increment_frame(sim, FrameProgression::FreezeWhenTerminated);
         assert!(!terminated);
         assert_eq!(s.current_frame, 3);
     }
 
     #[test]
     fn test_increment_frame_reversed() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 1;
         s.frame_count = 0;
 
         // Tick through delay
-        s.increment_frame(FrameProgression::Reversed);
+        s.increment_frame(sim, FrameProgression::Reversed);
         assert_eq!(s.frame_count, 1);
 
-        s.increment_frame(FrameProgression::Reversed);
+        s.increment_frame(sim, FrameProgression::Reversed);
         assert_eq!(s.frame_count, 2);
 
         // Next tick should go to frame 0
-        s.increment_frame(FrameProgression::Reversed);
+        s.increment_frame(sim, FrameProgression::Reversed);
         assert_eq!(s.current_frame, 0);
         assert_eq!(s.frame_count, 0);
     }
@@ -2180,12 +2206,14 @@ mod tests {
 
     #[test]
     fn test_perform_virgin_increment() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         s.current_row = 0;
         s.current_frame = 0;
         s.frame_count = 0;
 
-        let state = s.perform_virgin_increment(FrameProgression::Default);
+        let state = s.perform_virgin_increment(sim, FrameProgression::Default);
         assert_eq!(state, MotionState::InProgress);
     }
 
@@ -2309,6 +2337,8 @@ mod tests {
 
     #[test]
     fn changed_motion_order_id_reinitializes_goal_without_reseed_warning() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
         let old_order_id = std::num::NonZeroU32::new(42).unwrap();
         let new_order_id = std::num::NonZeroU32::new(43).unwrap();
@@ -2330,6 +2360,7 @@ mod tests {
         assert!(s.stale_motion_goal(ctx).is_none());
 
         let (state, _) = s.perform_motion(
+            sim,
             Some(ctx),
             OrderType::WaitingUprightBored,
             0,
@@ -2347,9 +2378,12 @@ mod tests {
 
     #[test]
     fn test_perform_action_basic() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
 
         let state = s.perform_action(
+            sim,
             Some(std::num::NonZeroU32::new(1).unwrap()),
             OrderType::WaitingUprightBored,
             0,
@@ -2362,6 +2396,7 @@ mod tests {
 
         // Second call with same order → in progress
         let state = s.perform_action(
+            sim,
             Some(std::num::NonZeroU32::new(1).unwrap()),
             OrderType::WaitingUprightBored,
             0,
@@ -2374,9 +2409,12 @@ mod tests {
 
     #[test]
     fn perform_action_start_tick_does_not_advance_frame() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
 
         let state = s.perform_action(
+            sim,
             Some(std::num::NonZeroU32::new(1).unwrap()),
             OrderType::WaitingUprightBored,
             0,
@@ -2394,9 +2432,12 @@ mod tests {
 
     #[test]
     fn test_perform_action_invalid_anim() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
         let mut s = make_test_sprite();
 
         let state = s.perform_action(
+            sim,
             Some(std::num::NonZeroU32::new(1).unwrap()),
             OrderType::WalkingUpright, // unmapped
             0,

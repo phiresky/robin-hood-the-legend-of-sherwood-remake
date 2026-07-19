@@ -152,7 +152,9 @@ mod tests {
         let handle = start_server(
             "127.0.0.1:0",
             "host".into(),
+            "Dem_Lei_MP".into(),
             42,
+            robin_engine::engine::SimConfig::default(),
             incoming_tx,
             outgoing_rx,
             frame_cursor,
@@ -220,10 +222,14 @@ mod tests {
         let (_server_out_tx, server_out_rx) = channel::<NetOutbound>();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut expected_config = robin_engine::engine::SimConfig::default();
+        expected_config.amount_of_speaking = 9;
         let _server = start_server(
             "127.0.0.1:0",
             "host".into(),
+            "Dem_Lei_MP".into(),
             42,
+            expected_config,
             server_in_tx,
             server_out_rx,
             server_cursor,
@@ -238,6 +244,9 @@ mod tests {
         let (client_out_tx, client_out_rx) = channel::<NetOutbound>();
         let _client = connect_client(&addr, "alice".into(), client_in_tx, client_out_rx)
             .expect("connect_client");
+        assert_eq!(_client.mission_id(), Some("Dem_Lei_MP"));
+        assert_eq!(_client.mission_seed(), Some(42));
+        assert_eq!(_client.mission_sim_config(), Some(expected_config));
 
         let assigned = loop {
             match client_in_rx.recv_timeout(Duration::from_secs(2)) {

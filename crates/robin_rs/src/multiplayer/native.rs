@@ -227,7 +227,9 @@ fn maybe_begin_sim_locked(peers: &mut ServerPeers) -> Option<(u32, u64, Vec<Send
 pub fn start_server(
     addr: &str,
     host_nickname: String,
+    mission_id: String,
     mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     frame_cursor: FrameCursor,
@@ -375,6 +377,7 @@ pub fn start_server(
     // Accept loop — for each new connection, spawn handler threads.
     let peers_for_accept = Arc::clone(&peers);
     let host_nick_for_accept = host_nickname;
+    let mission_id_for_accept = mission_id;
     let cursor_for_accept = Arc::clone(&frame_cursor);
     let snapshot_for_accept = std::sync::Arc::clone(&initial_snapshot);
     let cancellation_for_accept = Arc::clone(&cancellation);
@@ -407,6 +410,7 @@ pub fn start_server(
                         let peers = Arc::clone(&peers_for_accept);
                         let incoming_tx = incoming_tx.clone();
                         let host_nick = host_nick_for_accept.clone();
+                        let mission_id = mission_id_for_accept.clone();
                         let cursor = Arc::clone(&cursor_for_accept);
                         let snapshot = std::sync::Arc::clone(&snapshot_for_accept);
                         let cancellation = Arc::clone(&cancellation_for_accept);
@@ -424,7 +428,9 @@ pub fn start_server(
                                         peers,
                                         incoming_tx,
                                         host_nick,
+                                        mission_id.clone(),
                                         mission_seed,
+                                        sim_config,
                                         cursor,
                                         snapshot,
                                         Arc::clone(&cancellation),
@@ -523,7 +529,9 @@ fn handle_incoming_peer(
     peers: Arc<Mutex<ServerPeers>>,
     incoming_tx: Sender<NetEvent>,
     host_nickname: String,
+    mission_id: String,
     mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
     cancellation: Arc<AtomicBool>,
@@ -646,7 +654,9 @@ fn handle_incoming_peer(
             sender
                 .send(NetMsg::Welcome {
                     your_seat: assigned_seat,
+                    mission_id: mission_id.clone(),
                     mission_seed,
+                    sim_config,
                     host_nickname: host_nickname.clone(),
                 })
                 .map_err(|_| "writer queue closed before Welcome")?;
@@ -851,6 +861,8 @@ pub struct ClientHandle {
     /// client adopts this seed for its engine init so the local sim
     /// rolls match the host's.
     pub mission_seed: Option<u64>,
+    pub mission_sim_config: Option<robin_engine::engine::SimConfig>,
+    pub mission_id: Option<String>,
     cancellation: Arc<AtomicBool>,
     io_thread: Option<JoinHandle<()>>,
 }
@@ -858,6 +870,14 @@ pub struct ClientHandle {
 impl ClientHandle {
     pub fn mission_seed(&self) -> Option<u64> {
         self.mission_seed
+    }
+
+    pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
+        self.mission_sim_config
+    }
+
+    pub fn mission_id(&self) -> Option<&str> {
+        self.mission_id.as_deref()
     }
 
     pub fn shutdown(&mut self) {
@@ -919,7 +939,7 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
             });
         })?;
 
-    let (your_seat, mission_seed) = match handshake_rx.recv() {
+    let (your_seat, mission_id, mission_seed, sim_config) = match handshake_rx.recv() {
         Ok(Ok(result)) => result,
         Ok(Err(err)) => {
             cancellation.store(true, Ordering::Release);
@@ -939,6 +959,8 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
     Ok(ClientHandle {
         assigned_seat,
         mission_seed: Some(mission_seed),
+        mission_sim_config: Some(sim_config),
+        mission_id: Some(mission_id),
         cancellation,
         io_thread: Some(io_thread),
     })
@@ -948,7 +970,19 @@ pub fn connect_client<A: ToSocketAddrs + std::fmt::Display>(
 /// Returns the live async `WebSocket` plus the assigned seat and
 /// mission seed.  Used both for the initial handshake and for the
 /// auto-retry path after disconnects.
-async fn handshake_async(addr: &str, nickname: &str) -> Result<(AsyncWs, PlayerId, u64), String> {
+async fn handshake_async(
+    addr: &str,
+    nickname: &str,
+) -> Result<
+    (
+        AsyncWs,
+        PlayerId,
+        String,
+        u64,
+        robin_engine::engine::SimConfig,
+    ),
+    String,
+> {
     let url = format!("ws://{addr}/");
     let request = url
         .into_client_request()
@@ -977,7 +1011,9 @@ async fn handshake_async(addr: &str, nickname: &str) -> Result<(AsyncWs, PlayerI
     match decode_msg(&welcome_bytes).map_err(|e| format!("decode Welcome: {e}"))? {
         NetMsg::Welcome {
             your_seat,
+            mission_id,
             mission_seed,
+            sim_config,
             host_nickname,
         } => {
             tracing::info!(
@@ -986,7 +1022,7 @@ async fn handshake_async(addr: &str, nickname: &str) -> Result<(AsyncWs, PlayerI
                 host = %host_nickname,
                 "welcomed by server"
             );
-            Ok((ws, your_seat, mission_seed))
+            Ok((ws, your_seat, mission_id, mission_seed, sim_config))
         }
         other => Err(format!("expected Welcome, got {other:?}")),
     }
@@ -996,11 +1032,38 @@ async fn handshake_or_cancel(
     addr: &str,
     nickname: &str,
     cancellation: &AtomicBool,
-) -> Option<Result<(AsyncWs, PlayerId, u64), String>> {
+) -> Option<
+    Result<
+        (
+            AsyncWs,
+            PlayerId,
+            String,
+            u64,
+            robin_engine::engine::SimConfig,
+        ),
+        String,
+    >,
+> {
     tokio::select! {
         result = handshake_async(addr, nickname) => Some(result),
         _ = wait_for_cancel(cancellation) => None,
     }
+}
+
+fn validate_reconnect_state(
+    expected_mission_id: &str,
+    expected_seed: u64,
+    expected_config: robin_engine::engine::SimConfig,
+    mission_id: &str,
+    seed: u64,
+    config: robin_engine::engine::SimConfig,
+) -> Result<(), String> {
+    if mission_id != expected_mission_id || seed != expected_seed || config != expected_config {
+        return Err(format!(
+            "reconnect joined incompatible mission `{mission_id}` seed {seed} config {config:?}; expected mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Drive one connection until it ends, then auto-reconnect with
@@ -1012,7 +1075,9 @@ async fn run_client_io_async(
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
-    initial_handshake_tx: std::sync::mpsc::SyncSender<Result<(PlayerId, u64), String>>,
+    initial_handshake_tx: std::sync::mpsc::SyncSender<
+        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+    >,
     cancellation: Arc<AtomicBool>,
 ) {
     let (outgoing_async_tx, mut outgoing_async_rx) =
@@ -1063,10 +1128,12 @@ async fn run_client_io_inner(
     incoming_tx: Sender<NetEvent>,
     outgoing_async_rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetOutbound>,
     assigned: Arc<Mutex<Option<PlayerId>>>,
-    initial_handshake_tx: std::sync::mpsc::SyncSender<Result<(PlayerId, u64), String>>,
+    initial_handshake_tx: std::sync::mpsc::SyncSender<
+        Result<(PlayerId, String, u64, robin_engine::engine::SimConfig), String>,
+    >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let (mut ws, your_seat, mission_seed) = {
+    let (mut ws, your_seat, mission_id, mission_seed, sim_config) = {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut backoff = std::time::Duration::from_millis(50);
         loop {
@@ -1098,8 +1165,17 @@ async fn run_client_io_inner(
 
     *assigned.lock().unwrap() = Some(your_seat);
     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
-    let _ = incoming_tx.send(NetEvent::MissionSeed(mission_seed));
-    let _ = initial_handshake_tx.send(Ok((your_seat, mission_seed)));
+    let _ = incoming_tx.send(NetEvent::MissionConfig {
+        mission_id: mission_id.clone(),
+        rng_seed: mission_seed,
+        sim_config,
+    });
+    let _ = initial_handshake_tx.send(Ok((
+        your_seat,
+        mission_id.clone(),
+        mission_seed,
+        sim_config,
+    )));
 
     let mut backoff = std::time::Duration::from_millis(500);
     loop {
@@ -1135,12 +1211,27 @@ async fn run_client_io_inner(
                 return;
             };
             match handshake {
-                Ok((new_ws, new_seat, new_seed)) => {
+                Ok((new_ws, new_seat, new_mission_id, new_seed, new_config)) => {
+                    if let Err(message) = validate_reconnect_state(
+                        &mission_id,
+                        mission_seed,
+                        sim_config,
+                        &new_mission_id,
+                        new_seed,
+                        new_config,
+                    ) {
+                        let _ = incoming_tx.send(NetEvent::Fatal(message));
+                        return;
+                    }
                     tracing::info!(?new_seat, seed = new_seed, "client reconnected");
                     *assigned.lock().unwrap() = Some(new_seat);
                     let _ = incoming_tx.send(NetEvent::Reconnected);
                     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(new_seat));
-                    let _ = incoming_tx.send(NetEvent::MissionSeed(new_seed));
+                    let _ = incoming_tx.send(NetEvent::MissionConfig {
+                        mission_id: new_mission_id,
+                        rng_seed: new_seed,
+                        sim_config: new_config,
+                    });
                     backoff = std::time::Duration::from_millis(500);
                     break new_ws;
                 }
@@ -1314,4 +1405,22 @@ async fn send_client_outgoing(ws: &mut AsyncWs, outgoing: NetOutbound) -> Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_reconnect_state;
+
+    #[test]
+    fn reconnect_rejects_wrong_mission_or_config() {
+        let expected = robin_engine::engine::SimConfig::default();
+        assert!(
+            validate_reconnect_state("MissionA", 7, expected, "MissionB", 7, expected).is_err()
+        );
+
+        let mut changed = expected;
+        changed.amount_of_speaking = 9;
+        assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, changed).is_err());
+        assert!(validate_reconnect_state("MissionA", 7, expected, "MissionA", 7, expected).is_ok());
+    }
 }
