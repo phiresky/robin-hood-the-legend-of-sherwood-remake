@@ -88,72 +88,6 @@ impl EngineInner {
         Some(result)
     }
 
-    /// Normalize campaign/custom values from the legacy GameHost save shape
-    /// into their canonical campaign/entity owners. Contradictory duplicate
-    /// values are corrupt and must not be resolved by choosing one silently.
-    pub(super) fn migrate_legacy_script_custom_values(&mut self) {
-        let Some(legacy) = self
-            .scripts
-            .mission
-            .as_mut()
-            .and_then(|script| script.legacy_custom_values.take())
-        else {
-            return;
-        };
-
-        if let Some(parked) = legacy.parked_campaign {
-            let parked_value = serde_json::to_value(&parked)
-                .expect("serialize legacy parked campaign for comparison");
-            let canonical_value = serde_json::to_value(&self.mission_domain.campaign)
-                .expect("serialize canonical campaign for comparison");
-            assert_eq!(
-                parked_value, canonical_value,
-                "legacy GameHost campaign contradicts canonical engine campaign"
-            );
-        }
-
-        if !legacy.campaign.is_empty() {
-            let campaign = &mut self.mission_domain.campaign;
-            for (index, value) in legacy.campaign {
-                let slot = CampaignValue::custom(index).unwrap_or_else(|| {
-                    panic!("legacy script save has invalid campaign custom-value index {index}")
-                });
-                let canonical = campaign.values[slot];
-                assert!(
-                    canonical == 0 || canonical == value,
-                    "legacy script campaign value {index} contradicts canonical value: legacy={value}, canonical={canonical}"
-                );
-                campaign.values[slot] = value;
-            }
-        }
-
-        for ((actor_handle, index), value) in legacy.npc {
-            assert!(
-                (0..crate::element_kinds::NpcCustomValue::COUNT as i32).contains(&index),
-                "legacy script save has invalid NPC custom-value index {index} for actor {actor_handle}"
-            );
-            let entity_id = self
-                .entity_id_for_actor_handle(actor_handle)
-                .unwrap_or_else(|| {
-                    panic!("legacy script save references missing NPC actor {actor_handle}")
-                });
-            let npc = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .and_then(|entity| entity.npc_data_mut())
-                .unwrap_or_else(|| {
-                    panic!("legacy script save references non-NPC actor {actor_handle}")
-                });
-            let canonical = npc.custom_values[index as usize];
-            assert!(
-                canonical == 0 || canonical == value,
-                "legacy script NPC value ({actor_handle}, {index}) contradicts canonical value: legacy={value}, canonical={canonical}"
-            );
-            npc.custom_values[index as usize] = value;
-        }
-    }
-
     /// Attach immutable level data to the script-native dispatcher.
     ///
     /// The dispatcher borrows this object for each VM resume. It is not part
@@ -3124,7 +3058,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v6_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3145,26 +3079,33 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v6 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 6);
-        assert!(value["game_host"].get("campaign").is_none());
-        assert!(value["game_host"].get("mission_stat").is_none());
-        assert!(value["game_host"].get("engine_domains").is_none());
-        assert!(value["game_host"].get("script_this").is_none());
-        assert!(value["game_host"].get("current_scroll").is_none());
-        assert!(value["game_host"].get("nested_call_depth").is_none());
-        assert!(value["game_host"].get("globals").is_none());
-        assert!(value["game_host"].get("computed_locations").is_none());
-        assert!(value["game_host"].get("recording").is_none());
-        assert!(value["game_host"].get("entities").is_none());
-        assert!(value["game_host"].get("ai_global").is_none());
-        assert!(value["game_host"].get("fast_grid").is_none());
-        assert!(value["game_host"].get("background_invalidated").is_none());
+        assert!(value.get("snapshot_version").is_none());
+        let host_keys = value["game_host"]
+            .as_object()
+            .expect("GameHost snapshot object")
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            host_keys,
+            [
+                "commands",
+                "completed_sequences",
+                "deferred_commands",
+                "pending_objective_changes",
+                "production_points",
+                "production_registrations",
+                "sound_commands",
+            ]
+            .into_iter()
+            .collect()
+        );
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v6 MissionScript");
+            serde_json::from_str(&json).expect("deserialize MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3199,24 +3140,6 @@ mod script_context_tests {
     }
 
     #[test]
-    fn legacy_game_host_background_invalidation_is_accepted_then_omitted() {
-        let script = empty_mission_script();
-        let mut snapshot = serde_json::to_value(script).expect("serialize current MissionScript");
-        snapshot["game_host"]["background_invalidated"] = serde_json::json!(true);
-
-        let restored: MissionScript =
-            serde_json::from_value(snapshot).expect("decode legacy background invalidation flag");
-        let normalized =
-            serde_json::to_value(restored).expect("serialize normalized MissionScript");
-
-        assert!(
-            normalized["game_host"]
-                .get("background_invalidated")
-                .is_none()
-        );
-    }
-
-    #[test]
     fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(empty_mission_script());
@@ -3244,421 +3167,6 @@ mod script_context_tests {
             vec![crate::patch::PatchEffect::RestoreBackground],
         );
         assert!(engine.feedback.pending_side_effects.invalidate_background);
-    }
-
-    #[test]
-    fn v4_callframe_branch_parked_transient_game_host_values_are_ignored() {
-        let script = empty_mission_script();
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(4);
-        snapshot["game_host"]["script_this"] = serde_json::json!(41);
-        snapshot["game_host"]["current_scroll"] = serde_json::json!(17);
-        snapshot["game_host"]["nested_call_depth"] = serde_json::json!(3);
-
-        let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("legacy parked callback values are accepted");
-        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
-        assert!(normalized["game_host"].get("script_this").is_none());
-        assert!(normalized["game_host"].get("current_scroll").is_none());
-        assert!(normalized["game_host"].get("nested_call_depth").is_none());
-    }
-
-    #[test]
-    fn v5_parked_ai_global_deserializes_only_through_legacy_dto() {
-        let script = empty_mission_script();
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(5);
-        let mut parked = crate::ai::AiGlobalState::default();
-        parked.golden_eye_mode = true;
-        parked.next_repulsive_point_id = 77;
-        snapshot["game_host"]["ai_global"] =
-            serde_json::to_value(parked).expect("serialize legacy parked AI mirror");
-
-        let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("legacy parked AI mirror remains loadable");
-        let normalized = serde_json::to_value(decoded).expect("serialize normalized snapshot");
-        assert_eq!(normalized["snapshot_version"], 6);
-        assert!(normalized["game_host"].get("ai_global").is_none());
-    }
-
-    #[test]
-    fn legacy_game_host_script_state_normalizes_once() {
-        let mut script = empty_mission_script();
-        script.state.globals.insert(4, 55);
-        script
-            .state
-            .computed_locations
-            .push(crate::natives::ComputedScriptLocation {
-                position: (1.25, 9.5),
-                layer_sector: Some((3, 12)),
-            });
-        script.state.sequence_recorder.sequence_id = 2;
-
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        let root = snapshot.as_object_mut().expect("MissionScript JSON object");
-        root.remove("snapshot_version");
-        let state = root.remove("state").expect("current ScriptState field");
-        let state = state.as_object().expect("ScriptState object");
-        let computed = state["computed_locations"]
-            .as_array()
-            .expect("computed location array");
-        let positions = computed
-            .iter()
-            .map(|location| location["position"].clone())
-            .collect();
-        let layers = computed
-            .iter()
-            .map(|location| location["layer_sector"].clone())
-            .collect();
-        let recorder = state["sequence_recorder"]
-            .as_object()
-            .expect("sequence recorder object");
-        let host = root["game_host"].as_object_mut().expect("GameHost object");
-        host.insert("globals".into(), state["globals"].clone());
-        host.insert(
-            "computed_locations".into(),
-            serde_json::Value::Array(positions),
-        );
-        host.insert(
-            "computed_location_layers".into(),
-            serde_json::Value::Array(layers),
-        );
-        host.insert("recording".into(), recorder["recording"].clone());
-        host.insert("sequence_id".into(), recorder["sequence_id"].clone());
-
-        let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("normalize legacy MissionScript");
-        assert_eq!(decoded.state.globals.get(&4), Some(&55));
-        assert_eq!(decoded.state.computed_locations[0].position, (1.25, 9.5));
-        assert_eq!(
-            decoded.state.computed_locations[0].layer_sector,
-            Some((3, 12))
-        );
-        assert_eq!(decoded.state.sequence_recorder.sequence_id, 2);
-    }
-
-    #[test]
-    fn contradictory_new_and_legacy_script_state_is_rejected() {
-        let script = empty_mission_script();
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        let root = snapshot.as_object_mut().expect("MissionScript JSON object");
-        let host = root["game_host"].as_object_mut().expect("GameHost object");
-        host.insert("globals".into(), serde_json::json!({"9": 1}));
-        host.insert("computed_locations".into(), serde_json::json!([]));
-        host.insert("computed_location_layers".into(), serde_json::json!([]));
-        host.insert("recording".into(), serde_json::Value::Null);
-        host.insert("sequence_id".into(), serde_json::json!(0));
-
-        let error = serde_json::from_value::<MissionScript>(snapshot)
-            .expect_err("contradictory ScriptState must fail");
-        assert!(error.to_string().contains("contradictory"), "{error}");
-    }
-
-    #[test]
-    fn legacy_custom_campaign_value_migrates_once() {
-        let mut engine = EngineInner::new();
-        engine.mission_domain.campaign = crate::campaign::Campaign::default();
-        let mut script = empty_mission_script();
-        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
-            parked_campaign: None,
-            campaign: std::collections::BTreeMap::from([(7, 42)]),
-            npc: std::collections::BTreeMap::new(),
-        });
-        engine.scripts.mission = Some(script);
-
-        engine.migrate_legacy_script_custom_values();
-
-        let slot = CampaignValue::custom(7).unwrap();
-        assert_eq!(engine.campaign().values[slot], 42);
-        assert!(
-            engine
-                .scripts
-                .mission
-                .as_ref()
-                .unwrap()
-                .legacy_custom_values
-                .is_none()
-        );
-        engine.migrate_legacy_script_custom_values();
-        assert_eq!(engine.campaign().values[slot], 42);
-    }
-
-    #[test]
-    fn v2_game_host_custom_values_are_preserved_for_migration() {
-        let script = empty_mission_script();
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(2);
-        snapshot["game_host"]["campaign_values"] = serde_json::json!({"7": 42});
-
-        let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("deserialize v2 custom values");
-        let legacy = decoded
-            .legacy_custom_values
-            .expect("v2 custom values must survive until engine attachment");
-        assert_eq!(legacy.campaign.get(&7), Some(&42));
-    }
-
-    #[test]
-    fn v4_campaign_branch_parked_campaign_matches_required_engine_owner() {
-        let script = empty_mission_script();
-        let mut parked = crate::campaign::Campaign::default();
-        parked.values[CampaignValue::Custom20] = 0x8b_20_26;
-        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
-        snapshot["snapshot_version"] = serde_json::json!(4);
-        snapshot["game_host"]["campaign"] =
-            serde_json::to_value(&parked).expect("serialize legacy parked campaign");
-
-        let decoded: MissionScript =
-            serde_json::from_value(snapshot).expect("decode v4 parked campaign");
-        let mut engine = EngineInner::new_with_campaign(parked);
-        engine.scripts.mission = Some(decoded);
-
-        engine.migrate_legacy_script_custom_values();
-
-        assert_eq!(
-            engine.campaign().values[CampaignValue::Custom20],
-            0x8b_20_26
-        );
-    }
-
-    #[test]
-    fn legacy_engine_save_moves_game_host_campaign_to_canonical_owner() {
-        let mut engine = EngineInner::new();
-        let mut campaign = crate::campaign::Campaign::default();
-        campaign.values[CampaignValue::Custom19] = 0x19_08_25;
-        engine.mission_domain.campaign = campaign;
-        engine.scripts.mission = Some(empty_mission_script());
-
-        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        snapshot["mission_script"]["snapshot_version"] = serde_json::json!(3);
-        let parked_campaign = std::mem::take(&mut snapshot["campaign"]);
-        snapshot["mission_script"]["game_host"]["campaign"] = parked_campaign;
-        snapshot["mission_script"]["game_host"]["mission_stat"] =
-            serde_json::to_value(crate::mission_stat::MissionStat::default())
-                .expect("serialize legacy parked mission stats");
-
-        let mut restored: EngineInner =
-            serde_json::from_value(snapshot).expect("decode legacy engine save");
-        restored.migrate_legacy_script_custom_values();
-
-        assert_eq!(
-            restored.campaign().values[CampaignValue::Custom19],
-            0x19_08_25
-        );
-    }
-
-    #[test]
-    fn v5_game_host_native_owners_move_to_empty_canonical_engine_owners() {
-        let mut engine = EngineInner::new();
-        engine.world.entities.push(None);
-        engine.ai.global.golden_eye_mode = true;
-        engine.world.fast_grid.sector_active.push(false);
-        engine.scripts.mission = Some(empty_mission_script());
-
-        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        snapshot["mission_script"]["snapshot_version"] = serde_json::json!(5);
-        let parked_entities = std::mem::take(&mut snapshot["entities"]);
-        let parked_ai = std::mem::replace(
-            &mut snapshot["ai_global"],
-            serde_json::to_value(crate::ai::AiGlobalState::default()).unwrap(),
-        );
-        let parked_grid = std::mem::replace(
-            &mut snapshot["fast_grid"],
-            serde_json::to_value(crate::fast_find_grid::FastFindGrid::default()).unwrap(),
-        );
-        snapshot["entities"] = serde_json::json!([]);
-        snapshot["mission_script"]["game_host"]["entities"] = parked_entities;
-        snapshot["mission_script"]["game_host"]["ai_global"] = parked_ai;
-        snapshot["mission_script"]["game_host"]["fast_grid"] = parked_grid;
-
-        let restored: EngineInner =
-            serde_json::from_value(snapshot).expect("decode v5 parked native owners");
-        assert_eq!(restored.world.entities.len(), 1);
-        assert!(restored.ai.global.golden_eye_mode);
-        assert_eq!(restored.world.fast_grid.sector_active, [false]);
-        let host = &restored
-            .scripts
-            .mission
-            .as_ref()
-            .expect("mission script survives migration")
-            .game_host;
-        let host = serde_json::to_value(host).expect("serialize normalized GameHost");
-        assert!(host.get("entities").is_none());
-        assert!(host.get("ai_global").is_none());
-        assert!(host.get("fast_grid").is_none());
-    }
-
-    #[test]
-    fn contradictory_legacy_game_host_entities_are_rejected() {
-        let mut engine = EngineInner::new();
-        engine.world.entities.push(None);
-        engine.scripts.mission = Some(empty_mission_script());
-
-        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        snapshot["mission_script"]["snapshot_version"] = serde_json::json!(4);
-        snapshot["mission_script"]["game_host"]["entities"] = serde_json::json!([null, null]);
-
-        let error = match serde_json::from_value::<EngineInner>(snapshot) {
-            Ok(_) => panic!("contradictory entity owners must be rejected"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("contradictory"), "{error}");
-    }
-
-    #[test]
-    #[should_panic(expected = "legacy GameHost campaign contradicts canonical engine campaign")]
-    fn contradictory_legacy_game_host_campaign_is_rejected() {
-        let mut canonical = crate::campaign::Campaign::default();
-        canonical.values[CampaignValue::Custom20] = 1;
-        let mut parked = canonical.clone();
-        parked.values[CampaignValue::Custom20] = 2;
-
-        let mut engine = EngineInner::new();
-        engine.mission_domain.campaign = canonical;
-        let mut script = empty_mission_script();
-        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
-            parked_campaign: Some(parked),
-            campaign: std::collections::BTreeMap::new(),
-            npc: std::collections::BTreeMap::new(),
-        });
-        engine.scripts.mission = Some(script);
-
-        engine.migrate_legacy_script_custom_values();
-    }
-
-    #[test]
-    fn legacy_game_host_interactables_migrate_to_engine_domains_once() {
-        let mut engine = EngineInner::new();
-        engine.scripts.mission = Some(empty_mission_script());
-        engine
-            .script_domains
-            .interactables
-            .doors
-            .push(crate::gate::Door {
-                locked_pc: true,
-                ..Default::default()
-            });
-        engine
-            .script_domains
-            .interactables
-            .patches
-            .push(crate::patch::Patch {
-                active: true,
-                applied: true,
-                initially_active: true,
-                ..Default::default()
-            });
-
-        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        let interactables = snapshot["script_domains"]["interactables"]
-            .as_object()
-            .cloned()
-            .expect("current interactable domain");
-        snapshot["mission_script"]["game_host"]["doors"] = interactables["doors"].clone();
-        snapshot["mission_script"]["game_host"]["patches"] = interactables["patches"].clone();
-        snapshot["script_domains"]["interactables"]["doors"] = serde_json::json!([]);
-        snapshot["script_domains"]["interactables"]["patches"] = serde_json::json!([]);
-
-        let restored: EngineInner =
-            serde_json::from_value(snapshot).expect("normalize legacy interactables");
-        assert_eq!(restored.script_domains.interactables.doors.len(), 1);
-        assert!(restored.script_domains.interactables.doors[0].locked_pc);
-        assert_eq!(restored.script_domains.interactables.patches.len(), 1);
-        assert!(restored.script_domains.interactables.patches[0].applied);
-        let game_host = &restored
-            .scripts
-            .mission
-            .as_ref()
-            .expect("mission script survives migration")
-            .game_host;
-        assert!(
-            serde_json::to_value(game_host)
-                .expect("serialize migrated GameHost")
-                .get("engine_domains")
-                .is_none(),
-            "legacy storage must be consumed instead of retained as a mirror"
-        );
-    }
-
-    #[test]
-    fn legacy_game_host_mission_ui_migrates_without_overwriting_force_check() {
-        let mut engine = EngineInner::new();
-        engine.scripts.mission = Some(empty_mission_script());
-        engine.script_domains.mission_ui.outline_display = true;
-        engine.script_domains.mission_ui.force_check = true;
-        engine
-            .script_domains
-            .mission_ui
-            .men_to_blazon_conversion_mode = true;
-        engine
-            .script_domains
-            .mission_ui
-            .set_blinking_blazons(3, 100);
-
-        let mut snapshot = serde_json::to_value(&engine).expect("serialize current engine");
-        let ui = snapshot["script_domains"]["mission_ui"]
-            .as_object()
-            .cloned()
-            .expect("current mission UI domain");
-        let host = snapshot["mission_script"]["game_host"]
-            .as_object_mut()
-            .expect("legacy GameHost object");
-        host.insert("force_check".into(), serde_json::json!(false));
-        for field in [
-            "outline_display",
-            "men_to_blazon_conversion_mode",
-            "blinking_blazons",
-            "blink_expire_frame",
-        ] {
-            host.insert(field.into(), ui[field].clone());
-        }
-        snapshot["script_domains"]["mission_ui"] =
-            serde_json::to_value(crate::engine::state::MissionUiState::default())
-                .expect("serialize default mission UI");
-
-        let restored: EngineInner =
-            serde_json::from_value(snapshot).expect("normalize legacy mission UI");
-        let ui = &restored.script_domains.mission_ui;
-        assert!(ui.outline_display);
-        assert!(
-            ui.force_check,
-            "top-level legacy force_check remains authoritative"
-        );
-        assert!(ui.men_to_blazon_conversion_mode);
-        assert_eq!(ui.blinking_blazons, 3);
-        assert_eq!(ui.blink_expire_frame, 150);
-        let game_host = &restored
-            .scripts
-            .mission
-            .as_ref()
-            .expect("mission script survives migration")
-            .game_host;
-        assert!(
-            serde_json::to_value(game_host)
-                .expect("serialize migrated GameHost")
-                .get("engine_domains")
-                .is_none(),
-            "legacy UI storage must be consumed instead of retained as a mirror"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "contradicts canonical value")]
-    fn contradictory_legacy_custom_campaign_value_is_rejected() {
-        let mut engine = EngineInner::new();
-        let slot = CampaignValue::custom(7).unwrap();
-        let mut campaign = crate::campaign::Campaign::default();
-        campaign.values[slot] = 41;
-        engine.mission_domain.campaign = campaign;
-        let mut script = empty_mission_script();
-        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
-            parked_campaign: None,
-            campaign: std::collections::BTreeMap::from([(7, 42)]),
-            npc: std::collections::BTreeMap::new(),
-        });
-        engine.scripts.mission = Some(script);
-
-        engine.migrate_legacy_script_custom_values();
     }
 
     #[test]

@@ -22,7 +22,7 @@
 //!   `--replay` / the JSON API. The encode/decode logic lives in
 //!   `robin_rs::replay_format`.
 
-use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
+use crate::player_command::{FrameCommands, PlayerInput};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -37,9 +37,9 @@ pub struct ReplayHeader {
     pub mission_id: String,
     /// RNG seed used at mission start.
     pub rng_seed: u64,
-    /// Replay *schema* version, bumped when the on-disk layout changes
-    /// in a breaking way. Distinct from the engine git hash, which
-    /// lives outside the header (prefix of the compact format).
+    /// Replay *schema* version, bumped when the on-disk layout or the
+    /// deterministic state-hash contract changes. Distinct from the engine git
+    /// hash, which lives outside the header (prefix of the compact format).
     pub version: u32,
     /// Total number of simulation frames in the recording.
     /// Set to 0 during recording (unknown until mission ends);
@@ -53,14 +53,9 @@ pub struct ReplayHeader {
     pub campaign: Option<Vec<u8>>,
 }
 
-/// On-disk replay schema version.
-///
-/// - `1`: `c` was `Vec<PlayerCommand>` (untagged single-player).  Still
-///   accepted on read via the untagged-enum fallback in
-///   [`deserialize_inputs`].
-/// - `2`: `c` is `Vec<PlayerInput>` (tagged with `player_id`) — the
-///   first multiplayer-aware format.
-const REPLAY_SCHEMA_VERSION: u32 = 2;
+/// On-disk replay schema version. Version 3 uses tagged [`PlayerInput`] values
+/// and hashes the current nested `EngineInner` owner layout.
+pub const REPLAY_SCHEMA_VERSION: u32 = 3;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic
 /// engine-state hash used for desync detection on replay.
@@ -68,14 +63,8 @@ const REPLAY_SCHEMA_VERSION: u32 = 2;
 struct FrameRecord {
     /// Frame number (0-based).
     f: u32,
-    /// Inputs issued this frame, tagged with the seat that produced
-    /// them.  v1 recordings (untagged `Vec<PlayerCommand>`) are
-    /// transparently re-tagged as `PlayerId::HOST` on read.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "deserialize_inputs"
-    )]
+    /// Inputs issued this frame, tagged with the seat that produced them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     c: Vec<PlayerInput>,
     /// Hash of deterministic engine state, written once per second
     /// (every 25 frames).  Used by the player to detect desyncs.
@@ -83,38 +72,11 @@ struct FrameRecord {
     h: Option<u64>,
 }
 
-/// Per-element accept of either v2 (`PlayerInput`) or v1 (bare
-/// `PlayerCommand`) shapes.  v1 elements get tagged `PlayerId::HOST`
-/// on the way in.
-fn deserialize_inputs<'de, D>(d: D) -> Result<Vec<PlayerInput>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum InputOrCommand {
-        Tagged(PlayerInput),
-        Bare(PlayerCommand),
-    }
-    let raw: Vec<InputOrCommand> = Vec::deserialize(d)?;
-    Ok(raw
-        .into_iter()
-        .map(|item| match item {
-            InputOrCommand::Tagged(p) => p,
-            InputOrCommand::Bare(c) => PlayerInput::host(c),
-        })
-        .collect())
-}
-
 /// A complete recorded replay loaded into memory.
 #[derive(Clone, Debug)]
 pub struct ReplayData {
     pub header: ReplayHeader,
-    /// Sparse map: only frames with commands are present.  v1 (untagged
-    /// `Vec<PlayerCommand>`) recordings have every command tagged
-    /// [`crate::player_command::PlayerId::HOST`] on read — there was
-    /// only one seat by definition.  v2+ recordings carry the real
-    /// per-input seat tag.
+    /// Sparse map: only frames with commands are present.
     frames: BTreeMap<u32, Vec<PlayerInput>>,
     /// Sparse map: expected engine state hash at the start of frame N.
     hashes: BTreeMap<u32, u64>,
@@ -177,6 +139,12 @@ impl ReplayData {
             .map_err(|e| format!("read error: {e}"))?;
         let mut header: ReplayHeader =
             serde_json::from_str(&header_line).map_err(|e| format!("bad header: {e}"))?;
+        if header.version != REPLAY_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported replay schema version {}; expected {REPLAY_SCHEMA_VERSION}",
+                header.version
+            ));
+        }
 
         let mut frames = BTreeMap::new();
         let mut hashes = BTreeMap::new();
@@ -443,6 +411,7 @@ impl ReplayPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::player_command::PlayerCommand;
 
     #[test]
     fn record_and_playback_roundtrip() {
@@ -506,52 +475,22 @@ mod tests {
     }
 
     #[test]
-    fn legacy_v1_jsonl_loads_as_host_seat() {
-        // v1 recordings stored bare `PlayerCommand` values in `c`.
-        // Make sure the v2 reader still accepts them, tagging each
-        // command as `PlayerId::HOST`.
-        let path = std::env::temp_dir()
-            .join("replay_test_legacy_v1.jsonl")
-            .to_str()
-            .unwrap()
-            .to_string();
-        let mut buf = String::new();
-        buf.push_str(
-            r#"{"mission_id":"legacy","rng_seed":7,"version":1,"total_frames":0,"campaign":null}
-"#,
+    fn old_schema_jsonl_is_rejected() {
+        let input = r#"{"mission_id":"old","rng_seed":7,"version":2,"total_frames":0,"campaign":null}
+"#;
+        let error = ReplayData::from_reader(std::io::Cursor::new(input))
+            .expect_err("old replay schemas are not current snapshots");
+        assert!(
+            error.contains("unsupported replay schema version 2"),
+            "{error}"
         );
-        // CrouchDown is a unit variant — serializes as a bare string
-        // under serde's default external tagging; round-trips through
-        // the InputOrCommand::Bare arm.
-        buf.push_str(
-            r#"{"f":0,"c":["CrouchDown"]}
-"#,
-        );
-        buf.push_str(
-            r#"{"f":2,"c":["StandUp"],"h":12345}
-"#,
-        );
-        std::fs::write(&path, &buf).unwrap();
-
-        let data = ReplayData::from_file(&path).unwrap();
-        assert_eq!(data.frame_count(), 3);
-        assert_eq!(data.header.version, 1);
-
-        let f0 = data.commands_for_frame(0);
-        assert_eq!(f0.len(), 1);
-        assert_eq!(f0[0].player_id, crate::player_command::PlayerId::HOST);
-        assert!(matches!(f0[0].command, PlayerCommand::CrouchDown));
-
-        assert_eq!(data.hash_for_frame(2), Some(12345));
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn v2_recording_round_trips_player_id() {
+    fn current_recording_round_trips_player_id() {
         use crate::player_command::PlayerId;
         let path = std::env::temp_dir()
-            .join("replay_test_v2_seats.jsonl")
+            .join("replay_test_current_seats.jsonl")
             .to_str()
             .unwrap()
             .to_string();
@@ -630,7 +569,7 @@ mod tests {
             header: ReplayHeader {
                 mission_id: "x".into(),
                 rng_seed: 0,
-                version: 1,
+                version: REPLAY_SCHEMA_VERSION,
                 total_frames: 1,
                 campaign: None,
             },

@@ -147,10 +147,9 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// `Clone` is derived so rollback snapshots and the determinism test can
 /// copy the whole world cheaply.
 ///
-/// `Serialize` and `Deserialize` use the explicit flat compatibility schema in
-/// `snapshot.rs`. `StateHash` follows the current in-memory ownership layout:
-/// multiplayer peers and rollback use the same build, while historical replay
-/// hash compatibility is intentionally not an engine-layout constraint.
+/// `Serialize`, `Deserialize`, and `StateHash` all follow the current nested
+/// ownership layout. Multiplayer peers, rollback, and current-format replays
+/// therefore observe the same deterministic state boundaries.
 #[derive(Clone, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
     /// Deterministic mission outcome, campaign, objective, and stats state.

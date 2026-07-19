@@ -28,7 +28,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
-use robin_engine::replay::{ReplayData, ReplayFile};
+use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile};
 
 /// Git short-hash of the engine at build time (see `build.rs`).
 /// Falls back to `"unknown"` when built outside a git checkout.
@@ -41,13 +41,6 @@ pub const COMPACT_PREFIX: &str = "rhrec-";
 /// Zstd compression level. 19 is near-max ratio; replays are tiny so
 /// the extra CPU cost is invisible compared to a mission run.
 const ZSTD_LEVEL: i32 = 19;
-
-/// Replay schema versions accepted by the current engine reader.
-///
-/// Keep this in sync with `REPLAY_SCHEMA_VERSION` and the documented
-/// compatibility fallback in `robin_engine::replay`.
-const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
-const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 2;
 
 /// Error from compact-format encode / decode.
 #[derive(Debug, thiserror::Error)]
@@ -69,7 +62,7 @@ pub enum FormatError {
     #[error("jsonl decode failed: {0}")]
     Jsonl(String),
     #[error(
-        "unsupported replay schema version {version}; supported versions are {MIN_SUPPORTED_SCHEMA_VERSION}..={MAX_SUPPORTED_SCHEMA_VERSION}"
+        "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
     )]
     UnsupportedVersion { version: u32 },
 }
@@ -104,12 +97,10 @@ pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
 
 /// Reject replay schemas that this build cannot interpret reliably.
 ///
-/// `ReplayData::from_reader` intentionally handles the v1 input shape as
-/// well as the current v2 shape, but serde alone cannot reject a newer
-/// header whose payload happens to deserialize into today's structs.
+/// Serde alone cannot reject a header whose payload happens to deserialize
+/// into today's structs but belongs to a different hash contract.
 pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
-    if !(MIN_SUPPORTED_SCHEMA_VERSION..=MAX_SUPPORTED_SCHEMA_VERSION).contains(&data.header.version)
-    {
+    if data.header.version != REPLAY_SCHEMA_VERSION {
         return Err(FormatError::UnsupportedVersion {
             version: data.header.version,
         });
@@ -118,7 +109,7 @@ pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
 }
 
 /// Load a replay from either the compact inline format, a file
-/// containing the compact format, or a legacy `*.rhrec.jsonl` file.
+/// containing the compact format, or a `*.rhrec.jsonl` file.
 ///
 /// On version-hash mismatch: logs a warning at `warn!` level and
 /// continues with the load. This is deliberate — users debugging an
@@ -179,7 +170,7 @@ mod tests {
             header: ReplayHeader {
                 mission_id: "Dem_Lei_MP".into(),
                 rng_seed: 0xdead_beef,
-                version: 1,
+                version: REPLAY_SCHEMA_VERSION,
                 total_frames: 8,
                 campaign: Some(vec![1, 2, 3, 4]),
             },
