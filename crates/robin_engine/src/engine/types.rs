@@ -3016,7 +3016,9 @@ pub enum EngineError {
 /// Validation failures raised by the staged mission-level builder.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum MissionLevelBuildError {
-    #[error("mission '{mission}' requires script bindings, but its script was not loaded")]
+    #[error(
+        "mission '{mission}' has scripting enabled, but its mission VM with StartUp binding was not loaded"
+    )]
     MissingMissionScript { mission: String },
 
     #[error(
@@ -3035,6 +3037,14 @@ pub enum MissionLevelBuildError {
 
     #[error("building {building_index} has no door; tenant attachment requires its first door")]
     BuildingWithoutDoor { building_index: usize },
+
+    #[error(
+        "building {building_index} first authored door {door_index} is missing from the canonical door table"
+    )]
+    MissingCanonicalBuildingDoor {
+        building_index: usize,
+        door_index: u32,
+    },
 
     #[error(
         "mission tenant table has {tenant_count} entries but the proto level has {building_count} buildings"
@@ -3091,7 +3101,4 @@ pub enum MissionLevelBuildError {
         sector_number: i16,
         endpoint: String,
     },
-
-    #[error("jump-gate attachment requires a loaded mission script")]
-    JumpGateWithoutMissionScript,
 }

@@ -7,16 +7,15 @@ use crate::element::{BonusItemTypeExt, Entity, EntityId};
 
 /// Validated, staged construction of the mission-authored runtime domains.
 ///
-/// The builder owns only the mission identity; stage inputs and outputs are
-/// explicit values so transient proto data cannot leak into gameplay state.
+/// The builder owns the mission identity and explicit script mode; stage inputs
+/// and outputs are explicit values so transient proto data cannot leak into
+/// gameplay state.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct MissionLevelBuilder {
     mission_name: String,
-    requires_script: bool,
+    script_enabled: bool,
+    has_authored_content: bool,
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct ScriptBindingStageOutput;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct DoorStageOutput {
@@ -25,7 +24,7 @@ struct DoorStageOutput {
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-struct LiftStageOutput {
+struct LiftPreflight {
     authored_door_count: usize,
 }
 
@@ -37,8 +36,7 @@ struct PatchStageOutput {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct BuildingTenantAttachment {
     building_index: usize,
-    first_door_point_in: MapPoint,
-    sector_in: u16,
+    first_door_index: Option<crate::gate::DoorIndex>,
     tenant_element_indices: Vec<u16>,
     arrow_reserve: bool,
 }
@@ -49,15 +47,20 @@ struct BuildingStageOutput {
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-struct MissionLevelAttachmentStageInput {
+struct MissionLevelBuildPlan {
     buildings: BuildingStageOutput,
     building_gates: Vec<Vec<i32>>,
     patch_count: usize,
 }
 
 impl MissionLevelBuilder {
-    fn new(mission_name: &str, loaded: &crate::level_data::LoadedLevel) -> Self {
-        let requires_script = loaded.proto.motion_data.is_some()
+    fn new(
+        mission_name: &str,
+        script_enabled: bool,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Self {
+        let has_authored_content = !mission_name.is_empty()
+            || loaded.proto.motion_data.is_some()
             || !loaded.proto.buildings.is_empty()
             || !loaded.proto.lifts.is_empty()
             || !loaded.proto.patches.is_empty()
@@ -71,20 +74,21 @@ impl MissionLevelBuilder {
             || !loaded.mission.scrolls.is_empty();
         Self {
             mission_name: mission_name.to_owned(),
-            requires_script,
+            script_enabled,
+            has_authored_content,
         }
     }
 
-    fn script_binding_stage(
-        &self,
-        engine: &EngineInner,
-    ) -> Result<ScriptBindingStageOutput, MissionLevelBuildError> {
-        if self.requires_script && engine.scripts.mission.is_none() {
+    /// Match `RHengine.cpp`: `Bind("StartUp")` is required only when
+    /// scripting is enabled. `MissionScript` construction performs that bind,
+    /// so a present VM proves both requirements here.
+    fn preflight_script_binding(&self, engine: &EngineInner) -> Result<(), MissionLevelBuildError> {
+        if self.script_enabled && self.has_authored_content && engine.scripts.mission.is_none() {
             return Err(MissionLevelBuildError::MissingMissionScript {
                 mission: self.mission_name.clone(),
             });
         }
-        Ok(ScriptBindingStageOutput)
+        Ok(())
     }
 
     fn door_stage(
@@ -125,8 +129,8 @@ impl MissionLevelBuilder {
         })
     }
 
-    fn lift_stage(&self, loaded: &crate::level_data::LoadedLevel) -> LiftStageOutput {
-        LiftStageOutput {
+    fn preflight_lifts(&self, loaded: &crate::level_data::LoadedLevel) -> LiftPreflight {
+        LiftPreflight {
             authored_door_count: loaded.proto.lifts.iter().map(|lift| lift.doors.len()).sum(),
         }
     }
@@ -189,30 +193,37 @@ impl MissionLevelBuilder {
         engine: &EngineInner,
         loaded: &crate::level_data::LoadedLevel,
     ) -> Result<BuildingStageOutput, MissionLevelBuildError> {
-        let buildings: Vec<_> = loaded
+        let building_count = loaded
             .proto
             .buildings
             .iter()
-            .filter_map(|entry| match entry {
-                crate::level_data::RawBuildingEntry::Building { doors } => Some(doors),
-                crate::level_data::RawBuildingEntry::StandaloneDoors { .. } => None,
-            })
-            .collect();
-        if loaded.mission.building_tenants.len() != buildings.len() {
+            .filter(|entry| matches!(entry, crate::level_data::RawBuildingEntry::Building { .. }))
+            .count();
+        if loaded.mission.building_tenants.len() != building_count {
             return Err(MissionLevelBuildError::BuildingTenantCountMismatch {
                 tenant_count: loaded.mission.building_tenants.len(),
-                building_count: buildings.len(),
+                building_count,
             });
         }
-        let mut attachments = Vec::with_capacity(buildings.len());
-        for (building_index, (doors, tenants)) in buildings
-            .into_iter()
-            .zip(&loaded.mission.building_tenants)
-            .enumerate()
-        {
-            let first_door = doors
-                .first()
-                .ok_or(MissionLevelBuildError::BuildingWithoutDoor { building_index })?;
+        let mut attachments = Vec::with_capacity(building_count);
+        let mut building_index = 0usize;
+        let mut authored_door_index = 0usize;
+        for entry in &loaded.proto.buildings {
+            let crate::level_data::RawBuildingEntry::Building { doors } = entry else {
+                if let crate::level_data::RawBuildingEntry::StandaloneDoors { doors } = entry {
+                    authored_door_index += doors.len();
+                }
+                continue;
+            };
+            let tenants = &loaded.mission.building_tenants[building_index];
+            let first_door_index = if tenants.tenant_element_indices.is_empty() {
+                None
+            } else {
+                if doors.is_empty() {
+                    return Err(MissionLevelBuildError::BuildingWithoutDoor { building_index });
+                }
+                Some(crate::gate::DoorIndex(authored_door_index as u32))
+            };
             for &element_index in &tenants.tenant_element_indices {
                 let Some(entity_id) = engine
                     .world
@@ -238,27 +249,25 @@ impl MissionLevelBuilder {
             }
             attachments.push(BuildingTenantAttachment {
                 building_index,
-                first_door_point_in: MapPoint::new(
-                    first_door.point_in.0 as f32,
-                    first_door.point_in.1 as f32,
-                ),
-                sector_in: first_door.sector_in,
+                first_door_index,
                 tenant_element_indices: tenants.tenant_element_indices.clone(),
                 arrow_reserve: tenants.arrow_reserve,
             });
+            authored_door_index += doors.len();
+            building_index += 1;
         }
         Ok(BuildingStageOutput { attachments })
     }
 
-    fn validate(
+    fn preflight(
         &self,
         engine: &EngineInner,
         assets: &LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
-    ) -> Result<MissionLevelAttachmentStageInput, MissionLevelBuildError> {
-        let _script_bindings = self.script_binding_stage(engine)?;
+    ) -> Result<MissionLevelBuildPlan, MissionLevelBuildError> {
+        self.preflight_script_binding(engine)?;
         let doors = self.door_stage(loaded)?;
-        let lifts = self.lift_stage(loaded);
+        let lifts = self.preflight_lifts(loaded);
         let patches = self.patch_stage(engine, assets, loaded, &doors)?;
         let buildings = self.building_stage(engine, loaded)?;
         tracing::debug!(
@@ -269,7 +278,7 @@ impl MissionLevelBuilder {
             buildings = buildings.attachments.len(),
             "validated MissionLevelBuilder stages"
         );
-        Ok(MissionLevelAttachmentStageInput {
+        Ok(MissionLevelBuildPlan {
             buildings,
             building_gates: doors.building_gates,
             patch_count: patches.patch_count,
@@ -397,8 +406,17 @@ mod animation_placement_tests {
 #[cfg(test)]
 mod mission_level_builder_tests {
     use super::MissionLevelBuilder;
-    use crate::engine::{EngineInner, MissionLevelBuildError};
-    use crate::level_data::{RawBuildingEntry, RawBuildingTenants, RawDoor, SectorPolygon};
+    use crate::coordinates::MapPoint;
+    use crate::element::{
+        ActorCivilian, ActorData, CivilianData, ElementData, ElementKind, Entity, HumanData,
+        NpcData,
+    };
+    use crate::engine::{
+        EngineInner, JumpGateAttachment, LevelAssets, LevelLoadStaging, MissionLevelBuildError,
+    };
+    use crate::level_data::{
+        RawBuildingEntry, RawBuildingTenants, RawDoor, RawLift, SectorPolygon,
+    };
 
     fn door(door_type: u8) -> RawDoor {
         RawDoor {
@@ -423,6 +441,20 @@ mod mission_level_builder_tests {
         }
     }
 
+    fn civilian() -> Entity {
+        Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: CivilianData::default(),
+        })
+    }
+
     #[test]
     fn door_stage_keeps_building_and_standalone_authored_order() {
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
@@ -437,7 +469,7 @@ mod mission_level_builder_tests {
                 doors: vec![door(1)],
             },
         ];
-        let builder = MissionLevelBuilder::new("ordering", &loaded);
+        let builder = MissionLevelBuilder::new("ordering", true, &loaded);
 
         let stage = builder.door_stage(&loaded).expect("valid authored doors");
 
@@ -460,7 +492,7 @@ mod mission_level_builder_tests {
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
             doors: vec![door(4)],
         }];
-        let builder = MissionLevelBuilder::new("bad-door", &loaded);
+        let builder = MissionLevelBuilder::new("bad-door", true, &loaded);
 
         assert_eq!(
             builder.door_stage(&loaded),
@@ -475,16 +507,120 @@ mod mission_level_builder_tests {
     }
 
     #[test]
-    fn script_binding_stage_rejects_authored_level_without_script() {
+    fn script_preflight_rejects_authored_level_without_startup_when_enabled() {
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors { doors: Vec::new() }];
-        let builder = MissionLevelBuilder::new("missing-script", &loaded);
+        let builder = MissionLevelBuilder::new("missing-script", true, &loaded);
 
         assert_eq!(
-            builder.script_binding_stage(&EngineInner::new()),
+            builder.preflight_script_binding(&EngineInner::new()),
             Err(MissionLevelBuildError::MissingMissionScript {
                 mission: "missing-script".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
+            doors: vec![door(3)],
+        }];
+        let mut lift_door = door(4);
+        lift_door.sector_out = 20;
+        lift_door.sector_in = 21;
+        loaded.proto.lifts = vec![RawLift {
+            motion_area_index: 0,
+            lift_type: 0,
+            doors: vec![lift_door],
+            direction: 0,
+        }];
+        let builder = MissionLevelBuilder::new("no-script", false, &loaded);
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+
+        let plan = builder
+            .preflight(&engine, &assets, &loaded)
+            .expect("disabled scripting must not require a mission VM");
+        engine
+            .build_mission_level_stages(&assets, &loaded, &plan)
+            .expect("non-script domains still construct");
+
+        assert!(engine.scripts.mission.is_none());
+        assert_eq!(engine.script_domains.interactables.doors.len(), 2);
+        assert_eq!(
+            engine.script_domains.interactables.doors[0].door_type,
+            crate::gate::DoorType::Gate
+        );
+        assert_eq!(
+            engine.script_domains.interactables.doors[1].door_type,
+            crate::gate::DoorType::LiftHigh
+        );
+
+        for sector_number in [0_i16, 1_i16] {
+            let level = engine.world.fast_grid.level_mut();
+            let grid_index = level.sectors.len();
+            level
+                .sector_number_map
+                .insert(crate::sector::SectorNumber::new(sector_number), grid_index);
+            level.sectors.push(crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer: 0,
+                sector_number: crate::sector::SectorNumber::new(sector_number),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+        engine.populate_sector_gates_from_doors();
+        assert_eq!(
+            engine.world.fast_grid.level.sectors[0].gate_indices,
+            vec![crate::gate::DoorIndex(0)]
+        );
+        assert_eq!(
+            engine.world.fast_grid.level.sectors[1].gate_indices,
+            vec![crate::gate::DoorIndex(0)]
+        );
+    }
+
+    #[test]
+    fn no_script_mode_still_attaches_jump_gates() {
+        let mut engine = EngineInner::new();
+        let mut staging = LevelLoadStaging::default();
+        staging.attachments.jump_gates.push(JumpGateAttachment {
+            point_out: MapPoint::new(1.0, 2.0),
+            point_in: MapPoint::new(3.0, 4.0),
+            layer_out: 0,
+            layer_in: 1,
+            sector_out: crate::sector::SectorNumber::new(10),
+            sector_in: crate::sector::SectorNumber::new(11),
+            jump_line_out: 7,
+            jump_line_in: 8,
+            jump_line_in_helper_needed: false,
+            jump_line_out_helper_needed: true,
+            penalty: 9.0,
+        });
+
+        engine
+            .attach_jump_gates(&mut staging)
+            .expect("jump gates do not require a mission VM");
+
+        assert!(engine.scripts.mission.is_none());
+        assert!(staging.attachments.jump_gates.is_empty());
+        assert_eq!(engine.script_domains.interactables.doors.len(), 1);
+        assert_eq!(
+            engine.script_domains.interactables.doors[0].gate_type,
+            crate::gate::GateType::Jump
         );
     }
 
@@ -504,7 +640,7 @@ mod mission_level_builder_tests {
                 arrow_reserve: true,
             },
         ];
-        let builder = MissionLevelBuilder::new("bad-tenants", &loaded);
+        let builder = MissionLevelBuilder::new("bad-tenants", true, &loaded);
 
         let error = builder
             .building_stage(&EngineInner::new(), &loaded)
@@ -516,6 +652,74 @@ mod mission_level_builder_tests {
                 building_count: 1,
             }
         );
+    }
+
+    #[test]
+    fn building_without_doors_is_valid_when_it_has_no_tenants() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![RawBuildingEntry::Building { doors: Vec::new() }];
+        loaded.mission.building_tenants = vec![RawBuildingTenants {
+            tenant_element_indices: Vec::new(),
+            arrow_reserve: true,
+        }];
+        let builder = MissionLevelBuilder::new("empty-building", false, &loaded);
+
+        let stage = builder
+            .building_stage(&EngineInner::new(), &loaded)
+            .expect("an empty building does not need an attachment door");
+
+        assert_eq!(stage.attachments.len(), 1);
+        assert_eq!(stage.attachments[0].first_door_index, None);
+        assert!(stage.attachments[0].arrow_reserve);
+    }
+
+    #[test]
+    fn building_trap_tenant_uses_canonical_adapted_first_door() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.buildings = vec![
+            RawBuildingEntry::StandaloneDoors {
+                doors: vec![door(3)],
+            },
+            RawBuildingEntry::Building {
+                doors: vec![door(2)],
+            },
+        ];
+        loaded.mission.building_tenants = vec![RawBuildingTenants {
+            tenant_element_indices: vec![0],
+            arrow_reserve: false,
+        }];
+        let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        engine.world.entities.push(Some(civilian()));
+
+        let plan = builder
+            .preflight(&engine, &assets, &loaded)
+            .expect("valid trap tenant plan");
+        assert_eq!(
+            plan.buildings.attachments[0].first_door_index,
+            Some(crate::gate::DoorIndex(1))
+        );
+        engine
+            .build_mission_level_stages(&assets, &loaded, &plan)
+            .expect("construct canonical trap door");
+        let adapted_point = engine.script_domains.interactables.doors[1].point_in;
+        assert_ne!(adapted_point, MapPoint::new(30.0, 40.0));
+
+        engine
+            .attach_mission_level_stage(&plan)
+            .expect("attach tenant through canonical door");
+
+        let (_, tenant) = engine
+            .world
+            .entities
+            .get_legacy_slot(0)
+            .expect("tenant remains in authored slot");
+        assert_eq!(
+            tenant.element_data().sprite.position_iface.map_position(),
+            adapted_point
+        );
+        assert!(!tenant.element_data().active);
     }
 }
 
@@ -1273,7 +1477,11 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
-        let level_builder = MissionLevelBuilder::new(mission_name, &loaded);
+        let script_enabled = crate::engine::GlobalOptions::global()
+            .as_ref()
+            .map(|options| options.script_enabled)
+            .unwrap_or(true);
+        let level_builder = MissionLevelBuilder::new(mission_name, script_enabled, &loaded);
         self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
         self.mission_domain.short_briefings.clear();
@@ -1485,12 +1693,8 @@ impl EngineInner {
 
                 // When scripts are disabled (`-NOSCRIPT`), the sector is
                 // flagged unassociated even if a script class is named.
-                let scripts_enabled = crate::engine::GlobalOptions::global()
-                    .as_ref()
-                    .map(|o| o.script_enabled)
-                    .unwrap_or(true);
                 let mut script_data = crate::sector::ScriptSectorData::new();
-                script_data.script_associated = sec.script_class.is_some() && scripts_enabled;
+                script_data.script_associated = sec.script_class.is_some() && script_enabled;
                 script_data.script_class_name = sec.script_class.clone();
 
                 // Script sectors default to `CROSS | SCRIPT`; the CROSS bit
@@ -4087,9 +4291,17 @@ impl EngineInner {
             loaded.mission.beam_mes.len(),
         );
 
-        // Load the mission script (.scb bytecode).
-        let scb_path = format!("{}/{}.scb", level_directory, mission_name);
-        self.load_mission_script(assets, std::path::Path::new(&scb_path));
+        // `RHEngine::Initialize` binds StartUp only when `bScript` is set.
+        // In Rust, constructing MissionScript performs that bind, so keep the
+        // whole VM absent in --no-script mode while still building every
+        // authored non-script domain below.
+        self.scripts.mission = None;
+        if script_enabled {
+            let scb_path = format!("{}/{}.scb", level_directory, mission_name);
+            self.load_mission_script(assets, std::path::Path::new(&scb_path));
+        } else {
+            tracing::info!("Mission scripting disabled; skipping mission VM and StartUp binding");
+        }
 
         // Flush `force_visible` scroll visibility, calling SetStatus
         // (Visible) for each captured scroll.  Route through
@@ -4105,8 +4317,8 @@ impl EngineInner {
 
         // Validate every authored cross-reference before mutating canonical
         // script domains, then execute the door/lift/patch/building stages.
-        let attachment_stage = level_builder.validate(self, assets, &loaded)?;
-        self.build_mission_level_stages(assets, &loaded, &attachment_stage)?;
+        let level_plan = level_builder.preflight(self, assets, &loaded)?;
+        self.build_mission_level_stages(assets, &loaded, &level_plan)?;
 
         // Install mission-defined reinforcement doors: construct one
         // `Door(Reinforcement)` per REIN entry and insert it into the
@@ -4126,87 +4338,79 @@ impl EngineInner {
             // The out-of-map sector is sentinel #-1.
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
             let mut installed = 0usize;
-            if self.scripts.mission.is_some() {
-                for raw in &tactic.reinforcement_points {
-                    // The referenced sector must be motion+area.  We use
-                    // a soft error so the load path doesn't bail on a
-                    // corrupt mission file, while still flagging the
-                    // issue loudly.
-                    let sector_ok = self
-                        .world
-                        .fast_grid
-                        .level
-                        .sector_number_map
-                        .get(&crate::sector::SectorNumber::new(raw.sector as i16))
-                        .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
-                        .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
-                        .unwrap_or(false);
-                    if !sector_ok {
-                        tracing::error!(
-                            "Reinforcement point ({}, {}) references non-motion-area sector {} \
+            for raw in &tactic.reinforcement_points {
+                // The referenced sector must be motion+area.  We use
+                // a soft error so the load path doesn't bail on a
+                // corrupt mission file, while still flagging the
+                // issue loudly.
+                let sector_ok = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&crate::sector::SectorNumber::new(raw.sector as i16))
+                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
+                    .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
+                    .unwrap_or(false);
+                if !sector_ok {
+                    tracing::error!(
+                        "Reinforcement point ({}, {}) references non-motion-area sector {} \
                              — skipping",
-                            raw.x,
-                            raw.y,
-                            raw.sector,
-                        );
-                        continue;
-                    }
-
-                    let inside = MapPoint::new(raw.x as f32, raw.y as f32);
-                    let (border, outside) = crate::natives::compute_border_point_bbox(
-                        map_bbox,
-                        (inside.x, inside.y),
-                        raw.direction as i16,
+                        raw.x,
+                        raw.y,
+                        raw.sector,
                     );
-                    let border = MapPoint::new(border.0, border.1);
-                    let outside = MapPoint::new(outside.0, outside.1);
-
-                    // Reinforcement doors get 4× WalkingUpright actions
-                    // by default.
-                    let (act_d1, act_d2, act_i1, act_i2) =
-                        crate::gate::Door::default_actions_for_type(
-                            crate::gate::DoorType::Reinforcement,
-                        );
-
-                    self.script_domains
-                        .interactables
-                        .doors
-                        .push(crate::gate::Door {
-                            gate_type: crate::gate::GateType::Door,
-                            door_type: crate::gate::DoorType::Reinforcement,
-                            point_in: inside,
-                            point_mid: border,
-                            point_out: outside,
-                            layer_in: raw.layer,
-                            layer_out: special_layer,
-                            sector_in: crate::sector::SectorNumber::new(raw.sector as i16),
-                            sector_out: sector_out_of_map,
-                            action_direct_1: act_d1,
-                            action_direct_2: act_d2,
-                            action_indirect_1: act_i1,
-                            action_indirect_2: act_i2,
-                            ..Default::default()
-                        });
-                    // AdaptPoints is a no-op for `Reinforcement` doors
-                    // (only BuildingTrap / LiftHigh[Crenel] on wall lifts
-                    // shift `point_in`), but penalty still has to be
-                    // computed so A* gate-graph routing through these
-                    // out-of-map doors has a finite cost.
-                    if let Some(door) = self.script_domains.interactables.doors.last_mut() {
-                        door.compute_door_penalty();
-                    }
-                    installed += 1;
+                    continue;
                 }
-                // Rebuild gate-link connectivity so the new reinforcement
-                // doors are routed through by `find_path_gates`.
-                if installed > 0 {
-                    crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
-                }
-            } else {
-                tracing::warn!(
-                    "Skipping {} mission reinforcement point(s): mission script failed to load",
-                    tactic.reinforcement_points.len()
+
+                let inside = MapPoint::new(raw.x as f32, raw.y as f32);
+                let (border, outside) = crate::natives::compute_border_point_bbox(
+                    map_bbox,
+                    (inside.x, inside.y),
+                    raw.direction as i16,
                 );
+                let border = MapPoint::new(border.0, border.1);
+                let outside = MapPoint::new(outside.0, outside.1);
+
+                // Reinforcement doors get 4× WalkingUpright actions
+                // by default.
+                let (act_d1, act_d2, act_i1, act_i2) = crate::gate::Door::default_actions_for_type(
+                    crate::gate::DoorType::Reinforcement,
+                );
+
+                self.script_domains
+                    .interactables
+                    .doors
+                    .push(crate::gate::Door {
+                        gate_type: crate::gate::GateType::Door,
+                        door_type: crate::gate::DoorType::Reinforcement,
+                        point_in: inside,
+                        point_mid: border,
+                        point_out: outside,
+                        layer_in: raw.layer,
+                        layer_out: special_layer,
+                        sector_in: crate::sector::SectorNumber::new(raw.sector as i16),
+                        sector_out: sector_out_of_map,
+                        action_direct_1: act_d1,
+                        action_direct_2: act_d2,
+                        action_indirect_1: act_i1,
+                        action_indirect_2: act_i2,
+                        ..Default::default()
+                    });
+                // AdaptPoints is a no-op for `Reinforcement` doors
+                // (only BuildingTrap / LiftHigh[Crenel] on wall lifts
+                // shift `point_in`), but penalty still has to be
+                // computed so A* gate-graph routing through these
+                // out-of-map doors has a finite cost.
+                if let Some(door) = self.script_domains.interactables.doors.last_mut() {
+                    door.compute_door_penalty();
+                }
+                installed += 1;
+            }
+            // Rebuild gate-link connectivity so the new reinforcement
+            // doors are routed through by `find_path_gates`.
+            if installed > 0 {
+                crate::gate::build_gate_links(&mut self.script_domains.interactables.doors);
             }
             if installed > 0 {
                 tracing::debug!(
@@ -4219,12 +4423,12 @@ impl EngineInner {
         // The motion stage that produced these specs ran before the authored
         // door stages (so beam-me sector
         // checks see a populated grid), so the Door push has to happen
-        // here once the mission script is installed. Rebuilds gate-link connectivity
-        // last so the new jump gates (and any prior REIN doors above) are
+        // here once the canonical authored door table exists. Rebuilds
+        // gate-link connectivity last so the new jump gates (and any prior REIN doors above) are
         // routed through by `find_path_gates`.
         self.attach_jump_gates(staging)?;
 
-        self.attach_mission_level_stage(&attachment_stage)?;
+        self.attach_mission_level_stage(&level_plan)?;
 
         // Cache door geometry for `FindDoorEnemyCouldBeBehind`, which
         // walks the door list owned by the building/sector graph.
@@ -5474,9 +5678,6 @@ impl EngineInner {
         if specs.is_empty() {
             return Ok(());
         }
-        if self.scripts.mission.is_none() {
-            return Err(MissionLevelBuildError::JumpGateWithoutMissionScript);
-        }
         let count = specs.len();
         for spec in specs {
             self.script_domains
@@ -5518,12 +5719,6 @@ impl EngineInner {
     /// populates `sector_number_map`.  Doors themselves are loaded earlier
     /// by the MissionLevelBuilder door and lift stages.
     pub(crate) fn populate_sector_gates_from_doors(&mut self) {
-        if self.scripts.mission.is_none() {
-            tracing::warn!(
-                "populate_sector_gates_from_doors: skipped because the mission script failed to load"
-            );
-            return;
-        }
         let door_count = self.script_domains.interactables.doors.len();
         if door_count == 0 {
             return;
@@ -5579,18 +5774,12 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
-        stages: &MissionLevelAttachmentStageInput,
+        stages: &MissionLevelBuildPlan,
     ) -> Result<(), MissionLevelBuildError> {
-        if self.scripts.mission.is_none() {
-            // Empty test fixtures have no script-facing authored data and are
-            // allowed through the validation stage.
-            return Ok(());
-        }
-
         self.build_door_stage(loaded, stages);
         self.build_lift_stage(loaded);
         self.build_door_lift_attachment_stage()?;
-        self.build_patch_stage(assets, loaded);
+        self.build_patch_stage(assets, loaded, stages.patch_count);
         self.build_building_stage(stages);
         Ok(())
     }
@@ -5598,7 +5787,7 @@ impl EngineInner {
     fn build_door_stage(
         &mut self,
         loaded: &crate::level_data::LoadedLevel,
-        stages: &MissionLevelAttachmentStageInput,
+        stages: &MissionLevelBuildPlan,
     ) {
         // ── Doors ──
         // Collect every RawDoor from buildings / standalone-door entries.
@@ -5933,7 +6122,16 @@ impl EngineInner {
         Ok(())
     }
 
-    fn build_patch_stage(&mut self, assets: &LevelAssets, loaded: &crate::level_data::LoadedLevel) {
+    fn build_patch_stage(
+        &mut self,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+        patch_count: usize,
+    ) {
+        self.script_domains
+            .interactables
+            .patches
+            .reserve(patch_count);
         // ── Patches ──
         for (patch_idx, raw) in loaded
             .proto
@@ -6230,9 +6428,14 @@ impl EngineInner {
                 .filter(|h| h.is_some())
                 .count(),
         );
+        debug_assert_eq!(
+            patch_count,
+            self.script_domains.interactables.patches.len(),
+            "preflight patch count drifted during construction"
+        );
     }
 
-    fn build_building_stage(&mut self, stages: &MissionLevelAttachmentStageInput) {
+    fn build_building_stage(&mut self, stages: &MissionLevelBuildPlan) {
         // ── Building occupants from tenant data ──
         for building in &stages.buildings.attachments {
             let bld_idx = building.building_index;
@@ -6271,7 +6474,7 @@ impl EngineInner {
     /// building's first gate, matching `RHSectorBuilding::InitOccupant`.
     fn attach_mission_level_stage(
         &mut self,
-        stages: &MissionLevelAttachmentStageInput,
+        stages: &MissionLevelBuildPlan,
     ) -> Result<(), MissionLevelBuildError> {
         debug_assert_eq!(
             stages.patch_count,
@@ -6284,6 +6487,29 @@ impl EngineInner {
             0
         };
         for building in &stages.buildings.attachments {
+            if building.tenant_element_indices.is_empty() {
+                continue;
+            }
+            let first_door_index =
+                building
+                    .first_door_index
+                    .ok_or(MissionLevelBuildError::BuildingWithoutDoor {
+                        building_index: building.building_index,
+                    })?;
+            let first_door = self
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(first_door_index))
+                .ok_or(MissionLevelBuildError::MissingCanonicalBuildingDoor {
+                    building_index: building.building_index,
+                    door_index: first_door_index.0,
+                })?;
+            // `RHSectorBuilding::InitOccupant` resolves GetGate(0) after
+            // RHDoor::AdaptPoints, so attachment must use this canonical
+            // point rather than the raw proto point staged before construction.
+            let first_door_point_in = first_door.point_in;
+            let first_door_sector_in = u16::from(first_door.sector_in);
             for &element_index in &building.tenant_element_indices {
                 let entity_id = self
                     .world
@@ -6308,12 +6534,12 @@ impl EngineInner {
                 let elem = entity.element_data_mut();
                 elem.active = false;
                 let pi = &mut elem.sprite.position_iface;
-                pi.set_map_position(building.first_door_point_in);
+                pi.set_map_position(first_door_point_in);
                 if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
                     pi.set_layer(layer);
                 }
                 pi.set_sector(crate::position_interface::SectorHandle::new(
-                    building.sector_in,
+                    first_door_sector_in,
                 ));
             }
         }
