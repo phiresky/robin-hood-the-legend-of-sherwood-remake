@@ -1671,7 +1671,7 @@ mod tests {
             header: ReplayHeader {
                 mission_id: "Dem_Lei_MP".into(),
                 rng_seed: seed,
-                version: 2,
+                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
                 total_frames: 0,
                 campaign: None,
             },

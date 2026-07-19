@@ -1064,22 +1064,6 @@ pub struct MissionScript {
     /// restores it from [`LevelAssets`] before the VM can resume.
     #[state_hash(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
-    /// One-shot compatibility payload for saves written while campaign or
-    /// custom values were incorrectly serialized on `GameHost`. Engine
-    /// attachment moves them into canonical Campaign/NPC storage and clears
-    /// this field.
-    #[state_hash(skip)]
-    pub(crate) legacy_custom_values: Option<LegacyScriptCustomValues>,
-    /// One-shot compatibility payload for saves written while the script
-    /// adapter parked the canonical entity table on `GameHost`.
-    #[state_hash(skip)]
-    legacy_entities: Option<crate::entities::Entities>,
-    /// One-shot compatibility payloads for v5 saves written while the script
-    /// adapter parked the canonical AI and grid owners on `GameHost`.
-    #[state_hash(skip)]
-    legacy_ai_global: Option<crate::ai::AiGlobalState>,
-    #[state_hash(skip)]
-    legacy_fast_grid: Option<crate::fast_find_grid::FastFindGrid>,
     /// Concrete script-native state. VMs borrow this through their
     /// transient trait-object host field only while a script call is
     /// executing, so snapshots keep the real state instead of losing it
@@ -1134,19 +1118,10 @@ pub struct MissionScript {
     /// Serialized so rollback replay reproduces the same frame boundary
     /// without a host-owned companion bool.
     pub post_initialized: bool,
-
-    /// Domains recovered from a pre-Wave-6 GameHost snapshot. Each optional
-    /// domain is consumed once by the outer Engine snapshot deserializer and
-    /// merged with the already-migrated domains from the same save.
-    #[state_hash(skip)]
-    legacy_script_domains: Option<LegacyScriptDomains>,
 }
-
-const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 6;
 
 #[derive(Serialize)]
 struct MissionScriptSnapshotRef<'a> {
-    snapshot_version: u8,
     script_name: &'a str,
     manager: &'a ScriptManager,
     state: &'a ScriptState,
@@ -1172,7 +1147,6 @@ impl Serialize for MissionScript {
             ));
         }
         MissionScriptSnapshotRef {
-            snapshot_version: MISSION_SCRIPT_SNAPSHOT_VERSION,
             script_name: &self.script_name,
             manager: &self.manager,
             state: &self.state,
@@ -1191,11 +1165,10 @@ impl Serialize for MissionScript {
 
 #[derive(Deserialize)]
 struct MissionScriptSnapshot {
-    snapshot_version: Option<u8>,
     script_name: String,
     manager: ScriptManager,
-    state: Option<ScriptState>,
-    game_host: CompatibleGameHost,
+    state: ScriptState,
+    game_host: GameHost,
     instance: ScriptInstance,
     actor_instances: BTreeMap<i32, ScriptInstance>,
     zone_instances: BTreeMap<usize, ScriptInstance>,
@@ -1206,311 +1179,18 @@ struct MissionScriptSnapshot {
     post_initialized: bool,
 }
 
-/// One-shot compatibility shape for snapshots written before ScriptState had
-/// its own owner. Optional legacy members preserve the distinction between a
-/// genuinely empty value and a missing field; normalization below validates
-/// every combination instead of defaulting through contradictions.
-#[derive(Deserialize)]
-struct CompatibleGameHost {
-    #[serde(flatten)]
-    current: GameHost,
-    entities: Option<crate::entities::Entities>,
-    ai_global: Option<crate::ai::AiGlobalState>,
-    fast_grid: Option<crate::fast_find_grid::FastFindGrid>,
-    campaign: Option<crate::campaign::Campaign>,
-    campaign_values: Option<BTreeMap<i32, i32>>,
-    npc_values: Option<LegacyNpcValues>,
-    globals: Option<BTreeMap<i32, i32>>,
-    computed_locations: Option<Vec<(f32, f32)>>,
-    computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
-    recording: Option<crate::sequence::RecordingSession>,
-    sequence_id: Option<i32>,
-    /// Pre-Wave-8C snapshots parked callback-only state on GameHost. Legal
-    /// snapshots were already restricted to callback boundaries, so these
-    /// values have no canonical state to migrate and are intentionally ignored.
-    #[serde(rename = "script_this")]
-    _script_this: Option<i32>,
-    #[serde(rename = "current_scroll")]
-    _current_scroll: Option<i32>,
-    #[serde(rename = "nested_call_depth")]
-    _nested_call_depth: Option<u8>,
-    scroll_status: Option<BTreeMap<i32, i32>>,
-    scroll_attachments: Option<BTreeMap<i32, i32>>,
-    scroll_attachment_dirty: Option<std::collections::BTreeSet<i32>>,
-    building_occupants: Option<Vec<Vec<i32>>>,
-    arrow_reserves: Option<Vec<bool>>,
-    actor_building: Option<BTreeMap<i32, i32>>,
-    building_active: Option<Vec<bool>>,
-    building_gates: Option<Vec<Vec<i32>>>,
-    doors: Option<Vec<crate::gate::Door>>,
-    patches: Option<Vec<crate::patch::Patch>>,
-    force_check: Option<bool>,
-    outline_display: Option<bool>,
-    men_to_blazon_conversion_mode: Option<bool>,
-    blinking_blazons: Option<u32>,
-    blink_expire_frame: Option<u32>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct LegacyScriptCustomValues {
-    pub parked_campaign: Option<crate::campaign::Campaign>,
-    pub campaign: BTreeMap<i32, i32>,
-    pub npc: BTreeMap<(i32, i32), i32>,
-}
-
-pub(crate) struct LegacyNativeOwners {
-    pub(crate) entities: Option<crate::entities::Entities>,
-    pub(crate) ai_global: Option<crate::ai::AiGlobalState>,
-    pub(crate) fast_grid: Option<crate::fast_find_grid::FastFindGrid>,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct LegacyScriptDomains {
-    pub(crate) buildings: Option<super::state::BuildingState>,
-    pub(crate) interactables: Option<super::state::InteractableState>,
-    pub(crate) mission_ui: Option<super::state::MissionUiState>,
-    pub(crate) scrolls: Option<super::state::ScrollState>,
-}
-
-impl LegacyScriptDomains {
-    fn is_empty(&self) -> bool {
-        self.buildings.is_none()
-            && self.interactables.is_none()
-            && self.mission_ui.is_none()
-            && self.scrolls.is_none()
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(transparent)]
-struct LegacyNpcValues(
-    #[serde(with = "serde_json_any_key::any_key_map")] BTreeMap<(i32, i32), i32>,
-);
-
-impl CompatibleGameHost {
-    fn legacy_mission_ui<E: serde::de::Error>(
-        &self,
-    ) -> Result<Option<super::state::MissionUiState>, E> {
-        let present = [
-            self.force_check.is_some(),
-            self.outline_display.is_some(),
-            self.men_to_blazon_conversion_mode.is_some(),
-            self.blinking_blazons.is_some(),
-            self.blink_expire_frame.is_some(),
-        ];
-        if !present.iter().any(|value| *value) {
-            return Ok(None);
-        }
-        if !present.iter().all(|value| *value) {
-            return Err(E::custom(
-                "legacy GameHost has an incomplete mission-UI field set",
-            ));
-        }
-        Ok(Some(super::state::MissionUiState {
-            force_check: self.force_check.expect("validated above"),
-            outline_display: self.outline_display.expect("validated above"),
-            men_to_blazon_conversion_mode: self
-                .men_to_blazon_conversion_mode
-                .expect("validated above"),
-            blinking_blazons: self.blinking_blazons.expect("validated above"),
-            blink_expire_frame: self.blink_expire_frame.expect("validated above"),
-        }))
-    }
-
-    fn legacy_interactables<E: serde::de::Error>(
-        &self,
-    ) -> Result<Option<super::state::InteractableState>, E> {
-        match (&self.doors, &self.patches) {
-            (None, None) => Ok(None),
-            (Some(doors), Some(patches)) => Ok(Some(super::state::InteractableState {
-                doors: doors.clone(),
-                patches: patches.clone(),
-            })),
-            _ => Err(E::custom(
-                "legacy GameHost has an incomplete interactable-domain field set",
-            )),
-        }
-    }
-
-    fn legacy_buildings<E: serde::de::Error>(
-        &self,
-    ) -> Result<Option<super::state::BuildingState>, E> {
-        let present = [
-            self.building_occupants.is_some(),
-            self.arrow_reserves.is_some(),
-            self.actor_building.is_some(),
-            self.building_active.is_some(),
-            self.building_gates.is_some(),
-        ];
-        if !present.iter().any(|value| *value) {
-            return Ok(None);
-        }
-        if !present.iter().all(|value| *value) {
-            return Err(E::custom(
-                "legacy GameHost has an incomplete building-domain field set",
-            ));
-        }
-        Ok(Some(super::state::BuildingState {
-            occupants: self.building_occupants.clone().expect("validated above"),
-            arrow_reserves: self.arrow_reserves.clone().expect("validated above"),
-            actor_building: self.actor_building.clone().expect("validated above"),
-            active: self.building_active.clone().expect("validated above"),
-            gates: self.building_gates.clone().expect("validated above"),
-        }))
-    }
-
-    fn legacy_scrolls<E: serde::de::Error>(&self) -> Result<Option<super::state::ScrollState>, E> {
-        let present = [
-            self.scroll_status.is_some(),
-            self.scroll_attachments.is_some(),
-            self.scroll_attachment_dirty.is_some(),
-        ];
-        if !present.iter().any(|value| *value) {
-            return Ok(None);
-        }
-        if !present.iter().all(|value| *value) {
-            return Err(E::custom(
-                "legacy GameHost has an incomplete scroll-domain field set",
-            ));
-        }
-        Ok(Some(super::state::ScrollState {
-            status: self.scroll_status.clone().expect("validated above"),
-            attachments: self.scroll_attachments.clone().expect("validated above"),
-            attachment_dirty: self
-                .scroll_attachment_dirty
-                .clone()
-                .expect("validated above"),
-        }))
-    }
-
-    fn legacy_state<E: serde::de::Error>(&self) -> Result<Option<ScriptState>, E> {
-        let fields_present = [
-            self.globals.is_some(),
-            self.computed_locations.is_some(),
-            self.computed_location_layers.is_some(),
-            self.sequence_id.is_some(),
-        ];
-        if !fields_present.iter().any(|present| *present) && self.recording.is_none() {
-            return Ok(None);
-        }
-        if !fields_present.iter().all(|present| *present) {
-            return Err(E::custom(
-                "legacy MissionScript GameHost has an incomplete ScriptState field set",
-            ));
-        }
-
-        let positions = self.computed_locations.as_ref().expect("validated above");
-        let layers = self
-            .computed_location_layers
-            .as_ref()
-            .expect("validated above");
-        if positions.len() != layers.len() {
-            return Err(E::custom(format!(
-                "legacy computed-location arrays disagree in length: {} positions, {} layer entries",
-                positions.len(),
-                layers.len()
-            )));
-        }
-
-        Ok(Some(ScriptState {
-            globals: self.globals.clone().expect("validated above"),
-            computed_locations: positions
-                .iter()
-                .copied()
-                .zip(layers.iter().copied())
-                .map(
-                    |(position, layer_sector)| crate::natives::ComputedScriptLocation {
-                        position,
-                        layer_sector,
-                    },
-                )
-                .collect(),
-            sequence_recorder: crate::natives::SequenceRecorderState {
-                recording: self.recording.clone(),
-                sequence_id: self.sequence_id.expect("validated above"),
-            },
-        }))
-    }
-}
-
 impl<'de> Deserialize<'de> for MissionScript {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let snapshot = MissionScriptSnapshot::deserialize(deserializer)?;
-        let legacy_state = snapshot.game_host.legacy_state::<D::Error>()?;
-        let state = match snapshot.snapshot_version {
-            None => {
-                if snapshot.state.is_some() {
-                    return Err(serde::de::Error::custom(
-                        "unversioned MissionScript snapshot unexpectedly contains new ScriptState",
-                    ));
-                }
-                legacy_state.ok_or_else(|| {
-                    serde::de::Error::custom(
-                        "unversioned MissionScript snapshot is missing legacy ScriptState fields",
-                    )
-                })?
-            }
-            Some(2..=MISSION_SCRIPT_SNAPSHOT_VERSION) => {
-                let state = snapshot.state.ok_or_else(|| {
-                    serde::de::Error::custom(
-                        "versioned MissionScript snapshot is missing ScriptState",
-                    )
-                })?;
-                if let Some(legacy) = legacy_state
-                    && serde_json::to_value(&legacy).map_err(serde::de::Error::custom)?
-                        != serde_json::to_value(&state).map_err(serde::de::Error::custom)?
-                {
-                    return Err(serde::de::Error::custom(
-                        "MissionScript snapshot contains contradictory new and legacy ScriptState",
-                    ));
-                }
-                state
-            }
-            Some(other) => {
-                return Err(serde::de::Error::custom(format!(
-                    "unsupported MissionScript snapshot version {other}"
-                )));
-            }
-        };
-
-        let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
-        let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
-        let legacy_interactables = snapshot.game_host.legacy_interactables::<D::Error>()?;
-        let legacy_mission_ui = snapshot.game_host.legacy_mission_ui::<D::Error>()?;
-        let legacy_script_domains = LegacyScriptDomains {
-            buildings: legacy_buildings,
-            interactables: legacy_interactables,
-            mission_ui: legacy_mission_ui,
-            scrolls: legacy_scrolls,
-        };
-
         Ok(Self {
             script_name: snapshot.script_name,
             manager: snapshot.manager,
-            state,
+            state: snapshot.state,
             bindings: crate::natives::AttachedScriptBindings::default(),
-            legacy_custom_values: {
-                let parked_campaign = snapshot.game_host.campaign;
-                let campaign = snapshot.game_host.campaign_values.unwrap_or_default();
-                let npc = snapshot
-                    .game_host
-                    .npc_values
-                    .map_or_else(BTreeMap::new, |values| values.0);
-                (parked_campaign.is_some() || !campaign.is_empty() || !npc.is_empty()).then_some(
-                    LegacyScriptCustomValues {
-                        parked_campaign,
-                        campaign,
-                        npc,
-                    },
-                )
-            },
-            legacy_entities: snapshot.game_host.entities,
-            legacy_ai_global: snapshot.game_host.ai_global,
-            legacy_fast_grid: snapshot.game_host.fast_grid,
-            game_host: snapshot.game_host.current,
+            game_host: snapshot.game_host,
             call_stack: ScriptCallStack::default(),
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
@@ -1519,8 +1199,6 @@ impl<'de> Deserialize<'de> for MissionScript {
             scroll_instances: snapshot.scroll_instances,
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
-            legacy_script_domains: (!legacy_script_domains.is_empty())
-                .then_some(legacy_script_domains),
         })
     }
 }
@@ -1555,18 +1233,6 @@ fn nested_actor_function_default(fn_name: &str) -> i32 {
 }
 
 impl MissionScript {
-    pub(crate) fn take_legacy_script_domains(&mut self) -> Option<LegacyScriptDomains> {
-        self.legacy_script_domains.take()
-    }
-
-    pub(crate) fn take_legacy_native_owners(&mut self) -> LegacyNativeOwners {
-        LegacyNativeOwners {
-            entities: self.legacy_entities.take(),
-            ai_global: self.legacy_ai_global.take(),
-            fast_grid: self.legacy_fast_grid.take(),
-        }
-    }
-
     /// Build a [`MissionScript`] from an already-parsed `.scb` payload.
     pub fn from_scb(scb: crate::scb::ScbFile) -> Result<Self, String> {
         Self::from_manager(String::new(), ScriptManager::new(scb))
@@ -1590,10 +1256,6 @@ impl MissionScript {
             manager,
             state: ScriptState::default(),
             bindings: crate::natives::AttachedScriptBindings::default(),
-            legacy_custom_values: None,
-            legacy_entities: None,
-            legacy_ai_global: None,
-            legacy_fast_grid: None,
             game_host: GameHost::new(),
             call_stack: ScriptCallStack::default(),
             instance,
@@ -1603,7 +1265,6 @@ impl MissionScript {
             scroll_instances: BTreeMap::new(),
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
-            legacy_script_domains: None,
         })
     }
 

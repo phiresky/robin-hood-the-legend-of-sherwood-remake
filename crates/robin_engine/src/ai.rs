@@ -4140,38 +4140,6 @@ impl Default for AiGlobalState {
 }
 
 impl AiGlobalState {
-    pub(crate) fn is_default_for_legacy_merge(&self) -> bool {
-        self.green_alert_soldiers == 0
-            && self.yellow_alert_soldiers == 0
-            && self.red_alert_soldiers == 0
-            && !self.there_are_royalist_soldiers
-            && !self.there_are_lacklandist_soldiers
-            && !self.stupid_soldiers_cheat
-            && !self.freeze
-            && self.overall_alert_status == AlertLevel::Green
-            && self.overall_villain_alert_status == AlertLevel::Green
-            && self.ambush_points.is_empty()
-            && self.seek_points.is_empty()
-            && self.archery_sectors.is_empty()
-            && self.saved_random_seed == 0
-            && self.remarks_forbidden_till_frame.is_empty()
-            && self.forbidden_remarks.is_empty()
-            && self.screen_remarks.is_empty()
-            && !self.attribute_display
-            && !self.speech_display
-            && !self.golden_eye_mode
-            && !self.ezekiel_2517
-            && self.current_speech_variant == 0
-            && self.repulsive_points.is_empty()
-            && self.next_repulsive_point_id == 1
-            && self.door_seek_infos.is_empty()
-            && self.reinforcement_doors.is_empty()
-            && self.houses.is_empty()
-            && self.door_rally_points.is_empty()
-            && self.all_soldier_handles.is_empty()
-            && self.same_frame_target_claims.is_empty()
-    }
-
     pub fn npcs_can_be_enemies(&self) -> bool {
         self.there_are_royalist_soldiers && self.there_are_lacklandist_soldiers
     }

@@ -10,12 +10,12 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
-/// Distinctive but internally inert state used to lock the top-level Engine
-/// serde and bincode contracts while reorganizing its runtime fields.
+/// Distinctive but internally inert state used to exercise the current nested
+/// Engine serde contract.
 ///
 /// Keep this fixture free of level attachments: it must remain serializable at
 /// the same snapshot boundary as `EngineInner::new()`.
-fn engine_compatibility_fixture() -> EngineInner {
+fn engine_snapshot_fixture() -> EngineInner {
     let mut engine = EngineInner::new();
 
     engine.mission_domain.state.mission_won = true;
@@ -50,117 +50,57 @@ fn engine_compatibility_fixture() -> EngineInner {
 }
 
 #[test]
-fn engine_top_level_save_schema_and_current_bytes_are_locked() {
+fn engine_snapshot_schema_follows_current_owners() {
     use std::collections::BTreeSet;
 
-    let engine = engine_compatibility_fixture();
-    let json = serde_json::to_value(&engine).expect("serialize compatibility fixture to JSON");
+    let engine = engine_snapshot_fixture();
+    let json = serde_json::to_value(&engine).expect("serialize snapshot fixture to JSON");
     let object = json
         .as_object()
         .expect("EngineInner snapshot must remain a top-level map");
     let actual_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
     let expected_keys = [
-        "action_before_recording_macro",
-        "ai_global",
-        "campaign",
-        "cheat_used_flags",
-        "chorus_timer",
-        "cutscene_camera",
-        "dead_pc",
-        "dynamic_sight_obstacles",
-        "entities",
-        "failed_path_requests",
-        "fast_forward",
-        "fast_grid",
-        "force_check",
-        "frame_counter",
-        "ground_mark",
-        "macro_store",
-        "messenger",
-        "mission",
-        "mission_script",
-        "mission_stat",
-        "mobile_elements",
-        "next_order_id",
-        "pathfinder",
-        "pc_ids",
-        "pending_concussion_side_effects",
-        "pending_hades_kills",
-        "pending_hero_speeches",
-        "pending_move_requests",
-        "pending_path_requests",
-        "pending_reinforcements",
-        "pending_scroll_amulets",
-        "pending_side_effects",
-        "qa_recording_for",
-        "qa_recording_slot",
-        "rng",
+        "ai",
+        "control",
+        "feedback",
+        "mission_domain",
+        "orders",
+        "players",
         "script_domains",
-        "script_globals",
-        "script_zone_data",
-        "seats",
-        "sequence_manager",
-        "shield",
-        "short_briefings",
-        "simulation_gates",
-        "sound_sim",
-        "speed",
-        "speed_int",
-        "standard_view_polygon_radius",
-        "static_sight_obstacle_active",
-        "timer_elements",
-        "titbit_manager",
-        "user_locked",
-        "weather",
+        "scripts",
+        "world",
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
     assert_eq!(actual_keys, expected_keys);
-
-    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
-        .expect("encode compatibility fixture to bincode");
-    let encoded_hex = bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    assert_eq!(
-        encoded_hex,
-        "00010000000111636f6d7061746962696c6974792d6d6170fc40302010fc4433221100000000000101070000e03f090000000100040d0054fcfefffffffc5a5aa5a5fb4101fc88776655170100000000000001000000fbd20400000000000000fb2e160000000000000000000f000000000000010000000000000000000000000000000000cb4200404a43000080bf000080bf0000000000000000000000803f0000803f000000000000000000000000000000000000000000000000000000000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042010000003f0000803f000000400000000000000000000000000000000000000000000000000000803f0000803f000000000000000000000000000000000500000000fd40302010bebafeca00000000010000000000000000000000000000000000000000010002000100000000000000000000000000000000000000000000000000000200000000000000000000000000000001010001000000000000000003010001000100c800000000000000000000000000000000000000000000000000ff00000000000000000000000000000000000d000000000000000100000000000002000000000000030000000000000400000000000005000000000000060000000000000700000000000008000000000000090000000000000a0000000000000b0000000000000c000000000000000100000000000000000000fcffffffff00000000"
-    );
 }
 
 #[test]
-fn legacy_sim_config_save_field_is_accepted_and_not_reserialized() {
-    let engine = engine_compatibility_fixture();
+fn engine_nested_owner_fields_round_trip() {
+    let engine = engine_snapshot_fixture();
     let expected_hash = crate::replay::state_hash(&engine);
-    let mut json = serde_json::to_value(&engine).expect("serialize engine");
+    let json = serde_json::to_value(&engine).expect("serialize engine");
     let object = json
-        .as_object_mut()
+        .as_object()
         .expect("EngineInner snapshot must be an object");
-    assert!(!object.contains_key("sim_config"));
-
-    let mut legacy_config = SimConfig::default();
-    legacy_config.difficulty = crate::player_profile::DifficultyLevel::Hard;
-    legacy_config.highlander2 = true;
-    object.insert(
-        "sim_config".into(),
-        serde_json::to_value(legacy_config).expect("serialize legacy SimConfig"),
+    assert_eq!(
+        json["mission_domain"]["state"]["map_name"],
+        "compatibility-map"
     );
+    assert_eq!(json["control"]["frame_counter"], 0x1122_3344u32);
+    assert_eq!(json["ai"]["standard_view_polygon_radius"], 321);
+    assert_eq!(json["script_domains"]["mission_ui"]["force_check"], true);
+    assert!(!object.contains_key("mission"));
+    assert!(!object.contains_key("frame_counter"));
+    assert!(!object.contains_key("force_check"));
 
-    let restored: EngineInner = serde_json::from_value(json).expect("load legacy engine save");
+    let restored: EngineInner = serde_json::from_value(json).expect("restore current engine");
     assert_eq!(crate::replay::state_hash(&restored), expected_hash);
-    let current = serde_json::to_value(restored).expect("reserialize current engine save");
-    assert!(
-        !current
-            .as_object()
-            .expect("EngineInner snapshot must be an object")
-            .contains_key("sim_config")
-    );
 }
 
 #[test]
 fn engine_state_hash_is_deterministic_within_the_current_build() {
-    let engine = engine_compatibility_fixture();
+    let engine = engine_snapshot_fixture();
     let clone = engine.clone();
     assert_eq!(
         crate::replay::state_hash(&engine),
@@ -200,7 +140,11 @@ fn simulation_gate_aggregate_roundtrips_without_hash_drift() {
     let object = json
         .as_object()
         .expect("EngineInner should serialize as a map");
-    let gates = object
+    let control = object
+        .get("control")
+        .and_then(serde_json::Value::as_object)
+        .expect("simulation control should serialize as a nested owner");
+    let gates = control
         .get("simulation_gates")
         .and_then(serde_json::Value::as_object)
         .expect("simulation gates should serialize as a nested aggregate");
@@ -216,8 +160,8 @@ fn simulation_gate_aggregate_roundtrips_without_hash_drift() {
         gates.get("fade_freeze_frames_remaining"),
         Some(&serde_json::Value::from(0))
     );
-    assert!(!object.contains_key("lock_engine"));
-    assert!(!object.contains_key("freeze_all"));
+    assert!(!control.contains_key("lock_engine"));
+    assert!(!control.contains_key("freeze_all"));
 
     let restored: EngineInner = serde_json::from_value(json).expect("deserialize engine");
     assert_eq!(crate::replay::state_hash(&restored), expected_hash);

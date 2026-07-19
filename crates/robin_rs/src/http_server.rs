@@ -678,7 +678,7 @@ pub fn drain_pre_engine() {
     }
 }
 
-/// Parse a `rhrec-…` / legacy JSONL replay payload and stash it in
+/// Parse a `rhrec-…` / JSONL replay payload and stash it in
 /// the pending slot.  Shared between the engine-dispatch path and
 /// the wait-mode pre-engine drain.
 fn decode_load_replay(data: &str, paused: bool) -> Reply {

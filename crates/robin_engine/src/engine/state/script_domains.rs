@@ -30,8 +30,6 @@ pub(crate) struct InteractableState {
 #[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct MissionUiState {
     pub(crate) outline_display: bool,
-    /// Serialized through the historical top-level Engine `force_check` key.
-    #[serde(skip)]
     pub(crate) force_check: bool,
     pub(crate) men_to_blazon_conversion_mode: bool,
     pub(crate) blinking_blazons: u32,
@@ -66,14 +64,6 @@ impl MissionUiState {
         (frame_counter < self.blink_expire_frame)
             .then_some(self.blinking_blazons)
             .unwrap_or(0)
-    }
-
-    pub(crate) fn is_default_for_legacy_merge(&self) -> bool {
-        !self.outline_display
-            && !self.force_check
-            && !self.men_to_blazon_conversion_mode
-            && self.blinking_blazons == 0
-            && self.blink_expire_frame == u32::MAX
     }
 }
 

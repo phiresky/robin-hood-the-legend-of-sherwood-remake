@@ -29,14 +29,6 @@ impl ScriptRuntime {
         }
     }
 
-    pub(crate) fn from_snapshot(globals: Vec<i32>, mission: Option<MissionScript>) -> Self {
-        Self {
-            globals,
-            mission,
-            native_attachments_ready: false,
-        }
-    }
-
     pub(crate) fn install_mission(&mut self, mission: MissionScript) {
         self.mission = Some(mission);
         self.native_attachments_ready = false;

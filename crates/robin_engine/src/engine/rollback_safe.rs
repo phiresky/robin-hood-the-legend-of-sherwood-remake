@@ -852,7 +852,6 @@ impl Engine {
         // Attachment preflight above covers every static lookup, so this phase
         // cannot partially fail. The candidate is still detached from `self`.
         inner.attach_preflighted_level_assets(assets);
-        inner.migrate_legacy_script_custom_values();
         inner.orders.sequence_manager.rebuild_indices();
         Ok(inner)
     }
