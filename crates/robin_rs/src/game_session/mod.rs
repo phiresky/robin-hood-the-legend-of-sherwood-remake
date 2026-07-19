@@ -24,7 +24,7 @@ mod tick;
 
 use bootstrap::{
     HeadlessBuildOutcome, HeadlessMissionBuilder, InteractiveBuildOutcome,
-    InteractiveMissionBuilder,
+    InteractiveMissionBuilder, MultiplayerSetupFailurePolicy,
 };
 use debriefing::{
     SettledDebriefingOutcome, final_debriefing_outcome_from_replay, final_debriefing_result,
@@ -160,7 +160,15 @@ fn choose_pending_replay(
     newly_queued: Option<crate::http_server::PendingReplay>,
     restart_fallback: &mut Option<crate::http_server::PendingReplay>,
 ) -> Option<crate::http_server::PendingReplay> {
-    newly_queued.or_else(|| restart_fallback.take())
+    if newly_queued.is_some() {
+        // A newly queued replay supersedes the whole prior replay lifecycle,
+        // including its restart copy. Do not leave the old recording armed
+        // for a later loop iteration after the new replay exits.
+        *restart_fallback = None;
+        newly_queued
+    } else {
+        restart_fallback.take()
+    }
 }
 
 fn center_on_reselected_portrait_pc(
@@ -541,6 +549,7 @@ pub(crate) async fn run_session(
             mission_args,
             authoritative_rng_seed,
             authoritative_sim_config,
+            MultiplayerSetupFailurePolicy::ReturnToMenu,
         )
         .await;
         campaign = mission_outcome.campaign;
@@ -752,6 +761,7 @@ pub(crate) async fn run_mission(
             args,
             rng_seed,
             sim_config,
+            MultiplayerSetupFailurePolicy::Fatal,
         )
         .await;
         if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
@@ -790,6 +800,7 @@ async fn run_mission_with_seed(
     args: &crate::main_entry::CliArgs,
     rng_seed: u64,
     sim_config: engine_api::SimConfig,
+    multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
 ) -> MissionOutcome {
     let campaign = establish_mission_restart_boundary(campaign, rng_seed, sim_config);
     let mut mission = match InteractiveMissionBuilder::build(
@@ -802,6 +813,7 @@ async fn run_mission_with_seed(
         args,
         rng_seed,
         sim_config,
+        multiplayer_setup_failure_policy,
     )
     .await
     {
@@ -1005,7 +1017,36 @@ mod required_state_tests {
 
         assert_eq!(selected.data.header.rng_seed, 0x2020);
         assert!(selected.paused);
-        assert!(restart.is_some(), "unused restart remains the fallback");
+        assert!(restart.is_none(), "new replay must discard the old restart");
+    }
+
+    #[test]
+    fn completed_new_replay_cannot_resurrect_the_old_restart() {
+        for terminal_code in [GameCode::LevelSucceeded, GameCode::Quit] {
+            let (_, queued_data) = replay_fixture(Some(0));
+            let (_, mut restart_data) = replay_fixture(Some(0));
+            restart_data.header.rng_seed = 0x3030;
+            let mut restart = Some(crate::http_server::PendingReplay {
+                data: restart_data,
+                paused: false,
+            });
+
+            let selected = choose_pending_replay(
+                Some(crate::http_server::PendingReplay {
+                    data: queued_data,
+                    paused: true,
+                }),
+                &mut restart,
+            );
+            assert!(selected.is_some());
+
+            // The selected replay has now completed or exited. Entering the
+            // selection loop again must not reveal the superseded replay.
+            assert!(
+                choose_pending_replay(None, &mut restart).is_none(),
+                "terminal outcome {terminal_code:?} resurrected the old replay"
+            );
+        }
     }
 
     #[test]

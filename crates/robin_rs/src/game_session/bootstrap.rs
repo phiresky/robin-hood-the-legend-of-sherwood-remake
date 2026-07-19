@@ -453,6 +453,27 @@ enum InteractiveLoadStart {
     Finished(GameCode),
 }
 
+/// Whether an interactive owner treats multiplayer construction failure as a
+/// fatal launch error or as an explicit return to its already-running menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MultiplayerSetupFailurePolicy {
+    Fatal,
+    ReturnToMenu,
+}
+
+impl MultiplayerSetupFailurePolicy {
+    fn resolve(self, setup: Result<(), String>) -> Result<Option<GameCode>, String> {
+        match (self, setup) {
+            (_, Ok(())) => Ok(None),
+            (Self::Fatal, Err(error)) => Err(error),
+            (Self::ReturnToMenu, Err(error)) => {
+                tracing::error!("{error}; returning to main menu");
+                Ok(Some(GameCode::Quit))
+            }
+        }
+    }
+}
+
 impl InteractiveLoadStage {
     async fn begin(
         window: &mut GameWindow,
@@ -463,6 +484,7 @@ impl InteractiveLoadStage {
         args: &crate::main_entry::CliArgs,
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
+        multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
     ) -> Result<InteractiveLoadStart, String> {
         let mission_id = campaign.missions[mission_idx]
             .profile(profiles)
@@ -481,16 +503,15 @@ impl InteractiveLoadStage {
             window.height as f32,
         );
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        if let Err(error) =
-            setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await
-        {
-            tracing::error!("{error}; returning to main menu");
+        if let Some(code) = multiplayer_setup_failure_policy.resolve(
+            setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await,
+        )? {
             loading.status("Multiplayer connection failed", 1.0);
             if let Some(renderer) = loading.renderer.as_mut() {
                 renderer.refresh();
                 crate::window::sleep_ms(1200).await;
             }
-            return Ok(InteractiveLoadStart::Finished(GameCode::Quit));
+            return Ok(InteractiveLoadStart::Finished(code));
         }
 
         let mut game = Game::new(location);
@@ -685,11 +706,6 @@ struct HeadlessLoadStage {
     resources: HeadlessEngineResources,
 }
 
-enum HeadlessLoadStart {
-    Ready(HeadlessLoadStage),
-    Finished(GameCode),
-}
-
 impl HeadlessLoadStage {
     async fn begin(
         location: MissionLocation,
@@ -697,23 +713,24 @@ impl HeadlessLoadStage {
         mission_id: &str,
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
-    ) -> Result<HeadlessLoadStart, String> {
+    ) -> Result<HeadlessLoadStage, String> {
         let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        if let Err(error) =
-            setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await
-        {
-            tracing::error!("{error}; aborting headless mission");
-            return Ok(HeadlessLoadStart::Finished(GameCode::Quit));
-        }
+        let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
+            setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await,
+        )?;
+        debug_assert!(
+            setup_exit.is_none(),
+            "fatal headless multiplayer setup cannot return a menu outcome"
+        );
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
         let resources = HeadlessEngineResources::load(&host);
-        Ok(HeadlessLoadStart::Ready(Self {
+        Ok(Self {
             host,
             game,
             resources,
-        }))
+        })
     }
 
     fn load_level(
@@ -823,15 +840,7 @@ impl HeadlessMissionBuilder {
                         Err(error),
                     ));
                 }
-                Ok(HeadlessLoadStart::Ready(stage)) => stage,
-                Ok(HeadlessLoadStart::Finished(code)) => {
-                    return HeadlessBuildOutcome::Finished(MissionOutcome::new(
-                        campaign,
-                        rng_seed,
-                        sim_config,
-                        Ok(code),
-                    ));
-                }
+                Ok(stage) => stage,
             };
         let mut bootstrap = match loading.load_level(
             campaign,
@@ -885,6 +894,7 @@ impl InteractiveMissionBuilder {
         args: &crate::main_entry::CliArgs,
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
+        multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
     ) -> InteractiveBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
@@ -911,6 +921,7 @@ impl InteractiveMissionBuilder {
             args,
             rng_seed,
             sim_config,
+            multiplayer_setup_failure_policy,
         )
         .await
         {
@@ -995,8 +1006,10 @@ impl InteractiveMissionBuilder {
 mod tests {
     use super::{
         MissionBootstrapLifecycle, MissionBootstrapPhase, MissionFrontendKind, MissionSpec,
+        MultiplayerSetupFailurePolicy,
     };
     use robin_engine::campaign::{Campaign, CampaignValue};
+    use robin_engine::game_operation::GameCode;
     use robin_engine::profiles::MissionLocation;
     use std::cell::Cell;
     use std::future::Future;
@@ -1048,6 +1061,28 @@ mod tests {
 
         assert_eq!((spec.screen_width, spec.screen_height), (1024.0, 768.0));
         assert_eq!(spec.frontend, MissionFrontendKind::Headless);
+    }
+
+    #[test]
+    fn fatal_setup_policy_preserves_direct_and_headless_errors() {
+        for error in [
+            "multiplayer Welcome mission mismatch",
+            "multiplayer cannot be combined with replay playback",
+        ] {
+            let actual = MultiplayerSetupFailurePolicy::Fatal
+                .resolve(Err(error.to_string()))
+                .unwrap_err();
+            assert_eq!(actual, error);
+        }
+    }
+
+    #[test]
+    fn menu_owned_setup_policy_returns_to_existing_menu() {
+        let actual = MultiplayerSetupFailurePolicy::ReturnToMenu
+            .resolve(Err("multiplayer Welcome mission mismatch".to_string()))
+            .unwrap();
+
+        assert_eq!(actual, Some(GameCode::Quit));
     }
 
     #[test]
