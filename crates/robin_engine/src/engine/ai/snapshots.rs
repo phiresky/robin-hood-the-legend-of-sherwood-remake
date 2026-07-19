@@ -78,11 +78,6 @@ pub(super) struct PcSnapshot {
     /// Used by the 3D sphere/cone detection check —
     /// this is the PC-as-viewer position.
     pub(super) eye_z: f32,
-    /// Detection-point Z coordinate.  Used as the *target* side of
-    /// a `VisibilityQuery` when an NPC is checking visibility of this
-    /// PC.  Differs from `eye_z` in lying/carried postures
-    /// (+2 vs +5; +25 vs default).
-    pub(super) detection_z: f32,
     /// Exact ground Z used to reconstruct Original world-horizontal Y from
     /// the projected map point during cross-elevation visibility checks.
     pub(super) ground_z: f32,
@@ -513,8 +508,6 @@ impl EngineInner {
             .to_geo()
             .into();
             let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
-            let detection_z =
-                pc_ground_z + crate::stealth::detection_z_for_posture(pc.element.posture, false);
             // Refresh produced-noise volume once per PC per frame.
             // We pass the previous frame's stored volume so the
             // shadow-stage carry-over branches work correctly.
@@ -572,7 +565,6 @@ impl EngineInner {
                 is_vip: character.vip,
                 is_robin: pc.pc.robin,
                 eye_z,
-                detection_z,
                 ground_z: pc_ground_z,
                 melee_target: pc.pc.melee_target,
                 principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
