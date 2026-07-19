@@ -986,6 +986,7 @@ mod tests {
                 .expect("fixture mission script")
                 .script_effects;
             effects.emit_sound(crate::natives::SoundCommand::SuspendAll);
+            effects.emit_engine(crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 });
             effects.emit_barrier(crate::natives::DeferredCommand::FreezeAll { freeze: true });
         }
 
@@ -1199,6 +1200,11 @@ mod tests {
                         crate::natives::SoundCommand::SuspendAll
                     ),
                     crate::natives::ScriptEffect::Simulation(
+                        crate::natives::SimulationEffect::Engine(
+                            crate::natives::EngineCommand::ChooseVictoryDefeatText { id: 17 }
+                        )
+                    ),
+                    crate::natives::ScriptEffect::Simulation(
                         crate::natives::SimulationEffect::Deferred(
                             crate::natives::DeferredCommand::FreezeAll { freeze: true }
                         )
@@ -1231,6 +1237,15 @@ mod tests {
             .background_transform
             .zoom_to_up = true;
         source.inner.feedback.cutscene_camera.zoom_init_done = true;
+        let queued_engine_commands = source
+            .inner
+            .scripts
+            .mission
+            .as_ref()
+            .expect("fixture script")
+            .script_effects
+            .engine_commands()
+            .len();
         let snapshot = decoded_engine(&source);
         let mut live = Engine {
             inner: EngineInner::new(),
@@ -1254,7 +1269,7 @@ mod tests {
                     .script_effects
                     .engine_commands()
                     .len(),
-                1,
+                queued_engine_commands,
                 "save-only HUD repair must not be queued until engine fixups finish"
             );
         })
@@ -1271,7 +1286,7 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
         assert_eq!(
             script.script_effects.engine_commands().len(),
-            2,
+            queued_engine_commands + 1,
             "saved queue must survive and save-load must append one HUD repair"
         );
         let messages = live.inner.orders.messenger.drain();

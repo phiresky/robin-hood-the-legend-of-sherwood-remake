@@ -8767,13 +8767,26 @@ impl EngineInner {
                     (scroll, reader)
                 };
                 if let (Some(scroll), Some(reader)) = (scroll, reader) {
-                    self.scroll_is_taken_in_script_driver(assets, scroll, reader, active_scripts)?;
+                    let result = self.scroll_is_taken_in_script_driver(
+                        assets,
+                        scroll,
+                        reader,
+                        active_scripts,
+                    );
+                    // OpenScroll itself dispatched successfully. Match
+                    // SendMessage: terminate this ancestor before propagating
+                    // a failure from work launched by its nested IsTaken
+                    // callback, so only the actual child becomes Impossible.
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(sequence_id, element_index);
+                    result?;
                 } else {
                     tracing::warn!(?scroll, ?reader, "OpenScroll missing properties");
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(sequence_id, element_index);
                 }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(sequence_id, element_index);
             }
             other => {
                 return Err(format!(
