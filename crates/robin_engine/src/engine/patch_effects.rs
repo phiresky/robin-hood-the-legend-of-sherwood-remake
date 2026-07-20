@@ -568,10 +568,6 @@ impl EngineInner {
         // animation before emitting SwapBackground. The decal is an
         // explicit snapshot of the transition row, not the entity's current
         // live frame, so inactive state must not discard it.
-        if elem.position().z != 0.0 {
-            return None;
-        }
-
         let sprite = &elem.sprite;
         let Some(row) = sprite.row_for_action(crate::order::OrderType::PATCH_TRANSITION) else {
             tracing::warn!(
@@ -603,7 +599,7 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset};
+    use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset, WorldPoint3D};
     use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
     use crate::order::OrderType;
     use crate::sprite::Sprite;
@@ -644,6 +640,49 @@ mod tests {
         let decal = engine
             .snapshot_patch_transition_decal(entity_id)
             .expect("inactive patch FX has an authored transition-frame decal");
+        assert_eq!(decal.bank_id, 22);
+        assert_eq!(decal.dst_x, 98);
+        assert_eq!(decal.dst_y, 198);
+    }
+
+    #[test]
+    fn elevated_patch_fx_snapshots_at_projected_position() {
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::PATCH_TRANSITION as usize] = 0;
+        let script = SpriteScript {
+            frame_ids: vec![11, 22],
+            offsets: vec![
+                SpriteFrameOffset::new(0.0, 0.0),
+                SpriteFrameOffset::new(3.0, 4.0),
+            ],
+            ..Default::default()
+        };
+        let mut sprite = Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+        sprite.center = SpriteAnchor::new(5.0, 6.0);
+        // The original RHElementFX::BlitToMap uses GetPositionSprite for
+        // normal patch blits regardless of elevation. World (100, 220, 20)
+        // projects to the same map anchor (100, 200) as the ground case.
+        sprite
+            .position_iface
+            .set_position(WorldPoint3D::new(100.0, 220.0, 20.0));
+
+        let mut engine = EngineInner::new();
+        let entity_id = engine.add_entity(Entity::Fx(ElementFx {
+            element: ElementData {
+                kind: ElementKind::Fx,
+                active: true,
+                sprite,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+        }));
+
+        let decal = engine
+            .snapshot_patch_transition_decal(entity_id)
+            .expect("elevated patch FX has an authored transition-frame decal");
         assert_eq!(decal.bank_id, 22);
         assert_eq!(decal.dst_x, 98);
         assert_eq!(decal.dst_y, 198);
