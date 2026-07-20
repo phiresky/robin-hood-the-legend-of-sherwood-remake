@@ -196,6 +196,19 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
+            // Original `RHSequenceElement::SetState` resumes directly after
+            // `SendCondolationCard`: `Ready()` can advance the sequence and
+            // `RegisterSequenceElementToGo` immediately calls
+            // `ExecutedImmediately()` for Timer/LockUser/etc.  Keep that work
+            // inside this exact SetState stack frame, before another
+            // condolence card or NPC Hourglass slot can run.
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "condolation for owner {} failed to drain its synchronous sequence successor: {error:?}",
+                        owner.index()
+                    )
+                });
 
             for nested in self
                 .orders

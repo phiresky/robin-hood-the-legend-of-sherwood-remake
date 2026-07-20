@@ -256,3 +256,56 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
             .is_empty()
     );
 }
+
+#[test]
+fn condolation_ready_executes_immediate_timer_successor_inline() {
+    use crate::element::Command;
+    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    // The mission regression had three actor elements at the current command
+    // level and an ownerless Timer at index 3.  The last actor condolence
+    // resumes Ready(), which must execute that Timer before SetState returns.
+    let mut sequence = Sequence::new();
+    for command in [Command::LookLeft, Command::LookRight, Command::LookLeft] {
+        sequence.append_element(SequenceElement::new(1, command, Some(owner)));
+    }
+    let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(12));
+    sequence.append_element(timer);
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let initial = engine.orders.sequence_manager.hourglass();
+    assert_eq!(initial.len(), 3);
+
+    // Suppress the AI EventDone callbacks just as Halt does; the regression is
+    // the continuation of SetState after SendCondolationCard returns.
+    engine.orders.sequence_manager.set_halt_pending(true);
+    for element_index in 0..3 {
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, element_index);
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(sequence_id, element_index);
+    }
+    engine.orders.sequence_manager.set_halt_pending(false);
+
+    engine.dispatch_condolations(sim, &LevelAssets::new());
+
+    assert_eq!(engine.orders.timer_elements.len(), 1);
+    assert_eq!(engine.orders.timer_elements[0].remaining, 12);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions()
+            .is_empty(),
+        "Ready's immediate successor must not escape the condolence boundary"
+    );
+}
