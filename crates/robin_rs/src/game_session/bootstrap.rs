@@ -12,9 +12,9 @@ use super::runtime::{
     FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
 };
 use super::setup::{
-    HeadlessEngineResources, LoadedInteractiveResources, LoadedMissionCore, MissionLoadError,
-    MissionProcessResources, load_level_and_sprite_bank, pre_decode_maps_and_resources,
-    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
+    HeadlessEngineResources, LOADING_AUDIO_PROGRESS, LoadedInteractiveResources, LoadedMissionCore,
+    MissionLoadError, MissionProcessResources, load_level_and_sprite_bank,
+    pre_decode_maps_and_resources, setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{MissionOutcome, install_pending_lua_session, setup_multiplayer_session};
 use crate::game::Game;
@@ -590,7 +590,7 @@ impl LoadedInteractiveStage {
         self.loading
             .as_mut()
             .expect("interactive loading screen must exist until frontend assembly")
-            .status("Loading mission audio...", 0.75);
+            .status("Loading mission audio...", LOADING_AUDIO_PROGRESS);
         self.bootstrap.prepare_audio(
             self.process
                 .as_mut()

@@ -847,4 +847,30 @@ mod tests {
                 .unwrap();
         assert_eq!(path, "/data/objects/chest.rhs");
     }
+
+    #[test]
+    fn cached_object_master_satisfies_later_animation_lookup() {
+        let mut scriptor = SpriteScriptor::new();
+        scriptor.insert(
+            "ACCESSORIES_Ale/ACCESSOIRES Ale",
+            SpriteInfo {
+                scripts: std::sync::Arc::new(Vec::new()),
+                conversion: std::sync::Arc::new(vec![UNMAPPED; NONANIMATION_END]),
+                size: SpriteSize::new(12.0, 8.0),
+                center: SpriteAnchor::new(2.0, 3.0),
+            },
+        );
+
+        let info = scriptor
+            .load(
+                "Data/Animations/Day/does-not-exist.rhs",
+                "ACCESSOIRES Ale",
+                "ACCESSORIES_Ale/ACCESSOIRES Ale",
+                FrameKind::Animation,
+                |_| Err("cached lookup must not open or validate a file".to_owned()),
+            )
+            .expect("the original cache is shared across frame kinds");
+
+        assert_eq!(info.size, SpriteSize::new(12.0, 8.0));
+    }
 }

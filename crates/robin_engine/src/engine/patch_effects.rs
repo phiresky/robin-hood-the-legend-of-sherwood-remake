@@ -564,7 +564,11 @@ impl EngineInner {
         }
 
         let elem = entity.element_data();
-        if elem.position().z != 0.0 || !elem.active {
+        // The patch state machine deactivates FX without a transition
+        // animation before emitting SwapBackground. The decal is an
+        // explicit snapshot of the transition row, not the entity's current
+        // live frame, so inactive state must not discard it.
+        if elem.position().z != 0.0 {
             return None;
         }
 
@@ -593,5 +597,55 @@ impl EngineInner {
             dst_y,
             shadow_color: self.world.weather.night_color,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset};
+    use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
+    use crate::order::OrderType;
+    use crate::sprite::Sprite;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn inactive_patch_fx_still_snapshots_explicit_transition_frame() {
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::PATCH_TRANSITION as usize] = 0;
+        let script = SpriteScript {
+            frame_ids: vec![11, 22],
+            offsets: vec![
+                SpriteFrameOffset::new(0.0, 0.0),
+                SpriteFrameOffset::new(3.0, 4.0),
+            ],
+            ..Default::default()
+        };
+        let mut sprite = Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+        sprite.center = SpriteAnchor::new(5.0, 6.0);
+        sprite
+            .position_iface
+            .set_map_position(MapPoint::new(100.0, 200.0));
+
+        let mut engine = EngineInner::new();
+        let entity_id = engine.add_entity(Entity::Fx(ElementFx {
+            element: ElementData {
+                kind: ElementKind::Fx,
+                active: false,
+                sprite,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+        }));
+
+        let decal = engine
+            .snapshot_patch_transition_decal(entity_id)
+            .expect("inactive patch FX has an authored transition-frame decal");
+        assert_eq!(decal.bank_id, 22);
+        assert_eq!(decal.dst_x, 98);
+        assert_eq!(decal.dst_y, 198);
     }
 }

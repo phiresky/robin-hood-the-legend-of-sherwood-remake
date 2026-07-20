@@ -306,11 +306,11 @@ pub struct PendingBgBlit {
 
 /// Exact sprite frame to keep as a persistent background decal.
 ///
-/// `Patch::SwapBackground(true)` temporarily forces the patch FX to
-/// the last transition frame, blits it to the map, then restores the
-/// previous sprite row/frame before final-animation effects run.  The
-/// hardware renderer cannot read that transient state later, so the
-/// engine snapshots the concrete frame id and destination here.
+/// The original `Patch::SwapBackground(true)` temporarily forces the patch
+/// FX to the last transition frame, blits it to the map, then restores its
+/// previous row/frame. The Rust engine computes that same transition-frame
+/// result without mutating the live sprite; the hardware renderer consumes
+/// the concrete frame id and destination later.
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]

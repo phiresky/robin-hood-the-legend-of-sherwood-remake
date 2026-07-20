@@ -1535,6 +1535,12 @@ impl EngineInner {
         self.spawn_proto_entities_stage(assets, &loaded);
         progress(1.0);
 
+        // The original engine creates object masters before loading mission
+        // entities. Its SpriteScriptor cache is keyed by filename/profile,
+        // so targets authored with an accessory filename reuse that global
+        // master even though target loading requests FrameKind::Animation.
+        Self::preload_accessory_sprite_prototypes(assets);
+
         self.spawn_civilians_and_rescue_pcs_stage(assets, &loaded, config)?;
         progress(1.0);
 

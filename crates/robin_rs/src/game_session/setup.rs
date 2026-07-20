@@ -42,6 +42,16 @@ use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::titbit::SpriteRow;
 
+// Tail-phase loading targets share one monotonic schedule. Keeping these in
+// one place prevents a slow earlier phase (notably map decompression) from
+// advancing beyond a later phase's ceiling and making the loading bar stall.
+pub(super) const LOADING_MAP_DECODE_PROGRESS: f32 = 0.85;
+pub(super) const LOADING_SPRITE_VARIANTS_PROGRESS: f32 = 0.88;
+pub(super) const LOADING_AUDIO_PROGRESS: f32 = 0.91;
+pub(super) const LOADING_DESCRIPTORS_PROGRESS: f32 = 0.95;
+pub(super) const LOADING_HUD_FONTS_PROGRESS: f32 = 0.98;
+pub(super) const LOADING_FINAL_PROGRESS: f32 = 1.0;
+
 #[derive(Debug, serde::Deserialize)]
 struct HackableRhsManifest {
     profiles: Vec<HackableRhsProfile>,
@@ -686,7 +696,7 @@ pub(super) fn pre_decode_maps_and_resources(
     // pool, ground-mark sprite data, and titbit row counts.
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading level descriptors...", 0.76);
+        ls.set_status("Loading level descriptors...", LOADING_DESCRIPTORS_PROGRESS);
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
@@ -721,7 +731,7 @@ pub(super) fn pre_decode_maps_and_resources(
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading HUD fonts...", 0.77);
+        ls.set_status("Loading HUD fonts...", LOADING_HUD_FONTS_PROGRESS);
     }
     let hud_fonts = HudFonts::load();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -735,7 +745,7 @@ pub(super) fn pre_decode_maps_and_resources(
     let _ = (engine, game, host, event_pump);
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Finalizing...", 1.0);
+        ls.set_status("Finalizing...", LOADING_FINAL_PROGRESS);
     }
     LoadedInteractiveResources {
         level_descriptors,
@@ -1379,7 +1389,7 @@ pub(super) fn load_level_and_sprite_bank(
             }
             assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
                 if let Some(ls) = loading_screen.as_mut() {
-                    ls.set_status(text, 0.85);
+                    ls.set_status(text, LOADING_MAP_DECODE_PROGRESS);
                 }
             }
         };
@@ -1488,7 +1498,10 @@ pub(super) fn load_level_and_sprite_bank(
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Generating sprite variants...", 0.74);
+        ls.set_status(
+            "Generating sprite variants...",
+            LOADING_SPRITE_VARIANTS_PROGRESS,
+        );
     }
 
     // Generate night/fog variant dictionaries based on ambiance.
@@ -1680,6 +1693,21 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    #[test]
+    fn loading_tail_phase_targets_are_monotonic() {
+        let targets = [
+            LOADING_MAP_DECODE_PROGRESS,
+            LOADING_SPRITE_VARIANTS_PROGRESS,
+            LOADING_AUDIO_PROGRESS,
+            LOADING_DESCRIPTORS_PROGRESS,
+            LOADING_HUD_FONTS_PROGRESS,
+            LOADING_FINAL_PROGRESS,
+        ];
+
+        assert!(targets.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(targets.last().copied(), Some(1.0));
+    }
 
     fn replay_data(seed: u64) -> ReplayData {
         ReplayFile {

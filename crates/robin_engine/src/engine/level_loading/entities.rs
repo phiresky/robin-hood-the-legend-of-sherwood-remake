@@ -714,72 +714,38 @@ impl EngineInner {
         // Each target stores its own RHS file name and profile in the
         // mission stream, loaded as an animation (from
         // `Data/Animations/<ambiance>/`), then `ForceAnimation(action,
-        // direction)` is applied.
+        // direction)` is applied. Accessory targets reuse the object-master
+        // profile preloaded before mission entities, matching the original
+        // filename/profile-keyed SpriteScriptor cache.
         let anim_base_dir = "Data/Animations";
         let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
         for raw in &loaded.mission.targets {
             let mut sprite = crate::sprite::Sprite::default();
 
-            // Animations resolve through the ambiance-specific subdirectory,
-            // so we go via `resolve_rhs_path` + `sprite_scriptor.load` rather
-            // than the simpler `load_frame_info` helper (which assumes a
-            // fixed `{base_dir}/{file}.rhs` layout).
-            match crate::sprite_script::SpriteScriptor::resolve_rhs_path(
+            match sprite.load_frame_info(
+                assets.sprite_scriptor_mut(),
                 crate::sprite_script::FrameKind::Animation,
                 anim_base_dir,
                 &raw.filename,
+                &raw.profile_name,
+                bank_signature,
                 sprite_ambiance,
             ) {
-                Ok(path) => {
-                    let cache_key = format!("{}/{}", raw.filename, raw.profile_name);
-                    match assets.sprite_scriptor_mut().load(&path, &raw.profile_name, &cache_key, crate::sprite_script::FrameKind::Animation, |file| {
-                        let mut sig = 0u32;
-                        file.serialize_u32(&mut sig)
-                            .map_err(|e| format!("read signature: {e}"))?;
-                        if sig != bank_signature {
-                            return Err(format!(
-                                "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                            ));
-                        }
-                        Ok(())
-                    }) {
-                        Ok(info) => {
-                            sprite.scripts = info.scripts.clone();
-                            sprite.conversion = info.conversion.clone();
-                            sprite.center = info.center;
-                            sprite.frame_profile_name = raw.filename.clone();
-                            sprite.profile_cache_key = cache_key;
-                            let w = info.size.x as u16;
-                            let h = info.size.y as u16;
-                            if w > sprite.current_width {
-                                sprite.current_width = w;
-                            }
-                            if h > sprite.current_height {
-                                sprite.current_height = h;
-                            }
-
-                            // Apply `ForceAnimation(action, direction)`.
-                            match crate::order::OrderType::try_from(raw.action) {
-                                Ok(anim) => sprite.force_animation(anim, raw.direction as u16),
-                                Err(_) => tracing::error!(
-                                    "Target action {} is not a valid OrderType — animation not forced",
-                                    raw.action,
-                                ),
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load target sprite scripts for '{}' profile '{}': {e}",
-                                raw.filename,
-                                raw.profile_name,
-                            );
-                        }
+                Ok(()) => {
+                    // Apply `ForceAnimation(action, direction)`.
+                    match crate::order::OrderType::try_from(raw.action) {
+                        Ok(anim) => sprite.force_animation(anim, raw.direction as u16),
+                        Err(_) => tracing::error!(
+                            "Target action {} is not a valid OrderType — animation not forced",
+                            raw.action,
+                        ),
                     }
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to resolve target animation RHS path for '{}': {e}",
+                        "Failed to load target sprite scripts for '{}' profile '{}': {e}",
                         raw.filename,
+                        raw.profile_name,
                     );
                 }
             }
@@ -890,11 +856,6 @@ impl EngineInner {
     ) {
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
-        // Preload accessory sprite prototypes (arrow/stone/apple/net/
-        // wasp/purse/coin/ale/cape) — one master sprite per accessory
-        // type. We lazy-preload per mission since sprite banks differ
-        // across levels.
-        Self::preload_accessory_sprite_prototypes(assets);
         // Preload sprites for sim-tick spawn paths so they can hit the
         // scriptor cache through `&LevelAssets` — enforces the "engine
         // mutation only during perform_hourglass" invariant.
