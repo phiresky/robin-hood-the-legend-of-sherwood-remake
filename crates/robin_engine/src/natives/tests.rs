@@ -1066,6 +1066,53 @@ fn get_distance_invalid_handle() {
 }
 
 #[test]
+fn camera_commands_copy_static_and_vm_local_computed_points() {
+    let mut host = BoundScriptEffects::new();
+    host.state.computed_locations.push(ComputedScriptLocation {
+        position: (90.0, 123.0),
+        layer_sector: Some((2, 44)),
+    });
+    let bindings = AttachedScriptBindings {
+        script_location_count: 1,
+        script_point_count: 1,
+        location_positions: std::sync::Arc::new(vec![(12.0, 34.0)]),
+        ..Default::default()
+    };
+
+    let mut jump = NativeStack::default();
+    jump.push_i32(ScriptHandleCodec::location_handle_from_index(1));
+    assert_eq!(
+        call_bound_host_native(&mut host, &bindings, NativeFn::JumpCameraTo, &mut jump),
+        0
+    );
+
+    let mut scroll = NativeStack::default();
+    scroll.push_i32(ScriptHandleCodec::location_handle_from_index(0));
+    scroll.push_i32(0.75_f32.to_bits() as i32);
+    assert_eq!(
+        call_bound_host_native(
+            &mut host,
+            &bindings,
+            NativeFn::ScrollCameraSlowlyTo,
+            &mut scroll,
+        ),
+        0
+    );
+
+    assert!(matches!(
+        host.engine_commands().as_slice(),
+        [
+            EngineCommand::JumpCameraTo { x: 90.0, y: 123.0 },
+            EngineCommand::ScrollCameraTo {
+                x: 12.0,
+                y: 34.0,
+                speed: 0.75,
+            },
+        ]
+    ));
+}
+
+#[test]
 fn is_inside_building_specific() {
     let mut host = BoundScriptEffects::new();
     let actor = ScriptHandleCodec::actor_handle_from_index(4);

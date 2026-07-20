@@ -18,11 +18,15 @@
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum EngineCommand {
-    /// Smooth-scroll camera to a location entity's position.
+    /// Smooth-scroll camera to a location's position.
+    ///
+    /// The native resolves and copies the point synchronously, matching the
+    /// original game. Computed locations belong to the calling script VM and
+    /// cannot safely be resolved later through the mission-global VM.
     /// Speed 2.0 for normal, custom for SlowlyTo variant.
-    ScrollCameraTo { location_handle: i32, speed: f32 },
-    /// Instantly jump camera to a location entity's position.
-    JumpCameraTo { location_handle: i32 },
+    ScrollCameraTo { x: f32, y: f32, speed: f32 },
+    /// Instantly jump camera to a location's synchronously copied position.
+    JumpCameraTo { x: f32, y: f32 },
     /// Set desired zoom level (0.5, 1.0, or 2.0).
     SetZoomLevel { zoom: f32 },
     /// Start a dialog sequence.

@@ -11,10 +11,11 @@ impl NativeContext<'_, '_> {
             ScrollCameraTo => {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraTo") {
-                    self.emit_engine(EngineCommand::ScrollCameraTo {
-                        location_handle: loc,
-                        speed: 2.0,
-                    });
+                    if let Some((x, y)) = self.resolve_location_pos(loc) {
+                        self.emit_engine(EngineCommand::ScrollCameraTo { x, y, speed: 2.0 });
+                    } else {
+                        tracing::warn!("Script Error: ScrollCameraTo unresolved location {loc}");
+                    }
                 }
                 0
             }
@@ -22,19 +23,24 @@ impl NativeContext<'_, '_> {
                 let speed = f32::from_bits(stack.pop_i32() as u32);
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraSlowlyTo") {
-                    self.emit_engine(EngineCommand::ScrollCameraTo {
-                        location_handle: loc,
-                        speed,
-                    });
+                    if let Some((x, y)) = self.resolve_location_pos(loc) {
+                        self.emit_engine(EngineCommand::ScrollCameraTo { x, y, speed });
+                    } else {
+                        tracing::warn!(
+                            "Script Error: ScrollCameraSlowlyTo unresolved location {loc}"
+                        );
+                    }
                 }
                 0
             }
             JumpCameraTo => {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "JumpCameraTo") {
-                    self.emit_engine(EngineCommand::JumpCameraTo {
-                        location_handle: loc,
-                    });
+                    if let Some((x, y)) = self.resolve_location_pos(loc) {
+                        self.emit_engine(EngineCommand::JumpCameraTo { x, y });
+                    } else {
+                        tracing::warn!("Script Error: JumpCameraTo unresolved location {loc}");
+                    }
                 }
                 0
             }

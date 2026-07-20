@@ -3086,24 +3086,6 @@ impl EngineInner {
 
     // ─── Script command processing ──────────────────────────────
 
-    /// Resolve a script location handle to a map position.
-    /// Script locations are points and sectors from the SCRIPT chunk,
-    /// **not** entity handles. Handle 0 = null.
-    fn resolve_location_position(&self, handle: i32) -> Option<crate::coordinates::MapPoint> {
-        let idx = crate::natives::ScriptHandleCodec::location_index(handle)?;
-        let script = self.scripts.mission.as_ref()?;
-        let (x, y) = if idx < script.bindings.script_location_count {
-            *script.bindings.location_positions.get(idx)?
-        } else {
-            script
-                .state
-                .computed_locations
-                .get(idx - script.bindings.script_location_count)?
-                .position
-        };
-        Some(crate::coordinates::MapPoint::new(x, y))
-    }
-
     /// Process all deferred commands from script native calls.
     /// Called after each script tick (Hourglass / CheckVictoryCondition).
     pub(crate) fn apply_host_commands(
@@ -3116,36 +3098,23 @@ impl EngineInner {
 
         for cmd in commands {
             match cmd {
-                EngineCommand::ScrollCameraTo {
-                    location_handle,
-                    speed,
-                } => {
+                EngineCommand::ScrollCameraTo { x, y, speed } => {
                     // Store the raw script point in `camera_wanted` so
                     // resize/zoom can re-derive the slide target later,
                     // and the centered+clamped result in `camera_slide`.
-                    if let Some(pos) = self.resolve_location_position(location_handle) {
-                        self.feedback.cutscene_camera.camera_wanted = pos;
-                        self.feedback.cutscene_camera.camera_slide =
-                            self.check_location_is_valid_for_camera(pos);
-                        self.control.speed = speed;
-                    } else {
-                        tracing::warn!(
-                            "ScrollCameraTo: could not resolve location handle {location_handle}"
-                        );
-                    }
+                    let pos = crate::coordinates::MapPoint::new(x, y);
+                    self.feedback.cutscene_camera.camera_wanted = pos;
+                    self.feedback.cutscene_camera.camera_slide =
+                        self.check_location_is_valid_for_camera(pos);
+                    self.control.speed = speed;
                 }
-                EngineCommand::JumpCameraTo { location_handle } => {
+                EngineCommand::JumpCameraTo { x, y } => {
                     // Snap the view to the script point and invalidate
                     // background validity so the next frame redraws.
-                    if let Some(pos) = self.resolve_location_position(location_handle) {
-                        self.feedback.cutscene_camera.view_position =
-                            self.check_location_is_valid_for_camera(pos);
-                        self.feedback.pending_side_effects.invalidate_background = true;
-                    } else {
-                        tracing::warn!(
-                            "JumpCameraTo: could not resolve location handle {location_handle}"
-                        );
-                    }
+                    let pos = crate::coordinates::MapPoint::new(x, y);
+                    self.feedback.cutscene_camera.view_position =
+                        self.check_location_is_valid_for_camera(pos);
+                    self.feedback.pending_side_effects.invalidate_background = true;
                 }
                 EngineCommand::SetZoomLevel { zoom } => {
                     // `SetZoomLevel` only assigns the desired zoom; the
@@ -4009,37 +3978,6 @@ mod script_context_tests {
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
-    }
-
-    #[test]
-    fn camera_location_resolution_includes_computed_script_locations() {
-        let mut script = empty_mission_script();
-        script.attach_bindings(crate::natives::AttachedScriptBindings {
-            script_location_count: 2,
-            script_point_count: 2,
-            location_positions: std::sync::Arc::new(vec![(12.0, 34.0), (56.0, 78.0)]),
-            ..Default::default()
-        });
-        script
-            .state
-            .computed_locations
-            .push(crate::natives::ComputedScriptLocation {
-                position: (90.0, 123.0),
-                layer_sector: Some((2, 44)),
-            });
-        let mut engine = EngineInner::new();
-        engine.scripts.mission = Some(script);
-
-        let static_handle = crate::natives::ScriptHandleCodec::location_handle_from_index(1);
-        let computed_handle = crate::natives::ScriptHandleCodec::location_handle_from_index(2);
-        assert_eq!(
-            engine.resolve_location_position(static_handle),
-            Some(crate::coordinates::MapPoint::new(56.0, 78.0))
-        );
-        assert_eq!(
-            engine.resolve_location_position(computed_handle),
-            Some(crate::coordinates::MapPoint::new(90.0, 123.0))
-        );
     }
 
     #[test]
