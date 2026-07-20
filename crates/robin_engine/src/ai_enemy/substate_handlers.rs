@@ -2013,9 +2013,11 @@ impl EnemyAi {
                         self.set_state(AiState::Seeking, Substate::SeekingBodyAwakeningSleeperr);
                         self.base.stop_all();
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Soldier(
-                            crate::entity_id::SoldierId(body_handle),
-                        ));
+                        let antagonist = Some(ctx.entity_id(body_handle).unwrap_or_else(|| {
+                            panic!(
+                                "SeekingBody wake-up target {body_handle} has no typed live entity view"
+                            )
+                        }));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -2256,7 +2258,11 @@ impl EnemyAi {
                                     }
                                 });
                             // Merge with all three flags.
-                            self.base.consider_report_merged(&civ_report, 1 | 2 | 4);
+                            self.base.consider_report_merged(
+                                &civ_report,
+                                1 | 2 | 4,
+                                ctx.entity_views.as_ref(),
+                            );
 
                             // Alerting transition when the civilian's
                             // report strictly out-ranks ours and is
@@ -2713,9 +2719,11 @@ impl EnemyAi {
                         // re-react when detecting it later.
                         if let StimulusInfo::Human(body_handle) = stimulus.info {
                             self.base.outbox.actor.add_detectables.push((
-                                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(
-                                    body_handle,
-                                )),
+                                ctx.entity_id(body_handle).unwrap_or_else(|| {
+                                    panic!(
+                                        "CallYourTalk2 body {body_handle} has no typed live entity view"
+                                    )
+                                }),
                                 crate::element::DetectableType::Body,
                             ));
                         }
@@ -5175,9 +5183,14 @@ impl EnemyAi {
                             use crate::element::Command;
                             use crate::sequence::{Sequence, SequenceElement};
                             let owner = self.base.owner_entity_id;
-                            let antagonist = Some(crate::element::EntityId::Soldier(
-                                crate::entity_id::SoldierId(self.base.primary_target),
-                            ));
+                            let antagonist = Some(
+                                ctx.entity_id(self.base.primary_target).unwrap_or_else(|| {
+                                    panic!(
+                                        "sleeping-enemy target {} has no typed live entity view",
+                                        self.base.primary_target
+                                    )
+                                }),
+                            );
                             let mut seq = Sequence::new();
                             seq.append_element(SequenceElement::new_interaction(
                                 1,
@@ -5849,6 +5862,62 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pc_view(posture: crate::element::Posture) -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        crate::ai_entity_view::entity_view_from_entity(&entity, false, None, None)
+    }
+
+    #[test]
+    fn seeking_body_wake_up_preserves_pc_target_kind() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(1),
+        ));
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.base.detected_body = 17;
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(17, pc_view(crate::element::Posture::Tied));
+        let ctx = AiContext {
+            entity_views: std::sync::Arc::new(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim_context,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        let seq = ai
+            .base
+            .outbox
+            .actor
+            .launch_sequences
+            .first()
+            .expect("wake-up sequence");
+        assert!(matches!(
+            seq.elements[0].data,
+            crate::sequence::SequenceElementData::Interaction {
+                antagonist: Some(crate::element::EntityId::Pc(crate::entity_id::PcId(17)))
+            }
+        ));
+    }
 
     #[test]
     fn arrow_watching_ignores_event_done() {

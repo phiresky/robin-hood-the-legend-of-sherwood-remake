@@ -889,11 +889,11 @@ impl EnemyAi {
                     // identification. Queue it through the engine drain
                     // (`engine/ai.rs` process pending orders) since we
                     // can't touch other entities from here.
-                    self.base
-                        .outbox
-                        .actor
-                        .delete_beggar_for_all_npc
-                        .push(crate::element::EntityId::Pc(crate::entity_id::PcId(beggar)));
+                    self.base.outbox.actor.delete_beggar_for_all_npc.push(
+                        ctx.entity_id(beggar).unwrap_or_else(|| {
+                            panic!("EventSeesBeggar target {beggar} has no typed live entity view")
+                        }),
+                    );
                 }
             }
 
@@ -2721,6 +2721,40 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
         assert_eq!(ai.base.interesting_object, 0);
+    }
+
+    #[test]
+    fn event_sees_civilian_beggar_preserves_the_legacy_slots_entity_kind() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSeekpoint;
+
+        let mut beggar_view = object_view(ObjectType::None);
+        beggar_view.kind = EntityKind::Civilian;
+        beggar_view.is_beggar = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(17, beggar_view);
+        let ctx = AiContext {
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        ai.think_unexpected_event(
+            &sim_context,
+            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.outbox.actor.delete_beggar_for_all_npc,
+            vec![crate::element::EntityId::Civilian(
+                crate::entity_id::CivilianId(17)
+            )]
+        );
     }
 
     #[test]

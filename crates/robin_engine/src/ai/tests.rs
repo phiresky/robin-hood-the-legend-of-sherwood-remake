@@ -150,6 +150,37 @@ fn ai_controller_defaults() {
 }
 
 #[test]
+fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
+    let pc = crate::element::Entity::Pc(crate::element::ActorPc {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        pc: Default::default(),
+    });
+    let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+    views.insert(
+        17,
+        crate::ai_entity_view::entity_view_from_entity(&pc, false, None, None),
+    );
+    let mut report = ReconnaissanceReport::default();
+    report.add_seen_body(17);
+    let mut ai = AiController::new(1);
+
+    ai.consider_report_merged(&report, 0, &views);
+
+    assert_eq!(
+        ai.outbox.actor.delete_detectable_entity,
+        vec![(
+            crate::element::EntityId::Pc(crate::entity_id::PcId(17)),
+            crate::element::DetectableType::Body,
+        )]
+    );
+}
+
+#[test]
 fn goto_sword_sets_force_sword_movement_flag() {
     let order = AiController::make_move_order(
         &Position {

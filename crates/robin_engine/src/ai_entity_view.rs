@@ -298,6 +298,26 @@ pub enum EntityKind {
 }
 
 impl AiEntityView {
+    /// Reconstruct the typed entity ID for the raw legacy-table `handle`
+    /// used as this view's map key.
+    ///
+    /// AI stores C++ `RHElement*` values as their `marrayElements` slot.  A
+    /// slot alone does not imply PC, soldier, or civilian: use the kind that
+    /// was captured from the live entity when this view was built rather
+    /// than inventing a typed ID at an effect boundary.
+    pub fn entity_id(&self, handle: u32) -> Option<crate::element::EntityId> {
+        use crate::ai_entity_view::EntityKind;
+        use crate::entity_id::{BonusId, CivilianId, PcId, SoldierId};
+
+        match self.kind {
+            EntityKind::Pc => Some(crate::element::EntityId::Pc(PcId(handle))),
+            EntityKind::Soldier => Some(crate::element::EntityId::Soldier(SoldierId(handle))),
+            EntityKind::Civilian => Some(crate::element::EntityId::Civilian(CivilianId(handle))),
+            EntityKind::Bonus => Some(crate::element::EntityId::Bonus(BonusId(handle))),
+            EntityKind::Other => None,
+        }
+    }
+
     /// True if this view refers to a soldier NPC.
     pub fn is_soldier(&self) -> bool {
         self.kind == EntityKind::Soldier

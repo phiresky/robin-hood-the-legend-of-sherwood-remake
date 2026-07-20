@@ -8443,7 +8443,11 @@ impl EngineInner {
                         // skipped those side effects, leaving stale
                         // body detectables on the NPC after a peer
                         // report merge.
-                        enemy_ai.base.consider_report_merged(&report, flags);
+                        enemy_ai.base.consider_report_merged(
+                            &report,
+                            flags,
+                            scratch.ai_entity_views.as_ref(),
+                        );
                     }
                 }
 

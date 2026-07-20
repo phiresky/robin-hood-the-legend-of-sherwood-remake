@@ -1142,7 +1142,12 @@ impl AiController {
     ///
     /// The DeleteDetectable side effect fires for every newly-seen body
     /// even when `UPDATE_BODIES` is clear.
-    pub fn consider_report_merged(&mut self, other: &ReconnaissanceReport, flags: u16) {
+    pub fn consider_report_merged(
+        &mut self,
+        other: &ReconnaissanceReport,
+        flags: u16,
+        entity_views: &crate::ai_entity_view::AiEntityViewMap,
+    ) {
         use crate::element::{DetectableType, EntityId};
         const REPORT_UPDATE_BODIES: u16 = 1;
         const REPORT_UPDATE_CHARLY: u16 = 2;
@@ -1156,10 +1161,16 @@ impl AiController {
                 }
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
-                self.outbox.actor.delete_detectable_entity.push((
-                    EntityId::Soldier(crate::entity_id::SoldierId(body)),
-                    DetectableType::Body,
-                ));
+                let body_id = entity_views
+                    .get(&body)
+                    .and_then(|view| view.entity_id(body))
+                    .unwrap_or_else(|| {
+                        panic!("ConsiderReport body {body} has no typed live entity view")
+                    });
+                self.outbox
+                    .actor
+                    .delete_detectable_entity
+                    .push((body_id, DetectableType::Body));
             }
         }
 

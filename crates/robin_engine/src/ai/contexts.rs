@@ -180,6 +180,12 @@ impl AiContext {
         self.entity_views.get(&handle)
     }
 
+    /// Resolve a raw legacy human/object handle through the live entity-view
+    /// snapshot without guessing its typed [`crate::element::EntityId`] kind.
+    pub fn entity_id(&self, handle: u32) -> Option<crate::element::EntityId> {
+        self.entity_view(handle)?.entity_id(handle)
+    }
+
     /// Convenience wrapper around [`Self::entity_view`] that returns
     /// just the position.
     pub fn entity_position(&self, handle: u32) -> Option<Position> {
