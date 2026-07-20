@@ -1891,8 +1891,9 @@ impl EnemyAi {
             // Standard case — turn towards enemy with a 20-tick
             // LaunchTimer as the upper bound for the turn animation.
             // `process_turn_orders` handles the snap + anim booking and
-            // `tick_entity_animations` fires `EventDone` when the
-            // animation completes; whichever fires first wins.
+            // the live actor coordinator's `tick_actor_animation_for` fires
+            // `EventDone` when the animation completes; whichever fires first
+            // wins.
             self.set_state(AiState::Attacking, Substate::AttackingReactiontimeTurning);
             self.base.face_entity(enemy, ctx);
             self.base.launch_timer(20, ctx.frame);

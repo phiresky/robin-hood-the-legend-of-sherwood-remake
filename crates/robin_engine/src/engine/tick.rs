@@ -71,6 +71,51 @@ pub(super) fn capture_npc_hourglass_phases<T>(
     (result, phases)
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ActorAnimationBoundaryPhase {
+    WaitReady(EntityId),
+    GenericExecute(EntityId),
+    CompletionEffects(EntityId),
+    CombatInjuryThink(EntityId),
+    ActionChange(EntityId),
+}
+
+#[cfg(test)]
+thread_local! {
+    static ACTOR_ANIMATION_BOUNDARY_TRACE: std::cell::RefCell<Option<Vec<ActorAnimationBoundaryPhase>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(phase);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn capture_actor_animation_boundary<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<ActorAnimationBoundaryPhase>) {
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
+        assert!(
+            trace.borrow_mut().replace(Vec::new()).is_none(),
+            "actor animation boundary capture is not re-entrant"
+        );
+    });
+    let result = f();
+    let phases = ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("actor animation boundary capture must remain active")
+    });
+    (result, phases)
+}
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -1359,7 +1404,7 @@ impl EngineInner {
         // ── Process AI animation orders ─────────────────────────
         // Drain Pointing/RaisingShield/etc orders from NPC order queues
         // and start them as active_ai_anim. EventDone fires when the
-        // sprite animation completes (detected in tick_entity_animations).
+        // sprite animation completes (detected in tick_actor_animation_for).
         self.process_animation_orders();
 
         // TODO(original-parity): determine which queued NPC-order effects must
@@ -1757,13 +1802,6 @@ impl EngineInner {
         // so the sprite drawn this frame reflects the new position.
         self.tick_active_jumps(assets);
 
-        // Lazily reassert the "actor with no current order has a
-        // pending Wait" invariant before the idle animation driver
-        // reads `current_order_for_actor`, otherwise an actor that
-        // just lost its final element can keep displaying the
-        // previous movement/transition sprite row.
-        self.ensure_wait_elements_for_idle_actors();
-
         // ── PC `Execute` per-arm validity pre-tick gate ─────────
         // Run the init-phase validity guards for TAKING / EATING /
         // SEARCHING / HEALING / HELPING-CLIMB transitions /
@@ -1774,19 +1812,11 @@ impl EngineInner {
         // entity-iter borrow.
         self.pre_tick_pc_execute_validity(assets);
 
-        let (_ai_anim_done, combat_injury_terminated, anim_outcomes) =
-            self.tick_entity_animations(sim, assets);
-        // Process sequence-element / door-pass animation completions
-        // collected this tick (Turn, UnlockDoor, door-pass Transition).
-        self.process_anim_completion_outcomes(sim, anim_outcomes, assets);
-        // Dispatch EventAfterCombatInjury when a combat-hit /
-        // stunned / weak animation terminates on a soldier.
-        for entity_id in combat_injury_terminated {
-            self.dispatch_ai_stimulus(
-                entity_id,
-                crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
-            );
-        }
+        // Preserve the pre-PA-013 batching boundary for nonactors: patch/FX/
+        // object animation completes before any actor ActionChange callback,
+        // and a callback-spawned nonactor cannot advance until next tick.
+        self.tick_nonactor_entity_animations(sim, assets);
+        self.tick_actor_animation_action_change_slots(sim, assets);
         // RHElementActorHuman::Hourglass performs its staggered tiredness
         // recovery after the base actor/order work and before returning to
         // RHElementActorNPC::Hourglass.
@@ -1810,12 +1840,6 @@ impl EngineInner {
         // runs during refresh / execute).
         self.dispatch_frame_sounds();
 
-        // ── Per-actor script ActionChange dispatch ─────────────
-        // After all animations have been updated, check for changes
-        // and dispatch ActionChange(newAction, oldAction) to per-actor
-        // scripts via the `set_animation` callback.
-        self.dispatch_actor_action_changes(sim, assets);
-
         // ── Per-scroll script Hourglass dispatch ────────────────
         // Every active scroll with a bound script bumps a per-scroll
         // `script_hourglass_timeout` counter; on every 25th active
@@ -1830,6 +1854,140 @@ impl EngineInner {
         // mixed pre/post inputs required at an individual creation slot.
 
         positions_before_movement
+    }
+
+    /// Run the bounded base-actor Hourglass slice in live legacy creation
+    /// order: generic animation/Execute, synchronous combat-injury Think,
+    /// completion/priority effects, then `ActionChange`.
+    ///
+    /// The loop deliberately rereads the live slot-array length and resolves
+    /// each slot through `id_at_legacy_slot`, matching the original engine's
+    /// mutable element-array walk. Generic animation eligibility does not gate
+    /// `ActionChange`; inactive, frozen, moving, active-shot, and active-melee
+    /// actors still reach the callback boundary.
+    pub(super) fn tick_actor_animation_action_change_slots(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
+        let mut slot = 0;
+        while slot < self.world.entities.len() {
+            if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
+                let is_actor = self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "actor animation coordinator lost entity {entity_id:?} resolved from legacy slot {slot}"
+                        )
+                    })
+                    .actor_data()
+                    .is_some();
+                if is_actor {
+                    // Detach work that predates this actor slot. Lazy Wait
+                    // initialization and completion callbacks below may drain
+                    // only work they synchronously create; they must not steal
+                    // a global/later-owner continuation.
+                    let preexisting_sequence_work = self
+                        .orders
+                        .sequence_manager
+                        .take_pending_synchronous_actions();
+
+                    let actor_is_active = self
+                        .world
+                        .entities
+                        .get(entity_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "actor {entity_id:?} vanished before Wait initialization at legacy slot {slot}"
+                            )
+                        })
+                        .is_active();
+                    if actor_is_active {
+                        self.ensure_wait_element(entity_id);
+                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
+                                )
+                            });
+                    }
+                    #[cfg(test)]
+                    observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
+                        entity_id,
+                    ));
+
+                    #[cfg(test)]
+                    observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
+                        entity_id,
+                    ));
+                    let (combat_injury_terminated, outcomes) =
+                        self.tick_actor_animation_for(sim, assets, entity_id);
+                    for injured_id in combat_injury_terminated.iter().copied() {
+                        self.dispatch_combat_injury_think_for_actor_hourglass(
+                            sim, injured_id, assets,
+                        );
+                    }
+                    self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
+                            )
+                        });
+                    #[cfg(test)]
+                    for injured_id in combat_injury_terminated {
+                        observe_actor_animation_boundary(
+                            ActorAnimationBoundaryPhase::CombatInjuryThink(injured_id),
+                        );
+                    }
+
+                    // Original soldier Execute calls Think before returning
+                    // Terminated to the base Actor Hourglass. Only after that
+                    // synchronous Think finishes may DoNextOrder/completion
+                    // promote the actor's successor order.
+                    self.process_anim_completion_outcomes(sim, outcomes, assets);
+                    self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
+                            )
+                        });
+                    #[cfg(test)]
+                    observe_actor_animation_boundary(
+                        ActorAnimationBoundaryPhase::CompletionEffects(entity_id),
+                    );
+
+                    // Release every animation/completion borrow before the VM:
+                    // ActionChange can synchronously replace this or a later
+                    // actor's order and the next slot must sample that live.
+                    #[cfg(test)]
+                    observe_actor_animation_boundary(ActorAnimationBoundaryPhase::ActionChange(
+                        entity_id,
+                    ));
+                    self.dispatch_actor_action_change_for(sim, assets, entity_id);
+
+                    let leaked_slot_work = self
+                        .orders
+                        .sequence_manager
+                        .take_pending_synchronous_actions();
+                    assert!(
+                        leaked_slot_work.is_empty(),
+                        "actor {entity_id:?} leaked synchronous sequence work after ActionChange at legacy slot {slot}: {leaked_slot_work:?}"
+                    );
+                    self.orders
+                        .sequence_manager
+                        .restore_pending_synchronous_actions(preexisting_sequence_work);
+                }
+            }
+            slot += 1;
+        }
+
+        // TODO(original-parity): movement, melee, bow, abilities, NPC
+        // detection/tails, AI state callbacks, and speech still have separate
+        // order owners, preventing a full Actor Hourglass coordinator. Exact
+        // NPC derived-Hourglass nesting around this base-actor slice is also
+        // still absent.
     }
 
     /// Run the NPC Hourglass tail and its immediately adjacent notification
@@ -2685,7 +2843,7 @@ impl EngineInner {
     }
 
     /// Post-animation hook that drains outcomes collected by
-    /// [`EngineInner::tick_entity_animations`] for non-`EventDone`
+    /// [`EngineInner::tick_actor_animation_for`] for non-`EventDone`
     /// completion variants.
     ///
     /// - `seq_terminate`: terminate the associated sequence element
@@ -2703,6 +2861,14 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         use super::movement::DoorPassAdvance;
+
+        for (seq_id, elem_idx) in outcomes.non_interruptable_lifts.iter().copied() {
+            self.orders.sequence_manager.set_element_priority(
+                seq_id,
+                elem_idx,
+                crate::sequence::SequencePriority::NonInterruptable,
+            );
+        }
 
         for (seq_id, elem_idx) in outcomes.seq_advance {
             // `do_next_order` semantics: pop the just-completed
@@ -3009,21 +3175,16 @@ impl EngineInner {
         }
 
         for (rescuer, target) in sides.waking_up_done {
-            let Some(target_entity) = self.get_entity(target) else {
-                tracing::warn!(
-                    ?rescuer,
-                    ?target,
-                    "WakingUp DONE but antagonist target is missing"
-                );
-                continue;
-            };
+            let target_entity = self.get_entity(target).unwrap_or_else(|| {
+                panic!(
+                    "WakingUp DONE from rescuer {rescuer:?} references missing required target {target:?}"
+                )
+            });
             if !target_entity.is_human() {
-                tracing::warn!(
-                    ?rescuer,
-                    ?target,
-                    "WakingUp DONE antagonist target is not human"
+                panic!(
+                    "WakingUp DONE from rescuer {rescuer:?} requires human target {target:?}, found {:?}",
+                    target_entity.kind()
                 );
-                continue;
             }
 
             let target_is_dead = target_entity.is_dead();

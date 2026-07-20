@@ -53,7 +53,7 @@ impl EngineInner {
     ///
     /// The element's `NonInterruptable` priority bump (when needed) is
     /// applied lazily by `anim_forces_non_interruptable_on_start` in
-    /// `tick_entity_animations` on MotionState::Start of the new
+    /// `tick_actor_animation_for` on MotionState::Start of the new
     /// animation.
     pub(super) fn queue_damage_anim(
         &mut self,
@@ -2189,7 +2189,7 @@ impl EngineInner {
 
         // If a falling_back animation is going to play, leave the
         // posture where it is — the animation-completion handler in
-        // tick_entity_animations will set Posture::Lying when the anim
+        // tick_actor_animation_for will set Posture::Lying when the anim
         // terminates.  Setting Lying now would snap the
         // unconscious-star titbit to the crawling-offset position
         // while the sprite is still visually standing through the

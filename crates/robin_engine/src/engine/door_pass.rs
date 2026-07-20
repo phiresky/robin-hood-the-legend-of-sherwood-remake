@@ -1629,7 +1629,7 @@ impl EngineInner {
         // previously un-applied (drawbridge up, closed) it's now
         // opening; if it was applied (bridge down, open) it's now
         // closing.  The matching `finish_transition` fires when the
-        // patch's FX animation ends (see `tick_entity_animations`).
+        // patch's FX animation ends (see `tick_nonactor_entity_animations`).
         let was_applied = {
             match self.script_domains.interactables.patches.get(patch_idx) {
                 Some(p) => p.applied,
