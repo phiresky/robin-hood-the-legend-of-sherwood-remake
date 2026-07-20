@@ -101,6 +101,68 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
 }
 
 #[test]
+fn move_waiting_freeze_does_not_enter_destination_motion() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let position = MapPoint::new(1352.0, 246.0);
+    let mut mover = make_test_pc(Posture::Upright);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(position);
+    mover.actor_data_mut().unwrap().action_state = ActionState::Moving;
+    let mover_id = engine.add_entity(mover);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(mover_id),
+        OrderType::WalkingUpright,
+    );
+    movement.orders.push_back(Order::new(
+        OrderType::Freezing,
+        position.x,
+        position.y,
+        order_id,
+    ));
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(sequence_id, 0);
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+    let entity = engine.get_entity(mover_id).unwrap();
+    assert_eq!(entity.element_data().position_map(), position);
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
+        ActionState::Moving
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_type,
+        OrderType::Freezing,
+        "MOVE_WAITING must retain its pathfinder hold order"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {

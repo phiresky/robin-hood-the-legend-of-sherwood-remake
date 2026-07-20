@@ -3959,6 +3959,15 @@ impl EngineInner {
                 )
             };
 
+            if order_action == OrderType::Freezing {
+                // `MOVE_WAITING` carries a temporary FREEZING order while
+                // the pathfinder owns the request.  The original
+                // RHElementActor::Execute arm returns IN_PROGRESS without
+                // touching the sprite; this token has no destination-backed
+                // motion state to initialize or validate.
+                continue;
+            }
+
             let elem = entity.element_data_mut();
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
