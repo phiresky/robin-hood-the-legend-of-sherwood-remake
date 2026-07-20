@@ -45,6 +45,7 @@ else
     cmd="claude --permission-mode acceptEdits $(printf '%q' "$prompt")"
 fi
 
+cmd="systemd-run --user --scope --slice=robin-build.slice --quiet --collect -- $cmd"
 tmux new-session -d -s "$name" -c "$(pwd)/$dir" "$cmd"
 
 echo "Started tmux session '$name'"

@@ -25,7 +25,7 @@ use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::profiles::Action;
 use robin_engine::resource_ids::*;
-use robin_engine::titbit::SpriteRow;
+use robin_engine::titbit::{SpriteRow, TitbitKind};
 
 const NUM_ROWS: usize = SpriteRow::NumberOfRows as usize;
 
@@ -407,8 +407,6 @@ impl TitbitRenderer {
         renderer: &mut crate::renderer::Renderer,
         display_order_max: f32,
     ) {
-        use robin_engine::titbit::TitbitKind;
-
         let blink_off =
             engine.titbit_manager().blink_counter() < robin_engine::titbit::TIME_BLINK_OFF_RAW;
 
@@ -573,15 +571,12 @@ impl TitbitRenderer {
 
             // Ghost: add +7 to sprite_frame.
             // Growing question mark: size * 8 + local_frame.
-            let effective_frame = if titbit.kind == TitbitKind::Ghost {
-                titbit.sprite_frame + 7
-            } else if titbit.kind == TitbitKind::Emoticon
-                && titbit.sprite_row == SpriteRow::EmoticonGrowingQMark as u16
-            {
-                titbit.phase * 8 + titbit.sprite_frame
-            } else {
-                titbit.sprite_frame
-            };
+            let effective_frame = effective_titbit_frame(
+                titbit.kind,
+                titbit.sprite_row,
+                titbit.phase,
+                titbit.sprite_frame,
+            );
 
             // Read row-max dimensions before the mutable borrow from
             // get_frame_mut, which prevents overlapping borrows on self.
@@ -728,6 +723,23 @@ impl TitbitRenderer {
             );
         }
         self.render_host_preview_if_due(host, engine, renderer, f32::INFINITY, display_order_max);
+    }
+}
+
+/// Select the resource frame forced by the original titbit renderer.
+///
+/// Hidden indicators are a static strip with one portrait per PC, so their
+/// `phase` is the frame index. Other animated titbits normally use
+/// `sprite_frame`, with the two legacy exceptions below.
+fn effective_titbit_frame(kind: TitbitKind, row: u16, phase: u16, sprite_frame: u16) -> u16 {
+    if kind == TitbitKind::Ghost {
+        sprite_frame + 7
+    } else if kind == TitbitKind::Hidden {
+        phase
+    } else if kind == TitbitKind::Emoticon && row == SpriteRow::EmoticonGrowingQMark as u16 {
+        phase * 8 + sprite_frame
+    } else {
+        sprite_frame
     }
 }
 
@@ -940,6 +952,22 @@ mod tests {
         assert_eq!(floor_centered(100.0, 21), 89);
         assert_eq!(floor_centered(100.75, 21), 90);
         assert_eq!(floor_bottom(100.75, 21), 79);
+    }
+
+    #[test]
+    fn hidden_titbit_uses_character_phase_as_portrait_frame() {
+        assert_eq!(
+            effective_titbit_frame(TitbitKind::Hidden, SpriteRow::Hidden as u16, 0, 0),
+            0
+        );
+        assert_eq!(
+            effective_titbit_frame(TitbitKind::Hidden, SpriteRow::Hidden as u16, 5, 0),
+            5
+        );
+        assert_eq!(
+            effective_titbit_frame(TitbitKind::Hidden, SpriteRow::Hidden as u16, 8, 0),
+            8
+        );
     }
 
     #[test]

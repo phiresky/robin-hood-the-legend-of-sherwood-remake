@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 output_dir="${1:-mission-maps}"
-frame="${2:-0}"
+frame="${2:-50}"
 data_dir="${3:-${ROBINHOOD_DATA_DIR:-datadirs/fullgame_gog}}"
 mkdir -p -- "$output_dir"
 
