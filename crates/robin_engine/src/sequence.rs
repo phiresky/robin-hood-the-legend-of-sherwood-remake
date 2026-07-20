@@ -2916,6 +2916,58 @@ impl SequenceManager {
         actions
     }
 
+    /// Promote one exact deferred element produced inside a synchronous
+    /// native boundary. No other same-owner work is inspected or reordered.
+    pub fn take_deferred_owner_action(
+        &mut self,
+        owner: EntityId,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) -> Result<Option<SequenceAction>, String> {
+        let element = self
+            .get_element(sequence_id, element_index)
+            .ok_or_else(|| format!("missing deferred element {sequence_id:?}/{element_index}"))?;
+        if element.owner != Some(owner) {
+            return Err(format!(
+                "deferred element {sequence_id:?}/{element_index} belongs to {:?}, expected {owner:?}",
+                element.owner
+            ));
+        }
+        if !matches!(
+            element.state,
+            SequenceState::Todo | SequenceState::Postponed
+        ) {
+            if let Some(position) = self
+                .elements_to_go
+                .iter()
+                .position(|handle| *handle == (sequence_id, element_index))
+            {
+                self.elements_to_go.remove(position);
+            }
+            return Ok(None);
+        }
+        if element.executed_immediately() {
+            return Err(format!(
+                "deferred element {sequence_id:?}/{element_index} unexpectedly executes immediately"
+            ));
+        }
+        let position = self
+            .elements_to_go
+            .iter()
+            .position(|handle| *handle == (sequence_id, element_index))
+            .ok_or_else(|| {
+                format!(
+                    "live deferred element {sequence_id:?}/{element_index} is absent from elements_to_go"
+                )
+            })?;
+        self.elements_to_go.remove(position);
+        Ok(Some(SequenceAction::InstructOwner {
+            owner,
+            sequence_id,
+            element_index,
+        }))
+    }
+
     // ─── State change callbacks ─────────────────────────────────
 
     /// Called by the engine when an element has finished (terminated).

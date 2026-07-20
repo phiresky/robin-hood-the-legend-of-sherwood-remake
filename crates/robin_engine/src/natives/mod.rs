@@ -76,7 +76,7 @@ use handle_codec::ScriptHandleKind;
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use crate::ai::{AiState, AlertLevel, EmoticonType, GotoFlags};
+use crate::ai::{AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
@@ -613,6 +613,20 @@ impl NativeContext<'_, '_> {
             | NativeFn::SetActorPosture
             | NativeFn::SetActorLocation
             | NativeFn::SetActorActionState => true,
+            NativeFn::SetAIState => {
+                let Some((&actor, &state)) = args.first().zip(args.get(1)) else {
+                    return false;
+                };
+                let Some(entity) = self.get_entity(actor).filter(|entity| entity.is_npc()) else {
+                    return false;
+                };
+                match (state, entity) {
+                    (1 | 5 | 7, Entity::Soldier(s)) => s.npc.ai_brain.enemy().is_some(),
+                    (1 | 5 | 7, Entity::Civilian(c)) => c.npc.ai_brain.friendly().is_some(),
+                    (3, Entity::Soldier(s)) => s.npc.ai_brain.enemy().is_some(),
+                    _ => false,
+                }
+            }
             NativeFn::SetPersistentProperty => {
                 matches!(args.get(1), Some(2 | 3))
                     && args.first().is_some_and(|actor| {

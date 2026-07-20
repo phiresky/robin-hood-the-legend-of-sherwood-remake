@@ -225,6 +225,34 @@ impl EngineInner {
         }
     }
 
+    fn dispatch_script_ai_native_moves(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<(), ScriptDriverError> {
+        let launched_moves = self.drain_pending_move_requests_for_owner(owner);
+        for sequence_id in launched_moves {
+            let action = self
+                .orders
+                .sequence_manager
+                .take_deferred_owner_action(owner, sequence_id, 0)
+                .map_err(|detail| {
+                    ScriptDriverError::new(format!(
+                        "SetAIState owner {} Move dispatch failed: {detail}",
+                        owner.index()
+                    ))
+                })?;
+            if let Some(action) = action {
+                self.dispatch_script_synchronous_action(sim, assets, action, active)?;
+                self.drain_script_synchronous_actions(sim, assets, active)?;
+            }
+        }
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+        Ok(())
+    }
+
     fn execute_synchronous_script_request(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -233,6 +261,150 @@ impl EngineInner {
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
         match request {
+            crate::interp::SynchronousScriptRequest::ApplyAiStateNative {
+                actor, effect, ..
+            } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "SetAIState owner handle {actor} became stale before its synchronous effect barrier"
+                    )
+                })?;
+                let entity = self.get_entity(owner).ok_or_else(|| {
+                    format!(
+                        "SetAIState owner {} disappeared before its synchronous effect barrier",
+                        owner.index()
+                    )
+                })?;
+                if !entity.is_npc() || entity.ai_controller().is_none() {
+                    return Err(format!(
+                        "SetAIState owner {} lost its required NPC AI before its synchronous effect barrier",
+                        owner.index()
+                    )
+                    .into());
+                }
+                // RHArtificialIntelligence::SetAIState wraps SEEKING and
+                // FLEEING in StartThink(NO_EVENT) / EndThink. StartThink runs
+                // FilterAIEvent(NULL, -2) before its later freeze/lock gates;
+                // its bool is ignored by SetAIState. The outer effect is not
+                // installed yet, so a recursive SetAIState from this callback
+                // can stabilize without consuming its caller's work.
+                if matches!(
+                    effect,
+                    crate::interp::ScriptAiStateNativeEffect::Seeking
+                        | crate::interp::ScriptAiStateNativeEffect::Fleeing
+                ) {
+                    self.start_script_ai_native_think_pre_filter(owner);
+                    let is_scripted = self
+                        .get_entity(owner)
+                        .and_then(Entity::actor_data)
+                        .is_some_and(|actor| !actor.script_class.is_empty());
+                    let should_call = is_scripted
+                        && sim.config().script_enabled
+                        && self.scripts.mission.as_ref().is_some_and(|script| {
+                            script.actor_has_function(actor, "FilterAIEvent")
+                        });
+                    let filter_accepted = if should_call {
+                        match self.call_script_vm_inner(
+                            sim,
+                            assets,
+                            ScriptVmKey::Actor(actor),
+                            "FilterAIEvent",
+                            &[0, -2],
+                            crate::natives::ScriptCallFrame::actor(actor),
+                            active,
+                        ) {
+                            Ok(value) => value != 0,
+                            Err(error) => {
+                                tracing::warn!(
+                                    actor_handle = actor,
+                                    %error.detail,
+                                    "SetAIState StartThink(NO_EVENT) FilterAIEvent callback failed — allowing"
+                                );
+                                true
+                            }
+                        }
+                    } else {
+                        true
+                    };
+                    if filter_accepted {
+                        let _ = self.start_script_ai_native_think_post_filter(owner);
+                    }
+                }
+
+                match effect {
+                    crate::interp::ScriptAiStateNativeEffect::ScriptDriven => {
+                        self.set_typed_npc_state(
+                            owner,
+                            crate::ai::AiState::Default,
+                            crate::ai::Substate::DefaultScriptDriven,
+                            "SetAIState SCRIPT_DRIVEN",
+                        );
+                    }
+                    crate::interp::ScriptAiStateNativeEffect::Default
+                    | crate::interp::ScriptAiStateNativeEffect::Seeking
+                    | crate::interp::ScriptAiStateNativeEffect::Fleeing => {
+                        let current_position = {
+                            let entity = self.get_entity(owner).unwrap_or_else(|| {
+                                panic!(
+                                    "SetAIState owner {} disappeared after NO_EVENT callback",
+                                    owner.index()
+                                )
+                            });
+                            let data = entity.element_data();
+                            let point = data.position_map();
+                            crate::ai::Position {
+                                x: point.x,
+                                y: point.y,
+                                sector: data.sector(),
+                                level: data.layer(),
+                            }
+                        };
+                        let state = match effect {
+                            crate::interp::ScriptAiStateNativeEffect::Default => {
+                                crate::ai::AiState::Default
+                            }
+                            crate::interp::ScriptAiStateNativeEffect::Seeking => {
+                                crate::ai::AiState::Seeking
+                            }
+                            crate::interp::ScriptAiStateNativeEffect::Fleeing => {
+                                crate::ai::AiState::Fleeing
+                            }
+                            crate::interp::ScriptAiStateNativeEffect::ScriptDriven => {
+                                unreachable!()
+                            }
+                        };
+                        self.get_entity_mut(owner)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "SetAIState owner {} lost its required typed AI after NO_EVENT callback",
+                                    owner.index()
+                                )
+                            })
+                            .script_set_ai_state(state, current_position);
+                    }
+                }
+
+                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                if let Err(error) = self.dispatch_script_ai_native_moves(sim, assets, owner, active)
+                {
+                    return Err(error);
+                }
+                if matches!(
+                    effect,
+                    crate::interp::ScriptAiStateNativeEffect::Seeking
+                        | crate::interp::ScriptAiStateNativeEffect::Fleeing
+                ) {
+                    self.end_script_ai_native_think(sim, assets, owner);
+                    self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                    if let Err(error) =
+                        self.dispatch_script_ai_native_moves(sim, assets, owner, active)
+                    {
+                        return Err(error);
+                    }
+                }
+                Ok(0)
+            }
             crate::interp::SynchronousScriptRequest::SetPersistentLifePoints {
                 actor,
                 amount,
@@ -2269,6 +2441,18 @@ impl EngineInner {
         handle: i32,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
+        if !sim.config().script_enabled {
+            return true;
+        }
+        let is_scripted = self
+            .entity_id_for_actor_handle(handle)
+            .and_then(|id| self.world.entities.get(id))
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| !actor.script_class.is_empty());
+        if !is_scripted {
+            return true;
+        }
+
         // Original: RHArtificialIntelligence::StartThink assigns -2 in the
         // default switch arm and still calls FilterAIEvent for scripted NPCs.
         let code = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2);
@@ -2338,6 +2522,60 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         tick_data: &crate::ai::AiPerTickData,
     ) -> bool {
+        self.dispatch_filtered_stimulus_with_owner_mode(
+            sim,
+            assets,
+            entity_id,
+            stimulus,
+            ctx,
+            Some(tick_data),
+            false,
+        )
+    }
+
+    pub(super) fn dispatch_filtered_stimulus_without_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        tick_data: &crate::ai::AiPerTickData,
+    ) -> bool {
+        self.dispatch_filtered_stimulus_with_owner_mode(
+            sim,
+            assets,
+            entity_id,
+            stimulus,
+            ctx,
+            Some(tick_data),
+            true,
+        )
+    }
+
+    pub(super) fn dispatch_filtered_friendly_stimulus_without_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+    ) -> bool {
+        self.dispatch_filtered_stimulus_with_owner_mode(
+            sim, assets, entity_id, stimulus, ctx, None, true,
+        )
+    }
+
+    fn dispatch_filtered_stimulus_with_owner_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        enemy_tick_data: Option<&crate::ai::AiPerTickData>,
+        owner_local_no_forecast: bool,
+    ) -> bool {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
@@ -2346,6 +2584,14 @@ impl EngineInner {
         // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
         let doors = self.script_domains.interactables.doors.as_slice();
+        let friendly_tick = self
+            .world
+            .entities
+            .get(entity_id)
+            .is_some_and(|entity| {
+                matches!(entity, Entity::Civilian(c) if c.npc.ai_brain.friendly().is_some())
+            })
+            .then(|| self.build_friendly_tick_data_without_forecasts(entity_id));
         let handled = {
             let ai_global = &mut self.ai.global;
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
@@ -2357,7 +2603,12 @@ impl EngineInner {
                     stimulus,
                     ai_global,
                     ctx,
-                    tick_data,
+                    enemy_tick_data.unwrap_or_else(|| {
+                        panic!(
+                            "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
+                            entity_id.index()
+                        )
+                    }),
                     Some(&self.world.fast_grid),
                 )
             } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
@@ -2366,7 +2617,12 @@ impl EngineInner {
                     stimulus,
                     ai_global,
                     ctx,
-                    tick_data,
+                    &friendly_tick.unwrap_or_else(|| {
+                        panic!(
+                            "filtered Friendly AI stimulus for owner {} requires truthful friendly tick data",
+                            entity_id.index()
+                        )
+                    }),
                     Some(&self.world.fast_grid),
                     Some(doors),
                 )
@@ -2378,7 +2634,7 @@ impl EngineInner {
         // `SetState` calls FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_owner_work_for(sim, assets, entity_id);
+        self.drain_ai_owner_work_for_mode(sim, assets, entity_id, owner_local_no_forecast);
         handled
     }
 
@@ -2397,6 +2653,16 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: crate::element::EntityId,
+    ) {
+        self.drain_ai_owner_work_for_mode(sim, assets, owner, false);
+    }
+
+    pub(super) fn drain_ai_owner_work_for_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+        owner_local_no_forecast: bool,
     ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
@@ -2452,7 +2718,11 @@ impl EngineInner {
                         });
                     let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
                     if settlement.invoke_finished_callback {
-                        self.drain_self_stimuli_for_npc(sim, owner, assets);
+                        if owner_local_no_forecast {
+                            self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+                        } else {
+                            self.drain_self_stimuli_for_npc(sim, owner, assets);
+                        }
                     }
                     if let Some(finalization) = settlement.category_rejection {
                         self.finalize_category_speech_rejection(owner, finalization);

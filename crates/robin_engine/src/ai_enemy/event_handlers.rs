@@ -585,7 +585,14 @@ impl EnemyAi {
                             // the officer will be, not where they currently
                             // are.
                             let officer_target_pos = antagonist_cs
-                                .map(|cs| cs.forecast_destination)
+                                .map(|cs| {
+                                    cs.forecast_destination.unwrap_or_else(|| {
+                                        panic!(
+                                            "soldier {} is missing a required destination forecast",
+                                            cs.handle
+                                        )
+                                    })
+                                })
                                 .unwrap_or_else(|| {
                                     ctx.entity_view(antagonist)
                                         .map(|v| v.position)
@@ -965,7 +972,8 @@ impl EnemyAi {
             }
 
             StimulusType::CallPatrolCoordinate => {
-                self.base.coordinate_patrol(&stimulus.info, ctx, tick);
+                self.base
+                    .coordinate_patrol(&stimulus.info, ctx, tick.patrol_chief_position);
             }
 
             // The officer who
