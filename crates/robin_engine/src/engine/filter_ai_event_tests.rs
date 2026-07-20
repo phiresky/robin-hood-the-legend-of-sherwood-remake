@@ -1526,6 +1526,35 @@ fn install_test_action(
     );
 }
 
+fn install_test_wait_timer(
+    engine: &mut EngineInner,
+    assets: &LevelAssets,
+    actor: EntityId,
+    frames: u32,
+) -> crate::sequence::SequenceId {
+    use crate::sequence::{Field, FieldValue};
+
+    let mut element = crate::sequence::SequenceElement::new_generic(
+        1,
+        crate::element::Command::WaitTimer,
+        Some(actor),
+    );
+    element.set_property(Field::Timer, FieldValue::Integer(frames));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    super::sequence_runtime::WaitCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+        profiles: &assets.profile_manager,
+    }
+    .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+    sequence
+}
+
 fn bind_test_actor_animations(
     engine: &mut EngineInner,
     actor: EntityId,
@@ -2020,7 +2049,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
         .sequence_manager
         .take_pending_synchronous_actions();
 
-    let (injuries, outcomes) = engine.tick_actor_animation_for(
+    let (injuries, outcomes, executed) = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         actor,
@@ -2028,6 +2057,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
 
     assert!(injuries.is_empty());
     assert!(outcomes.seq_advance.is_empty());
+    assert!(executed.is_none());
     assert_eq!(
         engine
             .world
@@ -2368,6 +2398,808 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
         OrderType::Searching,
         "retention must store the promoted live order"
     );
+}
+
+#[test]
+fn wait_timer_zero_completes_after_execute_and_before_action_change() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let assets = LevelAssets::new();
+    bind_action_observer(&mut engine, &assets, actor);
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .and_then(|entity| entity.actor_data_mut())
+        .expect("timer actor is typed")
+        .old_action = OrderType::Pointing;
+    let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(timer_sequence, 0)
+            .expect("completed timer remains inspectable")
+            .state,
+        crate::sequence::SequenceState::Terminated
+    );
+    assert_eq!(
+        observed_action_args(&engine, actor),
+        (
+            OrderType::WaitingUprightBored as i32,
+            OrderType::Pointing as i32,
+        ),
+        "zero WAIT_TIMER must Execute its idle order, complete/DoNext, then expose the promoted Wait order to ActionChange"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .expect("timer actor remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        OrderType::WaitingUprightBored,
+        "WAIT_TIMER zero still performs Execute before forcing Terminated"
+    );
+}
+
+#[test]
+fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
+    let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 1);
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("timer actor remains typed")
+            .wait_time,
+        0
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(timer_sequence, 0)
+            .expect("timer remains installed")
+            .state,
+        crate::sequence::SequenceState::InProgress,
+        "a positive counter is decremented after Execute without completing on the frame it reaches zero"
+    );
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(timer_sequence, 0)
+            .expect("timer remains inspectable")
+            .state,
+        crate::sequence::SequenceState::Terminated,
+        "the following Execute observes zero and forces Terminated"
+    );
+}
+
+#[test]
+fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
+    let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
+    engine
+        .get_entity_mut(actor)
+        .and_then(|entity| entity.actor_data_mut())
+        .expect("frozen timer owner is an actor")
+        .execution_frozen = true;
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(timer_sequence, 0)
+            .expect("frozen timer remains inspectable")
+            .state,
+        crate::sequence::SequenceState::Terminated,
+        "execution_frozen only suppresses Original Hourglass when no order is installed"
+    );
+    assert_eq!(
+        engine
+            .get_entity(actor)
+            .expect("frozen timer owner remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        OrderType::WaitingUprightBored
+    );
+}
+
+#[test]
+fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
+    use crate::order::OrderType;
+    use crate::sequence::{Field, FieldValue};
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(
+        &mut engine,
+        actor,
+        &[OrderType::Pointing, OrderType::Searching],
+    );
+    let first = crate::order::Order::new(
+        OrderType::Pointing,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let first_id = first.order_id;
+    let second = crate::order::Order::new(
+        OrderType::Searching,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let mut element = crate::sequence::SequenceElement::new_generic(
+        1,
+        crate::element::Command::WaitTimer,
+        Some(actor),
+    );
+    element.set_property(Field::Timer, FieldValue::Integer(0));
+    element.orders.extend([first, second]);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+    {
+        let sprite = &mut engine
+            .get_entity_mut(actor)
+            .expect("forwarding timer owner exists")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = first_id.get();
+        sprite.last_action = OrderType::Pointing;
+        sprite.current_row = 0;
+        sprite.current_frame = 1;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("forwarding timer remains inspectable");
+    assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+    assert_eq!(
+        element.orders.len(),
+        1,
+        "raw Terminated plus WAIT_TIMER Terminated must not dispatch DoNextOrder twice"
+    );
+    assert_eq!(
+        element
+            .orders
+            .front()
+            .expect("successor remains")
+            .order_type,
+        OrderType::Searching
+    );
+}
+
+#[test]
+fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
+    use crate::order::OrderType;
+    use crate::sequence::{Field, FieldValue};
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(
+        &mut engine,
+        actor,
+        &[OrderType::Pointing, OrderType::Searching],
+    );
+    let first = crate::order::Order::new(
+        OrderType::Pointing,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let first_id = first.order_id;
+    let second = crate::order::Order::new(
+        OrderType::Searching,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let entry_sequence = install_test_order_queue(&mut engine, actor, [first, second]);
+    {
+        let sprite = &mut engine
+            .get_entity_mut(actor)
+            .expect("same-owner replacement actor exists")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = first_id.get();
+        sprite.last_action = OrderType::Pointing;
+        sprite.current_row = 0;
+        sprite.current_frame = 1;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+    let mut replacement_sequence = None;
+
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &crate::sim_rng::test_context(),
+        &assets,
+        |engine, callback_owner| {
+            if callback_owner != actor || replacement_sequence.is_some() {
+                return;
+            }
+            engine
+                .orders
+                .sequence_manager
+                .postpone_element(entry_sequence, 0);
+            let mut timer = crate::sequence::SequenceElement::new_generic(
+                1,
+                crate::element::Command::WaitTimer,
+                Some(actor),
+            );
+            timer.set_property(Field::Timer, FieldValue::Integer(0));
+            let sequence = engine.orders.sequence_manager.launch_element(timer);
+            super::sequence_runtime::WaitCommandContext {
+                entities: &mut engine.world.entities,
+                sequence_manager: &mut engine.orders.sequence_manager,
+                next_order_id: &mut engine.orders.next_order_id,
+                profiles: &assets.profile_manager,
+            }
+            .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
+            let _ = engine
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            replacement_sequence = Some(sequence);
+        },
+        |_, _| {},
+    );
+
+    let replacement_sequence =
+        replacement_sequence.expect("same-owner callback installed replacement timer");
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(replacement_sequence, 0)
+            .expect("replacement timer remains inspectable")
+            .state,
+        crate::sequence::SequenceState::Terminated,
+        "effective Terminated must DoNextOrder on the callback-installed live element"
+    );
+    let entry = engine
+        .orders
+        .sequence_manager
+        .get_element(entry_sequence, 0)
+        .expect("Execute-entry element remains inspectable");
+    assert_eq!(entry.state, crate::sequence::SequenceState::Postponed);
+    assert_eq!(
+        entry.orders.len(),
+        2,
+        "the raw Pointing termination must not retain an old-element completion bucket"
+    );
+}
+
+#[test]
+fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
+    use crate::order::OrderType;
+    use crate::sequence::{Field, FieldValue};
+
+    for installer_before_target in [true, false] {
+        let mut engine = EngineInner::new();
+        let first = engine.add_entity(make_scripted_soldier(""));
+        let second = engine.add_entity(make_scripted_soldier(""));
+        let (installer, target) = if installer_before_target {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let assets = LevelAssets::new();
+        for actor in [installer, target] {
+            bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
+            install_test_action(
+                &mut engine,
+                actor,
+                OrderType::WaitingUprightBored,
+                OrderType::WaitingUprightBored,
+            );
+        }
+        let sim = crate::sim_rng::test_context();
+        let mut timer_sequence = None;
+
+        engine.tick_actor_animation_action_change_slots_with_after_slot(
+            &sim,
+            &assets,
+            |engine, completed_owner| {
+                if completed_owner != installer || timer_sequence.is_some() {
+                    return;
+                }
+                let mut timer = crate::sequence::SequenceElement::new_generic(
+                    1,
+                    crate::element::Command::WaitTimer,
+                    Some(target),
+                );
+                timer.set_property(Field::Timer, FieldValue::Integer(1));
+                let sequence = engine.launch_element(timer);
+                super::sequence_runtime::WaitCommandContext {
+                    entities: &mut engine.world.entities,
+                    sequence_manager: &mut engine.orders.sequence_manager,
+                    next_order_id: &mut engine.orders.next_order_id,
+                    profiles: &assets.profile_manager,
+                }
+                .dispatch(target, crate::element::Command::WaitTimer, sequence, 0);
+                let _ = engine
+                    .orders
+                    .sequence_manager
+                    .take_pending_synchronous_actions();
+                timer_sequence = Some(sequence);
+            },
+        );
+
+        let timer_sequence = timer_sequence.expect("installer callback launched a timer");
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(timer_sequence, 0)
+                .expect("callback timer remains installed")
+                .state,
+            crate::sequence::SequenceState::InProgress
+        );
+        assert_eq!(
+            engine
+                .get_entity(target)
+                .and_then(|entity| entity.actor_data())
+                .expect("callback timer target remains an actor")
+                .wait_time,
+            if installer_before_target { 0 } else { 1 },
+            "only a target whose live creation slot is still ahead may Execute the callback-installed timer this pass"
+        );
+    }
+}
+
+fn waiting_sword_pair(
+    attacker_before_defender: bool,
+) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+    use crate::element::ActionState;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_scripted_soldier(""));
+    let second = engine.add_entity(make_scripted_soldier(""));
+    let (attacker, defender) = if attacker_before_defender {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    for actor in [attacker, defender] {
+        bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
+    }
+    for (actor, x, opponent) in [(attacker, 100.0, defender), (defender, 130.0, attacker)] {
+        let entity = engine
+            .world
+            .entities
+            .get_mut(actor)
+            .expect("smalltalk actor exists");
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D {
+                x,
+                y: 100.0,
+                z: 0.0,
+            });
+        entity
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(0));
+        entity
+            .actor_data_mut()
+            .expect("smalltalk actor is typed")
+            .action_state = ActionState::WaitingSword;
+        entity
+            .human_data_mut()
+            .expect("smalltalk actor is human")
+            .opponents
+            .push(opponent);
+    }
+    {
+        let human = engine
+            .world
+            .entities
+            .get_mut(attacker)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("attacker is human");
+        human.smalltalk_initiative = true;
+        human.received_smalltalk_initiative = true;
+    }
+    for actor in [attacker, defender] {
+        install_test_action(
+            &mut engine,
+            actor,
+            OrderType::WaitingSword,
+            OrderType::WaitingSword,
+        );
+    }
+    let mut assets = LevelAssets::new();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        hth_weapon_id: 1,
+        ..crate::profiles::SoldierProfile::default()
+    });
+    profiles
+        .hth_weapons
+        .push(crate::profiles::HtHWeaponProfile {
+            distance: [20, 40, 70, 100],
+            ..crate::profiles::HtHWeaponProfile::default()
+        });
+    (engine, assets, attacker, defender)
+}
+
+#[test]
+fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
+    use crate::element::ActionState;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let opponent = engine.add_entity(make_scripted_soldier(""));
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
+    install_test_action(
+        &mut engine,
+        actor,
+        OrderType::WaitingSword,
+        OrderType::WaitingSword,
+    );
+    for (id, position) in [
+        (
+            actor,
+            crate::coordinates::WorldPoint3D {
+                x: 100.0,
+                y: 100.0,
+                z: 0.0,
+            },
+        ),
+        (
+            opponent,
+            crate::coordinates::WorldPoint3D {
+                x: 120.0,
+                y: 100.0,
+                z: 100.0,
+            },
+        ),
+    ] {
+        engine
+            .get_entity_mut(id)
+            .expect("direction fixture actor exists")
+            .element_data_mut()
+            .set_position(position);
+    }
+    let entity = engine
+        .get_entity_mut(actor)
+        .expect("direction owner exists");
+    entity
+        .actor_data_mut()
+        .expect("direction owner is actor")
+        .action_state = ActionState::WaitingSword;
+    entity
+        .human_data_mut()
+        .expect("direction owner is human")
+        .opponents
+        .push(opponent);
+
+    let _ = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        actor,
+    );
+
+    let expected = crate::position_interface::vector_to_sector_0_to_15_iso(20.0, 0.0) as u8;
+    assert_eq!(
+        u8::from(
+            engine
+                .get_entity(actor)
+                .expect("direction owner remains installed")
+                .element_data()
+                .sprite
+                .position_iface
+                .get_direction_goal()
+        ),
+        expected
+    );
+}
+
+#[test]
+fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
+    use crate::element::Command;
+
+    let (mut engine, assets, _attacker, defender) = waiting_sword_pair(true);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
+            ))
+    );
+    let human = engine
+        .get_entity(defender)
+        .and_then(|entity| entity.human_data())
+        .expect("defender remains human");
+    assert_eq!(human.smalltalk_hint, crate::element::SmalltalkHint::None);
+    assert_eq!(human.smalltalk_hint_opponent, None);
+}
+
+#[test]
+fn later_smalltalk_hint_defers_for_already_visited_defender() {
+    use crate::element::Command;
+
+    let (mut engine, assets, _attacker, defender) = waiting_sword_pair(false);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
+            ))
+    );
+    assert_ne!(
+        engine
+            .get_entity(defender)
+            .and_then(|entity| entity.human_data())
+            .expect("defender remains human")
+            .smalltalk_hint,
+        crate::element::SmalltalkHint::None,
+        "the later attacker mutates the already-visited defender, but the defender cannot consume the hint until its next slot"
+    );
+}
+
+#[test]
+fn earlier_initiative_transfer_drives_later_recipient_slot() {
+    use crate::element::Command;
+
+    let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
+    {
+        let human = engine
+            .get_entity_mut(attacker)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("attacker remains human");
+        human.received_smalltalk_initiative = false;
+        human.relative_fighting_ability = 100;
+    }
+    crate::sim_rng::with_seed(9, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+            ))
+    );
+}
+
+#[test]
+fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
+    use crate::element::Command;
+
+    let (mut engine, assets, attacker, defender) = waiting_sword_pair(false);
+    {
+        let human = engine
+            .get_entity_mut(attacker)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("attacker remains human");
+        human.received_smalltalk_initiative = false;
+        human.relative_fighting_ability = 100;
+    }
+    crate::sim_rng::with_seed(9, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+            ))
+    );
+    let human = engine
+        .get_entity(defender)
+        .and_then(|entity| entity.human_data())
+        .expect("defender remains human");
+    assert!(human.smalltalk_initiative);
+    assert!(human.received_smalltalk_initiative);
+}
+
+#[test]
+fn earlier_opponent_prune_synchronously_quits_both_combatants() {
+    use crate::element::ActionState;
+    use crate::order::OrderType;
+
+    for pruner_before_mutated in [true, false] {
+        let mut engine = EngineInner::new();
+        let first = engine.add_entity(make_scripted_soldier(""));
+        let second = engine.add_entity(make_scripted_soldier(""));
+        let (pruner, mutated) = if pruner_before_mutated {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        for actor in [pruner, mutated] {
+            bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
+            install_test_action(
+                &mut engine,
+                actor,
+                OrderType::WaitingSword,
+                OrderType::WaitingSword,
+            );
+            engine
+                .get_entity_mut(actor)
+                .and_then(|entity| entity.actor_data_mut())
+                .expect("opponent-prune fighter is typed")
+                .action_state = ActionState::WaitingSword;
+        }
+        for (actor, x, z, sector) in [(pruner, 100.0, 0.0, 1), (mutated, 130.0, 41.0, 2)] {
+            let element = engine
+                .get_entity_mut(actor)
+                .expect("opponent-prune fighter exists")
+                .element_data_mut();
+            element.set_position(crate::coordinates::WorldPoint3D { x, y: 100.0, z });
+            element.set_sector(crate::position_interface::SectorHandle::new(sector));
+        }
+        engine
+            .get_entity_mut(pruner)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("pruner is human")
+            .opponents = vec![mutated];
+        {
+            let human = engine
+                .get_entity_mut(mutated)
+                .and_then(|entity| entity.human_data_mut())
+                .expect("mutated fighter is human");
+            human.opponents = vec![pruner];
+            human.smalltalk_initiative = true;
+            human.received_smalltalk_initiative = true;
+        }
+        let mut assets = LevelAssets::new();
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::SoldierProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile {
+                distance: [20, 40, 70, 100],
+                ..crate::profiles::HtHWeaponProfile::default()
+            });
+        crate::sim_rng::with_seed(5, |sim| {
+            engine.tick_actor_animation_action_change_slots(sim, &assets);
+        });
+
+        for actor in [pruner, mutated] {
+            assert_eq!(
+                engine
+                    .get_entity(actor)
+                    .and_then(|entity| entity.actor_data())
+                    .expect("pruned fighter remains an actor")
+                    .action_state,
+                ActionState::Waiting,
+                "the earlier owner must synchronously execute both QuitSwordfight launches; their command elements are terminal by the time the owner drain returns"
+            );
+            assert!(
+                engine
+                    .get_entity(actor)
+                    .and_then(|entity| entity.human_data())
+                    .expect("pruned fighter remains human")
+                    .opponents
+                    .is_empty()
+            );
+        }
+    }
+}
+
+#[test]
+fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let skipped = engine.add_entity(make_scripted_soldier(""));
+    let ordinary = engine.add_entity(make_scripted_soldier(""));
+    let stale = engine.add_entity(make_scripted_soldier(""));
+    engine.remove_entity(stale);
+    for actor in [skipped, ordinary] {
+        engine
+            .world
+            .entities
+            .get_mut(actor)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("test actor is human")
+            .opponents
+            .push(stale);
+    }
+    engine
+        .world
+        .entities
+        .get_mut(skipped)
+        .and_then(|entity| entity.actor_data_mut())
+        .expect("skipped actor is typed")
+        .execution_frozen = true;
+    bind_test_actor_animations(&mut engine, skipped, &[OrderType::WaitingSword]);
+    bind_test_actor_animations(&mut engine, ordinary, &[OrderType::WaitingUpright]);
+    install_test_action(
+        &mut engine,
+        skipped,
+        OrderType::WaitingSword,
+        OrderType::WaitingSword,
+    );
+    install_test_action(
+        &mut engine,
+        ordinary,
+        OrderType::WaitingUpright,
+        OrderType::WaitingUpright,
+    );
+    let assets = LevelAssets::new();
+
+    let observed = crate::sim_rng::with_seed(77, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide)
+    });
+    let expected = crate::sim_rng::with_seed(77, |sim| {
+        crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide)
+    });
+    assert_eq!(observed, expected);
 }
 
 fn waking_up_creation_order_engine(

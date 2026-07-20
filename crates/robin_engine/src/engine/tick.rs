@@ -496,65 +496,6 @@ impl EngineInner {
         false
     }
 
-    /// Decrement `wait_time` for every actor whose current in-progress
-    /// sequence element is `Command::WaitTimer`.  When the counter
-    /// reaches 0, fire `element_terminated` on that element so the
-    /// next hourglass pass advances past it.
-    fn tick_actor_wait_timers(&mut self) {
-        if self.actors_frozen() {
-            return;
-        }
-        // Two-pass to avoid overlapping borrows of `self.world.entities`
-        // and `self.orders.sequence_manager`.
-        struct Pending {
-            owner: EntityId,
-            seq_id: crate::sequence::SequenceId,
-            elem_idx: usize,
-            terminate: bool,
-        }
-        let mut pending: Vec<Pending> = Vec::new();
-        for (owner, _) in self.world.entities.actors() {
-            let owner = owner.into();
-            let Some((seq_id, elem_idx)) = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner)
-            else {
-                continue;
-            };
-            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-                continue;
-            };
-            if elem.command != crate::element::Command::WaitTimer {
-                continue;
-            }
-            pending.push(Pending {
-                owner,
-                seq_id,
-                elem_idx,
-                terminate: false,
-            });
-        }
-        for p in &mut pending {
-            if let Some(entity) = self.world.entities.get_mut(p.owner)
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                if actor.wait_time == 0 {
-                    p.terminate = true;
-                } else {
-                    actor.wait_time -= 1;
-                }
-            }
-        }
-        for p in pending {
-            if p.terminate {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(p.seq_id, p.elem_idx);
-            }
-        }
-    }
-
     fn perform_hourglass_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1481,13 +1422,12 @@ impl EngineInner {
         // counter is serde'd `PcData`).
         self.tick_pc_teleport_fades();
 
-        // `RefreshSeek` and WAIT_TIMER are actor-Hourglass behavior in the
+        // `RefreshSeek` is actor-Hourglass behavior in the
         // original, not part of the engine's ProcessPathRequests pre-pass.
-        // Original provenance: `original-code/RHelementactor.cpp:610-625`
-        // updates WAIT_TIMER while executing the actor's current order; seek
-        // refresh dispatch is in `original-code/RHelementactor.cpp:2720-2728`.
+        // Seek refresh dispatch is in
+        // `original-code/RHelementactor.cpp:2720-2728`. WAIT_TIMER now runs
+        // after Execute in the live actor-slot coordinator below.
         self.tick_refresh_seeks(sim, assets);
-        self.tick_actor_wait_timers();
 
         was_swordfighting
     }
@@ -1869,6 +1809,31 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.tick_actor_animation_action_change_slots_with_hooks(sim, assets, |_, _| {}, |_, _| {});
+    }
+
+    #[cfg(test)]
+    pub(super) fn tick_actor_animation_action_change_slots_with_after_slot(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        after_slot: impl FnMut(&mut Self, EntityId),
+    ) {
+        self.tick_actor_animation_action_change_slots_with_hooks(
+            sim,
+            assets,
+            |_, _| {},
+            after_slot,
+        );
+    }
+
+    pub(super) fn tick_actor_animation_action_change_slots_with_hooks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        mut after_execute_callbacks: impl FnMut(&mut Self, EntityId),
+        mut after_slot: impl FnMut(&mut Self, EntityId),
+    ) {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
@@ -1921,7 +1886,7 @@ impl EngineInner {
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
                         entity_id,
                     ));
-                    let (combat_injury_terminated, outcomes) =
+                    let (combat_injury_terminated, mut outcomes, mut execute_result) =
                         self.tick_actor_animation_for(sim, assets, entity_id);
                     for injured_id in combat_injury_terminated.iter().copied() {
                         self.dispatch_combat_injury_think_for_actor_hourglass(
@@ -1939,6 +1904,35 @@ impl EngineInner {
                         observe_actor_animation_boundary(
                             ActorAnimationBoundaryPhase::CombatInjuryThink(injured_id),
                         );
+                    }
+
+                    // RHElementActorHuman::Execute performs this work inside
+                    // the WaitingSword arm, after PerformAction and before
+                    // returning its motion result to Actor::Hourglass. Keep
+                    // launches and cross-actor mutations live so later slots
+                    // observe them and earlier slots do not.
+                    if execute_result.as_ref().is_some_and(|result| {
+                        result.order_type == crate::order::OrderType::WaitingSword
+                    }) {
+                        self.tick_waiting_sword_execute_for(sim, assets, entity_id);
+                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "actor {entity_id:?} WaitingSword Execute at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
+                                )
+                            });
+                    }
+
+                    after_execute_callbacks(self, entity_id);
+
+                    // Original Actor::Hourglass modifies the just-produced
+                    // Execute result for WAIT_TIMER / WAIT_FREE_LIFT before
+                    // completion/DoNextOrder. Sampling the current element
+                    // here is intentional: WaitingSword callbacks above may
+                    // have synchronously replaced it.
+                    if let Some(mut result) = execute_result.take() {
+                        self.apply_actor_post_execute_wait_modifier(entity_id, &mut result);
+                        self.stage_actor_execute_completion(entity_id, result, &mut outcomes);
                     }
 
                     // Original soldier Execute calls Think before returning
@@ -1965,6 +1959,7 @@ impl EngineInner {
                         entity_id,
                     ));
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
+                    after_slot(self, entity_id);
 
                     let leaked_slot_work = self
                         .orders
@@ -1987,6 +1982,118 @@ impl EngineInner {
         // order owners, preventing a full Actor Hourglass coordinator. Exact
         // NPC derived-Hourglass nesting around this base-actor slice is also
         // still absent.
+    }
+
+    /// Apply the two sequence-command motion modifiers owned by
+    /// `RHElementActor::Hourglass` after one actor's Execute call.
+    fn apply_actor_post_execute_wait_modifier(
+        &mut self,
+        owner: EntityId,
+        execute_result: &mut super::animation::ActorExecuteResult,
+    ) {
+        let Some((seq_id, elem_idx)) = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+        else {
+            return;
+        };
+        let command = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "actor {owner:?} post-Execute modifier lost current sequence element {seq_id:?}/{elem_idx}"
+                )
+            })
+            .command;
+
+        match command {
+            crate::element::Command::WaitTimer => {
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap_or_else(|| panic!("WAIT_TIMER post-Execute owner {owner:?} is missing"))
+                    .actor_data_mut()
+                    .unwrap_or_else(|| {
+                        panic!("WAIT_TIMER post-Execute owner {owner:?} is not an actor")
+                    });
+                if actor.wait_time == 0 {
+                    execute_result.motion = crate::sprite::MotionState::Terminated;
+                } else {
+                    actor.wait_time -= 1;
+                }
+            }
+            crate::element::Command::WaitFreeLift => {
+                let authorized = super::sequence_runtime::LiftWaitCommandContext {
+                    entities: &mut self.world.entities,
+                    fast_grid: &mut self.world.fast_grid,
+                    doors: self.script_domains.interactables.doors.as_slice(),
+                    sequence_manager: &mut self.orders.sequence_manager,
+                }
+                .authorize_and_reserve(owner, seq_id, elem_idx);
+                if authorized {
+                    execute_result.motion = crate::sprite::MotionState::Terminated;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve the retained base-Actor motion after derived Execute callbacks
+    /// and wait modifiers. Original TERMINATED calls DoNextOrder through the
+    /// owner's live `mpSequenceElement`; ABORTED alone uses the sequence
+    /// element snapshot captured before Execute.
+    fn stage_actor_execute_completion(
+        &self,
+        owner: EntityId,
+        execute_result: super::animation::ActorExecuteResult,
+        outcomes: &mut super::animation::AnimCompletionOutcomes,
+    ) {
+        match execute_result.motion {
+            crate::sprite::MotionState::Aborted => outcomes
+                .seq_impossible
+                .push((execute_result.entry_seq_id, execute_result.entry_elem_idx)),
+            crate::sprite::MotionState::Terminated => {
+                let Some((seq_id, elem_idx, order)) =
+                    self.orders.sequence_manager.current_order_for_actor(owner)
+                else {
+                    return;
+                };
+                match order.completion.clone() {
+                    crate::order::OrderCompletion::AdvanceElement => {
+                        outcomes.seq_advance.push((seq_id, elem_idx));
+                    }
+                    crate::order::OrderCompletion::UnlockDoor { door_id } => {
+                        outcomes.unlock_door.push((door_id, seq_id, elem_idx));
+                    }
+                    crate::order::OrderCompletion::ResumeDoorPass => {
+                        outcomes.resume_door_pass.push(owner);
+                    }
+                    crate::order::OrderCompletion::NextJumpStep => {
+                        outcomes.next_jump_step.push(owner);
+                    }
+                    crate::order::OrderCompletion::WaspStruggleCycle { cycles_remaining } => {
+                        if cycles_remaining <= 1 {
+                            outcomes.seq_terminate.push((seq_id, elem_idx));
+                        } else {
+                            outcomes
+                                .wasp_next_cycle
+                                .push((seq_id, elem_idx, cycles_remaining - 1));
+                        }
+                    }
+                }
+            }
+            crate::sprite::MotionState::Done
+            | crate::sprite::MotionState::Start
+            | crate::sprite::MotionState::InProgress => {}
+            crate::sprite::MotionState::Error => panic!(
+                "actor {owner:?} Execute returned MotionState::Error from entry {:?}/{}",
+                execute_result.entry_seq_id, execute_result.entry_elem_idx
+            ),
+        }
     }
 
     /// Run the NPC Hourglass tail and its immediately adjacent notification
@@ -3729,6 +3836,40 @@ mod bow_command_body_parity_tests {
         })
     }
 
+    fn install_test_lift_sector(
+        engine: &mut EngineInner,
+        owner: EntityId,
+        sector_number: crate::sector::SectorNumber,
+    ) {
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("test lift owner exists")
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(0));
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        level.sector_number_map.insert(sector_number, 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: Some(crate::sector::LiftType::Ladder),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    }
+
     #[test]
     fn bow_lean_out_commands_keep_transition_order_live() {
         let mut engine = EngineInner::new();
@@ -4087,6 +4228,43 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
+    #[should_panic(expected = "WAIT_TIMER owner")]
+    fn wait_timer_context_rejects_missing_timer_contextually() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitTimer, seq_id, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Wait translation owner")]
+    fn wait_context_rejects_stale_owner_contextually() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+        engine.remove_entity(owner);
+
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::Wait, seq_id, 0);
+    }
+
+    #[test]
     fn stealth_termination_splices_timer_successor_before_same_tick_scan() {
         use crate::sequence::{Field, FieldValue, Sequence};
 
@@ -4255,11 +4433,10 @@ mod bow_command_body_parity_tests {
     #[test]
     fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
-            .sector_number_map
-            .insert(sector_number, 0);
+        install_test_lift_sector(&mut engine, owner, sector_number);
         engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
         let door = crate::gate::Door {
             door_type: crate::gate::DoorType::LiftHigh,
@@ -4272,20 +4449,32 @@ mod bow_command_body_parity_tests {
             Some(owner),
             OrderType::WalkingUpright,
         );
-        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+        if let crate::sequence::SequenceElementData::Movement {
+            gate_id, sector, ..
+        } = &mut wait.data
+        {
             *gate_id = Some(crate::gate::DoorIndex(0));
+            *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-        let barrier = LiftWaitCommandContext {
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+
+        let authorized = LiftWaitCommandContext {
             entities: &mut engine.world.entities,
             fast_grid: &mut engine.world.fast_grid,
             doors: std::slice::from_ref(&door),
             sequence_manager: &mut engine.orders.sequence_manager,
         }
-        .dispatch(owner, seq_id, 0);
+        .authorize_and_reserve(owner, seq_id, 0);
 
-        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert!(!authorized);
         assert_eq!(
             engine
                 .orders
@@ -4310,13 +4499,56 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
-    fn lift_wait_context_reserves_direction_before_terminating() {
+    #[should_panic(expected = "must be LiftHigh or LiftLow")]
+    fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
-            .sector_number_map
-            .insert(sector_number, 0);
+        install_test_lift_sector(&mut engine, owner, sector_number);
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHighCrenel,
+            sector_in: sector_number,
+            ..crate::gate::Door::default()
+        };
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            gate_id, sector, ..
+        } = &mut wait.data
+        {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+            *sector = crate::position_interface::SectorHandle::new(42);
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+
+        LiftWaitCommandContext {
+            entities: &mut engine.world.entities,
+            fast_grid: &mut engine.world.fast_grid,
+            doors: std::slice::from_ref(&door),
+            sequence_manager: &mut engine.orders.sequence_manager,
+        }
+        .authorize_and_reserve(owner, seq_id, 0);
+    }
+
+    #[test]
+    fn lift_wait_context_reserves_direction_before_terminating() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        install_test_lift_sector(&mut engine, owner, sector_number);
         let door = crate::gate::Door {
             door_type: crate::gate::DoorType::LiftHigh,
             sector_in: sector_number,
@@ -4328,20 +4560,33 @@ mod bow_command_body_parity_tests {
             Some(owner),
             OrderType::WalkingUpright,
         );
-        if let crate::sequence::SequenceElementData::Movement { gate_id, .. } = &mut wait.data {
+        if let crate::sequence::SequenceElementData::Movement {
+            gate_id, sector, ..
+        } = &mut wait.data
+        {
             *gate_id = Some(crate::gate::DoorIndex(0));
+            *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
-        let barrier = LiftWaitCommandContext {
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+
+        let authorized = LiftWaitCommandContext {
             entities: &mut engine.world.entities,
             fast_grid: &mut engine.world.fast_grid,
             doors: std::slice::from_ref(&door),
             sequence_manager: &mut engine.orders.sequence_manager,
         }
-        .dispatch(owner, seq_id, 0);
+        .authorize_and_reserve(owner, seq_id, 0);
 
-        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert!(authorized);
+        engine.do_next_order(seq_id, 0);
         assert_eq!(
             engine
                 .orders
@@ -4366,6 +4611,110 @@ mod bow_command_body_parity_tests {
             .expect("authorized actor records its active lift");
         assert_eq!(active_lift.sector_number, 42);
         assert!(!active_lift.upwards);
+    }
+
+    #[test]
+    fn lift_wait_rechecks_each_execute_and_promotes_wait_successor_in_authorizing_slot() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        install_test_lift_sector(&mut engine, owner, sector_number);
+        engine.world.fast_grid.lift_state_mut(0).wait_time = 2;
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                door_type: crate::gate::DoorType::LiftHigh,
+                sector_in: sector_number,
+                ..crate::gate::Door::default()
+            });
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            gate_id, sector, ..
+        } = &mut wait.data
+        {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+            *sector = crate::position_interface::SectorHandle::new(42);
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(|entity| entity.actor_data_mut())
+            .expect("lift wait owner is an actor")
+            .execution_frozen = true;
+        let _ = engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions();
+        let sim = crate::sim_rng::test_context();
+
+        engine.tick_actor_animation_action_change_slots(&sim, &assets);
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 1);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("blocked lift wait remains installed")
+                .state,
+            SequenceState::InProgress
+        );
+
+        engine.tick_actor_animation_action_change_slots(&sim, &assets);
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).wait_time, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("zeroed lift wait remains installed")
+                .state,
+            SequenceState::InProgress,
+            "authorization returns false on the frame that decrements the cooldown to zero"
+        );
+
+        engine.tick_actor_animation_action_change_slots(&sim, &assets);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("authorized lift wait remains inspectable")
+                .state,
+            SequenceState::Terminated
+        );
+        let lift = engine.world.fast_grid.lift_state_mut(0);
+        assert_eq!(lift.occupants, 1);
+        assert!(lift.occupied_downwards);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner)
+                .and_then(|(sequence, element)| engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, element))
+                .map(|element| element.command),
+            Some(Command::Wait),
+            "DoNext/Wait translation must finish in the same owner slot"
+        );
     }
 }
 

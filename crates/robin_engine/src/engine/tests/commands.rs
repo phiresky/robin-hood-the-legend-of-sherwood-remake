@@ -1,6 +1,26 @@
 use super::*;
 use crate::player_command::PlayerCommand;
 
+fn swordfight_test_assets() -> LevelAssets {
+    let mut assets = LevelAssets::new();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        hth_weapon_id: 1,
+        ..crate::profiles::CharacterProfile::default()
+    });
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        hth_weapon_id: 1,
+        ..crate::profiles::SoldierProfile::default()
+    });
+    profiles
+        .hth_weapons
+        .push(crate::profiles::HtHWeaponProfile {
+            distance: [20, 40, 70, 100],
+            ..crate::profiles::HtHWeaponProfile::default()
+        });
+    assets
+}
+
 #[test]
 fn script_globals() {
     let mut engine = EngineInner::new();
@@ -720,7 +740,7 @@ fn swordfight_los_ignores_crossing_motion_line() {
     use crate::fast_find_grid::GridLine;
 
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let assets = swordfight_test_assets();
     engine.world.fast_grid.size_map(4, 4);
     engine.world.fast_grid.allocate_layers(1);
     engine.world.fast_grid.add_line(
@@ -743,6 +763,7 @@ fn swordfight_los_ignores_crossing_motion_line() {
             y: 100.0,
             z: 0.0,
         });
+        element.set_sector(crate::position_interface::SectorHandle::new(0));
         Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),
@@ -773,7 +794,7 @@ fn swordfight_los_ignores_crossing_motion_line() {
         "fixture must contain a movement barrier between the fighters"
     );
 
-    engine.tick_evaluate_swordfight(sim, &assets);
+    engine.tick_waiting_sword_execute_for(sim, &assets, left_id);
 
     assert_eq!(
         engine
@@ -802,7 +823,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     use crate::element_kinds::ActionState;
 
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let assets = swordfight_test_assets();
 
     let mut attacker_element = ElementData {
         kind: ElementKind::ActorSoldier,
@@ -817,6 +838,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         y: 100.0,
         z: 0.0,
     });
+    attacker_element.set_sector(crate::position_interface::SectorHandle::new(0));
     let attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: attacker_element,
         actor: Default::default(),
@@ -831,10 +853,11 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         ..Default::default()
     };
     defender_element.set_position(WorldPoint3D {
-        x: 160.0,
+        x: 130.0,
         y: 100.0,
         z: 0.0,
     });
+    defender_element.set_sector(crate::position_interface::SectorHandle::new(0));
     let defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: defender_element,
         actor: Default::default(),
@@ -861,7 +884,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 
     engine.control.frame_counter = 15;
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_smalltalk(sim, &assets, &[]);
+        engine.tick_waiting_sword_execute_for(sim, &assets, attacker_id);
     });
 
     let attacker_human = engine
@@ -893,6 +916,129 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 }
 
 #[test]
+fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+
+    let mut engine = EngineInner::new();
+    let assets = swordfight_test_assets();
+    let make_fighter = |position| {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position(position);
+        element.set_sector(crate::position_interface::SectorHandle::new(0));
+        Entity::Soldier(ActorSoldier {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        })
+    };
+    let attacker = engine.add_entity(make_fighter(WorldPoint3D {
+        x: 100.0,
+        y: 100.0,
+        z: 0.0,
+    }));
+    let defender = engine.add_entity(make_fighter(WorldPoint3D {
+        x: 160.0,
+        y: 100.0,
+        z: 40.0,
+    }));
+    for (fighter, opponent) in [(attacker, defender), (defender, attacker)] {
+        let entity = engine.get_entity_mut(fighter).expect("3D fighter exists");
+        entity
+            .actor_data_mut()
+            .expect("3D fighter is actor")
+            .action_state = ActionState::WaitingSword;
+        entity
+            .human_data_mut()
+            .expect("3D fighter is human")
+            .opponents
+            .push(opponent);
+    }
+    {
+        let human = engine
+            .get_entity_mut(attacker)
+            .and_then(|entity| entity.human_data_mut())
+            .expect("3D attacker is human");
+        human.smalltalk_initiative = true;
+        human.received_smalltalk_initiative = true;
+    }
+
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_waiting_sword_execute_for(sim, &assets, attacker);
+    });
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(attacker, |command| matches!(
+                command,
+                Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+            )),
+        "60 units horizontally but 72.1 in 3D is outside the 70-unit maximal range"
+    );
+    assert_eq!(
+        engine
+            .get_entity(defender)
+            .and_then(|entity| entity.human_data())
+            .expect("3D defender remains human")
+            .smalltalk_hint,
+        crate::element::SmalltalkHint::None
+    );
+}
+
+#[test]
+#[should_panic(expected = "EvaluateSwordfight Uber range")]
+fn waiting_sword_requires_real_combat_profiles_contextually() {
+    use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+
+    let mut engine = EngineInner::new();
+    let make_fighter = || {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        })
+    };
+    let owner = engine.add_entity(make_fighter());
+    let opponent = engine.add_entity(make_fighter());
+    for (fighter, other) in [(owner, opponent), (opponent, owner)] {
+        let entity = engine
+            .get_entity_mut(fighter)
+            .expect("profile fighter exists");
+        entity
+            .actor_data_mut()
+            .expect("profile fighter is actor")
+            .action_state = ActionState::WaitingSword;
+        entity
+            .human_data_mut()
+            .expect("profile fighter is human")
+            .opponents
+            .push(other);
+    }
+
+    engine.tick_waiting_sword_execute_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+}
+
+#[test]
 fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
@@ -903,7 +1049,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
     use crate::element_kinds::ActionState;
 
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let assets = swordfight_test_assets();
 
     let mut pc_element = ElementData {
         kind: ElementKind::ActorPc,
@@ -953,13 +1099,12 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
 
-    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(sim, &assets);
+    engine.tick_waiting_sword_execute_for(sim, &assets, pc_id);
 
     let pc_human = engine
         .get_entity(pc_id)
         .and_then(|e| e.human_data())
         .unwrap();
-    assert_eq!(consumed_smalltalk_hint_actors, vec![pc_id]);
     assert_eq!(pc_human.smalltalk_hint, SmalltalkHint::None);
     assert_eq!(pc_human.smalltalk_hint_opponent, None);
     assert!(
@@ -969,6 +1114,47 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
             .has_live_element_for_actor_matching(pc_id, |command| {
                 command == Command::SwordstrikeTired
             })
+    );
+}
+
+#[test]
+#[should_panic(expected = "EvaluateSmalltalkHint owner")]
+fn smalltalk_hint_missing_required_opponent_fails_contextually() {
+    use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, SmalltalkHint};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        element: ElementData {
+            kind: ElementKind::ActorSoldier,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        npc: Default::default(),
+        soldier: Default::default(),
+    }));
+    let stale = engine.add_entity(Entity::Soldier(ActorSoldier {
+        element: ElementData {
+            kind: ElementKind::ActorSoldier,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        npc: Default::default(),
+        soldier: Default::default(),
+    }));
+    engine.remove_entity(stale);
+    let human = engine
+        .get_entity_mut(owner)
+        .and_then(|entity| entity.human_data_mut())
+        .expect("owner is human");
+    human.smalltalk_hint = SmalltalkHint::Left;
+    human.smalltalk_hint_opponent = Some(stale);
+
+    engine.tick_waiting_sword_execute_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
     );
 }
 
@@ -983,7 +1169,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
     use crate::element_kinds::ActionState;
 
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let assets = swordfight_test_assets();
 
     let mut hinted_element = ElementData {
         kind: ElementKind::ActorSoldier,
@@ -1031,6 +1217,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         y: 100.0,
         z: 0.0,
     });
+    free_attacker_element.set_sector(crate::position_interface::SectorHandle::new(0));
     let free_attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: free_attacker_element,
         actor: Default::default(),
@@ -1045,10 +1232,11 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         ..Default::default()
     };
     free_defender_element.set_position(WorldPoint3D {
-        x: 360.0,
+        x: 330.0,
         y: 100.0,
         z: 0.0,
     });
+    free_defender_element.set_sector(crate::position_interface::SectorHandle::new(0));
     let free_defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: free_defender_element,
         actor: Default::default(),
@@ -1090,12 +1278,11 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .push(free_attacker_id);
     }
 
-    let consumed_smalltalk_hint_actors = engine.tick_evaluate_swordfight(sim, &assets);
+    engine.tick_waiting_sword_execute_for(sim, &assets, hinted_id);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_smalltalk(sim, &assets, &consumed_smalltalk_hint_actors);
+        engine.tick_waiting_sword_execute_for(sim, &assets, free_attacker_id);
     });
 
-    assert_eq!(consumed_smalltalk_hint_actors, vec![hinted_id]);
     assert!(
         engine
             .orders
