@@ -66,8 +66,6 @@ pub struct AiOutbox {
     pub actor: AiActorOutbox,
     /// Resurrection and eye repair drained by the dedicated recovery sweep.
     pub recovery: AiRecoveryOutbox,
-    /// Speech completion state drained by `process_npc_speech`.
-    pub speech: AiSpeechOutbox,
     /// Music urgency drained by the overall villain-alert sweep.
     pub music: AiMusicOutbox,
 }
@@ -87,8 +85,31 @@ pub struct AiDetectionOutbox {
 pub struct AiReentrantOutbox {
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<StimulusType>,
-    pub state_change_notifications: Vec<AiStateChangeNotification>,
+    /// Synchronous work produced while the AI owns its call stack.
+    ///
+    /// `RHArtificialIntelligence::Say` and Enemy/Friendly `SetState` are
+    /// immediate calls in the Original. Rust cannot re-enter the engine while
+    /// an AI controller is borrowed, so both calls share this FIFO. Keeping
+    /// them in one queue preserves statement order at the owner return barrier
+    /// instead of rebuilding a frame-global speech batch.
+    pub owner_work: Vec<AiOwnerWork>,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum AiOwnerWork {
+    StateChange(AiStateChangeNotification),
+    Speech(AiSpeechAttempt),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AiSpeechAttempt {
+    pub remark: Remark,
+    pub flags: u16,
 }
 
 /// One owner-local `SetState` script notification.
@@ -112,11 +133,6 @@ pub struct AiStateChangeNotification {
 pub struct AiRecoveryOutbox {
     pub inform_resurrection: bool,
     pub set_eye_status: Option<crate::element::EyeStatus>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
-pub struct AiSpeechOutbox {
-    pub mytalk_flags: u16,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]

@@ -3712,7 +3712,7 @@ impl EngineInner {
                     // delayed-highlight display flow.  The beggar's
                     // CIV_REMARK_BEGGAR_* speech cue is queued inside
                     // `reveal_scrolls` and later dispatched by
-                    // `process_npc_speech`.
+                    // the owner-local speech drain.
                     match self.reveal_scrolls(sim, display, assets, beggar_id) {
                         Some(remark) => tracing::debug!(
                             beggar = ?beggar_id,

@@ -335,9 +335,8 @@ impl EngineInner {
     /// On a successful reveal the beggar's `current_scroll_set`
     /// advances, the minimap's delayed-highlight queue fills with the
     /// revealed scrolls, and the map opens (centred if it was closed).
-    /// The beggar's speech cue is fired directly here (setting
-    /// `AiController::current_remark`); `process_npc_speech` picks it
-    /// up later in the tick and forwards it to the sound queue.
+    /// The beggar's speech cue is fired and settled at this interaction's
+    /// owner-local return boundary.
     /// `beggar_dont_talk_counter` is also bumped to 3 frames on the
     /// civilian's friendly-AI state so remarks don't stack.
     ///
@@ -365,7 +364,7 @@ impl EngineInner {
         // When the cursor has walked off the end, the beggar only says
         // "thanx" and nothing else happens (no cooldown bump either).
         if current_idx >= set_count {
-            self.say_beggar_remark(beggar, BeggarRemark::ExhaustedThanx);
+            self.say_beggar_remark(sim, assets, beggar, BeggarRemark::ExhaustedThanx);
             return Some(BeggarRemark::ExhaustedThanx);
         }
         let current_set = scroll_sets[current_idx].clone();
@@ -404,7 +403,7 @@ impl EngineInner {
         };
 
         // Fire the speech cue on the beggar's AI controller.
-        self.say_beggar_remark(beggar, remark);
+        self.say_beggar_remark(sim, assets, beggar, remark);
 
         // Common tail — unconditionally bump the chat cooldown and
         // advance the scroll-set cursor in both the revealable and
@@ -422,15 +421,20 @@ impl EngineInner {
         Some(remark)
     }
 
-    /// Fire a beggar speech cue on the entity's AI controller.  The
-    /// actual sound dispatch happens in `process_npc_speech` later in
-    /// the tick.
-    fn say_beggar_remark(&mut self, beggar: EntityId, remark: BeggarRemark) {
-        if let Some(entity) = self.get_entity_mut(beggar)
-            && let Some(ai) = entity.ai_controller_mut()
-        {
-            ai.say_with_flags(remark.remark(), remark.speech_flags());
-        }
+    /// Fire and settle the beggar speech cue at this interaction boundary.
+    fn say_beggar_remark(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        beggar: EntityId,
+        remark: BeggarRemark,
+    ) {
+        self.get_entity_mut(beggar)
+            .unwrap_or_else(|| panic!("beggar speech owner {} disappeared", beggar.index()))
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("beggar speech owner {} has no AI", beggar.index()))
+            .say_with_flags(remark.remark(), remark.speech_flags());
+        self.drain_ai_owner_work_for(sim, assets, beggar);
     }
 
     // ─── Deferred amulet spawn ───────────────────────────────────

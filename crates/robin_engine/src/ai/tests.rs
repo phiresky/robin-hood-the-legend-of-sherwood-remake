@@ -820,6 +820,36 @@ fn ai_outbox_drain_barriers_are_independent_and_serializable() {
 }
 
 #[test]
+fn owner_fifo_preserves_and_hashes_say_setstate_both_orders() {
+    let state = AiOwnerWork::StateChange(AiStateChangeNotification {
+        outgoing_state: AiState::Default,
+        outgoing_substate: Substate::DefaultOnPost,
+        incoming_state: AiState::Seeking,
+        incoming_substate: Substate::SeekingHeardsteps,
+        source: AiStateChangeSource::SelfActor,
+    });
+    let speech = AiOwnerWork::Speech(AiSpeechAttempt {
+        remark: Remark::Arrow,
+        flags: SpeechFlags::MYTALK_1.bits(),
+    });
+
+    let mut say_then_state = AiOutbox::default();
+    say_then_state.reentrant.owner_work = vec![speech, state];
+    let mut state_then_say = AiOutbox::default();
+    state_then_say.reentrant.owner_work = vec![state, speech];
+
+    let encoded = serde_json::to_string(&say_then_state).expect("serialize owner FIFO");
+    let decoded: AiOutbox = serde_json::from_str(&encoded).expect("deserialize owner FIFO");
+    assert_eq!(decoded.reentrant.owner_work, vec![speech, state]);
+    assert_eq!(state_then_say.reentrant.owner_work, vec![state, speech]);
+    assert_ne!(
+        robin_util::state_hash::compute(&say_then_state),
+        robin_util::state_hash::compute(&state_then_say),
+        "Say/SetState statement order must participate in deterministic state"
+    );
+}
+
+#[test]
 fn clear_all_pending_clears_every_outbox_barrier() {
     let mut ai = AiController::default();
     ai.outbox.patrol.direction_broadcast = Some(7);
@@ -838,14 +868,21 @@ fn clear_all_pending_clears_every_outbox_barrier() {
         .push(StimulusType::EventDone);
     ai.outbox
         .reentrant
-        .state_change_notifications
-        .push(AiStateChangeNotification {
+        .owner_work
+        .push(AiOwnerWork::StateChange(AiStateChangeNotification {
             outgoing_state: AiState::Default,
             outgoing_substate: Substate::DefaultOnPost,
             incoming_state: AiState::Seeking,
             incoming_substate: Substate::SeekingHeardsteps,
             source: AiStateChangeSource::SelfActor,
-        });
+        }));
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::Speech(AiSpeechAttempt {
+            remark: Remark::Arrow,
+            flags: SpeechFlags::MYTALK_1.bits(),
+        }));
     ai.outbox.reentrant.waypoint_script_reach_point =
         Some((PathId::new(2).expect("non-sentinel path"), 3));
 
@@ -878,7 +915,6 @@ fn clear_all_pending_clears_every_outbox_barrier() {
 
     ai.outbox.recovery.inform_resurrection = true;
     ai.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
-    ai.outbox.speech.mytalk_flags = 0x80;
     ai.outbox.music.instant_change = true;
 
     ai.clear_all_pending();

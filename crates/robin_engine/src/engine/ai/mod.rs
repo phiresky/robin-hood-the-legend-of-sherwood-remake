@@ -49,6 +49,17 @@ struct PotentialDetectable {
     camp: Camp,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct NpcSpeechSettlement {
+    pub(super) invoke_finished_callback: bool,
+    pub(super) category_rejection: Option<CategorySpeechRejectionFinalization>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CategorySpeechRejectionFinalization {
+    reason_after_callback: Option<u16>,
+}
+
 /// Build a snapshot of every live human in the engine.  Called once at
 /// the start of [`EngineInner::init_ai`] and handed to every per-NPC init
 /// pass.
@@ -3739,485 +3750,591 @@ impl EngineInner {
         }
     }
 
-    // ─── NPC speech processing ─────────────────────────────────
+    // ─── Owner-local NPC speech ─────────────────────────────────
 
-    /// Drain pending AI remarks and issue `play_exclamation` calls.
+    fn speech_finished_stimulus(flags: crate::ai::SpeechFlags) -> Option<StimulusType> {
+        use crate::ai::SpeechFlags;
+        if flags.contains(SpeechFlags::MYTALK_1) {
+            Some(StimulusType::EventMyTalk1)
+        } else if flags.contains(SpeechFlags::MYTALK_2) {
+            Some(StimulusType::EventMyTalk2)
+        } else if flags.contains(SpeechFlags::MYTALK_3) {
+            Some(StimulusType::EventMyTalk3)
+        } else if flags.contains(SpeechFlags::MYTALK_0) {
+            Some(StimulusType::EventMyTalk0)
+        } else {
+            None
+        }
+    }
+
+    fn reject_npc_speech_attempt(
+        &mut self,
+        owner: EntityId,
+        flags: crate::ai::SpeechFlags,
+        reason: u16,
+    ) -> NpcSpeechSettlement {
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap_or_else(|| {
+                panic!(
+                    "speech owner {} disappeared during rejection",
+                    owner.index()
+                )
+            })
+            .ai_controller_mut()
+            .unwrap_or_else(|| {
+                panic!(
+                    "speech owner {} lost its AI during rejection",
+                    owner.index()
+                )
+            });
+        ai.cached_frame = self.control.frame_counter;
+        ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+        let invoke_finished_callback = if let Some(stimulus) = Self::speech_finished_stimulus(flags)
+        {
+            ai.outbox.reentrant.self_stimuli.insert(0, stimulus);
+            true
+        } else {
+            false
+        };
+        NpcSpeechSettlement {
+            invoke_finished_callback,
+            category_rejection: None,
+        }
+    }
+
+    /// Settle one queued Say invocation at the current AI owner's return
+    /// barrier.
     ///
-    /// `Say()` is called inline from the AI state machine and
-    /// immediately dispatches to the sound manager.  Here, the AI
-    /// stores `current_remark` / `current_remark_flags` during its tick, and
-    /// this legacy pass drains them after all AI ticks. TODO(PA-013): the
-    /// original `Say` dispatch is synchronous; move this into a separately
-    /// audited re-entrant owner slice rather than attaching it to the new NPC
-    /// tail coordinator.
-    pub(super) fn process_npc_speech(&mut self, assets: &LevelAssets) {
+    /// Ordering follows `RHArtificialIntelligence::Say`
+    /// (`original-code/RHartificialintelligence.cpp:5846-6178`): blip,
+    /// script forbid, recent-remark forbid, house, CYCLE_3 advance,
+    /// active-speech arbitration, active remark assignment, speech-profile
+    /// category dispatch, screen remark, then automatic forbidding.
+    pub(super) fn settle_npc_speech_attempt(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        attempt: crate::ai::AiSpeechAttempt,
+    ) -> NpcSpeechSettlement {
         use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
         use crate::sound::ExclamationGroup;
 
-        let current_frame = self.control.frame_counter;
-
-        // ── Phase 0: evict expired forbidden remarks ────────────
-        self.ai
-            .global
-            .forbidden_remarks
-            .retain(|fr| fr.forbidden_till_frame >= current_frame);
-
-        // ── Phase 1: snapshot NPC speech data ───────────────────
-        // We collect everything needed into a vec to avoid holding
-        // mutable borrows on entities while accessing ai_global,
-        // profile_manager, and the sound manager.
-        struct SpeechSnap {
-            entity_id: EntityId,
-            remark: Remark,
-            flags: u16,
-            is_soldier: bool,
-            is_vip: bool,
-            blipped: bool,
-            sector: Option<crate::position_interface::SectorHandle>,
-            in_door_transit: bool,
-            position: crate::coordinates::MapPoint,
-            speech_id: u32,
-            script_forbidden: bool,
-            profile_name: String,
+        let flags = SpeechFlags::from_bits_truncate(attempt.flags);
+        #[derive(Clone, Copy)]
+        enum OwnerProfile {
+            Soldier(crate::profiles::SoldierProfileIdx),
+            Civilian(crate::profiles::CivilianProfileIdx),
         }
-        let mut snaps: Vec<SpeechSnap> = Vec::new();
 
-        for (npc_id, entity) in self.world.entities.npcs_mut() {
-            let (npc, is_soldier, is_vip, blipped, sector, in_door_transit, pos) = match entity {
-                crate::element::Entity::Soldier(s) => (
-                    &mut s.npc,
-                    true,
-                    assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .map(|p| p.vip)
-                        .unwrap_or(false),
-                    s.element.blipped,
-                    s.element.sector(),
-                    s.element.is_in_door_transit(),
-                    s.element.position_map(),
+        let (
+            owner_profile,
+            blipped,
+            sector,
+            in_door_transit,
+            position,
+            frame_profile_name,
+            script_forbidden,
+            active_remark,
+        ) = {
+            let entity = self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("queued speech owner {} is missing", owner.index()));
+            let owner_profile = match entity {
+                Entity::Soldier(s) => OwnerProfile::Soldier(s.soldier.soldier_profile_index),
+                Entity::Civilian(c) => OwnerProfile::Civilian(c.civilian.civilian_profile_index),
+                other => panic!(
+                    "queued NPC speech owner {} has invalid entity kind {:?}",
+                    owner.index(),
+                    other.element_data().kind
                 ),
-                crate::element::Entity::Civilian(c) => (
-                    &mut c.npc,
-                    false,
-                    assets
-                        .profile_manager
-                        .civilians
-                        .get(usize::from(c.civilian.civilian_profile_index))
-                        .map(|p| p.civilian_type == crate::profiles::CivilianType::Vip)
-                        .unwrap_or(false),
-                    c.element.blipped,
-                    c.element.sector(),
-                    c.element.is_in_door_transit(),
-                    c.element.position_map(),
-                ),
-                _ => continue,
             };
-
-            let ai = match npc.ai_brain.base_mut() {
-                Some(ai) => ai,
-                None => continue,
-            };
-
-            let remark = ai.current_remark;
-            if remark == Remark::TheSoundOfSilence {
-                continue;
-            }
-            // Skip NPCs whose exclamation is already being played by
-            // the sound manager — we must NOT redispatch it, and we
-            // must NOT clear current_remark (the `already speaking?`
-            // guard in `say_impl` reads it to block overrides).
-            if ai.speech_in_flight {
-                continue;
-            }
-            let flags = ai.current_remark_flags;
-
-            // Script-forbidden check.
-            let script_forbidden = ai.forbidden_remark_ids.contains(&(remark as u32));
-
-            // Get the NPC's speech profile ID and name.
-            let (speech_id, profile_name) = match entity {
-                crate::element::Entity::Soldier(s) => {
-                    let p = assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index);
-                    (
-                        p.map(|p| p.exclamation_id).unwrap_or(0),
-                        p.map(|p| p.profile_name.clone()).unwrap_or_default(),
-                    )
-                }
-                crate::element::Entity::Civilian(c) => {
-                    let p = assets
-                        .profile_manager
-                        .civilians
-                        .get(usize::from(c.civilian.civilian_profile_index));
-                    (
-                        p.map(|p| p.exclamation_id).unwrap_or(0),
-                        p.map(|p| p.profile_name.clone()).unwrap_or_default(),
-                    )
-                }
-                _ => (0, String::new()),
-            };
-
-            tracing::trace!(
-                npc = npc_id.index(),
-                ?remark,
-                flags,
-                speech_id,
-                blipped,
-                script_forbidden,
-                profile_name = profile_name.as_str(),
-                "process_npc_speech: snap"
-            );
-            snaps.push(SpeechSnap {
-                entity_id: npc_id.into(),
-                remark,
-                flags,
-                is_soldier,
-                is_vip,
-                blipped,
-                sector,
-                in_door_transit,
-                position: pos,
-                speech_id,
-                script_forbidden,
-                profile_name,
+            let ai = entity.ai_controller().unwrap_or_else(|| {
+                panic!("queued speech owner {} has no AI controller", owner.index())
             });
+            (
+                owner_profile,
+                entity.element_data().blipped,
+                entity.element_data().sector(),
+                entity.element_data().is_in_door_transit(),
+                entity.element_data().position_map(),
+                entity.element_data().sprite.frame_profile_name.clone(),
+                ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),
+                ai.current_remark,
+            )
+        };
+        let is_soldier = matches!(owner_profile, OwnerProfile::Soldier(_));
+        let mut resolved_profile: Option<(bool, u32)> = None;
+        let resolve_profile = |cached: &mut Option<(bool, u32)>| {
+            if cached.is_none() {
+                *cached = Some(match owner_profile {
+                    OwnerProfile::Soldier(profile_index) => {
+                        let profile = assets
+                            .profile_manager
+                            .get_soldier(profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing soldier profile {} after early gates",
+                                    owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (profile.vip, profile.exclamation_id)
+                    }
+                    OwnerProfile::Civilian(profile_index) => {
+                        let profile = assets
+                            .profile_manager
+                            .civilians
+                            .get(usize::from(profile_index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing civilian profile {} after early gates",
+                                    owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (
+                            profile.civilian_type == crate::profiles::CivilianType::Vip,
+                            profile.exclamation_id,
+                        )
+                    }
+                });
+            }
+            cached.clone().expect("speech profile cache was populated")
+        };
+
+        {
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "speech owner {} disappeared before Speak log",
+                        owner.index()
+                    )
+                })
+                .ai_controller_mut()
+                .unwrap_or_else(|| {
+                    panic!("speech owner {} lost AI before Speak log", owner.index())
+                });
+            ai.cached_frame = self.control.frame_counter;
+            ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
         }
 
-        // ── Phase 2: filter and dispatch ────────────────────────
-        // Blocked remarks need MYTALK fired immediately; accepted remarks
-        // store flags for Phase 3 callback when sound finishes.
-        let mut blocked_mytalk: Vec<(EntityId, u16)> = Vec::new(); // (entity_id, flags)
-        let mut accepted_mytalk: Vec<(EntityId, u16)> = Vec::new(); // (entity_id, flags)
+        if blipped {
+            return self.reject_npc_speech_attempt(owner, flags, 0);
+        }
+        if script_forbidden {
+            return self.reject_npc_speech_attempt(owner, flags, 1);
+        }
 
-        for snap in snaps {
-            let flags = SpeechFlags::from_bits_truncate(snap.flags);
-
-            // Blipped → forget it.
-            if snap.blipped {
-                tracing::trace!(npc = snap.entity_id.index(), ?snap.remark, "speech blocked: blipped");
-                blocked_mytalk.push((snap.entity_id, snap.flags));
-                continue;
-            }
-
-            // Script-forbidden.
-            if snap.script_forbidden {
-                tracing::trace!(npc = snap.entity_id.index(), ?snap.remark, "speech blocked: script_forbidden");
-                blocked_mytalk.push((snap.entity_id, snap.flags));
-                continue;
-            }
-
-            // Recently-said check (unless SPEECH_ALWAYS).
-            // `is_remark_forbidden` with full scope checking.
-            if !flags.contains(SpeechFlags::ALWAYS) {
-                let is_forbidden = self.ai.global.forbidden_remarks.iter().any(|fr| {
-                    if fr.remark != snap.remark {
-                        return false;
-                    }
-                    let scope = RemarkTargetFlags::from_bits_truncate(fr.flags);
-                    // THIS_TYPE: same NPC category (soldier/civilian) with same speech profile
+        if !flags.contains(SpeechFlags::ALWAYS) {
+            let frame = self.control.frame_counter;
+            // Original scans lazily in list order. It deletes expired entries
+            // only as encountered and returns on the first live match, leaving
+            // every later entry (including expired ones) untouched.
+            let mut forbidden = false;
+            let mut index = 0;
+            while index < self.ai.global.forbidden_remarks.len() {
+                if self.ai.global.forbidden_remarks[index].forbidden_till_frame < frame {
+                    self.ai.global.forbidden_remarks.remove(index);
+                    continue;
+                }
+                let entry = &self.ai.global.forbidden_remarks[index];
+                if entry.remark == attempt.remark {
+                    let scope = RemarkTargetFlags::from_bits_truncate(entry.flags);
                     if scope.contains(RemarkTargetFlags::THIS_TYPE)
-                        && fr.bad_guy == snap.is_soldier
-                        && fr.speech_id == snap.speech_id
+                        && entry.bad_guy == is_soldier
+                        && entry.speech_id == resolve_profile(&mut resolved_profile).1
                     {
-                        return true;
-                    }
-                    // THIS_GUY: exact same NPC.  EntityId (monotonic
-                    // slot index, never reused) is isomorphic to the
-                    // creation counter, so we use it directly in
-                    // place of `creation_order`.
-                    if scope.contains(RemarkTargetFlags::THIS_GUY)
-                        && fr.guy_index == snap.entity_id.index() as u16
+                        forbidden = true;
+                    } else if scope.contains(RemarkTargetFlags::THIS_GUY)
+                        && entry.guy_index == owner.index() as u16
                     {
-                        return true;
+                        forbidden = true;
+                    } else if is_soldier && scope.contains(RemarkTargetFlags::VILLAINS) {
+                        forbidden = true;
+                    } else if !is_soldier && scope.contains(RemarkTargetFlags::CIVILIANS) {
+                        forbidden = true;
                     }
-                    // VILLAINS: all soldiers
-                    if scope.contains(RemarkTargetFlags::VILLAINS) && snap.is_soldier {
-                        return true;
-                    }
-                    // CIVILIANS: all civilians
-                    if scope.contains(RemarkTargetFlags::CIVILIANS) && !snap.is_soldier {
-                        return true;
-                    }
-                    false
-                });
-                if is_forbidden {
-                    tracing::trace!(npc = snap.entity_id.index(), ?snap.remark, "speech blocked: forbidden_remarks list");
-                    blocked_mytalk.push((snap.entity_id, snap.flags));
-                    continue;
                 }
-            }
-
-            // Inside-building suppression (unless SPEECH_HOUSE).
-            // `is_inside_building()` — sector-flag OR door-transit.
-            if !flags.contains(SpeechFlags::HOUSE) {
-                let inside_building =
-                    self.entity_building_sector(snap.sector).is_some() || snap.in_door_transit;
-                if inside_building {
-                    tracing::trace!(npc = snap.entity_id.index(), ?snap.remark, "speech blocked: inside_building");
-                    blocked_mytalk.push((snap.entity_id, snap.flags));
-                    continue;
+                if forbidden {
+                    break;
                 }
+                index += 1;
             }
-
-            if snap.speech_id == 0 {
-                tracing::trace!(npc = snap.entity_id.index(), ?snap.remark, "speech blocked: speech_id=0");
-                blocked_mytalk.push((snap.entity_id, snap.flags));
-                continue;
+            if forbidden {
+                return self.reject_npc_speech_attempt(owner, flags, 2);
             }
+        }
 
-            // Resolve remark → (group, exclamation_id).
-            let remark_u32 = snap.remark as u32;
+        if !flags.contains(SpeechFlags::HOUSE)
+            && (self.entity_building_sector(sector).is_some() || in_door_transit)
+        {
+            return self.reject_npc_speech_attempt(owner, flags, 3);
+        }
+
+        // This is deliberately before the already-speaking gate, exactly as
+        // in Original Say. Rejected overlapping attempts still consume one
+        // shared CYCLE_3 slot.
+        let variant = if flags.contains(SpeechFlags::CYCLE_3_VARIANTS) {
+            self.ai.global.current_speech_variant = (self.ai.global.current_speech_variant + 1) % 3;
+            self.ai.global.current_speech_variant as i32
+        } else {
+            -1
+        };
+
+        if active_remark != Remark::TheSoundOfSilence {
+            if flags.contains(SpeechFlags::EMERGENCY) {
+                self.feedback
+                    .pending_side_effects
+                    .sounds
+                    .push(super::SoundCommand::StopExclamation { actor_id: owner });
+                // StopExclamation removes the old pending/playing line without
+                // calling SoundIsFinished, so its MYTALK callback is discarded.
+                self.feedback
+                    .sound_sim
+                    .playing_exclamations
+                    .retain(|playing| playing.actor_id != owner.index());
+            } else {
+                return self.reject_npc_speech_attempt(owner, flags, 4);
+            }
+        }
+
+        {
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| {
+                    panic!("speech owner {} disappeared before latch", owner.index())
+                })
+                .ai_controller_mut()
+                .unwrap_or_else(|| panic!("speech owner {} lost AI before latch", owner.index()));
+            ai.current_remark = attempt.remark;
+            ai.current_remark_flags = attempt.flags;
+        }
+
+        let (is_vip, speech_id) = resolve_profile(&mut resolved_profile);
+
+        // Original skips the entire category/sound branch for speech ID zero,
+        // but still leaves current_remark latched and performs the display and
+        // auto-forbid tail. With no SoundIsFinished callback this can remain
+        // active indefinitely.
+        if speech_id != 0 {
+            let raw = attempt.remark as u32;
             let first_vip = Remark::FIRST_VIP as u32;
-            let first_civ = Remark::FIRST_CIVILIAN as u32;
-
-            // Mismatch diagnostics: the `SPEECH_SCRIPT` flag flips the
-            // prefix from "AI error" to "Script error" so QA can tell
-            // script-driven mis-tags from engine-side bugs.
+            let first_civilian = Remark::FIRST_CIVILIAN as u32;
             let prefix = if flags.contains(SpeechFlags::SCRIPT) {
                 "Script error"
             } else {
                 "AI error"
             };
-            let (group, excl_id) = if remark_u32 >= first_vip {
-                if !snap.is_vip {
-                    if snap.is_soldier {
+            let resolved = if raw >= first_vip {
+                if !is_vip {
+                    tracing::warn!(
+                        target: "ai_speech_mismatch",
+                        "{}: VIP remark [{}] for non-VIP NPC {} at ({},{})",
+                        prefix,
+                        attempt.remark.speech(),
+                        owner.index(),
+                        position.x as u16,
+                        position.y as u16
+                    );
+                    None
+                } else {
+                    Some((ExclamationGroup::Vip, raw.wrapping_sub(first_vip) as u16))
+                }
+            } else if raw >= first_civilian {
+                if is_soldier || is_vip {
+                    if is_soldier {
                         tracing::warn!(
                             target: "ai_speech_mismatch",
-                            "{}: Trying to play VIP remark [{}] for non-VIP soldier at ({},{})",
+                            "{}: civilian remark [{}] for soldier {} at ({},{})",
                             prefix,
-                            snap.remark.speech(),
-                            snap.position.x as u16,
-                            snap.position.y as u16,
-                        );
-                    } else {
-                        tracing::warn!(
-                            target: "ai_speech_mismatch",
-                            "{}: Trying to play VIP remark [{}] for non-VIP civilian at ({},{})",
-                            prefix,
-                            snap.remark.speech(),
-                            snap.position.x as u16,
-                            snap.position.y as u16,
+                            attempt.remark.speech(),
+                            owner.index(),
+                            position.x as u16,
+                            position.y as u16
                         );
                     }
-                    blocked_mytalk.push((snap.entity_id, snap.flags));
-                    continue;
+                    None
+                } else {
+                    Some((
+                        ExclamationGroup::Civilian,
+                        raw.wrapping_sub(first_civilian) as u16,
+                    ))
                 }
-                (ExclamationGroup::Vip, (remark_u32 - first_vip) as u16)
-            } else if remark_u32 >= first_civ {
-                if snap.is_soldier {
+            } else if !is_soldier || is_vip {
+                if !is_soldier {
                     tracing::warn!(
                         target: "ai_speech_mismatch",
-                        "{}: Trying to play civilian remark [{}] for soldier at ({},{})",
+                        "{}: soldier remark [{}] for civilian {} at ({},{})",
                         prefix,
-                        snap.remark.speech(),
-                        snap.position.x as u16,
-                        snap.position.y as u16,
+                        attempt.remark.speech(),
+                        owner.index(),
+                        position.x as u16,
+                        position.y as u16
                     );
-                    blocked_mytalk.push((snap.entity_id, snap.flags));
-                    continue;
                 }
-                (ExclamationGroup::Civilian, (remark_u32 - first_civ) as u16)
+                None
             } else {
-                if !snap.is_soldier && !snap.is_vip {
-                    tracing::warn!(
-                        target: "ai_speech_mismatch",
-                        "{}: Trying to play soldier remark [{}] for civilian at ({},{})",
-                        prefix,
-                        snap.remark.speech(),
-                        snap.position.x as u16,
-                        snap.position.y as u16,
-                    );
-                    blocked_mytalk.push((snap.entity_id, snap.flags));
-                    continue;
-                }
-                // The soldier-remark fall-through passes
-                // `EXCLAMATION_CIVILIAN`: soldiers play soldier remarks
-                // via the civilian sound bank — a quirk of the original
-                // engine; `EXCLAMATION_SOLDIER` is declared but never
-                // used.
-                (ExclamationGroup::Civilian, remark_u32 as u16)
+                // Original's ordinary soldier bank uses EXCLAMATION_CIVILIAN.
+                Some((ExclamationGroup::Civilian, raw as u16))
             };
 
-            // SPEECH_CYCLE_3_VARIANTS round-robins the variant index
-            // across the three VIP-remark recordings so repeated lines
-            // don't play the same sample twice.  The counter is shared
-            // across all NPCs, stored on `AiGlobalState`.
-            let variant = if flags.contains(SpeechFlags::CYCLE_3_VARIANTS) {
-                self.ai.global.current_speech_variant =
-                    (self.ai.global.current_speech_variant + 1) % 3;
-                self.ai.global.current_speech_variant as i32
-            } else {
-                -1
+            let Some((group, exclamation_id)) = resolved else {
+                let reason = if raw >= first_vip {
+                    if is_soldier { 5 } else { 6 }
+                } else if raw >= first_civilian {
+                    if is_soldier { 7 } else { 8 }
+                } else if !is_soldier {
+                    9
+                } else {
+                    10
+                };
+                let log_before_callback = !matches!(reason, 8 | 9);
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "speech owner {} disappeared after category rejection",
+                            owner.index()
+                        )
+                    })
+                    .ai_controller_mut()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "speech owner {} lost AI after category rejection",
+                            owner.index()
+                        )
+                    });
+                if log_before_callback {
+                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+                }
+                let invoke_finished_callback =
+                    if let Some(stimulus) = Self::speech_finished_stimulus(flags) {
+                        ai.outbox.reentrant.self_stimuli.insert(0, stimulus);
+                        true
+                    } else {
+                        false
+                    };
+                return NpcSpeechSettlement {
+                    invoke_finished_callback,
+                    category_rejection: Some(CategorySpeechRejectionFinalization {
+                        reason_after_callback: (!log_before_callback).then_some(reason),
+                    }),
+                };
             };
 
-            // Emergency speech interrupts the actor's current line
-            // before starting the replacement: if the actor is already
-            // speaking and `SPEECH_EMERGENCY` is set, call
-            // `stop_exclamation(self)` and then continue.
-            if flags.contains(SpeechFlags::EMERGENCY) {
-                self.feedback.pending_side_effects.sounds.push(
-                    super::SoundCommand::StopExclamation {
-                        actor_id: snap.entity_id,
-                    },
-                );
-                self.feedback
-                    .sound_sim
-                    .playing_exclamations
-                    .retain(|p| p.actor_id != snap.entity_id.index());
-            }
-
-            // Queue the exclamation — drained by `flush_sound_queue` after
-            // the tick body has finished so a rollback replay does not
-            // stack-play duplicate audio.
             self.feedback
                 .pending_side_effects
                 .sounds
                 .push(super::SoundCommand::Exclamation {
                     group,
-                    profile_id: snap.speech_id,
-                    exclamation_id: excl_id,
+                    profile_id: speech_id,
+                    exclamation_id,
                     variant,
-                    position: snap.position,
-                    actor_id: Some(snap.entity_id),
+                    position,
+                    actor_id: Some(owner),
                 });
-            // Schedule the deterministic MYTALK finish from the
-            // host-populated sample-duration table. Missing samples use
-            // the original zero-length completion path; sound backend
-            // presence is deliberately not part of sim state.
             let duration = super::exclamation_duration_frames(
                 &assets.exclamation_durations,
                 group,
-                snap.speech_id,
-                excl_id,
+                speech_id,
+                exclamation_id,
             );
             self.feedback
                 .sound_sim
                 .playing_exclamations
                 .push(crate::sound::PlayingExclamation {
-                    actor_id: snap.entity_id.index(),
-                    exclamation_id: excl_id as u32,
+                    actor_id: owner.index(),
+                    exclamation_id: u32::from(exclamation_id),
                     finish_frame: self.control.frame_counter + duration,
                 });
-            tracing::trace!(
-                npc = snap.entity_id.index(),
-                ?snap.remark,
-                profile_id = snap.speech_id,
-                excl_id,
-                ?group,
-                "speech dispatched"
-            );
+        }
 
-            // `forbid_remark`: auto-forbid based on remark type.
-            // EntityId serves the same role as `creation_order`.
-            Self::auto_forbid_remark(
-                &mut self.ai.global.forbidden_remarks,
-                snap.remark,
-                snap.speech_id,
-                snap.entity_id.index() as u16,
-                snap.is_soldier,
-                current_frame,
-            );
+        self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {
+            timer: 100,
+            prefix: frame_profile_name,
+            remark: attempt.remark,
+        });
+        Self::auto_forbid_remark(
+            &mut self.ai.global.forbidden_remarks,
+            attempt.remark,
+            speech_id,
+            owner.index() as u16,
+            is_soldier,
+            self.control.frame_counter,
+        );
+        NpcSpeechSettlement::default()
+    }
 
-            // Add to screen remarks (HUD subtitle display) with a
-            // 100-frame timer.
-            self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {
-                timer: 100,
-                prefix: snap.profile_name.clone(),
-                remark: snap.remark,
+    /// Finish the unconditional tail of a category-rejected Original `Say`.
+    /// Reasons 8/9 log only after `InformAIOnFinishedRemark`; every category
+    /// rejection clears the latch after that callback returns, overwriting any
+    /// recursively started emergency line.
+    pub(super) fn finalize_category_speech_rejection(
+        &mut self,
+        owner: EntityId,
+        finalization: CategorySpeechRejectionFinalization,
+    ) {
+        use crate::ai::Remark;
+
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap_or_else(|| {
+                panic!(
+                    "speech owner {} disappeared during category-rejection tail",
+                    owner.index()
+                )
+            })
+            .ai_controller_mut()
+            .unwrap_or_else(|| {
+                panic!(
+                    "speech owner {} lost AI during category-rejection tail",
+                    owner.index()
+                )
             });
-
-            // Store flags for MYTALK callback when sound finishes (Phase 3).
-            accepted_mytalk.push((snap.entity_id, snap.flags));
+        if let Some(reason) = finalization.reason_after_callback {
+            ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
         }
+        ai.current_remark = Remark::TheSoundOfSilence;
+        ai.current_remark_flags = 0;
+    }
 
-        // Push blocked-remark MYTALK self-stimuli immediately:
-        // `inform_ai_on_finished_remark` fires synchronously when
-        // `say()` is blocked.
-        for (entity_id, flags_bits) in blocked_mytalk {
-            let flags = SpeechFlags::from_bits_truncate(flags_bits);
-            let event = if flags.contains(SpeechFlags::MYTALK_1) {
-                Some(StimulusType::EventMyTalk1)
-            } else if flags.contains(SpeechFlags::MYTALK_2) {
-                Some(StimulusType::EventMyTalk2)
-            } else if flags.contains(SpeechFlags::MYTALK_3) {
-                Some(StimulusType::EventMyTalk3)
-            } else if flags.contains(SpeechFlags::MYTALK_0) {
-                Some(StimulusType::EventMyTalk0)
-            } else {
-                None
-            };
-            // Blocked remarks never reached the sound manager, so
-            // SoundIsFinished will not fire for them — we must clear
-            // `current_remark` here or the `already speaking?` guard
-            // would stay latched forever.
-            if let Some(entity) = self.world.entities.get_mut(entity_id)
-                && let Some(ai) = entity.ai_controller_mut()
-            {
-                ai.current_remark = Remark::TheSoundOfSilence;
-                ai.current_remark_flags = 0;
-                if let Some(stimulus_type) = event {
-                    ai.outbox.reentrant.self_stimuli.push(stimulus_type);
-                }
-            }
-        }
+    /// Deliver deterministic SoundIsFinished callbacks at the first mutation
+    /// of the `PerformHourglass` deferred-effects phase where matured
+    /// exclamations are collected.
+    ///
+    /// `RHElementActorNPC::SoundIsFinished`
+    /// (`original-code/RHelementactornpc.cpp:6473-6511`) converts the
+    /// currently active remark through the owner's category and clears it only
+    /// when the callback's exact exclamation ID matches. A stale/mismatched
+    /// completion is logged and deliberately retains the active line.
+    pub(super) fn settle_npc_speech_completions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
+        use crate::ai::{Remark, SpeechFlags};
 
-        // Store accepted flags for MYTALK callback on sound completion,
-        // and latch `speech_in_flight` so the next pass through
-        // `process_npc_speech` skips this NPC while the sound plays.
-        for (entity_id, flags_bits) in accepted_mytalk {
-            if let Some(entity) = self.world.entities.get_mut(entity_id)
-                && let Some(ai) = entity.ai_controller_mut()
-            {
-                ai.outbox.speech.mytalk_flags = flags_bits;
-                ai.speech_in_flight = true;
-            }
-        }
-
-        // ── Phase 3: drain finished exclamations ────────────────
-        // `sound_is_finished` callback: clear current_remark and fire
-        // the MYTALK event (`inform_ai_on_finished_remark`).
-        for &(actor_handle, _excl_id) in &self.feedback.sound_sim.finished_exclamations {
-            if let Some(actor_id) = self.world.entities.id_at_legacy_slot(actor_handle)
-                && let Some(entity) = self.world.entities.get_mut(actor_id)
-            {
-                // PC branch: nothing to do here — the C++ "currently
-                // speaking" suppression that consumed sound-finished
-                // events was already dead in legacy and has been
-                // dropped from the Rust port.
-                if matches!(entity, crate::element::Entity::Pc(_)) {
-                    continue;
-                }
-                let npc = match entity {
-                    crate::element::Entity::Soldier(s) => &mut s.npc,
-                    crate::element::Entity::Civilian(c) => &mut c.npc,
-                    _ => continue,
-                };
-                if let Some(ai) = npc.ai_brain.base_mut() {
-                    ai.current_remark = Remark::TheSoundOfSilence;
-                    ai.current_remark_flags = 0;
-                    ai.speech_in_flight = false;
-
-                    // Fire MYTALK callback based on stored flags.
-                    let flags = SpeechFlags::from_bits_truncate(ai.outbox.speech.mytalk_flags);
-                    ai.outbox.speech.mytalk_flags = 0;
-                    let event = if flags.contains(SpeechFlags::MYTALK_1) {
-                        Some(StimulusType::EventMyTalk1)
-                    } else if flags.contains(SpeechFlags::MYTALK_2) {
-                        Some(StimulusType::EventMyTalk2)
-                    } else if flags.contains(SpeechFlags::MYTALK_3) {
-                        Some(StimulusType::EventMyTalk3)
-                    } else if flags.contains(SpeechFlags::MYTALK_0) {
-                        Some(StimulusType::EventMyTalk0)
-                    } else {
-                        None
+        let completions = std::mem::take(&mut self.feedback.sound_sim.finished_exclamations);
+        for (actor_slot, completed_id) in completions {
+            let actor_id = self
+                .world
+                .entities
+                .id_at_legacy_slot(actor_slot)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "speech completion references missing legacy actor slot {} (id {})",
+                        actor_slot, completed_id
+                    )
+                });
+            let (active, expected_id, flags, is_pc) = {
+                let entity = self.world.entities.get(actor_id).unwrap_or_else(|| {
+                    panic!(
+                        "speech completion owner {} vanished after slot resolution",
+                        actor_id.index()
+                    )
+                });
+                if entity.is_pc() {
+                    (Remark::TheSoundOfSilence, 0, 0, true)
+                } else {
+                    let ai = entity.ai_controller().unwrap_or_else(|| {
+                        panic!(
+                            "speech completion owner {} is neither PC nor an NPC with AI",
+                            actor_id.index()
+                        )
+                    });
+                    let active = ai.current_remark;
+                    let raw = active as u32;
+                    let expected = match entity {
+                        Entity::Soldier(s) => {
+                            let profile = assets
+                                .profile_manager
+                                .get_soldier(s.soldier.soldier_profile_index)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "speech completion owner {} requires missing soldier profile {}",
+                                        actor_id.index(),
+                                        s.soldier.soldier_profile_index
+                                    )
+                                });
+                            if profile.vip {
+                                raw.wrapping_sub(Remark::FIRST_VIP as u32)
+                            } else {
+                                raw
+                            }
+                        }
+                        Entity::Civilian(c) => {
+                            let profile = assets
+                                .profile_manager
+                                .civilians
+                                .get(usize::from(c.civilian.civilian_profile_index))
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "speech completion owner {} requires missing civilian profile {}",
+                                        actor_id.index(),
+                                        c.civilian.civilian_profile_index
+                                    )
+                                });
+                            if profile.civilian_type == crate::profiles::CivilianType::Vip {
+                                raw.wrapping_sub(Remark::FIRST_VIP as u32)
+                            } else {
+                                raw.wrapping_sub(Remark::FIRST_CIVILIAN as u32)
+                            }
+                        }
+                        other => panic!(
+                            "speech completion owner {} has invalid entity kind {:?}",
+                            actor_id.index(),
+                            other.element_data().kind
+                        ),
                     };
-                    if let Some(stimulus_type) = event {
-                        ai.outbox.reentrant.self_stimuli.push(stimulus_type);
-                    }
+                    (active, expected, ai.current_remark_flags, false)
                 }
+            };
+            if is_pc {
+                continue;
             }
+            if active == Remark::TheSoundOfSilence || expected_id != completed_id {
+                tracing::warn!(
+                    actor = actor_id.index(),
+                    ?active,
+                    expected_id,
+                    completed_id,
+                    "stale or mismatched NPC speech completion retained active speech"
+                );
+                continue;
+            }
+
+            let ai = self
+                .world
+                .entities
+                .get_mut(actor_id)
+                .unwrap_or_else(|| {
+                    panic!("speech completion owner {} disappeared", actor_id.index())
+                })
+                .ai_controller_mut()
+                .unwrap_or_else(|| panic!("speech completion owner {} lost AI", actor_id.index()));
+            ai.current_remark = Remark::TheSoundOfSilence;
+            ai.current_remark_flags = 0;
+            ai.register_log_line(crate::ai::LogLineType::SpeakFinished, 0);
+            if let Some(stimulus) =
+                Self::speech_finished_stimulus(SpeechFlags::from_bits_truncate(flags))
+            {
+                ai.outbox.reentrant.self_stimuli.push(stimulus);
+            }
+            self.drain_direct_ai_owner_boundary(sim, actor_id, assets);
         }
     }
 
@@ -4340,13 +4457,90 @@ impl EngineInner {
                 );
             }
 
-            // Standard forbidden time for everything else.
-            _ => {
+            // Standard THIS_TYPE list from Original Say's switch.
+            Remark::AwakensSleeperr
+            | Remark::HuntsEnemy
+            | Remark::StartsCombat
+            | Remark::ProvokesCombat
+            | Remark::GoodStrikeCombat
+            | Remark::CombatInsult
+            | Remark::Warcry
+            | Remark::KilledAdversary
+            | Remark::Cassos
+            | Remark::WaspSting
+            | Remark::UnderNet
+            | Remark::SeesFriendUnderNet
+            | Remark::Arrow
+            | Remark::TiedUp
+            | Remark::SeesObject
+            | Remark::AleYes
+            | Remark::AleNo
+            | Remark::HitByApple
+            | Remark::ChasesChild
+            | Remark::CaughtChild
+            | Remark::GoldYes
+            | Remark::GoldNo
+            | Remark::GoldBrawl
+            | Remark::SearchingSoldierGold
+            | Remark::SearchingSoldierNothing
+            | Remark::EndsSearch
+            | Remark::Panic
+            | Remark::ControlsBeggar
+            | Remark::MenacesPcInComa
+            | Remark::CryAlert
+            | Remark::ShieldBearerCovers
+            | Remark::ProudDontFight
+            | Remark::ProudFinallyFight
+            | Remark::OfficerComplains
+            | Remark::OutOfAmmunition
+            | Remark::AdmiresObjectScript
+            | Remark::MissesObjectScript
+            | Remark::CivCallsSoldier
+            | Remark::ShieldBearersLineFormation
+            | Remark::ArchersBehindShieldBearers
+            | Remark::CivDenunciates
+            | Remark::CivAdmiresRobin
+            | Remark::CivPanic
+            | Remark::CivThanx
+            | Remark::CivCries
+            | Remark::CivBeerYes
+            | Remark::CivBeerNo
+            | Remark::CivSeesSoldiersUnderNet
+            | Remark::CivUnderNet
+            | Remark::CivApple
+            | Remark::CivWasps
+            | Remark::CivWhistling
+            | Remark::CivSeesBrawl
+            | Remark::CivGoldYes
+            | Remark::CivGoldNo
+            | Remark::CivBeggarIdentifiesHimself
+            | Remark::CivChildCaughtBySoldier
+            | Remark::CivChildChasedBySoldier
+            | Remark::VipProudDontFight
+            | Remark::VipProudFinallyFight
+            | Remark::VipStartsCombat
+            | Remark::VipGoodStrikeCombat
+            | Remark::VipWarcry
+            | Remark::VipVictory
+            | Remark::VipSpeaksToHimself
+            | Remark::VipAleNo
+            | Remark::VipNetNo
+            | Remark::VipAppleNo
+            | Remark::VipWaspsNo
+            | Remark::VipGoldNo
+            | Remark::HearsNoise
+            | Remark::SeesEnemy
+            | Remark::SeesBody
+            | Remark::BahIlBougePus
+            | Remark::SpecialAction => {
                 push(
                     forbidden_remarks,
                     AI_REMARK_FORBIDDEN_TIME,
                     RemarkTargetFlags::THIS_TYPE,
                 );
+            }
+            Remark::NumberOfRemarks | Remark::TheSoundOfSilence => {
+                panic!("invalid automatic-forbid remark {remark:?}")
             }
         }
     }
@@ -4448,7 +4642,7 @@ impl EngineInner {
     ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
-        self.drain_ai_state_change_notifications_for(sim, assets, npc_id);
+        self.drain_ai_owner_work_for(sim, assets, npc_id);
 
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
@@ -5541,7 +5735,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
-            self.process_pending_begin_panic_for(npc_id, &ctx);
+            self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
         }
 
         let has_panic_seek_fallback = self
@@ -5802,7 +5996,7 @@ impl EngineInner {
         }
 
         // Drain the PanicRequest so a door gets picked and GoTo fires.
-        self.process_pending_begin_panic_for(civ_id, &ctx);
+        self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
         self.process_pending_panic_seek_fallback_for(civ_id, &ctx);
     }
 
@@ -5955,7 +6149,7 @@ impl EngineInner {
 
             // Drain the resulting `PanicRequest`: find a door, or fall
             // back to the `FleeingPanic` run-segment state machine.
-            self.process_pending_begin_panic_for(npc_id, &ctx);
+            self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
             self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
         }
     }
@@ -6086,6 +6280,8 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_begin_panic_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
@@ -6133,9 +6329,11 @@ impl EngineInner {
         // filter: when a panic center is known, first try to find a
         // door in the "away" half-plane; if none exists, fall back to
         // an undirected lookup (clearing `directed_panic`).
-        let pick_door = |directed: bool| -> Option<(crate::ai::Position, u32)> {
+        let pick_door = |door_seek_infos: &[crate::ai::DoorSeekInfo],
+                         directed: bool|
+         -> Option<(crate::ai::Position, u32)> {
             let mut best: Option<(crate::ai::Position, u32)> = None;
-            for door in &self.ai.global.door_seek_infos {
+            for door in door_seek_infos {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
                 }
@@ -6175,13 +6373,13 @@ impl EngineInner {
         };
 
         let directed_initial = request.center.is_some();
-        let mut best = pick_door(directed_initial);
+        let mut best = pick_door(&self.ai.global.door_seek_infos, directed_initial);
         // Directed → undirected door fallback.  If no door satisfies
         // the away-half-plane filter, retry with the filter dropped
         // and clear the directed-panic flag on the controller.
         let mut directed_after_door_pick = directed_initial;
         if best.is_none() && directed_initial {
-            best = pick_door(false);
+            best = pick_door(&self.ai.global.door_seek_infos, false);
             directed_after_door_pick = false;
         }
 
@@ -6194,26 +6392,41 @@ impl EngineInner {
             .map(|e| e.is_civilian())
             .unwrap_or(false);
 
-        // Re-borrow the AI base for either branch.
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
+        {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                return;
+            };
+            let Some(ai) = entity.ai_controller_mut() else {
+                return;
+            };
 
-        // Sync `directed_panic` with the door-pick outcome
-        // (`directed_panic = false` on the fallback path).
-        ai.directed_panic = directed_after_door_pick;
-
-        ai.break_macro();
-        ai.set_transient_emoticon(crate::ai::EmoticonType::XMark, 0, ctx.frame);
+            // Sync `directed_panic` with the door-pick outcome
+            // (`directed_panic = false` on the fallback path).
+            ai.directed_panic = directed_after_door_pick;
+            ai.break_macro();
+            ai.set_transient_emoticon(crate::ai::EmoticonType::XMark, 0, ctx.frame);
+        }
 
         if let Some((door_in, _)) = best {
             // Door-found arm.
             if is_civilian {
-                ai.say(crate::ai::Remark::CivPanic);
+                self.world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| panic!("panic owner {} lost AI", npc_id.index()))
+                    .say(crate::ai::Remark::CivPanic);
+                self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "panic owner {} disappeared before state tail",
+                    npc_id.index()
+                )
+            });
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!("panic owner {} lost AI before state tail", npc_id.index())
+            });
             ai.set_ai_state(crate::ai::AiState::Fleeing);
             ai.current_substate = crate::ai::Substate::FleeingRunToDoor;
             ai.set_alert_status(request.alert);
@@ -6229,7 +6442,9 @@ impl EngineInner {
             // branch.
             if ai.couldnt_reachpoint {
                 ai.couldnt_reachpoint = false;
-                if directed_after_door_pick && let Some((retry_door, _)) = pick_door(false) {
+                if directed_after_door_pick
+                    && let Some((retry_door, _)) = pick_door(&self.ai.global.door_seek_infos, false)
+                {
                     let Some(entity) = self.world.entities.get_mut(npc_id) else {
                         return;
                     };
@@ -6242,15 +6457,22 @@ impl EngineInner {
                         return;
                     }
                     ai.couldnt_reachpoint = false;
-                    self.begin_panic_no_door_branch(npc_id, &request, ctx, is_civilian);
+                    self.begin_panic_no_door_branch(
+                        sim,
+                        assets,
+                        npc_id,
+                        &request,
+                        ctx,
+                        is_civilian,
+                    );
                     return;
                 }
-                self.begin_panic_no_door_branch(npc_id, &request, ctx, is_civilian);
+                self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
             }
             return;
         }
 
-        self.begin_panic_no_door_branch(npc_id, &request, ctx, is_civilian);
+        self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
     }
 
     /// Drain a queued `pending_panic_seek_fallback` on a single NPC.
@@ -6332,24 +6554,25 @@ impl EngineInner {
     /// error.
     fn begin_panic_no_door_branch(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         npc_id: EntityId,
         request: &crate::ai::PanicRequest,
         ctx: &crate::ai::AiContext,
         is_civilian: bool,
     ) {
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
-        let Some(ai) = entity.ai_controller_mut() else {
-            return;
-        };
-
         // If directed, OR in the "panic center is in front of me"
         // dot-product test so a center that has flipped in front
         // during a prior run still counts as a new panic.
         let mut is_new_panic = request.is_new_panic;
         if request.center.is_some() && !is_new_panic {
             let (dx_face, dy_face) = crate::element::direction_vector_16(ctx.direction as i16);
+            let ai = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::ai_controller)
+                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
             let dx = ai.panic_center_x - ctx.position.x;
             let dy = ai.panic_center_y - ctx.position.y;
             if dx_face * dx + dy_face * dy > 0.0 {
@@ -6359,6 +6582,12 @@ impl EngineInner {
 
         if is_new_panic {
             // New panic — full side-effect set.
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
             ai.set_ai_state(crate::ai::AiState::Fleeing);
             ai.current_substate = crate::ai::Substate::FleeingPanic;
             ai.say(if is_civilian {
@@ -6366,6 +6595,13 @@ impl EngineInner {
             } else {
                 crate::ai::Remark::Panic
             });
+            self.drain_ai_owner_work_for(sim, assets, npc_id);
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!("panic owner {} disappeared after speech", npc_id.index())
+            });
+            let ai = entity
+                .ai_controller_mut()
+                .unwrap_or_else(|| panic!("panic owner {} lost AI after speech", npc_id.index()));
             ai.set_alert_status(request.alert);
             ai.lasting_panic_runs = request.runs.saturating_add(1);
             ai.first_try = true;
@@ -6374,6 +6610,12 @@ impl EngineInner {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no
             // `say()`, no self-fire.
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
             if ai.lasting_panic_runs < request.runs {
                 ai.lasting_panic_runs = request.runs;
             }
@@ -7498,12 +7740,22 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::Say { target, remark } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
-                        continue;
+                    let Entity::Soldier(s) =
+                        self.world.entities.get_mut(target_id).unwrap_or_else(|| {
+                            panic!("cross-NPC speech target {target} is missing")
+                        })
+                    else {
+                        panic!("cross-NPC speech target {target} is not a soldier")
                     };
-                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        enemy_ai.base.say(remark);
-                    }
+                    s.npc
+                        .ai_brain
+                        .enemy_mut()
+                        .unwrap_or_else(|| {
+                            panic!("cross-NPC speech target {target} has no EnemyAi")
+                        })
+                        .base
+                        .say(remark);
+                    self.drain_ai_owner_work_for(sim, assets, target_id);
                 }
 
                 crate::ai::CrossNpcAction::SetLootedAfterMoneyFight { target, looted } => {
@@ -7720,7 +7972,7 @@ impl EngineInner {
                 });
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
-                    || !ai.outbox.reentrant.state_change_notifications.is_empty()
+                    || !ai.outbox.reentrant.owner_work.is_empty()
             };
             if !still_pending {
                 break;
@@ -8137,8 +8389,8 @@ impl EngineInner {
     /// Finish engine-facing work queued by a direct AI method that is not
     /// itself entered through `dispatch_think_with_drain` (ambush checks,
     /// ladder recovery, The16thFrame, and macro continuation). This remains
-    /// owner-local and deliberately excludes the still-unaudited synchronous
-    /// SetState-script and Say/audio paths.
+    /// owner-local and includes the shared SetState/Say FIFO before later
+    /// effects, orders, condolations, and recursive self-stimuli.
     fn drain_direct_ai_owner_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -8179,7 +8431,7 @@ impl EngineInner {
                     });
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
-                    || !ai.outbox.reentrant.state_change_notifications.is_empty()
+                    || !ai.outbox.reentrant.owner_work.is_empty()
             };
             if !still_pending {
                 break;

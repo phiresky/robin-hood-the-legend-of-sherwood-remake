@@ -171,15 +171,6 @@ pub struct AiController {
     pub initial_view_cone: ViewCone,
     pub current_remark: Remark,
     pub current_remark_flags: u16,
-    /// True once the engine has actually dispatched the exclamation to
-    /// the sound manager and is waiting for the sound to finish. The
-    /// `already speaking?` guard in `say_impl` checks
-    /// `current_remark != Silence || speech_in_flight`; without this
-    /// flag, `process_npc_speech` would clear `current_remark` to
-    /// Silence on the tick after dispatch, allowing a subsequent
-    /// non-EMERGENCY `Say()` to override a remark that is still
-    /// playing. Cleared by phase 3 when `SoundIsFinished` fires.
-    pub speech_in_flight: bool,
 
     // -- Macro rand --
     pub next_macro_rand: u8,
@@ -343,7 +334,6 @@ impl Default for AiController {
             initial_view_cone: ViewCone::Commandoslike,
             current_remark: Remark::TheSoundOfSilence,
             current_remark_flags: 0,
-            speech_in_flight: false,
             next_macro_rand: 0,
             next_macro_rand_forecasted: false,
             current_emoticon_type: EmoticonType::None,
@@ -2861,61 +2851,20 @@ impl AiController {
         self.say_impl(remark, flags);
     }
 
-    /// Full `Say()` implementation.
+    /// Record one ordered `RHArtificialIntelligence::Say` attempt.
     ///
-    /// Stores the remark + flags for `process_npc_speech()` to pick up.
-    /// Gating (blipped, forbidden, in-building) and sound playback happen
-    /// there. The MYTALK callback fires when the sound finishes (or
-    /// immediately if `process_npc_speech` blocks the remark).
+    /// The engine settles every attempt at the current owner return boundary,
+    /// where entity/profile/global-forbid state is available. Do not collapse
+    /// this into `current_remark`: the Original observes and rejects every
+    /// invocation in statement order, including multiple calls in one Think.
     fn say_impl(&mut self, remark: Remark, flags: SpeechFlags) {
-        self.register_log_line(LogLineType::Speak, remark as u16);
-
-        // Already speaking? Block a new non-EMERGENCY Say() from
-        // overriding a remark
-        // that is still in the Say->process_npc_speech pipeline
-        // (`current_remark` set, not yet dispatched) OR actively being
-        // played by the sound manager (`speech_in_flight`).  Without
-        // `speech_in_flight`, the guard would pass the tick after
-        // dispatch because phase 3 in process_npc_speech clears
-        // `current_remark` only when the sound finishes — leaving a
-        // window where a post-detection remark (REMARK_STARTS_COMBAT)
-        // could cut off REMARK_SEES_ENEMY mid-clip.
-        if self.current_remark != Remark::TheSoundOfSilence || self.speech_in_flight {
-            if flags.contains(SpeechFlags::EMERGENCY) {
-                // Kill current speech — process_npc_speech will handle
-                // stopping the old channel when it sees the new remark.
-                self.speech_in_flight = false;
-            } else {
-                // Still saying something — forget it.
-                // Fire MYTALK immediately so the caller doesn't stall.
-                self.inform_ai_on_finished_remark(flags);
-                return;
-            }
-        }
-
-        // Accept — process_npc_speech will check remaining gates,
-        // play the sound, and fire MYTALK when finished.
-        self.current_remark = remark;
-        self.current_remark_flags = flags.bits();
-    }
-
-    /// Fire EVENT_MYTALK_X based on speech flags. Queues the event as
-    /// a self-stimulus for the engine to deliver.
-    fn inform_ai_on_finished_remark(&mut self, flags: SpeechFlags) {
-        let event = if flags.contains(SpeechFlags::MYTALK_1) {
-            Some(StimulusType::EventMyTalk1)
-        } else if flags.contains(SpeechFlags::MYTALK_2) {
-            Some(StimulusType::EventMyTalk2)
-        } else if flags.contains(SpeechFlags::MYTALK_3) {
-            Some(StimulusType::EventMyTalk3)
-        } else if flags.contains(SpeechFlags::MYTALK_0) {
-            Some(StimulusType::EventMyTalk0)
-        } else {
-            None
-        };
-        if let Some(stimulus_type) = event {
-            self.outbox.reentrant.self_stimuli.push(stimulus_type);
-        }
+        self.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::Speech(AiSpeechAttempt {
+                remark,
+                flags: flags.bits(),
+            }));
     }
 
     // -- Pointing command --

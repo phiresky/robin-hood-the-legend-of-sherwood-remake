@@ -452,7 +452,7 @@ impl EngineInner {
             && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
         {
-            self.say_ouch(assets, victim_id, Some(cutting_inflicted));
+            self.say_ouch(sim, assets, victim_id, Some(cutting_inflicted));
         }
 
         // Hero speech for PC attacker:
@@ -562,7 +562,7 @@ impl EngineInner {
                 Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
             );
             if is_shoulder_posture {
-                self.translate_shoulder_damage(assets, victim_id, damage_element);
+                self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = self.get_entity(victim_id).and_then(|e| {
                     let posture = e.element_data().posture;
@@ -844,7 +844,7 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(assets, victim_id, damage_element);
+            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
             return;
         }
@@ -855,7 +855,7 @@ impl EngineInner {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
-        self.say_ouch(assets, victim_id, None);
+        self.say_ouch(sim, assets, victim_id, None);
 
         // Alive-conscious branch: queue the posture-dependent
         // simple-hit animation onto the damage element and fire the
@@ -996,7 +996,7 @@ impl EngineInner {
             pre_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(assets, victim_id, damage_element);
+            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
             return;
         }
@@ -1007,7 +1007,7 @@ impl EngineInner {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
-        self.say_ouch(assets, victim_id, Some(damage));
+        self.say_ouch(sim, assets, victim_id, Some(damage));
 
         // Alive-conscious branch: queue the posture-dependent
         // extract-arrow animation onto the damage element, then fire
@@ -1134,7 +1134,7 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(assets, victim_id, damage_element);
+            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             self.handle_post_damage(
                 sim,
                 assets,

@@ -2333,14 +2333,14 @@ impl EnemyAi {
             self.base
                 .outbox
                 .reentrant
-                .state_change_notifications
-                .push(AiStateChangeNotification {
+                .owner_work
+                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
                     outgoing_state: self.base.current_state,
                     outgoing_substate: self.base.current_substate,
                     incoming_state: state,
                     incoming_substate: substate,
                     source,
-                });
+                }));
         }
 
         tracing::trace!(
@@ -4177,14 +4177,14 @@ mod tests {
         // for the post-think dispatcher to drain (matching the reference
         // `RHArtificialMalignity::SetState` at L9226).
         assert_eq!(
-            ai.base.outbox.reentrant.state_change_notifications,
-            vec![AiStateChangeNotification {
+            ai.base.outbox.reentrant.owner_work,
+            vec![AiOwnerWork::StateChange(AiStateChangeNotification {
                 outgoing_state: AiState::Default,
                 outgoing_substate: Substate::DefaultOnPost,
                 incoming_state: AiState::Attacking,
                 incoming_substate: Substate::AttackingSwordfight,
                 source: AiStateChangeSource::Null,
-            }]
+            })]
         );
     }
 

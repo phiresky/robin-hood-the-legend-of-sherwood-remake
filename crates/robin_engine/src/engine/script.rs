@@ -2378,7 +2378,7 @@ impl EngineInner {
         // `SetState` calls FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_state_change_notifications_for(sim, assets, entity_id);
+        self.drain_ai_owner_work_for(sim, assets, entity_id);
         handled
     }
 
@@ -2392,7 +2392,7 @@ impl EngineInner {
     /// The temporary outgoing restore covers only base state/substate: an
     /// Enemy SetState tail already applied before this callback remains visible.
     /// Friendly alert is intentionally pre-callback, matching Original.
-    pub(crate) fn drain_ai_state_change_notifications_for(
+    pub(crate) fn drain_ai_owner_work_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2404,72 +2404,121 @@ impl EngineInner {
             Friendly,
         }
 
-        const MAX_NOTIFICATIONS: usize = 64;
+        const MAX_OWNER_WORK: usize = 128;
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
 
-        for callback_index in 0..MAX_NOTIFICATIONS {
-            let (notification, owner_kind, is_scripted) = {
+        for work_index in 0..MAX_OWNER_WORK {
+            let work = {
                 let Some(entity) = self.world.entities.get_mut(owner) else {
-                    if callback_index == 0 {
+                    if work_index == 0 {
                         return;
                     }
                     panic!(
-                        "AI SetState notification owner {} disappeared before callback {}",
+                        "AI owner-work recipient {} disappeared before item {}",
                         owner.index(),
-                        callback_index
+                        work_index
                     );
                 };
+                let Some(ai) = entity.ai_controller_mut() else {
+                    if work_index == 0 {
+                        return;
+                    }
+                    panic!(
+                        "AI owner-work recipient {} lost its AI before item {}",
+                        owner.index(),
+                        work_index
+                    );
+                };
+                if ai.outbox.reentrant.owner_work.is_empty() {
+                    return;
+                }
+                ai.outbox.reentrant.owner_work.remove(0)
+            };
+
+            let notification = match work {
+                crate::ai::AiOwnerWork::StateChange(notification) => notification,
+                crate::ai::AiOwnerWork::Speech(attempt) => {
+                    // A rejected Say invokes MYTALK synchronously before Say
+                    // returns. Detach the outer statement tail so recursive
+                    // Think work and its logs settle ahead of that tail.
+                    let later_work = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
+                        .unwrap_or_else(|| {
+                            panic!("speech owner {} vanished before settlement", owner.index())
+                        });
+                    let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
+                    if settlement.invoke_finished_callback {
+                        self.drain_self_stimuli_for_npc(sim, owner, assets);
+                    }
+                    if let Some(finalization) = settlement.category_rejection {
+                        self.finalize_category_speech_rejection(owner, finalization);
+                    }
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("speech owner {} vanished after settlement", owner.index())
+                        })
+                        .outbox
+                        .reentrant
+                        .owner_work
+                        .extend(later_work);
+                    continue;
+                }
+            };
+
+            // Work produced by a FilterAIEvent callback belongs inside this
+            // SetState call and therefore precedes statements the outer
+            // pure-Rust handler queued after SetState. Detach that later tail
+            // while the VM runs, then splice recursively produced work ahead
+            // of it.
+            let (owner_kind, is_scripted, later_work) = {
+                let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
+                    panic!(
+                        "AI SetState owner {} disappeared before callback {}",
+                        owner.index(),
+                        work_index
+                    )
+                });
                 let owner_kind = match entity {
                     Entity::Soldier(s)
                         if matches!(&s.npc.ai_brain, crate::element::AiBrain::Enemy(_)) =>
                     {
                         OwnerAiKind::Enemy
                     }
-                    Entity::Soldier(_) => panic!(
-                        "AI SetState notification owner {} has a non-Enemy brain",
-                        owner.index()
-                    ),
+                    Entity::Soldier(_) => {
+                        panic!("AI SetState owner {} has a non-Enemy brain", owner.index())
+                    }
                     Entity::Civilian(c)
                         if matches!(&c.npc.ai_brain, crate::element::AiBrain::Friendly(_)) =>
                     {
                         OwnerAiKind::Friendly
                     }
                     Entity::Civilian(_) => panic!(
-                        "AI SetState notification owner {} has a non-Friendly brain",
+                        "AI SetState owner {} has a non-Friendly brain",
                         owner.index()
                     ),
-                    _ => {
-                        if callback_index == 0 {
-                            return;
-                        }
-                        panic!(
-                            "AI SetState notification owner {} drifted to non-NPC type before callback {}",
-                            owner.index(),
-                            callback_index
-                        );
-                    }
-                };
-                let Some(ai) = entity.ai_controller_mut() else {
-                    if callback_index == 0 {
-                        return;
-                    }
-                    panic!(
-                        "AI SetState notification owner {} lost its {:?} AI before callback {}",
+                    other => panic!(
+                        "AI SetState owner {} drifted to invalid kind {:?}",
                         owner.index(),
-                        owner_kind,
-                        callback_index
-                    );
+                        other.element_data().kind
+                    ),
                 };
-                if ai.outbox.reentrant.state_change_notifications.is_empty() {
-                    return;
-                }
-                let notification = ai.outbox.reentrant.state_change_notifications.remove(0);
+                let ai = entity
+                    .ai_controller_mut()
+                    .unwrap_or_else(|| panic!("AI SetState owner {} lost its AI", owner.index()));
                 ai.set_ai_state(notification.outgoing_state);
                 ai.current_substate = notification.outgoing_substate;
+                let later_work = std::mem::take(&mut ai.outbox.reentrant.owner_work);
                 let is_scripted = entity
                     .actor_data()
                     .is_some_and(|actor| !actor.script_class.is_empty());
-                (notification, owner_kind, is_scripted)
+                (owner_kind, is_scripted, later_work)
             };
 
             let source = match notification.source {
@@ -2506,14 +2555,11 @@ impl EngineInner {
                 );
             }
 
-            // Do not retain any entity/AI borrow across the VM call. The
-            // callback may mutate the AI; original SetState's later raw field
-            // assignment wins over those changes.
             let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
                 panic!(
-                    "AI SetState notification owner {} disappeared during callback {} ({:?} -> {:?})",
+                    "AI SetState owner {} disappeared during callback {} ({:?} -> {:?})",
                     owner.index(),
-                    callback_index,
+                    work_index,
                     notification.outgoing_state,
                     notification.incoming_state
                 )
@@ -2524,11 +2570,9 @@ impl EngineInner {
                         .enemy_ai_mut()
                         .unwrap_or_else(|| {
                             panic!(
-                                "AI SetState notification owner {} lost EnemyAi during callback {} ({:?} -> {:?})",
+                                "AI SetState owner {} lost EnemyAi during callback {}",
                                 owner.index(),
-                                callback_index,
-                                notification.outgoing_state,
-                                notification.incoming_state
+                                work_index
                             )
                         })
                         .base
@@ -2538,11 +2582,9 @@ impl EngineInner {
                         .friendly_ai_mut()
                         .unwrap_or_else(|| {
                             panic!(
-                                "AI SetState notification owner {} lost FriendlyAi during callback {} ({:?} -> {:?})",
+                                "AI SetState owner {} lost FriendlyAi during callback {}",
                                 owner.index(),
-                                callback_index,
-                                notification.outgoing_state,
-                                notification.incoming_state
+                                work_index
                             )
                         })
                         .base
@@ -2550,6 +2592,7 @@ impl EngineInner {
             };
             ai.set_ai_state(notification.incoming_state);
             ai.current_substate = notification.incoming_substate;
+            ai.outbox.reentrant.owner_work.extend(later_work);
         }
 
         let still_pending = self
@@ -2557,15 +2600,23 @@ impl EngineInner {
             .entities
             .get(owner)
             .and_then(Entity::ai_controller)
-            .is_some_and(|ai| !ai.outbox.reentrant.state_change_notifications.is_empty());
+            .is_some_and(|ai| !ai.outbox.reentrant.owner_work.is_empty());
         assert!(
             !still_pending,
-            "AI SetState notification owner {} exceeded the recursive FIFO bound of {MAX_NOTIFICATIONS}",
+            "AI owner {} exceeded recursive FIFO bound {MAX_OWNER_WORK}",
             owner.index()
         );
     }
 
-    // ─── Campaign integration ────────────────────────────────────
+    #[cfg(test)]
+    pub(crate) fn drain_ai_state_change_notifications_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: crate::element::EntityId,
+    ) {
+        self.drain_ai_owner_work_for(sim, assets, owner);
+    }
 
     /// Initialize the engine for the campaign's current mission.
     ///

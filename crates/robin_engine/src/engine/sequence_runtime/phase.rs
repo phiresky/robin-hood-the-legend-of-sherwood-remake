@@ -1197,6 +1197,7 @@ impl EngineInner {
                             {
                                 ai.say(crate::ai::Remark::ProvokesCombat);
                             }
+                            self.drain_ai_owner_work_for(sim, assets, owner);
                             // Append the order to the sequence
                             // element's queue.
                             let mut order = crate::order::Order::new(
@@ -2341,6 +2342,7 @@ impl EngineInner {
                     element_index: elem_idx,
                 } => {
                     self.dispatch_execute_immediate_owner(
+                        sim,
                         assets,
                         owner,
                         seq_id,
