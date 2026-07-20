@@ -77,6 +77,22 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     }
 }
 
+fn rider_charge_point_in_quad(point: MapPoint, quad: [(f32, f32); 4]) -> bool {
+    fn cross(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+        ax * by - ay * bx
+    }
+    let mut positive = false;
+    let mut negative = false;
+    for index in 0..4 {
+        let (x1, y1) = quad[index];
+        let (x2, y2) = quad[(index + 1) % 4];
+        let value = cross(x2 - x1, y2 - y1, point.x - x1, point.y - y1);
+        positive |= value > 0.0;
+        negative |= value < 0.0;
+    }
+    !(positive && negative)
+}
+
 fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
     doors
         .iter()
@@ -800,6 +816,346 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    /// Execute the Original's `RHNONANIMATION_RIDER_CHARGING` arm inside its
+    /// rider's creation-ordered movement slot. Returns true only when the live
+    /// selected movement order was exactly `RiderCharging` and consumed the
+    /// slot; stale state is cleared for every other live-order shape.
+    fn tick_rider_charge_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        rider_id: EntityId,
+        frozen_all: bool,
+    ) -> bool {
+        use crate::element::{ActionState, ActiveRiderCharge, Posture};
+        use crate::weapons::SwordStrike;
+
+        let selected = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(rider_id);
+        let live = selected.and_then(|(seq_id, elem_idx)| {
+            let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+            if !element.data.is_movement() {
+                return None;
+            }
+            Some((
+                seq_id,
+                elem_idx,
+                element.current_order()?.clone(),
+                element.next_order().cloned(),
+                element.speed_factor(),
+            ))
+        });
+        let is_live_charge = live
+            .as_ref()
+            .is_some_and(|(_, _, order, _, _)| order.order_type == OrderType::RiderCharging);
+        if !is_live_charge {
+            if let Some(entity) = self.world.entities.get_mut(rider_id)
+                && let Some(actor) = entity.actor_data_mut()
+            {
+                actor.active_rider_charge = None;
+                actor.last_executed_rider_charge_order_id = None;
+            }
+            return false;
+        }
+        let (seq_id, elem_idx, order, next_order, speed_factor) = live.unwrap();
+
+        let rider = self
+            .world
+            .entities
+            .get(rider_id)
+            .unwrap_or_else(|| panic!("live rider-charge owner {rider_id:?} disappeared"));
+        let soldier = rider
+            .soldier_data()
+            .unwrap_or_else(|| panic!("RiderCharging owner {rider_id:?} is not a soldier"));
+        assert!(
+            soldier.rider,
+            "RiderCharging owner {rider_id:?} is not a rider"
+        );
+        let weapon_profile_id =
+            super::melee::get_hth_weapon_id_full(rider, &assets.profile_manager).unwrap_or_else(
+                || panic!("rider {rider_id:?} has no hand-to-hand weapon profile id"),
+            );
+        assets
+            .profile_manager
+            .get_hth_weapon(weapon_profile_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "rider {rider_id:?} references missing hand-to-hand weapon profile {weapon_profile_id}"
+                )
+            });
+        let transition_frames = rider
+            .sprite()
+            .num_frames_for_anim(OrderType::TransitionCharging);
+        assert!(
+            rider.sprite().has_animation(OrderType::TransitionCharging) && transition_frames > 0,
+            "rider {rider_id:?} is missing TransitionCharging animation"
+        );
+
+        // ExecuteRiderCharge samples these before Turn and PerformMotion on
+        // every call. The same sample drives initialization and this frame's
+        // narrow hit polygon.
+        let (origin, sampled_layer, sampled_direction, forward, sidewards) = {
+            let elem = rider.element_data();
+            let direction = elem.direction();
+            let [fx, fy] = crate::position_interface::sector_to_vector_iso(direction);
+            let [sx, sy] = crate::position_interface::sector_to_vector_iso((direction + 4) & 15);
+            (
+                elem.position_map(),
+                elem.layer(),
+                direction,
+                (fx, fy),
+                (sx, sy),
+            )
+        };
+
+        // RHElementActor's new-order identity is distinct from RHSprite's
+        // processed-motion identity. FrozenAll executes this charge pass but
+        // deliberately leaves sprite motion initialization pending.
+        let needs_initialization = rider
+            .actor_data()
+            .expect("RiderCharging soldier must have actor data")
+            .last_executed_rider_charge_order_id
+            != Some(order.order_id);
+        if needs_initialization {
+            let initial_quad = [
+                (
+                    origin.x - 20.0 * forward.0 - 20.0 * sidewards.0,
+                    origin.y - 20.0 * forward.1 - 20.0 * sidewards.1,
+                ),
+                (
+                    origin.x + 180.0 * forward.0 - 20.0 * sidewards.0,
+                    origin.y + 180.0 * forward.1 - 20.0 * sidewards.1,
+                ),
+                (
+                    origin.x + 180.0 * forward.0 + 80.0 * sidewards.0,
+                    origin.y + 180.0 * forward.1 + 80.0 * sidewards.1,
+                ),
+                (
+                    origin.x - 20.0 * forward.0 + 80.0 * sidewards.0,
+                    origin.y - 20.0 * forward.1 + 80.0 * sidewards.1,
+                ),
+            ];
+            let obstacles = crate::sight_obstacle::ObstacleList {
+                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
+            };
+            let mut pending_victims = Vec::new();
+            for (victim_id, victim) in self.world.entities.humans() {
+                let victim_id: EntityId = victim_id.into();
+                if super::melee::is_possible_sword_strike_victim(
+                    &self.world.entities,
+                    rider_id,
+                    victim,
+                    victim_id,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                ) && victim.element_data().layer() == sampled_layer
+                    && rider_charge_point_in_quad(
+                        victim.element_data().position_map(),
+                        initial_quad,
+                    )
+                {
+                    pending_victims.push(victim_id);
+                }
+            }
+            self.world.entities[rider_id]
+                .as_mut()
+                .expect("rider remained present during charge initialization")
+                .actor_data_mut()
+                .expect("RiderCharging soldier must have actor data")
+                .active_rider_charge = Some(ActiveRiderCharge { pending_victims });
+        }
+
+        let goal = MapPoint::new(order.target_x, order.target_y);
+        let next_destination_same_action = next_order
+            .filter(|next| next.order_type == order.order_type)
+            .map(|next| MapPoint::new(next.target_x, next.target_y));
+        let motion_context = MotionOrderContext {
+            order_id: order.order_id,
+            destination: goal,
+            reverse: order.reverse,
+            tolerance: order.tolerance,
+            directional_tolerance: false,
+            compute_direction: order.compute_direction,
+            next_destination_same_action,
+        };
+        let (motion_state, actual_frame) = {
+            let entity = self.world.entities[rider_id]
+                .as_mut()
+                .expect("rider remained present before charge motion");
+            let elem = entity.element_data_mut();
+            let dx = goal.x - elem.position_map().x;
+            let dy = goal.y - elem.position_map().y;
+            if order.compute_direction && dx * dx + dy * dy > 0.01 {
+                let direction = vector_to_sector_0_to_15(dx, dy);
+                elem.set_direction_goal(if order.reverse {
+                    direction ^ 8
+                } else {
+                    direction
+                });
+            }
+            elem.sprite.position_iface.turn();
+            let (state, distance) = if frozen_all {
+                // FrozenAll short-circuits RHSprite::PerformMotion before it
+                // changes row/frame/order state. ExecuteRiderCharge continues
+                // around that call and uses the sprite's existing live frame.
+                (MotionState::InProgress, 0.0)
+            } else {
+                elem.sprite.perform_motion(
+                    sim,
+                    Some(motion_context),
+                    OrderType::TransitionCharging,
+                    elem.direction() as u16,
+                    FrameProgression::Default,
+                    false,
+                    MotionMethod::Run,
+                    false,
+                )
+            };
+            if distance != 0.0 {
+                elem.sprite
+                    .position_iface
+                    .update_position_map_scaled(distance * speed_factor);
+                elem.update_grid_cell();
+            }
+            (state, elem.sprite.current_frame)
+        };
+        let last_frame = actual_frame == transition_frames - 1;
+        if matches!(motion_state, MotionState::Start) {
+            let entity = self.world.entities[rider_id]
+                .as_mut()
+                .expect("rider remained present after charge motion");
+            assert_eq!(
+                entity.element_data().posture,
+                Posture::Upright,
+                "rider charge must start upright"
+            );
+            let actor = entity
+                .actor_data_mut()
+                .expect("RiderCharging soldier must have actor data");
+            actor.action_state = ActionState::MovingFast;
+            entity.element_data_mut().posture = Posture::Upright;
+        }
+
+        let back_length = (5.0 * f32::from(actual_frame)).min(50.0);
+        let back = (-back_length * forward.0, -back_length * forward.1);
+        let front = if last_frame { 15.0 } else { 0.0 };
+        let hit_quad = [
+            (origin.x + back.0, origin.y + back.1),
+            (origin.x + front * forward.0, origin.y + front * forward.1),
+            (
+                origin.x + front * forward.0 + 60.0 * sidewards.0,
+                origin.y + front * forward.1 + 60.0 * sidewards.1,
+            ),
+            (
+                origin.x + back.0 + 60.0 * sidewards.0,
+                origin.y + back.1 + 60.0 * sidewards.1,
+            ),
+        ];
+
+        // Copy only the IDs to release the charge borrow. Each hit is removed
+        // before launching its damage element, and launch_sword_damage_now
+        // completes synchronously before the next candidate is inspected.
+        let candidates = self.world.entities[rider_id]
+            .as_ref()
+            .expect("rider remained present before charge damage")
+            .actor_data()
+            .expect("RiderCharging soldier must have actor data")
+            .active_rider_charge
+            .as_ref()
+            .expect("live RiderCharging order must retain active charge state")
+            .pending_victims
+            .clone();
+        for victim_id in candidates {
+            let Some(victim) = self.world.entities.get(victim_id) else {
+                // Original pointers cannot become holes independently; Rust
+                // entity removal can. Retain the pending ID so this is visible
+                // state rather than silently fabricating a resolved hit.
+                continue;
+            };
+            if victim.element_data().layer() != sampled_layer
+                || !rider_charge_point_in_quad(victim.element_data().position_map(), hit_quad)
+            {
+                continue;
+            }
+            self.world.entities[rider_id]
+                .as_mut()
+                .expect("rider remained present while resolving charge hit")
+                .actor_data_mut()
+                .expect("RiderCharging soldier must have actor data")
+                .active_rider_charge
+                .as_mut()
+                .expect("active charge must remain installed through synchronous damage")
+                .pending_victims
+                .retain(|pending| *pending != victim_id);
+            self.launch_sword_damage_now(
+                sim,
+                assets,
+                victim_id,
+                rider_id,
+                SwordStrike::Charge,
+                weapon_profile_id,
+            );
+        }
+
+        if last_frame {
+            // Rewrite only the same live order identity sampled above. Damage
+            // can interrupt or replace it synchronously; never mutate a newer
+            // order in that case.
+            let still_same = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.current_order())
+                .is_some_and(|current| {
+                    current.order_type == OrderType::RiderCharging
+                        && current.order_id == order.order_id
+                });
+            if still_same {
+                let fresh_id = self.orders.allocate_order_id();
+                let current = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                    .and_then(|element| element.orders.front_mut())
+                    .expect("validated rider charge order disappeared before rewrite");
+                current.order_type = OrderType::RunningUpright;
+                current.order_id = fresh_id;
+            }
+            self.world.entities[rider_id]
+                .as_mut()
+                .expect("rider remained present at charge completion")
+                .actor_data_mut()
+                .expect("RiderCharging soldier must have actor data")
+                .active_rider_charge = None;
+        }
+
+        // RHElementActor::Hourglass clears mbNewOrder after Execute even when
+        // FrozenAll prevented RHSprite::PerformMotion from initializing. Stamp
+        // only the actor-level identity. A synchronously installed fresh order
+        // therefore still initializes on its next owner slot.
+        self.world.entities[rider_id]
+            .as_mut()
+            .expect("rider remained present after charge execute")
+            .actor_data_mut()
+            .expect("RiderCharging soldier must have actor data")
+            .last_executed_rider_charge_order_id = Some(order.order_id);
+
+        tracing::trace!(
+            ?rider_id,
+            ?sampled_direction,
+            actual_frame,
+            last_frame,
+            frozen_all,
+            "executed rider charge in owner movement slot"
+        );
+        true
+    }
+
     pub(super) fn lift_endpoint_points(
         &self,
         sector_number: crate::sector::SectorNumber,
@@ -3173,6 +3529,19 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>) {
         if self.actors_frozen() {
+            // ExecuteRiderCharge is reached even under the Original's
+            // FrozenAll switch. PerformMotion reports InProgress on the
+            // frozen sprite frame, but initialization and polygon damage
+            // still run in creation order.
+            let actor_ids: Vec<EntityId> = self
+                .world
+                .entities
+                .actors()
+                .map(|(id, _)| id.into())
+                .collect();
+            for actor_id in actor_ids {
+                self.tick_rider_charge_owner(sim, assets, actor_id, true);
+            }
             return (Vec::new(), Vec::new());
         }
 
@@ -3757,6 +4126,9 @@ impl EngineInner {
         let movement_actor_ids: Vec<_> = self.world.entities.actors().map(|(id, _)| id).collect();
         for actor_id in movement_actor_ids {
             let entity_id = actor_id.into();
+            if self.tick_rider_charge_owner(sim, assets, entity_id, false) {
+                continue;
+            }
             let ft = final_tolerances[actor_id];
             let live_seek_target = ft.target_id.and_then(|target_id| {
                 self.world.entities.get(target_id).map(|target| {
