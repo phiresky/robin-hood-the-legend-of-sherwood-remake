@@ -1788,6 +1788,8 @@ impl EngineInner {
                                 &ctx,
                             );
                         }
+                        // This branch returns immediately after GoTo; close the
+                        // owner-local callback boundary before the caller resumes.
                         self.drain_ai_state_change_notifications_for(sim, assets, victim_id);
                         tracing::debug!(
                             ?victim_id,

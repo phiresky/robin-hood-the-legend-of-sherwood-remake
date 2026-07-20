@@ -299,7 +299,10 @@ continuation. The serialized/state-hashed FIFO records outgoing and incoming
 state/substate plus the raw source; each callback exposes the outgoing pair,
 uses the bound actor VM/frame, ignores the return, then re-resolves the typed
 owner and commits the recorded incoming pair. Disabled, absent, unbound, and
-non-overriding script cases consume their entries. Synthetic SCB/native tests
+non-overriding script cases consume their entries. The temporary outgoing
+restore does not undo an Enemy post-`SetState` tail already applied before
+callback re-entry; Friendly alert is correctly pre-callback and visible.
+Synthetic SCB/native tests
 cover state/source/alert visibility, FIFO, callback mutation, owner order, and
 all skip gates. Exact `Say`/`SetState` ordering, placement between multiple
 `SetState` calls inside one pure-Rust Think, script-recursive `SetAIState`, and

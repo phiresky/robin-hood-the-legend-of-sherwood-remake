@@ -2390,6 +2390,9 @@ impl EngineInner {
     /// the default `FilterAIEvent`. Callback return values are informational
     /// and deliberately ignored. A callback may append more transitions to
     /// this same owner; those are observed without taking the whole queue.
+    /// The temporary outgoing restore covers only base state/substate: an
+    /// Enemy SetState tail already applied before this callback remains visible.
+    /// Friendly alert is intentionally pre-callback, matching Original.
     pub(crate) fn drain_ai_state_change_notifications_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2406,7 +2409,7 @@ impl EngineInner {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
 
         for callback_index in 0..MAX_NOTIFICATIONS {
-            let (notification, owner_kind) = {
+            let (notification, owner_kind, is_scripted) = {
                 let Some(entity) = self.world.entities.get_mut(owner) else {
                     if callback_index == 0 {
                         return;
@@ -2418,8 +2421,24 @@ impl EngineInner {
                     );
                 };
                 let owner_kind = match entity {
-                    Entity::Soldier(_) => OwnerAiKind::Enemy,
-                    Entity::Civilian(_) => OwnerAiKind::Friendly,
+                    Entity::Soldier(s)
+                        if matches!(&s.npc.ai_brain, crate::element::AiBrain::Enemy(_)) =>
+                    {
+                        OwnerAiKind::Enemy
+                    }
+                    Entity::Soldier(_) => panic!(
+                        "AI SetState notification owner {} has a non-Enemy brain",
+                        owner.index()
+                    ),
+                    Entity::Civilian(c)
+                        if matches!(&c.npc.ai_brain, crate::element::AiBrain::Friendly(_)) =>
+                    {
+                        OwnerAiKind::Friendly
+                    }
+                    Entity::Civilian(_) => panic!(
+                        "AI SetState notification owner {} has a non-Friendly brain",
+                        owner.index()
+                    ),
                     _ => {
                         if callback_index == 0 {
                             return;
@@ -2448,7 +2467,10 @@ impl EngineInner {
                 let notification = ai.outbox.reentrant.state_change_notifications.remove(0);
                 ai.set_ai_state(notification.outgoing_state);
                 ai.current_substate = notification.outgoing_substate;
-                (notification, owner_kind)
+                let is_scripted = entity
+                    .actor_data()
+                    .is_some_and(|actor| !actor.script_class.is_empty());
+                (notification, owner_kind, is_scripted)
             };
 
             let source = match notification.source {
@@ -2459,7 +2481,8 @@ impl EngineInner {
                 }
             };
             let code = notification.incoming_state.state_change_event_code();
-            let should_call = sim.config().script_enabled
+            let should_call = is_scripted
+                && sim.config().script_enabled
                 && self
                     .scripts
                     .mission

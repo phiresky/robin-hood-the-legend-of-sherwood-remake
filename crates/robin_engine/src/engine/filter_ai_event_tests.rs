@@ -1978,6 +1978,10 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         crate::ai::Substate::SeekingHeardsteps
     );
     assert!(
+        ai.base.outbox.actor.begin_panic.is_some(),
+        "callback SetAIState mutation remains queued while outer incoming state wins"
+    );
+    assert!(
         ai.base
             .outbox
             .reentrant
@@ -2345,6 +2349,26 @@ fn unavailable_state_change_callbacks_are_consumed() {
     queue_seeking(&mut no_override, actor);
     no_override.drain_ai_state_change_notifications_for(&sim, &assets, actor);
     assert_consumed(&no_override, actor);
+
+    let mut unscripted = EngineInner::new();
+    let actor = unscripted.add_entity(make_scripted_soldier(""));
+    let assets = install_state_change_script(
+        &mut unscripted,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut unscripted, actor, "StateRecorder");
+    queue_seeking(&mut unscripted, actor);
+    unscripted.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    assert_consumed(&unscripted, actor);
+    assert_eq!(
+        npc_custom_values(&unscripted, actor)[9],
+        4,
+        "bound VM does not bypass the owner's is_scripted gate"
+    );
 
     let mut disabled = EngineInner::new();
     let actor = disabled.add_entity(make_scripted_soldier("StateRecorder"));
