@@ -83,6 +83,759 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 }
 
 #[test]
+fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
+    use super::ai::{NpcPostDetectionTailPhase as Tail, capture_npc_post_detection_tail_phases};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let second = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    for id in [first, second] {
+        let entity = engine.get_entity_mut(id).expect("tail owner exists");
+        entity.element_data_mut().active = true;
+        let npc = entity.npc_data_mut().expect("tail owner has NPC data");
+        for list in &mut npc.detectable_lists {
+            list.clear();
+        }
+        let ai = npc.ai_brain.base_mut().expect("tail owner has AI");
+        ai.timer_is_running = false;
+        ai.macro_timer_is_running = false;
+    }
+
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+    let (_, trace) = capture_npc_post_detection_tail_phases(|| {
+        crate::sim_rng::with_seed(0xA013_7A11, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        })
+    });
+
+    let whole_tail = [
+        Tail::Ambush,
+        Tail::Deafness,
+        Tail::Busy,
+        Tail::Ladder,
+        Tail::RandomSpeech,
+        Tail::LockGate,
+        Tail::SixteenthFrame,
+        Tail::NormalTimer,
+        Tail::MacroTimer,
+        Tail::Emoticon,
+        Tail::QueuedStimuli,
+    ];
+    let expected: Vec<_> = [first, second]
+        .into_iter()
+        .flat_map(|id| whole_tail.into_iter().map(move |phase| (id, phase)))
+        .collect();
+    assert_eq!(trace, expected);
+}
+
+#[test]
+fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
+    use super::ai::{NpcPostDetectionTailPhase as Tail, capture_npc_post_detection_tail_phases};
+    use crate::ai::AiLockFlags;
+
+    let mut engine = EngineInner::new();
+    let locked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let unlocked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    for id in [locked, unlocked] {
+        let entity = engine.get_entity_mut(id).expect("gate owner exists");
+        entity.element_data_mut().active = true;
+        for list in &mut entity
+            .npc_data_mut()
+            .expect("gate owner has NPC data")
+            .detectable_lists
+        {
+            list.clear();
+        }
+    }
+    let ai = engine
+        .get_entity_mut(locked)
+        .and_then(Entity::ai_controller_mut)
+        .expect("locked owner has AI");
+    ai.locks_flag_field = AiLockFlags::FREEZE;
+    ai.when_does_timer_ring = u32::MAX;
+    ai.when_does_macro_timer_ring = u32::MAX;
+    ai.emoticon_expiration_date = u32::MAX;
+
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+    let (_, trace) = capture_npc_post_detection_tail_phases(|| {
+        crate::sim_rng::with_seed(0xA013_10CC, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        })
+    });
+    let locked_trace: Vec<_> = trace
+        .iter()
+        .filter_map(|(id, phase)| (*id == locked).then_some(*phase))
+        .collect();
+    assert_eq!(
+        locked_trace,
+        vec![
+            Tail::Ambush,
+            Tail::Deafness,
+            Tail::Busy,
+            Tail::Ladder,
+            Tail::RandomSpeech,
+            Tail::LockGate,
+        ]
+    );
+    assert_eq!(
+        trace.last(),
+        Some(&(unlocked, Tail::QueuedStimuli)),
+        "the later owner must execute its whole unlocked tail"
+    );
+    let ai = engine
+        .get_entity(locked)
+        .and_then(Entity::ai_controller)
+        .expect("locked owner retains AI");
+    assert_eq!(ai.when_does_timer_ring, 0);
+    assert_eq!(ai.when_does_macro_timer_ring, 0);
+    assert_eq!(ai.emoticon_expiration_date, 0);
+}
+
+#[test]
+fn post_detection_tail_clears_only_unlocked_expired_emoticon() {
+    use crate::ai::{AiLockFlags, EmoticonType};
+
+    let mut engine = EngineInner::new();
+    let unlocked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let locked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.control.frame_counter = 200;
+    for id in [unlocked, locked] {
+        let ai = engine
+            .get_entity_mut(id)
+            .and_then(Entity::ai_controller_mut)
+            .expect("emoticon owner has AI");
+        ai.set_transient_emoticon(EmoticonType::QuestionMark, 1, 100);
+    }
+    engine
+        .get_entity_mut(locked)
+        .and_then(Entity::ai_controller_mut)
+        .expect("locked emoticon owner has AI")
+        .locks_flag_field = AiLockFlags::FREEZE;
+
+    crate::sim_rng::with_seed(0xA013_EA10, |sim| {
+        engine.tick_npc_post_detection_tail_for_npc(sim, unlocked, &assets);
+        engine.tick_npc_post_detection_tail_for_npc(sim, locked, &assets);
+    });
+    let unlocked_ai = engine
+        .get_entity(unlocked)
+        .and_then(Entity::ai_controller)
+        .expect("unlocked emoticon owner retains AI");
+    assert_eq!(unlocked_ai.current_emoticon_type, EmoticonType::None);
+    assert!(!unlocked_ai.emoticon_has_expiration_date);
+    let locked_ai = engine
+        .get_entity(locked)
+        .and_then(Entity::ai_controller)
+        .expect("locked emoticon owner retains AI");
+    assert_eq!(locked_ai.current_emoticon_type, EmoticonType::QuestionMark);
+    assert!(locked_ai.emoticon_has_expiration_date);
+    assert_eq!(locked_ai.emoticon_expiration_date, 102);
+}
+
+#[test]
+fn post_detection_tail_refreshes_deafness_off_acoustic_cadence() {
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.control.frame_counter = 7;
+    assert_ne!((engine.control.frame_counter + npc_id.index()) % 3, 0);
+    let npc = engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::npc_data_mut)
+        .expect("deafness owner has NPC data");
+    npc.old_cover_noise_deafness = 100;
+    npc.old_cover_noise_deafness_frame_counter = 6;
+
+    crate::sim_rng::with_seed(0xA013_DEAF, |sim| {
+        engine.tick_npc_post_detection_tail_for_npc(sim, npc_id, &assets)
+    });
+    let npc = engine
+        .get_entity(npc_id)
+        .and_then(Entity::npc_data)
+        .expect("deafness owner retains NPC data");
+    assert_eq!(npc.old_cover_noise_deafness_frame_counter, 7);
+    assert!(npc.old_cover_noise_deafness < 100);
+}
+
+#[test]
+fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
+    use crate::ai::{AiState, AmbushPoint, Position, Substate};
+    use crate::ai_enemy::AmbushPointStatus;
+    use crate::element::Command;
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ambush owner exists")
+    else {
+        panic!("ambush owner changed kind")
+    };
+    soldier.element.active = true;
+    soldier.element.set_position_map(MapPoint::new(0.0, 0.0));
+    soldier.element.set_direction_instantly(0);
+    let enemy = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("ambush owner has enemy AI");
+    enemy.base.current_state = AiState::Seeking;
+    enemy.base.current_substate = Substate::SeekingSeekpoint;
+    enemy.soldier_profile_iq = 100;
+    enemy.ambush_point_status = vec![AmbushPointStatus::Near];
+    engine.ai.global.ambush_points = vec![AmbushPoint {
+        position: Position {
+            x: 10.0,
+            y: 0.0,
+            ..Position::default()
+        },
+        direction: 0,
+        position_3d: crate::coordinates::WorldPoint3D::new(10.0, 0.0, 32.0),
+        id: 0,
+    }];
+
+    engine.tick_refresh_ambush_points_for_npc(sim, npc_id, &assets);
+
+    let enemy = engine
+        .get_entity(npc_id)
+        .and_then(Entity::enemy_ai)
+        .expect("ambush owner retains enemy AI");
+    assert_eq!(
+        enemy.base.current_substate,
+        Substate::SeekingSeekpointCheckingAmbushPoint
+    );
+    assert!(enemy.base.outbox.actor.look_sidewards.is_none());
+    assert!(
+        [Command::LookLeft, Command::LookRight]
+            .into_iter()
+            .any(|command| engine.actor_command(npc_id) == command
+                || engine
+                    .orders
+                    .sequence_manager
+                    .element_is_about_to_be_launched(npc_id, command)),
+        "RefreshAmbushPoints must launch LookSidewards before deafness/busy"
+    );
+}
+
+#[test]
+fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
+    use crate::ai::Substate;
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(npc_id));
+    wait.state = SequenceState::InProgress;
+    engine.orders.sequence_manager.launch_element(wait);
+    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ladder owner exists")
+    else {
+        panic!("ladder owner changed kind")
+    };
+    soldier.element.posture = Posture::OnLadder;
+    soldier.npc.stuck_on_ladder_emergency_counter = 25;
+    let ai = soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("ladder owner has AI");
+    ai.macro_timer_is_running = true;
+    ai.when_does_macro_timer_ring = 0;
+    ai.current_substate = Substate::DefaultOnPost;
+
+    engine.tick_npc_stuck_on_ladder_for_npc(sim, npc_id, &assets);
+    assert_eq!(
+        engine
+            .get_entity(npc_id)
+            .and_then(Entity::npc_data)
+            .expect("ladder owner retains NPC data")
+            .stuck_on_ladder_emergency_counter,
+        0,
+        "the 26th qualifying frame must trigger recovery and reset"
+    );
+
+    engine.tick_ai_macro_timer_for_npc(sim, npc_id, &assets);
+    assert!(
+        !engine
+            .get_entity(npc_id)
+            .and_then(Entity::ai_controller)
+            .expect("macro owner retains AI")
+            .macro_timer_is_running,
+        "elapsed macro timers stop even outside DefaultInMacro"
+    );
+}
+
+#[test]
+fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.control.frame_counter = u32::MAX - 10;
+    let ai = engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("overflow-timer owner has AI");
+    ai.timer_is_running = true;
+    ai.when_does_timer_ring = u32::MAX - 5;
+    ai.substate_at_last_timer_launch = ai.current_substate;
+
+    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
+    let ai = engine
+        .get_entity(npc_id)
+        .and_then(Entity::ai_controller)
+        .expect("overflow-timer owner retains AI");
+    assert!(
+        !ai.timer_is_running || ai.when_does_timer_ring != u32::MAX - 5,
+        "the wrapped million-frame guard must consume the apparently-future timer"
+    );
+}
+
+#[test]
+fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
+    use crate::ai::{AiLockFlags, Stimulus, StimulusType};
+    use crate::element::Posture;
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("FIFO owner exists") else {
+        panic!("FIFO owner changed kind")
+    };
+    soldier.element.posture = Posture::OnLadder;
+    let ai = soldier.npc.ai_brain.base_mut().expect("FIFO owner has AI");
+    ai.locks_flag_field = AiLockFlags::empty();
+    ai.stimulus_queue = vec![
+        Stimulus::new(StimulusType::EventCouldntReachPoint),
+        Stimulus::new(StimulusType::EventTimer),
+    ];
+
+    engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
+    let ai = engine
+        .get_entity(npc_id)
+        .and_then(Entity::ai_controller)
+        .expect("FIFO owner retains AI");
+    assert!(ai.locks_flag_field.contains(AiLockFlags::BUSY));
+    assert!(
+        ai.stimulus_queue
+            .iter()
+            .any(|stimulus| stimulus.stimulus_type == StimulusType::EventTimer),
+        "the pre-existing FIFO suffix must survive the newly acquired lock"
+    );
+}
+
+#[test]
+fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
+    use crate::ai::{AiLockFlags, EmoticonType, StimulusType, Substate};
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.control.frame_counter = 100;
+
+    assert!(
+        !engine.tick_npc_lock_gate_for_npc(npc_id),
+        "the pre-suffix gate is sampled open"
+    );
+
+    // Model a synchronous The16thFrame/EVENT_TIMER consequence that acquires
+    // both kinds of outer lock after the branch has already been entered.
+    engine.set_actors_frozen(true);
+    let ai = engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("post-gate owner has AI");
+    ai.locks_flag_field = AiLockFlags::FREEZE;
+    ai.timer_is_running = true;
+    ai.when_does_timer_ring = 100;
+    ai.macro_timer_is_running = true;
+    ai.when_does_macro_timer_ring = 100;
+    ai.current_substate = Substate::DefaultOnPost;
+    ai.set_transient_emoticon(EmoticonType::QuestionMark, 1, 99);
+
+    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_macro_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_npc_emoticon_expiration_for_npc(npc_id);
+    engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
+
+    let ai = engine
+        .get_entity(npc_id)
+        .and_then(Entity::ai_controller)
+        .expect("post-gate owner retains AI");
+    assert!(!ai.timer_is_running, "due normal timer is consumed");
+    assert!(!ai.macro_timer_is_running, "due macro timer is consumed");
+    assert_eq!(ai.current_emoticon_type, EmoticonType::None);
+    assert!(
+        ai.stimulus_queue
+            .iter()
+            .any(|stimulus| stimulus.stimulus_type == StimulusType::EventTimer),
+        "Think observes the new AI lock and the retained loop preserves it"
+    );
+}
+
+#[test]
+fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately() {
+    use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
+    use crate::element::Command;
+
+    fn add_ready_civilian(engine: &mut EngineInner) -> EntityId {
+        let id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+        let Entity::Civilian(civilian) = engine.get_entity_mut(id).expect("civilian exists") else {
+            panic!("civilian changed kind")
+        };
+        civilian.element.active = true;
+        civilian.npc.life_points = 100;
+        civilian.element.set_position_map(MapPoint::new(0.0, 0.0));
+        id
+    }
+
+    fn assert_drained(engine: &EngineInner, id: EntityId, boundary: &str) {
+        let ai = engine
+            .get_entity(id)
+            .and_then(Entity::ai_controller)
+            .expect("civilian retains AI");
+        assert!(
+            ai.outbox.actor.orders.is_empty(),
+            "{boundary} must not leave civilian orders for a global batch"
+        );
+    }
+
+    fn assert_launched(engine: &EngineInner, id: EntityId, expected: Command, boundary: &str) {
+        assert_drained(engine, id, boundary);
+        assert!(
+            engine.actor_command(id) == expected
+                || engine
+                    .orders
+                    .sequence_manager
+                    .element_is_about_to_be_launched(id, expected),
+            "{boundary} must synchronously launch or enqueue the civilian {expected:?} command"
+        );
+    }
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let timer_owner = add_ready_civilian(&mut engine);
+    let retained_owner = add_ready_civilian(&mut engine);
+    let self_owner = add_ready_civilian(&mut engine);
+    let periodic_owner = add_ready_civilian(&mut engine);
+    let macro_owner = add_ready_civilian(&mut engine);
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let Entity::Pc(pc) = engine.get_entity_mut(target).expect("face target exists") else {
+        panic!("face target changed kind")
+    };
+    pc.element.active = true;
+    pc.element.set_position_map(MapPoint::new(100.0, 0.0));
+    pc.pc.life_points = 100;
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let timer_ai = engine
+        .get_entity_mut(timer_owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("timer civilian has AI");
+    timer_ai.current_state = AiState::Wondering;
+    timer_ai.current_substate = Substate::WonderingCivilianAdmiringHero;
+    timer_ai.initial_position = Position {
+        x: 100.0,
+        y: 0.0,
+        ..Position::default()
+    };
+    timer_ai.timer_is_running = true;
+    timer_ai.when_does_timer_ring = 0;
+    timer_ai.substate_at_last_timer_launch = timer_ai.current_substate;
+    engine.tick_ai_normal_timer_for_npc(sim, timer_owner, &assets);
+    assert_drained(&engine, timer_owner, "normal timer");
+    assert_eq!(
+        engine
+            .get_entity(timer_owner)
+            .and_then(Entity::ai_controller)
+            .expect("timer civilian retains AI")
+            .current_substate,
+        Substate::DefaultGotoPost,
+        "normal timer Think must complete before the next owner"
+    );
+
+    for (id, queue) in [
+        (retained_owner, Some(Stimulus::new(StimulusType::EventDone))),
+        (self_owner, None),
+    ] {
+        let ai = engine
+            .get_entity_mut(id)
+            .and_then(Entity::ai_controller_mut)
+            .expect("face civilian has AI");
+        ai.current_state = AiState::Seeking;
+        ai.current_substate = Substate::SeekingCivilianGiveAlertingReportToSoldierPoint;
+        ai.antagonist = target.index();
+        if let Some(stimulus) = queue {
+            ai.stimulus_queue.push(stimulus);
+        } else {
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventDone);
+        }
+    }
+    engine.tick_ai_queued_stimuli_for_npc(sim, retained_owner, &assets);
+    assert_launched(&engine, retained_owner, Command::Turn, "retained Think");
+    engine.drain_self_stimuli_for_npc(sim, self_owner, &assets);
+    assert_launched(&engine, self_owner, Command::Turn, "recursive self-Think");
+
+    let periodic_ai = engine
+        .get_entity_mut(periodic_owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("The16thFrame civilian has AI");
+    periodic_ai.current_state = AiState::Default;
+    periodic_ai.current_substate = Substate::DefaultGotoPost;
+    periodic_ai.stuck_counter = 3;
+    periodic_ai.last_goto_destination = Position {
+        x: 100.0,
+        y: 0.0,
+        ..Position::default()
+    };
+    engine.control.frame_counter = (periodic_owner.index() + 100) & 255;
+    engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
+    assert_drained(&engine, periodic_owner, "civilian The16thFrame");
+    assert_eq!(
+        engine
+            .get_entity(periodic_owner)
+            .and_then(Entity::ai_controller)
+            .expect("The16thFrame civilian retains AI")
+            .stuck_counter,
+        0,
+        "The16thFrame must run and hand its retried GoTo to the engine boundary"
+    );
+
+    let macro_ai = engine
+        .get_entity_mut(macro_owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("macro civilian has AI");
+    macro_ai.current_state = AiState::Default;
+    macro_ai.current_substate = Substate::DefaultInMacro;
+    macro_ai.macro_command = vec![3, 8, 0]; // CMD_FACE_TO(8)
+    macro_ai.macro_command_offset = 0;
+    macro_ai.number_of_remaining_macro_bytes = 3;
+    macro_ai.macro_timer_is_running = true;
+    macro_ai.when_does_macro_timer_ring = 0;
+    engine.tick_ai_macro_timer_for_npc(sim, macro_owner, &assets);
+    assert_launched(&engine, macro_owner, Command::Turn, "macro VM");
+}
+
+#[test]
+fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::{Detectable, DetectableType};
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let friend_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("macro civilian exists")
+    else {
+        panic!("macro owner changed kind")
+    };
+    civilian.element.active = true;
+    civilian.npc.life_points = 100;
+    civilian.npc.detectable_lists[DetectableType::MissedFriend as usize].push(Detectable {
+        element: Some(friend_id),
+        detectable_type: DetectableType::MissedFriend,
+        ..Detectable::default()
+    });
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("macro civilian has AI");
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    // CMD_FACE_TO without its u16 operand takes the common BreakMacro path,
+    // which queues the MissedFriend deletions through set_checkpoint_charly(0).
+    ai.macro_command = vec![3];
+    ai.macro_command_offset = 0;
+    ai.number_of_remaining_macro_bytes = 1;
+    ai.macro_in_progress = true;
+    ai.macro_timer_is_running = true;
+    ai.when_does_macro_timer_ring = 0;
+
+    engine.tick_ai_macro_timer_for_npc(sim, civilian_id, &assets);
+
+    let civilian = engine
+        .get_entity(civilian_id)
+        .and_then(Entity::npc_data)
+        .expect("macro civilian retains NPC data");
+    assert!(
+        civilian.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
+        "common macro completion deletes must be applied to civilian NpcData"
+    );
+    let ai = engine
+        .get_entity(civilian_id)
+        .and_then(Entity::ai_controller)
+        .expect("macro civilian retains AI");
+    assert!(ai.outbox.actor.delete_detectables.is_empty());
+}
+
+#[test]
+fn quiet_off_phase_tail_and_empty_common_drain_do_not_draw_building_exit_gate() {
+    use crate::ai::AmbushPoint;
+    use crate::element::ActiveDoorPass;
+    use crate::fast_find_grid::GridSector;
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+    use crate::sector::{SectorNumber, SectorType};
+    use crate::sim_rng::{RngSite, with_draw_trace};
+    use std::collections::VecDeque;
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let quiet_owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let door_actor = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(quiet_owner)
+        .expect("quiet civilian exists")
+    else {
+        panic!("quiet owner changed kind")
+    };
+    civilian.element.active = true;
+    civilian.npc.life_points = 100;
+    let ai = civilian
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("quiet civilian has AI");
+    ai.timer_is_running = false;
+    ai.macro_timer_is_running = false;
+
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(door_actor)
+        .expect("door-passing actor exists")
+    else {
+        panic!("door-passing actor changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
+    pc.actor.active_door_pass = Some(ActiveDoorPass {
+        door_index: DoorIndex(0),
+        direct: true,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::default(),
+        current_reverse: false,
+        saved_action_state: None,
+    });
+
+    let building_sector = SectorNumber::new(8);
+    engine.script_domains.interactables.doors = vec![
+        Door {
+            door_type: DoorType::Building,
+            sector_out: SectorNumber::new(7),
+            sector_in: building_sector,
+            point_out: MapPoint::new(0.0, 0.0),
+            point_in: MapPoint::new(10.0, 0.0),
+            ..Door::default()
+        },
+        Door {
+            door_type: DoorType::Building,
+            sector_out: SectorNumber::new(9),
+            sector_in: building_sector,
+            point_out: MapPoint::new(100.0, 0.0),
+            point_in: MapPoint::new(90.0, 0.0),
+            ..Door::default()
+        },
+    ];
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+    level.sector_number_map.insert(building_sector, 0);
+    level.sectors.push(GridSector {
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type: SectorType::BUILDING,
+        layer: 0,
+        sector_number: building_sector,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![ClassEntry {
+                source_file: "pa013_rng_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: Vec::new(),
+            }],
+        })
+        .expect("minimal mission script builds"),
+    );
+    engine.ai.global.ambush_points = vec![AmbushPoint {
+        position: crate::ai::Position::default(),
+        direction: 0,
+        position_3d: crate::coordinates::WorldPoint3D::default(),
+        id: 0,
+    }];
+    engine.control.frame_counter = (quiet_owner.index() + 101) & 255;
+
+    let (_, control_trace) = with_draw_trace(|| {
+        drop(engine.build_sim_scratch(sim, &assets));
+    });
+    assert!(
+        control_trace.contains(&RngSite::BuildingExitGate),
+        "the fixture must exercise BuildingExitGate when scratch is really built"
+    );
+
+    let (_, empty_drain_trace) =
+        with_draw_trace(|| engine.drain_pending_for_npc(sim, quiet_owner, &assets));
+    assert!(
+        !empty_drain_trace.contains(&RngSite::BuildingExitGate),
+        "an empty common outbox drain must not build forecast scratch"
+    );
+
+    let (_, tail_trace) =
+        with_draw_trace(|| engine.tick_npc_post_detection_tail_for_npc(sim, quiet_owner, &assets));
+    assert!(
+        !tail_trace.contains(&RngSite::BuildingExitGate),
+        "a civilian ambush no-op plus off-phase/undue tail must remain RNG-silent"
+    );
+}
+
+#[test]
 fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
     use crate::ai::{AiLockFlags, AiState, StimulusType, Substate};
     use crate::ai_enemy::task_priority;
@@ -725,7 +1478,7 @@ fn wake_blinks_follow_waker_and_observer_creation_order_for_both_producers() {
 
 #[test]
 fn npc_detection_observes_friend_state_at_creation_order_boundary() {
-    use crate::ai::{AiState, Substate};
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
     use crate::profiles::ProfileRank;
 
@@ -808,8 +1561,8 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         profile.detection_speed_in_city = 100;
         profile.detection_speed_in_forest = 100;
 
-        // Isolate the exact A-EVENT_VIEW → B-FRIEND edge after fixture
-        // initialization has installed profiles and AI runtime defaults.
+        // Isolate the exact A retained-EVENT_VIEW tail → B-FRIEND edge after
+        // fixture initialization has installed profiles and AI defaults.
         let Entity::Soldier(attacker) = engine
             .get_entity_mut(attacker_id)
             .expect("attacker exists before detection")
@@ -818,14 +1571,13 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         };
         attacker.npc.detectable_lists[DetectableType::Enemy as usize].clear();
         attacker.npc.detectable_lists[DetectableType::Friend as usize].clear();
-        attacker.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
-        attacker.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
-            element: Some(pc_id),
-            detectable_type: DetectableType::Enemy,
-            // This oracle starts after the ordinary predetection shadow edge.
-            shadow_seen_last_frame: true,
-            ..Detectable::default()
-        });
+        attacker
+            .npc
+            .ai_brain
+            .base_mut()
+            .expect("attacker retains base AI")
+            .stimulus_queue
+            .push(Stimulus::with_human(StimulusType::EventView, pc_id.index()));
 
         let Entity::Soldier(officer) = engine
             .get_entity_mut(officer_id)
@@ -840,7 +1592,13 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
             ..Detectable::default()
         });
 
-        crate::sim_rng::with_seed(0xA013, |sim| engine.tick_enemy_ai(sim, &assets));
+        let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (id, entity) in engine.world.entities.occupied() {
+            positions[id] = Some(entity.element_data().position_map());
+        }
+        crate::sim_rng::with_seed(0xA013, |sim| {
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+        });
 
         let attacker_ai = engine
             .get_entity(attacker_id)

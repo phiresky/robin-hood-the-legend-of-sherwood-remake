@@ -1335,7 +1335,7 @@ pub struct NpcData {
     pub old_cover_noise_deafness_frame_counter: u32,
 
     /// Frames spent stuck on an outdoor ladder while idle.  Bumped
-    /// each tick by `tick_npc_stuck_on_ladder` when the NPC is on a
+    /// each tick by `tick_npc_stuck_on_ladder_for_npc` when the NPC is on a
     /// ladder in a non-building sector with command `Wait`/`MoveWaiting`
     /// and not script-locked; reset otherwise.  After 25 frames the
     /// engine fires `ForceReturnToDuty` so NPCs that hang on outdoor

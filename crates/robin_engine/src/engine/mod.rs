@@ -2245,7 +2245,7 @@ impl EngineInner {
     /// order without tearing down the in-flight posture-transition or
     /// door-pass sequence, so the engine holds `AILOCK_BUSY` for the
     /// duration via the per-tick edge detector in
-    /// [`Self::tick_npc_busy_edge_detect`].
+    /// [`Self::tick_npc_busy_edge_detect_for_npc`].
     pub(crate) fn is_very_very_busy(&self, owner: EntityId) -> bool {
         use crate::element::Posture;
         let Some(entity) = self.get_entity(owner) else {
@@ -2286,24 +2286,22 @@ impl EngineInner {
     /// The per-tick edge detect closes the loop and also covers the
     /// `Command::PassDoor | Command::Fall` arm of `is_very_very_busy`,
     /// which neither caller checks.
-    pub(super) fn tick_npc_busy_edge_detect(&mut self) {
-        if self.actors_frozen() {
-            return;
+    pub(super) fn tick_npc_busy_edge_detect_for_npc(&mut self, npc_id: EntityId) {
+        let busy = self.is_very_very_busy(npc_id);
+        let entity = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("busy-edge NPC {} disappeared", npc_id.index()));
+        let ai = entity
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("busy-edge NPC {} has no AI controller", npc_id.index()));
+        if !ai.was_busy && busy {
+            ai.non_script_lock(crate::ai::AiLockFlags::BUSY);
+        } else if ai.was_busy && !busy {
+            ai.non_script_unlock(crate::ai::AiLockFlags::BUSY);
         }
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            let busy = self.is_very_very_busy(npc_id);
-            if let Some(entity) = self.world.entities.get_mut(npc_id)
-                && let Some(ai) = entity.ai_controller_mut()
-            {
-                if !ai.was_busy && busy {
-                    ai.non_script_lock(crate::ai::AiLockFlags::BUSY);
-                } else if ai.was_busy && !busy {
-                    ai.non_script_unlock(crate::ai::AiLockFlags::BUSY);
-                }
-                ai.was_busy = busy;
-            }
-        }
+        ai.was_busy = busy;
     }
 
     /// Launch the actor's pending post-seek sequence, if any.  Stops a

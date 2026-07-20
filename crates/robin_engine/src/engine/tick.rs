@@ -1864,11 +1864,14 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         self.tick_enemy_ai_with_creation_ordered_prelude(sim, assets, positions_before_movement);
 
+        // The phase observations below retain the coarse PA-016 ordering
+        // contract. Production work no longer runs here: PA-013 executes the
+        // complete post-detection tail inside each NPC's creation slot before
+        // the next NPC enters RefreshDetection.
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_refresh_ambush_points(sim, assets);
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
@@ -1878,7 +1881,6 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_npc_busy_edge_detect();
 
         // ── Stuck-on-ladder emergency counter ──────────────────
         // Bump per frame for non-script-locked NPCs on outdoor
@@ -1889,9 +1891,6 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_npc_stuck_on_ladder(sim, assets);
-
-        self.tick_civilian_random_speech(sim, assets);
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -1906,7 +1905,6 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_npc_locked_frame_timer_bumps();
 
         // The unlocked tail is ordered exactly like the original callee:
         // The16thFrame, normal EVENT_TIMER, macro timer, then stimuli held
@@ -1915,13 +1913,11 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_periodic_ai(sim, assets);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_normal_timers(sim, assets);
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
@@ -1933,13 +1929,11 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_macro_timers(sim, assets);
 
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_ai_queued_stimuli(sim, assets);
 
         // ── Post-AI script state-change notifications ───────────
         // Notify per-actor scripts of AI state transitions via
@@ -1958,10 +1952,10 @@ impl EngineInner {
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
 
-        // TODO(original-parity): the pre-detection creation boundary above is
-        // restored, but the post-detection RefreshAmbushPoints / deafness,
-        // busy/ladder, lock gate, timers, and queued-stimulus Hourglass tail
-        // remains globally batched. Preserve it for a later PA-013 wave.
+        // TODO(original-parity): SetState script notifications and Say audio
+        // dispatch are still deferred to these system passes. The original
+        // performs both synchronously and can re-enter script/AI before the
+        // next creation slot; restore that in a later narrowly-audited slice.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that

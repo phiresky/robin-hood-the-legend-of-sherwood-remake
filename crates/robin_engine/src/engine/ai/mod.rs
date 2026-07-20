@@ -10,6 +10,11 @@ mod detection;
 mod post_detection;
 mod snapshots;
 
+#[cfg(test)]
+pub(crate) use post_detection::{
+    NpcPostDetectionTailPhase, capture_npc_post_detection_tail_phases,
+};
+
 use super::*;
 use crate::ai::{AiContext, AiPerTickData, StimulusType};
 use crate::ai_entity_view::{self, AiEntityViewMap, SharedAiEntityViews};
@@ -3740,10 +3745,11 @@ impl EngineInner {
     ///
     /// `Say()` is called inline from the AI state machine and
     /// immediately dispatches to the sound manager.  Here, the AI
-    /// stores `current_remark` / `current_remark_flags` during its
-    /// tick, and we drain them in this pass — after all AI ticks have
-    /// run — to avoid holding a mutable borrow on the entity while
-    /// also needing `&mut SoundManager`.
+    /// stores `current_remark` / `current_remark_flags` during its tick, and
+    /// this legacy pass drains them after all AI ticks. TODO(PA-013): the
+    /// original `Say` dispatch is synchronous; move this into a separately
+    /// audited re-entrant owner slice rather than attaching it to the new NPC
+    /// tail coordinator.
     pub(super) fn process_npc_speech(&mut self, assets: &LevelAssets) {
         use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
         use crate::sound::ExclamationGroup;
@@ -4377,6 +4383,15 @@ impl EngineInner {
         positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
     ) {
         if self.actors_frozen() {
+            // Frozen-all skips patrol/view/detection/ambush/deafness but the
+            // original still enters each NPC's busy/ladder/speech/lock gate,
+            // where all three deadlines are extended before returning.
+            if positions_before_movement.is_some() {
+                let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+                for npc_id in npc_ids {
+                    self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
+                }
+            }
             return;
         }
         self.ai.global.same_frame_target_claims.clear();
@@ -4399,11 +4414,15 @@ impl EngineInner {
         // that NPC before the next creation slot starts.
         self.tick_enemy_ai_refresh_detection(sim, assets, &world, positions_before_movement);
 
-        // ── 6c. Process pending AI swordfight requests. ─────────
-        self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
-
-        // ── 6d. Drain pending stimuli ────────────────────────────
-        self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
+        // Focused detection tests retain the legacy fallback drains for
+        // stimuli injected outside the production owner coordinator. Every
+        // production Think now drains its own effects/stimuli synchronously;
+        // re-running 6c/6d globally here would re-batch owner work.
+        #[cfg(test)]
+        if positions_before_movement.is_none() {
+            self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
+            self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
+        }
         self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
@@ -4427,7 +4446,6 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        let scratch = self.build_sim_scratch(sim, assets);
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.
@@ -4444,10 +4462,10 @@ impl EngineInner {
         // restoring `active_movement` and re-driving the run animation
         // — the visual "stuck in running pose" symptom.
         let take_halt = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
+            let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
             ai.outbox.actor.take_halt()
@@ -4459,12 +4477,14 @@ impl EngineInner {
         // The halt application above is a real same-frame barrier: only now
         // take the prefixes that the original `go_to` path launches next.
         let preemption = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
+            });
             ai.outbox.actor.take_movement_prefixes()
         };
 
@@ -4473,14 +4493,25 @@ impl EngineInner {
         // still enqueue effects that this pass observes at their Original
         // application point.
         let effects = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
+            });
             ai.outbox.actor.take_core()
         };
+        assert!(
+            effects.enter_swordfight_jump_line.is_none()
+                || matches!(
+                    effects.enter_swordfight,
+                    Some(crate::ai::EnterSwordfightRequest::Engage(_))
+                ),
+            "pending-drain owner {} queued a swordfight jump line without an engagement",
+            npc_id.index()
+        );
 
         // Process quit_swordfight.
         if effects.quit_swordfight {
@@ -4575,11 +4606,33 @@ impl EngineInner {
         // other soldier when the swap heuristic fires; we hand it off
         // here so both soldiers are updated consistently after their
         // AI ticks ran.
-        if let Some((friend_id, new_target)) = effects.friend_primary_target_swap
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
-            && let Some(friend_ai) = s.npc.ai_brain.base_mut()
-        {
-            friend_ai.primary_target = new_target;
+        if let Some((friend_id, new_target)) = effects.friend_primary_target_swap {
+            let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
+                panic!(
+                    "pending-drain NPC {} primary-target friend {} disappeared",
+                    npc_id.index(),
+                    friend_id.index()
+                )
+            });
+            let Entity::Soldier(friend) = friend else {
+                panic!(
+                    "pending-drain NPC {} primary-target friend {} is not a soldier",
+                    npc_id.index(),
+                    friend_id.index()
+                );
+            };
+            friend
+                .npc
+                .ai_brain
+                .base_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "pending-drain NPC {} primary-target friend {} has no AI",
+                        npc_id.index(),
+                        friend_id.index()
+                    )
+                })
+                .primary_target = new_target;
         }
 
         // Process pending bow shot.
@@ -4599,37 +4652,51 @@ impl EngineInner {
         // honour the synchronous ordering even though the channel
         // itself is deferred.
         let mut focus_channel_fired = false;
-        if let Some(target_handle) = effects.focus
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-        {
+        if let Some(target_handle) = effects.focus {
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
             crate::ai_vision::focus_entity(
-                &mut s.npc,
+                npc,
                 EntityId::Pc(crate::entity_id::PcId(target_handle)),
             );
             focus_channel_fired = true;
         }
 
-        if let Some(point) = effects.focus_point
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-        {
-            crate::ai_vision::focus_point(
-                &mut s.npc,
-                crate::coordinates::MapPoint::new(point.x, point.y),
-            );
+        if let Some(point) = effects.focus_point {
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+            crate::ai_vision::focus_point(npc, crate::coordinates::MapPoint::new(point.x, point.y));
             focus_channel_fired = true;
         }
 
-        if effects.unfocus
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-        {
-            crate::ai_vision::unfocus(&mut s.npc);
+        if effects.unfocus {
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+            crate::ai_vision::unfocus(npc);
             focus_channel_fired = true;
         }
 
-        if focus_channel_fired
-            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-            && let Some(ai) = s.npc.ai_brain.base_mut()
-        {
+        if focus_channel_fired {
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!("pending-drain owner {} lost AI after focus", npc_id.index())
+                });
             ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
         }
 
@@ -4641,13 +4708,17 @@ impl EngineInner {
         // back open at 8 units/frame.
         if effects.slowly_open_eyes {
             let standard = self.ai.standard_view_polygon_radius;
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                s.npc.view_transition = true;
-                s.npc.view_radius = 5;
-                s.npc.view_radius_base = 5;
-                s.npc.view_radius_goal = standard;
-                s.npc.eye_status = crate::element::EyeStatus::ViewconeGrow;
-            }
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+            npc.view_transition = true;
+            npc.view_radius = 5;
+            npc.view_radius_base = 5;
+            npc.view_radius_goal = standard;
+            npc.eye_status = crate::element::EyeStatus::ViewconeGrow;
         }
 
         // Process pending set_direction_instantly.
@@ -4987,14 +5058,20 @@ impl EngineInner {
                         crate::ai::StimulusType::CallCharlyIsBack,
                         charly_handle,
                     );
+                    // The preceding drain work and earlier Charly recipients
+                    // may have synchronously changed entity state. Build the
+                    // recipient snapshot at this exact Think boundary.
+                    let scratch = self.build_sim_scratch(sim, assets);
                     let other_ctx = {
                         let Some(entity) = self.world.entities.get(other_id) else {
                             continue;
                         };
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
                         build_ai_context_from_entity(
                             entity,
                             self.control.frame_counter,
-                            None,
+                            building_sector,
                             self.world.weather.is_forest_level,
                             self.world.weather.ambiance,
                             self.ai.standard_view_polygon_radius,
@@ -5074,9 +5151,13 @@ impl EngineInner {
             // the sequence so the soldier's gaze drops its lock for
             // the head-turn animation.  Centralise it here instead of
             // patching every caller.
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                crate::ai_vision::unfocus(&mut s.npc);
-            }
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+            crate::ai_vision::unfocus(npc);
             let mut seq = crate::sequence::Sequence::new();
             for (i, cmd) in cmds.iter().enumerate() {
                 let elem =
@@ -5094,13 +5175,23 @@ impl EngineInner {
         // drops the PC and stops firing duplicate `EventSeesBeggar`
         // stimuli on subsequent frames.
         let delete_beggar_requests: Vec<EntityId> = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            std::mem::take(&mut ai.outbox.actor.delete_beggar_for_all_npc)
+            match self.world.entities.get_mut(npc_id) {
+                Some(Entity::Soldier(s)) => std::mem::take(
+                    &mut s
+                        .npc
+                        .ai_brain
+                        .base_mut()
+                        .unwrap_or_else(|| {
+                            panic!("pending-drain soldier {} lost its AI", npc_id.index())
+                        })
+                        .outbox
+                        .actor
+                        .delete_beggar_for_all_npc,
+                ),
+                Some(Entity::Civilian(_)) => Vec::new(),
+                Some(_) => panic!("pending-drain owner {} is not an NPC", npc_id.index()),
+                None => panic!("pending-drain NPC {} disappeared", npc_id.index()),
+            }
         };
         for beggar_id in delete_beggar_requests {
             self.delete_beggar_detectable_for_all_npc(beggar_id);
@@ -5124,70 +5215,100 @@ impl EngineInner {
                         if *dt != DetectableType::Enemy {
                             return None;
                         }
-                        self.get_entity(*eid)
-                            .map(|e| (e.is_pc(), e.is_soldier(), e.camp(), e.is_human()))
+                        let target = self.get_entity(*eid).unwrap_or_else(|| {
+                            panic!(
+                                "pending-drain owner {} detectable target {} disappeared",
+                                npc_id.index(),
+                                eid.index()
+                            )
+                        });
+                        Some((
+                            target.is_pc(),
+                            target.is_soldier(),
+                            target.camp(),
+                            target.is_human(),
+                        ))
                     })
                     .collect();
 
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                let npc_camp = s.soldier.cached_camp;
-                let npc_is_soldier = true; // dispatch already filtered to Soldier
-                // Delete all detectables of specified types.
-                for det_type in &effects.delete_detectables {
-                    let idx = *det_type as usize;
-                    if idx < s.npc.detectable_lists.len() {
-                        s.npc.detectable_lists[idx].clear();
-                    }
-                }
-                // Per-entity deletes: `delete_detectable(entity, type)`
-                // drops a single (element, type) entry, leaving
-                // siblings of the same type alone.
-                for (entity_id, det_type) in &effects.delete_detectable_entities {
-                    let idx = *det_type as usize;
-                    if idx < s.npc.detectable_lists.len() {
-                        s.npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
-                    }
-                }
-                // Add new detectables.
-                for ((entity_id, det_type), tgt) in
-                    effects.add_detectables.iter().zip(enemy_target_info.iter())
-                {
-                    let idx = *det_type as usize;
-                    if idx >= s.npc.detectable_lists.len() {
+            let (npc_camp, npc_is_soldier) = {
+                let owner = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!("pending-drain owner {} disappeared", npc_id.index())
+                });
+                (owner.camp(), owner.is_soldier())
+            };
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
+            // Delete all detectables of specified types.
+            for det_type in &effects.delete_detectables {
+                let idx = *det_type as usize;
+                assert!(
+                    idx < npc.detectable_lists.len(),
+                    "pending-drain owner {} has no {:?} detectable list",
+                    npc_id.index(),
+                    det_type
+                );
+                npc.detectable_lists[idx].clear();
+            }
+            // Per-entity deletes: `delete_detectable(entity, type)`
+            // drops a single (element, type) entry, leaving
+            // siblings of the same type alone.
+            for (entity_id, det_type) in &effects.delete_detectable_entities {
+                let idx = *det_type as usize;
+                assert!(
+                    idx < npc.detectable_lists.len(),
+                    "pending-drain owner {} has no {:?} detectable list",
+                    npc_id.index(),
+                    det_type
+                );
+                npc.detectable_lists[idx].retain(|d| d.element != Some(*entity_id));
+            }
+            // Add new detectables.
+            for ((entity_id, det_type), tgt) in
+                effects.add_detectables.iter().zip(enemy_target_info.iter())
+            {
+                let idx = *det_type as usize;
+                assert!(
+                    idx < npc.detectable_lists.len(),
+                    "pending-drain owner {} has no {:?} detectable list",
+                    npc_id.index(),
+                    det_type
+                );
+                // ENEMY-arm filter — drop pushes that fail the
+                // per-NPC camp/rank arm so a Royalist soldier
+                // never tracks a PC and a Lacklandist civilian
+                // never tracks a Royalist soldier.
+                if *det_type == DetectableType::Enemy {
+                    let Some((tgt_pc, tgt_soldier, tgt_camp, tgt_human)) = *tgt else {
+                        continue;
+                    };
+                    if !tgt_human {
                         continue;
                     }
-                    // ENEMY-arm filter — drop pushes that fail the
-                    // per-NPC camp/rank arm so a Royalist soldier
-                    // never tracks a PC and a Lacklandist civilian
-                    // never tracks a Royalist soldier.
-                    if *det_type == DetectableType::Enemy {
-                        let Some((tgt_pc, tgt_soldier, tgt_camp, tgt_human)) = *tgt else {
-                            continue;
-                        };
-                        if !tgt_human {
-                            continue;
-                        }
-                        if !crate::ai_detectable_filter::should_add_enemy_detectable(
-                            npc_camp,
-                            npc_is_soldier,
-                            tgt_pc,
-                            tgt_soldier,
-                            tgt_camp,
-                        ) {
-                            continue;
-                        }
+                    if !crate::ai_detectable_filter::should_add_enemy_detectable(
+                        npc_camp,
+                        npc_is_soldier,
+                        tgt_pc,
+                        tgt_soldier,
+                        tgt_camp,
+                    ) {
+                        continue;
                     }
-                    // Don't add duplicates.
-                    let already = s.npc.detectable_lists[idx]
-                        .iter()
-                        .any(|d| d.element == Some(*entity_id));
-                    if !already {
-                        s.npc.detectable_lists[idx].push(crate::element::Detectable {
-                            element: Some(*entity_id),
-                            detectable_type: *det_type,
-                            ..Default::default()
-                        });
-                    }
+                }
+                // Don't add duplicates.
+                let already = npc.detectable_lists[idx]
+                    .iter()
+                    .any(|d| d.element == Some(*entity_id));
+                if !already {
+                    npc.detectable_lists[idx].push(crate::element::Detectable {
+                        element: Some(*entity_id),
+                        detectable_type: *det_type,
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -5199,15 +5320,16 @@ impl EngineInner {
         // when not already present.  Fired from the enemy
         // `EVENT_FITAGAIN` / `SleepingUnconscious` handler.
         let restore_request = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            if ai.outbox.actor.restore_detectable_objects {
-                ai.outbox.actor.restore_detectable_objects = false;
-                Some(ai.knocked_out_in_money_fight)
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
+                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
+                });
+                if ai.outbox.actor.restore_detectable_objects {
+                    ai.outbox.actor.restore_detectable_objects = false;
+                    Some(ai.knocked_out_in_money_fight)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -5260,13 +5382,20 @@ impl EngineInner {
         // synchronously on the AI side in
         // `EnemyAi::forget_all_nearby_coins`.
         let forget_pos = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            ai.outbox.actor.forget_nearby_coins.take()
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+                s.npc
+                    .ai_brain
+                    .base_mut()
+                    .unwrap_or_else(|| {
+                        panic!("pending-drain soldier {} lost its AI", npc_id.index())
+                    })
+                    .outbox
+                    .actor
+                    .forget_nearby_coins
+                    .take()
+            } else {
+                None
+            }
         };
         if let Some(pos) = forget_pos {
             use crate::element::DetectableType;
@@ -5330,15 +5459,16 @@ impl EngineInner {
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
         let blink_all = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            let b = ai.outbox.actor.blink_all_enemies;
-            ai.outbox.actor.blink_all_enemies = false;
-            b
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
+                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
+                });
+                let b = ai.outbox.actor.blink_all_enemies;
+                ai.outbox.actor.blink_all_enemies = false;
+                b
+            } else {
+                false
+            }
         };
         if blink_all && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
             let idx = crate::element::DetectableType::Enemy as usize;
@@ -5358,15 +5488,16 @@ impl EngineInner {
         // (`init_battle_before_door` + `send_before_door_to_fight`
         // in `engine/soldier_helpers.rs`) are wired below.
         let in_house_alert = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = s.npc.ai_brain.base_mut() else {
-                return;
-            };
-            let v = ai.outbox.actor.enemy_in_house_alert;
-            ai.outbox.actor.enemy_in_house_alert = false;
-            v
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
+                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
+                });
+                let v = ai.outbox.actor.enemy_in_house_alert;
+                ai.outbox.actor.enemy_in_house_alert = false;
+                v
+            } else {
+                false
+            }
         };
         if in_house_alert {
             self.dispatch_enemy_in_house_alert(sim, npc_id, assets);
@@ -5378,16 +5509,21 @@ impl EngineInner {
         // pushes a `PanicRequest` (e.g. from the fleeing arm of
         // `think_alerting_event(sim, EVENT_VIEW)` outdoors) stays wedged
         // in `FleeingPanic` with no door picked.
-        let ctx_for_panic = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let entity_sector = entity.element_data().sector();
-            let building_sector = self.entity_building_sector(entity_sector);
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            build_ai_context_from_entity(
+        let has_begin_panic = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
+        if has_begin_panic {
+            let scratch = self.build_sim_scratch(sim, assets);
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
@@ -5400,10 +5536,42 @@ impl EngineInner {
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
-            )
-        };
-        self.process_pending_begin_panic_for(npc_id, &ctx_for_panic);
-        self.process_pending_panic_seek_fallback_for(npc_id, &ctx_for_panic);
+            );
+            self.process_pending_begin_panic_for(npc_id, &ctx);
+        }
+
+        let has_panic_seek_fallback = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .is_some_and(|ai| ai.outbox.actor.panic_seek_fallback);
+        if has_panic_seek_fallback {
+            // BeginPanic above can mutate the owner and world; do not reuse
+            // its context snapshot at this later synchronous boundary.
+            let scratch = self.build_sim_scratch(sim, assets);
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let ctx = build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
+        }
 
         // Drain any pending script-driven SeekArea request.  Matches
         // the immediate `start_think(NO_EVENT); seek_area(sim, ...);
@@ -5421,8 +5589,32 @@ impl EngineInner {
             .and_then(|entity| entity.ai_controller())
             .is_some_and(|ai| ai.outbox.actor.script_seek_area.is_some());
         if has_script_seek {
+            // The panic boundaries above may have synchronously changed the
+            // world. Script SeekArea gets a fresh owner snapshot and tick
+            // data at its own Original call boundary.
+            let scratch = self.build_sim_scratch(sim, assets);
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let ctx = build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
             let tick_for_seek = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-            self.process_pending_script_seek_area_for(sim, npc_id, &ctx_for_panic, &tick_for_seek);
+            self.process_pending_script_seek_area_for(sim, npc_id, &ctx, &tick_for_seek);
         }
     }
 
@@ -7446,17 +7638,16 @@ impl EngineInner {
         // letting it fall into the end-of-frame cross-action batch.
         self.process_synchronous_officer_reports_for(sim, npc_id, assets);
 
-        // Drain any panic-seek-point fallback the think pushed
-        // (FleeingPanic / EventCouldntReachPoint arm).  Needs the
-        // `ctx`/`ai_global` pair the outer caller owns, so it lives
-        // here rather than in `drain_pending_for_npc`.
-        self.process_pending_panic_seek_fallback_for(npc_id, ctx);
-
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
             // Drain the per-NPC pending-flags pass (launches sequences,
             // commands, turn orders, attentive-mode transitions, etc.).
             self.drain_pending_for_npc(sim, npc_id, assets);
+            // `drain_pending_for_npc` launches the first order barrier in its
+            // original position. Close the boundary again because later
+            // effect application and civilian handlers share the same base
+            // order outbox and must not leak into a global batch.
+            self.launch_pending_orders_for_npc(npc_id);
 
             // EventViewStandardProcedure calls HeyFolksLookThere directly in
             // the original. Deliver only that synchronous cross-NPC family at
@@ -7471,26 +7662,40 @@ impl EngineInner {
 
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.
-            let had_self_stimuli = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    break;
-                };
-                let Some(ai) = entity.ai_controller() else {
+            let has_self_stimuli = {
+                let Some(ai) = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::ai_controller)
+                else {
                     break;
                 };
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
-            if !had_self_stimuli {
+            if has_self_stimuli {
+                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+            }
+
+            let still_pending = {
+                let Some(ai) = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .and_then(Entity::ai_controller)
+                else {
+                    break;
+                };
+                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
+            };
+            if !still_pending {
                 break;
             }
-            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
-
-            if iter + 1 == MAX_ITERS {
-                tracing::warn!(
-                    npc = npc_id.index(),
-                    "dispatch_think_with_drain reached MAX_ITERS without stabilising"
-                );
-            }
+            assert!(
+                iter + 1 < MAX_ITERS,
+                "Think-drain NPC {} did not stabilise after {MAX_ITERS} passes",
+                npc_id.index()
+            );
         }
 
         handled
@@ -7740,13 +7945,14 @@ impl EngineInner {
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    return;
-                };
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!("re-entrant self-Think NPC {} disappeared", npc_id.index())
+                });
+                let building_sector = self.entity_building_sector(entity.element_data().sector());
                 let mut ctx = build_ai_context_from_entity(
                     entity,
                     frame,
-                    None,
+                    building_sector,
                     self.world.weather.is_forest_level,
                     self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
@@ -7767,15 +7973,14 @@ impl EngineInner {
             // non-enemy, populates for enemy.
             let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
             self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
-            // The re-entered think might have queued a panic-seek
-            // fallback (FleeingPanic / EventCouldntReachPoint).
-            self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
 
             // Original Think calls execute their engine-facing side effects
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc(sim, npc_id, assets);
+            self.launch_pending_orders_for_npc(npc_id);
+            self.process_synchronous_look_there_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
     }
@@ -7895,168 +8100,234 @@ impl EngineInner {
         }
     }
 
+    /// Finish engine-facing work queued by a direct AI method that is not
+    /// itself entered through `dispatch_think_with_drain` (ambush checks,
+    /// ladder recovery, The16thFrame, and macro continuation). This remains
+    /// owner-local and deliberately excludes the still-unaudited synchronous
+    /// SetState-script and Say/audio paths.
+    fn drain_direct_ai_owner_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        const MAX_ITERS: u32 = 8;
+        for iter in 0..MAX_ITERS {
+            self.drain_pending_for_npc(sim, npc_id, assets);
+            self.launch_pending_orders_for_npc(npc_id);
+            self.process_synchronous_look_there_for(sim, npc_id, assets);
+            self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            let has_self_stimuli = {
+                let ai = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .unwrap_or_else(|| panic!("direct-drain NPC {} disappeared", npc_id.index()))
+                    .ai_controller()
+                    .unwrap_or_else(|| {
+                        panic!("direct-drain NPC {} has no AI controller", npc_id.index())
+                    });
+                !ai.outbox.reentrant.self_stimuli.is_empty()
+            };
+            if has_self_stimuli {
+                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+            }
+
+            let still_pending = {
+                let ai = self
+                    .world
+                    .entities
+                    .get(npc_id)
+                    .unwrap_or_else(|| panic!("direct-drain NPC {} disappeared", npc_id.index()))
+                    .ai_controller()
+                    .unwrap_or_else(|| {
+                        panic!("direct-drain NPC {} has no AI controller", npc_id.index())
+                    });
+                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
+            };
+            if !still_pending {
+                break;
+            }
+            assert!(
+                iter + 1 < MAX_ITERS,
+                "direct AI drain for NPC {} did not stabilise after {MAX_ITERS} passes",
+                npc_id.index()
+            );
+        }
+    }
+
     // ── The16thFrame — periodic AI tasks (staggered) ──────────────
     //
     // `the_16th_frame` runs every 16th frame from the NPC's
     // `hourglass`, staggered by NPC index so not all soldiers run on
     // the same frame.
 
-    pub(super) fn tick_periodic_ai(
+    pub(super) fn tick_periodic_ai_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-        let scratch = self.build_sim_scratch(sim, assets);
-
         let current_frame = self.control.frame_counter;
 
-        for npc_id in self.world.entities.npc_ids().collect::<Vec<_>>() {
-            // Exact original phase:
-            //   (frame & 255) - ((register_number + 100) & 255)
-            // with unsigned-byte wrap. Passing the full phase matters:
-            // The16thFrame uses bits 4..5 to reduce some work to every
-            // 64th frame, so substituting `frame % 16` ran that work 4x.
-            let frame_phase = npc_hourglass_frame_phase(current_frame, npc_id.index());
-            if (frame_phase & 15) != 0 {
-                continue;
-            }
-
-            let locked = self.world.entities.get(npc_id).is_some_and(|entity| {
-                entity
-                    .ai_controller()
-                    .is_some_and(|ai| !ai.locks_flag_field.is_empty() || ai.script_locked)
-            });
-            if locked {
-                continue;
-            }
-
-            // `sequence_element_is_about_to_be_launched(self, NULL)`
-            // — used by the civilian stuck-counter suppression.
-            // Query once up front so we can hand it to the AI layer
-            // without holding a sequence-manager borrow across the
-            // AI tick.
-            let sequence_null_about_to_launch = self
-                .orders
-                .sequence_manager
-                .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
-
-            // `command == Wait` — entity is idle.  Read the live
-            // sequence-element command via `actor_command` rather
-            // than `action_state == Waiting` so we don't get a
-            // false-positive on `WaitTimer` (which sets `action_state
-            // = Waiting` via the animation map but is not
-            // `Command::Wait`) or a false-negative on the brief
-            // window where a teardown nulls the sequence-element
-            // before the next animation tick resets `action_state`.
-            let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
-
-            // Build the per-tick data first (uses `&self`) before the
-            // mutable entity borrow.
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-
-            if !entity.element_data().active || entity.is_dead() {
-                continue;
-            }
-
-            let ctx = build_ai_context_from_entity(
-                entity,
-                current_frame,
-                None,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.hiking_paths,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
-
-            match entity {
-                Entity::Soldier(s) => {
-                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        enemy_ai.the_16th_frame(
-                            sim,
-                            frame_phase,
-                            &ctx,
-                            &self.ai.global,
-                            &tick_data,
-                            Some(&self.world.fast_grid),
-                            is_idle,
-                            sequence_null_about_to_launch,
-                        );
-                    }
-                }
-                Entity::Civilian(c) => {
-                    if let Some(friendly_ai) = c.npc.ai_brain.friendly_mut() {
-                        friendly_ai.the_16th_frame(
-                            frame_phase,
-                            &mut self.ai.global,
-                            is_idle,
-                            sequence_null_about_to_launch,
-                        );
-                    }
-                    // `tick_data` is only used for enemies; civilians
-                    // don't need it.
-                    let _ = &tick_data;
-                }
-                _ => {}
-            }
+        // Exact original phase:
+        //   (frame & 255) - ((register_number + 100) & 255)
+        // with unsigned-byte wrap. Passing the full phase matters:
+        // The16thFrame uses bits 4..5 to reduce some work to every
+        // 64th frame, so substituting `frame % 16` ran that work 4x.
+        let frame_phase = npc_hourglass_frame_phase(current_frame, npc_id.index());
+        if (frame_phase & 15) != 0 {
+            return;
         }
+
+        let entity = self
+            .world
+            .entities
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
+        if entity.is_dead() {
+            return;
+        }
+
+        // `sequence_element_is_about_to_be_launched(self, NULL)`
+        // — used by the civilian stuck-counter suppression.
+        // Query once up front so we can hand it to the AI layer
+        // without holding a sequence-manager borrow across the
+        // AI tick.
+        let sequence_null_about_to_launch = self
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
+
+        // `command == Wait` — entity is idle.  Read the live
+        // sequence-element command via `actor_command` rather
+        // than `action_state == Waiting` so we don't get a
+        // false-positive on `WaitTimer` (which sets `action_state
+        // = Waiting` via the animation map but is not
+        // `Command::Wait`) or a false-negative on the brief
+        // window where a teardown nulls the sequence-element
+        // before the next animation tick resets `action_state`.
+        let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
+
+        // Scratch construction forecasts every active actor and can consume
+        // authoritative BuildingExitGate RNG. Keep it after every no-call
+        // gate so an off-phase/dead owner remains RNG-silent.
+        let scratch = self.build_sim_scratch(sim, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+
+        let building_sector = self
+            .world
+            .entities
+            .get(npc_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
+        let entity =
+            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!("periodic NPC {} disappeared before call", npc_id.index())
+            });
+
+        let ctx = build_ai_context_from_entity(
+            entity,
+            current_frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+
+        match entity {
+            Entity::Soldier(s) => {
+                s.npc
+                    .ai_brain
+                    .enemy_mut()
+                    .unwrap_or_else(|| {
+                        panic!("periodic soldier {} has no enemy AI", npc_id.index())
+                    })
+                    .the_16th_frame(
+                        sim,
+                        frame_phase,
+                        &ctx,
+                        &self.ai.global,
+                        &tick_data,
+                        Some(&self.world.fast_grid),
+                        is_idle,
+                        sequence_null_about_to_launch,
+                    );
+            }
+            Entity::Civilian(c) => {
+                c.npc
+                    .ai_brain
+                    .friendly_mut()
+                    .unwrap_or_else(|| {
+                        panic!("periodic civilian {} has no friendly AI", npc_id.index())
+                    })
+                    .the_16th_frame(
+                        frame_phase,
+                        &mut self.ai.global,
+                        is_idle,
+                        sequence_null_about_to_launch,
+                    );
+                // `tick_data` is only used for enemies; civilians
+                // don't need it.
+                let _ = &tick_data;
+            }
+            _ => unreachable!("post-detection owner must remain an NPC"),
+        }
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
     /// It sits before the lock gate and only acts at exact phase zero.
-    pub(super) fn tick_civilian_random_speech(
+    pub(super) fn tick_civilian_random_speech_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
         let current_frame = self.control.frame_counter;
-        let due: Vec<_> = self
+        let entity = self
             .world
             .entities
-            .npc_ids()
-            .filter(|&npc_id| {
-                matches!(self.world.entities.get(npc_id), Some(Entity::Civilian(_)))
-                    && npc_hourglass_frame_phase(current_frame, npc_id.index()) == 0
-            })
-            .collect();
-        if due.is_empty() {
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("random-speech NPC {} disappeared", npc_id.index()));
+        if !matches!(entity, Entity::Civilian(_))
+            || npc_hourglass_frame_phase(current_frame, npc_id.index()) != 0
+        {
             return;
         }
 
         let scratch = self.build_sim_scratch(sim, assets);
-        for npc_id in due {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            let ctx = build_ai_context_from_entity(
-                entity,
-                current_frame,
-                None,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.hiking_paths,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
-            if let Some(friendly_ai) = entity.friendly_ai_mut() {
-                friendly_ai.random_speech(sim, 0, &ctx);
-            }
-        }
+        let building_sector = self.entity_building_sector(entity.element_data().sector());
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "random-speech NPC {} disappeared before call",
+                npc_id.index()
+            )
+        });
+        let ctx = build_ai_context_from_entity(
+            entity,
+            current_frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        entity
+            .friendly_ai_mut()
+            .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
+            .random_speech(sim, 0, &ctx);
     }
 
     // ── RefreshAmbushPoints — per-frame ambush peek scan ─────────
@@ -8067,9 +8338,10 @@ impl EngineInner {
     // slot status vector and may transition the AI substate via
     // `check_ambush_point`.
 
-    pub(super) fn tick_refresh_ambush_points(
+    pub(super) fn tick_refresh_ambush_points_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
         if self.actors_frozen() {
@@ -8078,64 +8350,86 @@ impl EngineInner {
         if self.ai.global.ambush_points.is_empty() {
             return;
         }
+
+        // Civilian RefreshAmbushPoints is the Original virtual no-op. Check
+        // that before scratch construction, which can draw BuildingExitGate
+        // RNG while forecasting unrelated door-passing actors.
+        let owner = self
+            .world
+            .entities
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("ambush-refresh NPC {} disappeared", npc_id.index()));
+        if matches!(owner, Entity::Civilian(_)) {
+            return;
+        }
+        assert!(
+            owner.enemy_ai().is_some(),
+            "soldier {} has no enemy AI for ambush refresh",
+            npc_id.index()
+        );
         let scratch = self.build_sim_scratch(sim, assets);
 
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
         let ambiance = self.world.weather.ambiance;
         let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        // Phase 1: read-only — gather context + eyes point + LOS scope.
+        let (ctx, eyes) = {
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("ambush-refresh NPC {} disappeared", npc_id.index()));
+            assert!(
+                entity.enemy_ai().is_some(),
+                "soldier {} has no enemy AI for ambush refresh",
+                npc_id.index()
+            );
+            let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
+                panic!(
+                    "soldier {} has no eye point for ambush refresh",
+                    npc_id.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let ctx = build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                is_forest_level,
+                ambiance,
+                standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            (ctx, eyes)
+        };
 
-        for npc_id in npc_ids {
-            // Phase 1: read-only — gather context + eyes point + LOS scope.
-            let (ctx, eyes) = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                if !entity.element_data().active {
-                    continue;
-                }
-                // Soldier-only: civilian RefreshAmbushPoints is a no-op.
-                if entity.enemy_ai().is_none() {
-                    continue;
-                }
-                let Some(eyes) = entity.compute_eyes_point(None) else {
-                    continue;
-                };
-                let ctx = build_ai_context_from_entity(
-                    entity,
-                    frame,
-                    None,
-                    is_forest_level,
-                    ambiance,
-                    standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                );
-                (ctx, eyes)
-            };
+        // Build the obstacle view from individual disjoint fields
+        // so the borrow checker can split it from the mut borrow
+        // on `self.world.entities` below.
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let ambush_points = self.ai.global.ambush_points.as_slice();
 
-            // Build the obstacle view from individual disjoint fields
-            // so the borrow checker can split it from the mut borrow
-            // on `self.world.entities` below.
-            let sight_obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
-            let ambush_points = self.ai.global.ambush_points.as_slice();
-
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            if let Some(enemy_ai) = entity.enemy_ai_mut() {
-                enemy_ai.refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
-            }
-        }
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "ambush-refresh NPC {} disappeared before apply",
+                npc_id.index()
+            )
+        });
+        entity
+            .enemy_ai_mut()
+            .unwrap_or_else(|| panic!("soldier {} lost enemy AI", npc_id.index()))
+            .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     // ── Macro timer hourglass ────────────────────────────────────
@@ -8149,90 +8443,81 @@ impl EngineInner {
     // We iterate both soldier and civilian NPCs because civilians use
     // the common macro opcodes too (REVERSE_PATH, WAIT, GOTO_POINT,
     // FACE_TO, ...).
-    pub(super) fn tick_ai_macro_timers(
+    pub(super) fn tick_ai_macro_timer_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-        let scratch = self.build_sim_scratch(sim, assets);
-
         let current_frame = self.control.frame_counter;
 
-        // Snapshot the list of NPC ids we'll iterate.  `npc_ids`
-        // already holds both soldiers and civilians
-        // (engine/mod.rs:1081-1096) — both kinds execute waypoint
-        // macros, even if the soldier-only opcodes SBError on
-        // civilians.
-        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
-
-        for npc_id in npc_ids {
-            // Read macro-timer state without holding a borrow. The original
-            // stops an elapsed macro timer even if the NPC has since left
-            // DefaultInMacro; only command execution is substate-gated.
-            let (fire, execute) = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                let base = match entity {
-                    Entity::Soldier(s) => s.npc.ai_brain.base(),
-                    Entity::Civilian(c) => c.npc.ai_brain.base(),
-                    _ => None,
-                };
-                base.map(|ai| {
-                    let unlocked = ai.locks_flag_field.is_empty() && !ai.script_locked;
-                    let fire = unlocked
-                        && ai.macro_timer_is_running
-                        && ai.when_does_macro_timer_ring <= current_frame;
-                    (
-                        fire,
-                        fire && ai.current_substate == crate::ai::Substate::DefaultInMacro,
-                    )
-                })
-                .unwrap_or((false, false))
-            };
-            if !fire {
-                continue;
-            }
-
-            // Build the AI context before we take the mut AI borrow.
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            let ctx = build_ai_context_from_entity(
-                entity,
-                current_frame,
-                None,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.hiking_paths,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
-
-            // Stop the timer and resume the macro VM.  `execute_next_
-            // macro_command` may transition the substate (e.g. to
-            // `DefaultEnroute` when the byte stream ends) — we don't
-            // post-process beyond that; any downstream state changes
-            // ride the normal think dispatch.
-            let base_opt = match entity {
-                Entity::Soldier(s) => s.npc.ai_brain.base_mut(),
-                Entity::Civilian(c) => c.npc.ai_brain.base_mut(),
-                _ => None,
-            };
-            if let Some(base) = base_opt {
-                base.macro_timer_is_running = false;
-                if execute {
-                    base.execute_next_macro_command(sim, &ctx);
-                }
-            }
+        // Read macro-timer state without holding a borrow. The original stops
+        // an elapsed macro timer even outside DefaultInMacro; only execution
+        // is substate-gated.
+        let (fire, execute) = {
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
+            let ai = entity.ai_controller().unwrap_or_else(|| {
+                panic!("macro-timer NPC {} has no AI controller", npc_id.index())
+            });
+            let fire = ai.macro_timer_is_running && ai.when_does_macro_timer_ring <= current_frame;
+            (
+                fire,
+                fire && ai.current_substate == crate::ai::Substate::DefaultInMacro,
+            )
+        };
+        if !fire {
+            return;
         }
+
+        // Forecast scratch can draw BuildingExitGate RNG. A not-yet-due timer
+        // is a pure no-op in the Original, so only build after the due gate.
+        let scratch = self.build_sim_scratch(sim, assets);
+
+        // Build the AI context before we take the mut AI borrow.
+        let building_sector = self
+            .world
+            .entities
+            .get(npc_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "macro-timer NPC {} disappeared before execute",
+                npc_id.index()
+            )
+        });
+        let ctx = build_ai_context_from_entity(
+            entity,
+            current_frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+
+        // Stop the timer and resume the macro VM.  `execute_next_
+        // macro_command` may transition the substate (e.g. to
+        // `DefaultEnroute` when the byte stream ends) — we don't
+        // post-process beyond that; any downstream state changes
+        // ride the normal think dispatch.
+        let base = entity
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("macro-timer NPC {} lost its AI controller", npc_id.index()));
+        base.macro_timer_is_running = false;
+        if execute {
+            base.execute_next_macro_command(sim, &ctx);
+        }
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     // ── Locked-frame timer bumps ─────────────────────────────────
@@ -8246,29 +8531,87 @@ impl EngineInner {
     // lock clears — a script-locked civilian's EVENT_TIMER would
     // fire immediately on unlock instead of N frames later.
     //
-    // Bumping here also doubles as the "skip the fire" gate for the
-    // downstream tick functions: `tick_ai_macro_timers` and the EVENT_
-    // TIMER dispatch in `tick_enemy_ai_pursuit_approach` both check
-    // `when_does_*_timer_ring <= current_frame` to decide whether to
-    // fire.  Bumping the ring frame in lock-step with the lock keeps
-    // it strictly greater than `current_frame`, preventing a fire.
-    pub(super) fn tick_npc_locked_frame_timer_bumps(&mut self) {
+    // The decision returned here is the one and only lock sample for this
+    // owner suffix. Once it is false, later The16thFrame/Think side effects
+    // may acquire locks or FrozenAll without suppressing the already-entered
+    // normal timer, macro timer, or emoticon phases. Only the retained FIFO
+    // intentionally samples AI/script locks again before every item.
+    /// Original `GetDeafness()` call immediately after
+    /// `RefreshAmbushPoints`. This runs for every non-frozen owner even when
+    /// acoustic detection's staggered cadence did not open this frame.
+    pub(super) fn tick_npc_refresh_deafness_for_npc(&mut self, npc_id: EntityId) {
+        if self.actors_frozen() {
+            return;
+        }
+        let (position, elevation) = {
+            let entity =
+                self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!("deafness-refresh NPC {} disappeared", npc_id.index())
+                });
+            assert!(
+                entity.npc_data().is_some(),
+                "deafness-refresh owner {} has no NPC data",
+                npc_id.index()
+            );
+            (
+                entity.element_data().position_map(),
+                entity.element_data().position().z,
+            )
+        };
+        let cover_volume = self
+            .feedback
+            .sound_sim
+            .sources
+            .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "deafness-refresh NPC {} disappeared before apply",
+                npc_id.index()
+            )
+        });
+        entity
+            .npc_data_mut()
+            .unwrap_or_else(|| panic!("deafness-refresh owner {} lost NPC data", npc_id.index()))
+            .get_deafness(self.control.frame_counter, cover_volume);
+    }
+
+    pub(super) fn tick_npc_lock_gate_for_npc(&mut self, npc_id: EntityId) -> bool {
         let frozen = self.actors_frozen();
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            let Some(ai) = entity.ai_controller_mut() else {
-                continue;
-            };
-            let locked = frozen || !ai.locks_flag_field.is_empty() || ai.script_locked;
-            if !locked {
-                continue;
-            }
-            ai.when_does_timer_ring = ai.when_does_timer_ring.saturating_add(1);
-            ai.when_does_macro_timer_ring = ai.when_does_macro_timer_ring.saturating_add(1);
-            ai.emoticon_expiration_date = ai.emoticon_expiration_date.saturating_add(1);
+        let entity = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("lock-gate NPC {} disappeared", npc_id.index()));
+        let ai = entity
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("lock-gate NPC {} has no AI controller", npc_id.index()));
+        let locked = frozen || !ai.locks_flag_field.is_empty() || ai.script_locked;
+        if locked {
+            // C++ UDWORD `++` wraps. Saturation would pin a deadline forever
+            // after one overflow and break the later elapsed checks.
+            ai.when_does_timer_ring = ai.when_does_timer_ring.wrapping_add(1);
+            ai.when_does_macro_timer_ring = ai.when_does_macro_timer_ring.wrapping_add(1);
+            ai.emoticon_expiration_date = ai.emoticon_expiration_date.wrapping_add(1);
+        }
+        locked
+    }
+
+    pub(super) fn tick_npc_emoticon_expiration_for_npc(&mut self, npc_id: EntityId) {
+        let current_frame = self.control.frame_counter;
+        let entity = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("emoticon-expiry NPC {} disappeared", npc_id.index()));
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!(
+                "emoticon-expiry NPC {} has no AI controller",
+                npc_id.index()
+            )
+        });
+        if ai.emoticon_has_expiration_date && ai.emoticon_expiration_date <= current_frame {
+            ai.set_emoticon(crate::ai::EmoticonType::None);
+            assert!(!ai.emoticon_has_expiration_date);
         }
     }
 
@@ -8285,104 +8628,115 @@ impl EngineInner {
     // — so the freshly-set BUSY lock from the edge detector earlier in
     // the same frame does not suppress this counter (the BUSY lock is
     // exactly what we want to escape from).
-    pub(super) fn tick_npc_stuck_on_ladder(
+    pub(super) fn tick_npc_stuck_on_ladder_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-        let scratch = self.build_sim_scratch(sim, assets);
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            // Snapshot the gating predicates without holding a borrow.
-            let on_ladder = match self.world.entities.get(npc_id) {
-                Some(entity) => entity.element_data().posture == crate::element::Posture::OnLadder,
-                _ => false,
-            };
-            let cmd = self.actor_command(npc_id);
-            let in_wait_or_move_waiting = matches!(
-                cmd,
-                crate::element::Command::Wait | crate::element::Command::MoveWaiting
-            );
-            let (script_locked, in_building) = match self.world.entities.get(npc_id) {
-                Some(entity) => (
-                    entity.ai_controller().is_some_and(|ai| ai.script_locked),
-                    self.entity_data_inside_building(entity.element_data()),
-                ),
-                _ => (false, false),
-            };
-            let qualifies = on_ladder && in_wait_or_move_waiting && !script_locked && !in_building;
+        // Snapshot the gating predicates without holding a borrow.
+        let entity = self
+            .world
+            .entities
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
+        let on_ladder = entity.element_data().posture == crate::element::Posture::OnLadder;
+        let cmd = self.actor_command(npc_id);
+        let in_wait_or_move_waiting = matches!(
+            cmd,
+            crate::element::Command::Wait | crate::element::Command::MoveWaiting
+        );
+        let script_locked = entity
+            .ai_controller()
+            .unwrap_or_else(|| panic!("ladder-tail NPC {} has no AI", npc_id.index()))
+            .script_locked;
+        let in_building = self.entity_data_inside_building(entity.element_data());
+        let qualifies = on_ladder && in_wait_or_move_waiting && !script_locked && !in_building;
 
-            // Bump or reset the counter; remember whether to fire.
-            let trigger = {
-                let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                    continue;
-                };
-                let Some(npc) = entity.npc_data_mut() else {
-                    continue;
-                };
-                if qualifies {
-                    npc.stuck_on_ladder_emergency_counter =
-                        npc.stuck_on_ladder_emergency_counter.saturating_add(1);
-                    if npc.stuck_on_ladder_emergency_counter > 25 {
-                        npc.stuck_on_ladder_emergency_counter = 0;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
+        // Bump or reset the counter; remember whether to fire.
+        let trigger = {
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "ladder-tail NPC {} disappeared before counter",
+                    npc_id.index()
+                )
+            });
+            let npc = entity
+                .npc_data_mut()
+                .unwrap_or_else(|| panic!("ladder-tail owner {} has no NPC data", npc_id.index()));
+            if qualifies {
+                npc.stuck_on_ladder_emergency_counter =
+                    npc.stuck_on_ladder_emergency_counter.saturating_add(1);
+                if npc.stuck_on_ladder_emergency_counter > 25 {
                     npc.stuck_on_ladder_emergency_counter = 0;
+                    true
+                } else {
                     false
                 }
-            };
-            if !trigger {
-                continue;
+            } else {
+                npc.stuck_on_ladder_emergency_counter = 0;
+                false
             }
-
-            // `force_return_to_duty == return_to_duty`.  Dispatch via
-            // the AI subclass to mirror the virtual call.  Build the
-            // ctx + tick data the way `tick_periodic_ai` does.
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-            let frame = self.control.frame_counter;
-            let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                None,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.hiking_paths,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            match entity {
-                Entity::Soldier(s) => {
-                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        enemy_ai.return_to_duty(
-                            sim,
-                            crate::ai::DutyFlags::empty(),
-                            &ctx,
-                            &tick_data,
-                        );
-                    }
-                }
-                Entity::Civilian(c) => {
-                    if let Some(friendly_ai) = c.npc.ai_brain.friendly_mut() {
-                        friendly_ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
-                    }
-                }
-                _ => {}
-            }
+        };
+        if !trigger {
+            return;
         }
+
+        // `force_return_to_duty == return_to_duty`.  Dispatch via
+        // the AI subclass to mirror the virtual call.  Build the
+        // ctx + tick data the way `tick_periodic_ai` does.
+        let scratch = self.build_sim_scratch(sim, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        let frame = self.control.frame_counter;
+        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        let building_sector = self
+            .world
+            .entities
+            .get(npc_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "ladder-tail NPC {} disappeared before recovery",
+                npc_id.index()
+            )
+        });
+        let mut ctx = build_ai_context_from_entity(
+            entity,
+            frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        ctx.in_uninterruptible_command = in_uninterruptible_command;
+        match entity {
+            Entity::Soldier(s) => {
+                s.npc
+                    .ai_brain
+                    .enemy_mut()
+                    .unwrap_or_else(|| {
+                        panic!("ladder-tail soldier {} has no enemy AI", npc_id.index())
+                    })
+                    .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+            }
+            Entity::Civilian(c) => {
+                c.npc
+                    .ai_brain
+                    .friendly_mut()
+                    .unwrap_or_else(|| {
+                        panic!("ladder-tail civilian {} has no friendly AI", npc_id.index())
+                    })
+                    .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx);
+            }
+            _ => unreachable!("post-detection owner must remain an NPC"),
+        }
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 }
