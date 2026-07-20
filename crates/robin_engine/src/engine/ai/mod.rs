@@ -5705,9 +5705,21 @@ impl EngineInner {
         // Full sequences the AI wants to launch verbatim — the
         // `launch_sequence(SEQ_INFO, sequence)` calls inside AI
         // handlers (e.g. the officer's turn/gather/point alert
-        // sequence).
+        // sequence). `RHSequence::Launch` calls
+        // `RegisterSequenceElementToGo` while the AI handler is still on the
+        // stack, and `ExecutedImmediately` dispatches engine commands inline.
+        // Close that exact boundary for each sequence: batching the drain
+        // until after the NPC tail lets a Timer/LockUser successor escape the
+        // owner's legacy Hourglass slot.
         for seq in effects.launch_sequences {
             self.launch_sequence(seq);
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "AI owner {} failed to drain a synchronously launched sequence: {error:?}",
+                        npc_id.index()
+                    )
+                });
         }
 
         // Process pending LookSidewards — build a one- or two-element

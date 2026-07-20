@@ -1859,6 +1859,58 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
 }
 
 #[test]
+fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
+    use crate::element::Command;
+    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+
+    // A real AI alert sequence can place an engine-immediate element after
+    // several actor elements at the same command level.  Sequence::Launch
+    // visits all four at once, so the Timer at legacy element index 3 must
+    // execute before the derived NPC Hourglass returns.
+    let mut sequence = Sequence::new();
+    for _ in 0..3 {
+        sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    }
+    let mut timer = SequenceElement::new_generic(1, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(12));
+    sequence.append_element(timer);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("AI sequence owner retains its controller")
+        .outbox
+        .actor
+        .launch_sequences
+        .push(sequence);
+
+    engine.drain_pending_for_npc(&crate::sim_rng::test_context(), owner, &assets);
+
+    assert_eq!(engine.orders.timer_elements.len(), 1);
+    let timer_ref = engine.orders.timer_elements[0].element_ref;
+    let timer = engine
+        .orders
+        .sequence_manager
+        .get_element(timer_ref.sequence_id, timer_ref.element_index)
+        .expect("AI-launched timer remains inspectable");
+    assert_eq!(timer.command, Command::Timer);
+    assert_eq!(timer.state, SequenceState::Todo);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions()
+            .is_empty(),
+        "the AI owner tail must not leak its inline sequence work"
+    );
+}
+
+#[test]
 fn generic_animation_skip_does_not_skip_action_change() {
     use crate::element::ActionState;
     use crate::order::OrderType;
