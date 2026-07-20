@@ -2644,6 +2644,7 @@ impl EngineInner {
     }
 
     /// Per-frame concussion healing for all humans.
+    #[cfg(test)]
     pub(crate) fn tick_concussion_healing(&mut self, assets: &LevelAssets) {
         let mut pending_fit_again: Vec<EntityId> = Vec::new();
         // Standup / BeingStunnedSword chains discovered during the
@@ -2773,6 +2774,136 @@ impl EngineInner {
                 victim_id,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
+        }
+    }
+
+    /// Run one human's concussion prelude and close a natural/script wake
+    /// synchronously before the owner's base Actor Hourglass begins.
+    pub(crate) fn tick_concussion_healing_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        owner: EntityId,
+        assets: &LevelAssets,
+    ) {
+        let mut recover = None;
+        let naturally_woke = {
+            let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
+                panic!(
+                    "concussion owner {} disappeared from its legacy slot",
+                    owner.index()
+                )
+            });
+            assert!(
+                entity.human_data().is_some(),
+                "concussion owner {} is not human",
+                owner.index()
+            );
+            if matches!(entity, Entity::Civilian(civilian) if civilian.npc.scroll_attached) {
+                false
+            } else if entity
+                .human_data()
+                .expect("validated concussion owner lost HumanData")
+                .concussion_of_the_brain
+                == 0
+            {
+                false
+            } else {
+                let life_points = get_life_points(entity);
+                let ctx = concussion_ctx_full(
+                    entity,
+                    self.world.weather.is_forest_level,
+                    Some(&self.mission_domain.campaign),
+                    self.control.sim_config.difficulty,
+                );
+                let healing_speed =
+                    concussion_healing_speed_for_entity(entity, &assets.profile_manager);
+                let was_unconscious = entity
+                    .human_data()
+                    .expect("validated concussion owner lost HumanData")
+                    .unconscious;
+                combat::concussion_healing_tick(
+                    entity
+                        .human_data_mut()
+                        .expect("validated concussion owner lost HumanData"),
+                    healing_speed,
+                    life_points,
+                    &ctx,
+                );
+                let woke = was_unconscious
+                    && !entity
+                        .human_data()
+                        .expect("validated concussion owner lost HumanData")
+                        .unconscious;
+                if woke {
+                    let standing_anim = select_combat_animations(
+                        entity.element_data().posture,
+                        entity
+                            .actor_data()
+                            .expect("human concussion owner lost ActorData")
+                            .action_state,
+                    )
+                    .map(|animations| animations.standing_up);
+                    let still_stunned = entity
+                        .human_data()
+                        .expect("validated concussion owner lost HumanData")
+                        .concussion_of_the_brain
+                        > STUNNING_THRESHOLD;
+                    if standing_anim.is_some() || still_stunned {
+                        let mut element = crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::Recover,
+                            Some(owner),
+                        );
+                        if let Some(animation) = standing_anim {
+                            element.push_order(crate::order::Order::new(
+                                animation,
+                                0.0,
+                                0.0,
+                                crate::order::alloc_order_id(&mut self.orders.next_order_id),
+                            ));
+                        }
+                        if still_stunned {
+                            element.push_order(crate::order::Order::new(
+                                crate::order::OrderType::BeingStunnedSword,
+                                0.0,
+                                0.0,
+                                crate::order::alloc_order_id(&mut self.orders.next_order_id),
+                            ));
+                        }
+                        recover = Some(element);
+                    }
+                }
+                woke
+            }
+        };
+
+        if let Some(element) = recover {
+            self.launch_element(element);
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "concussion owner {} failed to launch recovery synchronously: {error:?}",
+                        owner.index()
+                    )
+                });
+        }
+
+        if naturally_woke && matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+            self.dispatch_ai_stimulus(
+                owner,
+                crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+            );
+        }
+        let dispatched_wake = if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_)) {
+            self.dispatch_pending_fit_again_for_npc(sim, owner, assets)
+        } else {
+            naturally_woke
+        };
+        if dispatched_wake {
+            // EVENT_FITAGAIN's resurrection fan-out and eye reset are inline
+            // consequences of Think in Original, including under FrozenAll.
+            self.tick_ai_pending_resurrection_and_eyes_for_npc(owner);
+            self.apply_wake_redetection_blinks(owner);
         }
     }
 }

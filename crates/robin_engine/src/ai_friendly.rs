@@ -1381,20 +1381,41 @@ impl FriendlyAi {
             }
 
             StimulusType::EventFitAgain => {
-                // Recovered from unconsciousness.  Three steps:
-                //   1. fan out to every other NPC to delete `this`
-                //      from their DETECTABLE_BODY lists,
-                //   2. snap our eyes back to "look forward" so
-                //      refresh_view doesn't keep us blind,
-                //   3. return to duty.
-                // The first two run through pending flags the engine
-                // drains in post-think (analogous to
-                // `pending_inform_my_friends` on the "I went down"
-                // side of the KO cycle).
-                self.base.outbox.recovery.inform_resurrection = true;
-                self.base.outbox.recovery.set_eye_status =
-                    Some(crate::element::EyeStatus::LookForward);
+                // Preserve the direct Original calls around ReturnToDuty's
+                // SetState callback at the engine borrow boundary.
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::InformResurrection);
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::SetEyeStatus(
+                        crate::element::EyeStatus::LookForward,
+                    ));
+                let outgoing_state = self.base.current_state;
+                let outgoing_substate = self.base.current_substate;
+                let return_to_duty_sets_state = !ctx.in_uninterruptible_command
+                    && !matches!(
+                        ctx.posture,
+                        crate::element::Posture::Flying
+                            | crate::element::Posture::OnLadder
+                            | crate::element::Posture::OnWall
+                    );
                 self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                if return_to_duty_sets_state {
+                    self.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::StateChange(crate::ai::AiStateChangeNotification {
+                            outgoing_state,
+                            outgoing_substate,
+                            incoming_state: self.base.current_state,
+                            incoming_substate: self.base.current_substate,
+                            source: crate::ai::AiStateChangeSource::SelfActor,
+                        }),
+                    );
+                }
             }
 
             StimulusType::EventOutOfView => {
@@ -2502,16 +2523,17 @@ mod tests {
     }
 
     #[test]
-    fn fit_again_queues_resurrection_and_eye_reset() {
+    fn fit_again_queues_ordered_resurrection_eye_and_state_work() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         // EVENT_FITAGAIN must fire the resurrection fan-out and
         // reset the view status to LookForward alongside the
-        // return-to-duty hand-off.  Both are surfaced via pending
-        // flags on `AiController`; this test pins them so the
-        // engine drain keeps firing them.
+        // return-to-duty hand-off. They share the owner FIFO with
+        // ReturnToDuty's state callback so the engine can preserve the
+        // Original statement boundary.
         let mut ai = FriendlyAi::new(1);
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
+        ai.base.outbox.reentrant.owner_work.clear();
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
         ai.think_unexpected_event(
@@ -2523,15 +2545,16 @@ mod tests {
             None,
         );
 
-        assert!(
-            ai.base.outbox.recovery.inform_resurrection,
-            "EVENT_FITAGAIN must queue resurrection fan-out"
-        );
-        assert_eq!(
-            ai.base.outbox.recovery.set_eye_status,
-            Some(crate::element::EyeStatus::LookForward),
-            "EVENT_FITAGAIN must reset eyes to LookForward"
-        );
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [
+                crate::ai::AiOwnerWork::InformResurrection,
+                crate::ai::AiOwnerWork::SetEyeStatus(crate::element::EyeStatus::LookForward),
+                crate::ai::AiOwnerWork::StateChange(_),
+            ]
+        ));
+        assert!(!ai.base.outbox.recovery.inform_resurrection);
+        assert_eq!(ai.base.outbox.recovery.set_eye_status, None);
     }
 
     #[test]

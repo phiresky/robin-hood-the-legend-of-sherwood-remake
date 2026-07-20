@@ -1516,10 +1516,9 @@ impl AiController {
     /// `patrol_direction` on each minion; if the minion is in
     /// `DefaultPatrolEnrouteWaiting`, it also calls `FaceTo(direction)`
     /// on the minion. Each minion call needs an `AiContext` which the
-    /// chief's `AiController` doesn't have access to — so we queue the
-    /// directive into `pending_patrol_direction_broadcast` and let
-    /// `EngineInner::tick_patrol_coordination` Phase 0 drain it (it has
-    /// access to each minion's entity + context).
+    /// chief's `AiController` doesn't have access to, so the directive is
+    /// handed to the engine-facing owner drain that runs before the macro
+    /// call returns.
     pub fn instruct_patrol_direction_to_patrol_members(&mut self, direction: u16) {
         self.outbox.patrol.direction_broadcast = Some(direction);
     }

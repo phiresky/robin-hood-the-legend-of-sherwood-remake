@@ -10,6 +10,37 @@ use crate::profiles::{MissionLocation, MissionProfile};
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ACTIVE_DRIVER_SNAPSHOT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static AI_STATE_CALLBACK_OBSERVATIONS: std::cell::RefCell<Option<Vec<AiStateCallbackObservation>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AiStateCallbackObservation {
+    pub owner: crate::element::EntityId,
+    pub eye_status: crate::element::EyeStatus,
+    pub timer_is_running: bool,
+    pub body_references_to_owner: usize,
+}
+
+#[cfg(test)]
+pub(super) fn capture_ai_state_callback_observations<R>(
+    f: impl FnOnce() -> R,
+) -> (R, Vec<AiStateCallbackObservation>) {
+    AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
+        assert!(
+            observations.borrow().is_none(),
+            "AI state callback observation capture is already active"
+        );
+        *observations.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let observations = AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
+        observations
+            .borrow_mut()
+            .take()
+            .expect("AI state callback observation capture disappeared")
+    });
+    (result, observations)
 }
 
 #[cfg(test)]
@@ -2723,6 +2754,45 @@ impl EngineInner {
                         .extend(later_work);
                     continue;
                 }
+                crate::ai::AiOwnerWork::RestoreDetectableObjects {
+                    knocked_out_in_money_fight,
+                } => {
+                    self.restore_detectable_objects_for_npc(owner, knocked_out_in_money_fight);
+                    continue;
+                }
+                crate::ai::AiOwnerWork::InformResurrection => {
+                    self.broadcast_resurrection(owner);
+                    continue;
+                }
+                crate::ai::AiOwnerWork::LaunchTimer {
+                    frames,
+                    current_frame,
+                } => {
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("timer owner {} vanished before settlement", owner.index())
+                        })
+                        .launch_timer(frames, current_frame);
+                    continue;
+                }
+                crate::ai::AiOwnerWork::SetEyeStatus(status) => {
+                    let npc = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::npc_data_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "eye-status owner {} vanished before settlement",
+                                owner.index()
+                            )
+                        });
+                    crate::ai_vision::set_view_status(npc, status);
+                    continue;
+                }
             };
 
             // Work produced by a FilterAIEvent callback belongs inside this
@@ -2789,6 +2859,58 @@ impl EngineInner {
                     .mission
                     .as_ref()
                     .is_some_and(|script| script.actor_has_function(handle, "FilterAIEvent"));
+            #[cfg(test)]
+            if should_call {
+                let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                    panic!(
+                        "AI SetState owner {} vanished before observation",
+                        owner.index()
+                    )
+                });
+                let npc = entity.npc_data().unwrap_or_else(|| {
+                    panic!(
+                        "AI SetState owner {} lost NPC data before observation",
+                        owner.index()
+                    )
+                });
+                let timer_is_running = entity
+                    .ai_controller()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "AI SetState owner {} lost AI before observation",
+                            owner.index()
+                        )
+                    })
+                    .timer_is_running;
+                let body_references_to_owner = self
+                    .world
+                    .entities
+                    .npcs()
+                    .filter(|(_, entity)| {
+                        entity
+                            .npc_data()
+                            .and_then(|npc| {
+                                npc.detectable_lists
+                                    .get(crate::element::DetectableType::Body as usize)
+                            })
+                            .is_some_and(|bodies| {
+                                bodies
+                                    .iter()
+                                    .any(|detectable| detectable.element == Some(owner))
+                            })
+                    })
+                    .count();
+                AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
+                    if let Some(observations) = observations.borrow_mut().as_mut() {
+                        observations.push(AiStateCallbackObservation {
+                            owner,
+                            eye_status: npc.eye_status,
+                            timer_is_running,
+                            body_references_to_owner,
+                        });
+                    }
+                });
+            }
             if should_call
                 && let Err(error) = self.call_script_vm(
                     sim,

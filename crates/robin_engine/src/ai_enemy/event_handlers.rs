@@ -284,7 +284,8 @@ impl EnemyAi {
                             }
                             {
                                 // Not detecting 360° — forecast and quit swordfight.
-                                if let Some(forecast) = tick.primary_target_forecast {
+                                if let Some(prepared) = &tick.primary_target_forecast {
+                                    let forecast = prepared.resolve(sim);
                                     self.base.seek_position = forecast.position;
                                     self.pc_gone_away_in_this_direction = forecast.direction;
                                 }
@@ -459,11 +460,9 @@ impl EnemyAi {
             StimulusType::EventFitAgain => {
                 // Recovered from unconsciousness.
                 //
-                // `RestoreDetectableObjects` + `InformEveryoneOn-
-                // MyResurrection` run through pending flags that the
-                // engine AI drain picks up this tick.  The eye-status
-                // reset is expressed via `pending_set_eye_status` (the
-                // civilian `EventFitAgain` handler uses the same path).
+                // Engine-facing calls share the owner-work FIFO with
+                // SetState so their exact intra-Think order survives the
+                // temporary Rust borrow boundary.
                 // The money-fight branch routes to `return_to_duty` and
                 // clears `knocked_out_in_money_fight` so the victor
                 // cleanly rejoins their duty loop instead of getting stuck
@@ -474,19 +473,35 @@ impl EnemyAi {
                     return false;
                 }
 
-                self.base.outbox.actor.restore_detectable_objects = true;
-                self.base.outbox.recovery.inform_resurrection = true;
+                let knocked_out_in_money_fight = self.base.knocked_out_in_money_fight;
+                self.base.outbox.reentrant.owner_work.push(
+                    crate::ai::AiOwnerWork::RestoreDetectableObjects {
+                        knocked_out_in_money_fight,
+                    },
+                );
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::InformResurrection);
                 self.base.clear_emoticon();
 
-                if self.base.knocked_out_in_money_fight {
+                if knocked_out_in_money_fight {
                     self.base.knocked_out_in_money_fight = false;
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 } else {
                     self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
-                    self.base
-                        .launch_timer(parameters_ai::AI_WAKEUP_IDLING_TIME as u32, ctx.frame);
-                    self.base.outbox.recovery.set_eye_status =
-                        Some(crate::element::EyeStatus::LookForward);
+                    self.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::LaunchTimer {
+                            frames: parameters_ai::AI_WAKEUP_IDLING_TIME as u32,
+                            current_frame: ctx.frame,
+                        },
+                    );
+                    self.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::SetEyeStatus(
+                            crate::element::EyeStatus::LookForward,
+                        ),
+                    );
                 }
             }
 
@@ -586,12 +601,16 @@ impl EnemyAi {
                             // are.
                             let officer_target_pos = antagonist_cs
                                 .map(|cs| {
-                                    cs.forecast_destination.unwrap_or_else(|| {
-                                        panic!(
-                                            "soldier {} is missing a required destination forecast",
-                                            cs.handle
-                                        )
-                                    })
+                                    cs.forecast_destination
+                                        .as_ref()
+                                        .unwrap_or_else(|| {
+                                            panic!(
+                                                "soldier {} is missing a required destination forecast",
+                                                cs.handle
+                                            )
+                                        })
+                                        .resolve(sim)
+                                        .position
                                 })
                                 .unwrap_or_else(|| {
                                     ctx.entity_view(antagonist)
@@ -1544,7 +1563,7 @@ impl EnemyAi {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
                             self.call_tower_guard_calls_me_standard_procedure(
-                                hint, global, grid, ctx, tick,
+                                sim, hint, global, grid, ctx, tick,
                             );
                         }
                         _ => {}
@@ -2417,6 +2436,7 @@ impl EnemyAi {
 
     fn call_tower_guard_calls_me_standard_procedure(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         hint: &Hint,
         global: &AiGlobalState,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2430,7 +2450,7 @@ impl EnemyAi {
 
         match self.get_rank() {
             ProfileRank::Soldier => {
-                self.alert_officer(self.base.seek_position, 0, ctx, tick);
+                self.alert_officer(sim, self.base.seek_position, 0, ctx, tick);
                 self.current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
             }
             ProfileRank::Officer => {

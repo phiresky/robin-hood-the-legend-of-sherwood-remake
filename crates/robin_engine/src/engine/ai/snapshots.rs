@@ -113,6 +113,9 @@ pub(super) struct PcSnapshot {
     /// shadow-stage carry-over work (`pc_noise_volume` reads
     /// the stored prev-frame value from `actor.last_noise_volume`).
     pub(super) noise_volume: u16,
+    /// Full owner-local noise record, including the position metadata from
+    /// the PC's most recently visited Human Hourglass slot.
+    pub(super) produced_noise: crate::ai::Noise,
     /// PC's current sector number (0 if unknown).  Fed into the
     /// `Noise.origin.sector` produced by the noise-refresh pass,
     /// which the hearing AI uses for sector-aware investigation
@@ -234,7 +237,7 @@ pub(super) struct SoldierSnapshot {
     /// `forecast_destination_for_ia`).  Used by `alert_officer`
     /// so the running soldier homes on where the officer will be,
     /// not where the officer is right now.
-    pub(super) forecast_destination: crate::ai::Position,
+    pub(super) forecast_destination: Option<crate::ai::PreparedForecastDestination>,
     /// Body handles still on this soldier's body-detectable list —
     /// corpses they have *not yet* reacted to.  Mirror of the live
     /// `detectable_lists[DetectableType::Body]`.  Consumed by
@@ -339,7 +342,6 @@ pub(super) struct ObjectTarget {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AiWorldView {
     pub(super) pcs: Vec<PcSnapshot>,
-    pub(super) pc_forecasts: std::collections::HashMap<u32, crate::ai::ForecastedDestination>,
     pub(super) primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
     pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
     pub(super) soldiers: Vec<SoldierSnapshot>,
@@ -357,18 +359,16 @@ impl EngineInner {
     /// the captured view.
     pub(super) fn tick_enemy_ai_build_world_view(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
     ) -> AiWorldView {
-        let pcs = self.tick_enemy_ai_build_pc_snapshots(assets);
-        let pc_forecasts = self.tick_enemy_ai_build_pc_forecasts(sim);
+        let pcs = self.tick_enemy_ai_build_pc_snapshots(assets, owner_boundary);
         let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
-        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(sim, assets);
+        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets, owner_boundary);
         let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
         AiWorldView {
             pcs,
-            pc_forecasts,
             primary_target_multiplicity,
             npc_jump_lines,
             soldiers,
@@ -378,14 +378,12 @@ impl EngineInner {
 
     /// P1 — snapshot every alive PC for the per-tick detection pass.
     ///
-    /// Computes the per-frame produced-noise volume plus the
-    /// eye-point / weapon-range lookups the per-NPC detection
-    /// refresh needs.  The freshly computed `noise_volume` is also
-    /// written back onto each PC so the next frame's shadow-stage
-    /// walk/run carry-over reads the correct prior value.
+    /// Produced noise is refreshed by the PC's live owner envelope before a
+    /// later NPC snapshots it here.
     pub(super) fn tick_enemy_ai_build_pc_snapshots(
         &mut self,
         assets: &LevelAssets,
+        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
     ) -> Vec<PcSnapshot> {
         use crate::element::Posture;
 
@@ -400,9 +398,6 @@ impl EngineInner {
             // at snapshot-build time would make NPCs blind to sleeping
             // heroes entirely, breaking the "approach sleeping enemy" +
             // "kill nearby sleeping enemies" branches.
-            if pc.pc.life_points <= 0 {
-                continue;
-            }
             let element_active = pc.element.active;
             let is_unconscious = pc.human.unconscious;
             let is_carried = pc.human.carrier.is_some();
@@ -411,7 +406,11 @@ impl EngineInner {
             // facing vector for LeaningOut.  Every other posture uses
             // the feet position — the Z offset is layered on below.
             let pos = {
-                let mut p = pc.element.position_map();
+                let mut p = owner_boundary
+                    .map(|(owner, positions)| {
+                        self.position_at_owner_boundary(pc_id, owner, positions, true)
+                    })
+                    .unwrap_or_else(|| pc.element.position_map());
                 if pc.element.posture == Posture::LeaningOut {
                     let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
                     p.x += 40.0 * dx;
@@ -421,11 +420,10 @@ impl EngineInner {
             };
             let layer = pc.element.layer();
             let building_sector = self.entity_building_sector(pc.element.sector());
-            let material = pc.element.sprite.position_iface.get_material();
-            // PCs reaching this point are alive.  Unconscious PCs are
-            // *not* able to fight — FighterSnapshots and combat
-            // scoring should treat them as non-combatants.
-            let alive = !is_unconscious;
+            // Dead and unconscious PCs remain in the snapshot so their
+            // produced-noise metadata is not stranded, but they are not able
+            // to fight and combat scoring treats them as non-combatants.
+            let alive = pc.pc.life_points > 0 && !is_unconscious;
             // Look up the PC's HtH weapon profile for combat ranges and
             // fighting ability.
             // Original: `RHProfileManager.h::GetCharacterProfile` asserts the
@@ -508,34 +506,13 @@ impl EngineInner {
             .to_geo()
             .into();
             let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
-            // Refresh produced-noise volume once per PC per frame.
-            // We pass the previous frame's stored volume so the
-            // shadow-stage carry-over branches work correctly.
-            //
-            // Volume is forced to 0 when the PC is not "active" —
-            // i.e. mid-door-pass, unconscious, lying-tied, lying
-            // stuck-under-net, dead, or suspended by the script-driven
-            // freeze-all flag.  The Rust model tracks those states on
-            // separate fields (the early filter at the top of this
-            // loop already drops PCs whose raw `element.active` is
-            // false), so derive the active analogue from the per-state
-            // flags here.
-            let posture_inactive = matches!(
-                pc.element.posture,
-                Posture::Dead | Posture::DeadBack | Posture::StuckUnderNet | Posture::Tied
-            );
-            let active = element_active
-                && !is_unconscious
-                && !is_passing_door
-                && !posture_inactive
-                && !self.actors_frozen();
-            let noise_volume = Self::pc_noise_volume(
-                order_type,
-                material,
-                building_sector.is_some(),
-                active,
-                pc.actor.last_noise_volume,
-            );
+            let produced_noise = pc.actor.produced_noise.unwrap_or_else(|| {
+                panic!(
+                    "PC {} has no initialized produced-noise record",
+                    pc_id.index()
+                )
+            });
+            let noise_volume = produced_noise.volume;
             pc_snapshots.push(PcSnapshot {
                 id: pc_id,
                 active: element_active,
@@ -550,7 +527,7 @@ impl EngineInner {
                 detection_speed_in_forest,
                 detection_speed_in_city,
                 direction: pc.element.direction() as u16,
-                // PC `is_able_to_fight`: life > 0 (filtered above),
+                // PC `is_able_to_fight`: life > 0,
                 // active, not unconscious, and not
                 // in a disguised posture (Tree/Spy).
                 able_to_fight: element_active
@@ -573,6 +550,7 @@ impl EngineInner {
                 carried: is_carried,
                 passing_door: is_passing_door,
                 noise_volume,
+                produced_noise,
                 sector_num: pc.element.sector().map(u16::from).unwrap_or(0),
                 ground_elevation: pc.element.sprite.position_iface.get_elevation() as u16,
                 is_swordfighting: !pc.human.opponents.is_empty(),
@@ -581,47 +559,7 @@ impl EngineInner {
             });
         }
 
-        // Persist the freshly computed noise volume back onto each PC
-        // actor so that the next frame's shadow-stage walk/run branch
-        // can pick it up.  Stored on the human element so it carries
-        // across frames.
-        for snap in &pc_snapshots {
-            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(snap.id) {
-                pc.actor.last_noise_volume = snap.noise_volume;
-            }
-        }
-
         pc_snapshots
-    }
-
-    /// P1b — pre-compute destination forecasts for every PC.  Used by
-    /// `forecast_destination_for_ia` when an NPC loses sight of its
-    /// target; built before the NPC loop so we don't need to borrow
-    /// the target entity while mutably borrowing the NPC entity.
-    pub(super) fn tick_enemy_ai_build_pc_forecasts(
-        &self,
-        sim: &crate::sim_rng::SimulationContext,
-    ) -> std::collections::HashMap<u32, crate::ai::ForecastedDestination> {
-        let doors = self
-            .scripts
-            .mission
-            .as_ref()
-            .map(|_| self.script_domains.interactables.doors.as_slice())
-            .unwrap_or(&[]);
-        let mut forecasts = std::collections::HashMap::with_capacity(self.world.pc_ids.len());
-        forecasts.extend(self.world.pc_ids.iter().filter_map(|&pc_id| {
-            let entity = self.world.entities.get(pc_id)?;
-            let input = extract_forecast_input(entity)?;
-            let forecast = crate::ai::forecast_destination_for_ia(
-                sim,
-                &input,
-                doors,
-                &self.world.fast_grid.level.sectors,
-                &self.world.fast_grid.level.sector_number_map,
-            );
-            Some((pc_id.index(), forecast))
-        }));
-        forecasts
     }
 
     /// P2b — count, per PC, how many enemy soldiers in a swordfight
@@ -692,8 +630,8 @@ impl EngineInner {
     /// so direct self-reads stay consistent with the snapshot view.
     pub(super) fn tick_enemy_ai_build_soldier_snapshots(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.world.entities.soldiers().count());
@@ -771,7 +709,7 @@ impl EngineInner {
             let fighting_ability = {
                 let base = soldier_profile.fighting;
                 if s.soldier.cached_camp == Camp::Lacklandists {
-                    let diff = sim.config().difficulty;
+                    let diff = self.control.sim_config.difficulty;
                     diff.modify_capacity(
                         base,
                         crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
@@ -859,45 +797,8 @@ impl EngineInner {
             // `alert_officer` layer-penalty gate.  Includes the
             // door-transit branch — see `entity_data_inside_building`.
             let in_building = self.entity_data_inside_building(&s.element);
-            // Forecast the officer's destination — used by
-            // `alert_officer` to home on where the officer will be,
-            // not where they are now.
-            let forecast_destination = {
-                let doors = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .map(|_| self.script_domains.interactables.doors.as_slice())
-                    .unwrap_or(&[]);
-                let pos_now = s.element.position_map();
-                let door_pass = s
-                    .actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|dp| (dp.door_index, dp.direct));
-                let input = crate::ai::ForecastInput {
-                    position_map_x: pos_now.x,
-                    position_map_y: pos_now.y,
-                    sector: s.element.sector().map(u16::from).unwrap_or(0),
-                    layer: s.element.layer(),
-                    direction: s.element.direction() as u16,
-                    forecasted_movement_z: s
-                        .element
-                        .sprite
-                        .position_iface
-                        .get_forecasted_movement()
-                        .z,
-                    door_pass,
-                };
-                crate::ai::forecast_destination_for_ia(
-                    sim,
-                    &input,
-                    doors,
-                    &self.world.fast_grid.level.sectors,
-                    &self.world.fast_grid.level.sector_number_map,
-                )
-                .position
-            };
+            // Filled only when the current NPC owner has queued Think work.
+            let forecast_destination = None;
             let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
                 able_to_fight,
                 s.npc.ai_state(),
@@ -906,7 +807,11 @@ impl EngineInner {
 
             soldier_snapshots.push(SoldierSnapshot {
                 id: npc_id.into(),
-                position: s.element.position_map(),
+                position: owner_boundary
+                    .map(|(owner, positions)| {
+                        self.position_at_owner_boundary(npc_id.into(), owner, positions, true)
+                    })
+                    .unwrap_or_else(|| s.element.position_map()),
                 layer: s.element.layer(),
                 camp: s.soldier.cached_camp,
                 ai_state: s.npc.ai_state(),
@@ -1062,6 +967,7 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_build_human_object_targets_for_npc(
         &self,
         npc_id: EntityId,
+        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
     ) -> (
         std::collections::HashMap<EntityId, HumanTarget>,
         std::collections::HashMap<EntityId, ObjectTarget>,
@@ -1106,7 +1012,9 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let position = entity.element_data().position_map();
+            let position = positions_before_movement
+                .map(|positions| self.position_at_owner_boundary(id, npc_id, positions, true))
+                .unwrap_or_else(|| entity.element_data().position_map());
             let layer = entity.element_data().layer();
             let posture = entity.element_data().posture;
             // These IDs came from a human-typed detectable list. Original
@@ -1195,8 +1103,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let position = entity.element_data().position_map();
+            let position = positions_before_movement
+                .map(|positions| self.position_at_owner_boundary(id, npc_id, positions, true))
+                .unwrap_or_else(|| entity.element_data().position_map());
             let mut world_position = entity.element_data().position();
+            world_position.x = position.x;
+            world_position.y = position.y;
             world_position.z += 1.0;
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;

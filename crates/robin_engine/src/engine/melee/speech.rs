@@ -517,35 +517,38 @@ impl EngineInner {
     /// Per-frame tiredness recovery.
     ///
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
-    pub(crate) fn tick_tiredness(&mut self, assets: &LevelAssets) {
+    /// Apply the human tiredness tail for one live owner.
+    pub(crate) fn tick_tiredness_for(&mut self, id: EntityId, assets: &LevelAssets) {
         let frame = self.control.frame_counter;
-        for (id, entity) in self.world.entities.humans_mut() {
-            let idx = id.index();
-            // Spread the work — only every 64 frames per entity
-            if (frame & 63) != (idx & 31) {
-                continue;
-            }
-            if entity.is_dead() {
-                continue;
-            }
-            let is_swordfighting = entity
-                .human_data()
-                .map(|h| !h.opponents.is_empty())
-                .unwrap_or(false);
-            let is_moving = entity
-                .actor_data()
-                .map(|a| a.action_state.is_moving())
-                .unwrap_or(false);
-            if is_swordfighting || is_moving {
-                continue;
-            }
-            // Real endurance from profile
-            let endurance = endurance_from_profile(entity, &assets.profile_manager);
-            let recuperation = endurance / 10;
-            if let Some(human) = entity.human_data_mut() {
-                human.tiredness = human.tiredness.saturating_sub(recuperation);
-            }
+        if (frame & 63) != (id.index() & 31) {
+            return;
         }
+        let entity = self.world.entities.get_mut(id).unwrap_or_else(|| {
+            panic!(
+                "tiredness owner {} disappeared from its legacy slot",
+                id.index()
+            )
+        });
+        assert!(
+            entity.human_data().is_some(),
+            "tiredness owner {} is not human",
+            id.index()
+        );
+        let is_swordfighting = entity
+            .human_data()
+            .is_some_and(|human| !human.opponents.is_empty());
+        let is_moving = entity
+            .actor_data()
+            .is_some_and(|actor| actor.action_state.is_moving());
+        if is_swordfighting || is_moving {
+            return;
+        }
+        let endurance = endurance_from_profile(entity, &assets.profile_manager);
+        let recuperation = endurance / 10;
+        let human = entity
+            .human_data_mut()
+            .expect("validated human tiredness owner lost HumanData");
+        human.tiredness = human.tiredness.saturating_sub(recuperation);
     }
 
     // ─── Tie-up (public, called from natives/UI) ────────────────────

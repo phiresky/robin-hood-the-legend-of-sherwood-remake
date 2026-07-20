@@ -963,6 +963,27 @@ impl EngineInner {
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
         let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
 
+        if let Entity::Pc(pc) = &mut entity {
+            let position = pc.element.position_map();
+            pc.actor.produced_noise = Some(crate::ai::Noise {
+                origin: crate::ai::Position {
+                    x: position.x,
+                    y: position.y,
+                    sector: pc.element.sector(),
+                    level: pc.element.layer(),
+                },
+                noise_type: crate::ai::NoiseType::Off,
+                volume: 0,
+                elevation: pc.element.sprite.position_iface.get_elevation() as u16,
+                element_id: u16::try_from(id.index()).unwrap_or_else(|_| {
+                    panic!(
+                        "PC legacy slot {} exceeds noise element-id range",
+                        id.index()
+                    )
+                }),
+            });
+        }
+
         // Initialise outline colours based on entity kind.  For
         // soldiers, route the VIP flag (cached on `EnemyAi.is_vip` from
         // the soldier profile at level load) so VIP soldiers get the
@@ -2586,6 +2607,24 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .queued_element_exists(pc_id, crate::element::Command::ShootBow)
+    }
+
+    /// Owner-local `ProcessShootList` boundary. Rust represents the legacy
+    /// list as an already-instructed cross-postponed ShootBow element, so the
+    /// sequence manager resumes it synchronously when the current bow element
+    /// permits it; no second instruction or queue mutation is required here.
+    pub(crate) fn process_shoot_list_for(&mut self, owner: EntityId) {
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!(
+                "shoot-list owner {} disappeared from its legacy slot",
+                owner.index()
+            )
+        });
+        assert!(
+            entity.human_data().is_some(),
+            "shoot-list owner {} is not human",
+            owner.index()
+        );
     }
 
     /// Background animation entity ids.

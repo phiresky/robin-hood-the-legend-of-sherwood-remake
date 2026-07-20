@@ -69,18 +69,15 @@ its pending list FIFO and calls `Go()` at
 
 ### Remaining architectural limitations
 
-- **NPCs:** Original NPC AI/detection was reached inside each NPC element's
-  creation-ordered Hourglass (for example
-  `original-code/RHelementactornpc.cpp:3495-3614`). Rust has both an `NpcOrders`
-  pre-pass and a batched `Npcs` pass after sequence launch. Fixing that is an AI
-  lifecycle/interleaving change, not a tick-only reorder: the NPC pass requires
-  complete profile/brain snapshots, and this slice may neither invent missing
-  defaults nor change AI ownership. TODO(original-parity): move NPC work into
-  creation-ordered entity refresh only when the AI implementation owns
-  complete per-NPC profiles/brains at that boundary.
-- **Entity systems:** Movement, animation, projectile, melee, and ability work
-  is batched by system in Rust, whereas the original invoked subtype
-  hourglasses from the creation-ordered element loop. Base entity refresh is
+- **NPCs:** The actor-owner envelope now nests the supported Soldier, Human,
+  Actor, PC, and NPC Hourglass slices at each live legacy slot, including
+  patrol, concussion wake, produced noise, tiredness, detection, and the full
+  NPC tail (`original-code/RHelementactornpc.cpp:3495-3659`). `NpcOrders` and
+  non-NPC Listen/object discovery remain separate system boundaries, as do the
+  movement/combat/ability owners described below.
+- **Entity systems:** Movement, special projectile variants, active combat,
+  and ability work remain batched by system in Rust, whereas the original
+  invoked subtype hourglasses from the creation-ordered element loop. Base entity refresh is
   now correctly placed, but the profile-dependent batched systems remain after
   sequence translation. Exact intra-entity interleaving requires redesign
   outside this tick-only slice. TODO(original-parity): give these systems
@@ -155,7 +152,7 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. `1a1901c7c` moves straight/assault strike advancement, synchronous damage, and completion to the attacker's slot, so an earlier lethal strike interrupts a later chained attacker before it can hit. `b36b4e14b` makes SEEK tolerance sample target position, sector, and hotspot at the seeker's slot, observing earlier movers after their step and later movers before it. `44cfa10f4` runs the Lacklandist optical Enemy→Body→Object→Friend→MissedFriend→Beggar scan and its queued sight stimuli at each NPC creation slot; the swapped-order regression proves that a later officer sees an earlier soldier's synchronous EVENT_VIEW transition while an earlier officer sees the soldier's pre-transition state. `63c5e2245` preserves the detection-built tactical aggregate for queued EVENT_VIEW, restores Body predetection-shadow-before-commit FIFO order, limits live target snapshots to the current NPC, and skips live-context construction for quiet NPCs. `ef8d67720` moves acoustic detection into that same creation-ordered NPC boundary: it walks each Enemy list in order, applies the original 3D subjective-volume/latch rules, and dispatches rising-edge EVENT_HEAR synchronously before that NPC's optical state snapshot. The regression proves HEAR can change Default→Seeking and thereby make the immediately following sub-threshold optical detection instant; a stale dead-PC entry before the audible PC is also covered. `4721f389a` moves every falling-edge EVENT_OUTOFVIEW into the current NPC's Enemy detectable-list FIFO, interleaved with the currently supported selected rising VIEW and ahead of Body/Object/Friend/MissedFriend/Beggar. Its regression proves OUTOFVIEW can enter Seeking before a later visible Body stimulus is handled, matching original `RefreshDetection` causality. `b6887abaa` queues every rising Enemy EVENT_VIEW in detectable-list order, reconciles the final latch snapshot before Think, preserves unique them-list semantics, and restores ordinary VIEW routing for learned-through beggar disguises; the swapped-order regression proves that the first detectable remains primary even when a later target is nearer. `547e2e159` rebuilds entity views, antagonist context, and live tactical inputs for every queued Think, then overlays only the completed detection-scan aggregate; VIEW and OUTOFVIEW now receive their exact payload actor's live position, posture, animation, carrier, forecast, and jump-line data. The close-range regression starts with a stale old primary and proves the newly viewed actor drives the immediate swordfight, while the multi-VIEW regression proves the second Think runs without replacing the first accepted target. `71864167e` folds Royalist Enemy detection into the same creation-ordered NPC coordinator, rebuilds live Lacklandist targets per Royalist slot, reveals blipped NPCs inline, drains accepted VIEW/HeyFolks synchronously, and removes the no-PC early exit and duplicate out-of-band Royalist alert. Its creation-order regression exercises synchronous Royalist alert/reveal boundaries; the later mixed-Enemy correction keeps every Royalist optical refresh on strict modulo-16, including after same-frame alerts. `8e9732f34` restores Royalist HandleDetection's full detectable-order VIEW/OUTOFVIEW edge pass, reveals every rising blipped target before Think, retains living inactive targets for falling edges, and attaches the final scan aggregate to the contiguous FIFO block. Its AI-locked regression observes the raw VIEW(A)→OUTOFVIEW(B)→VIEW(C) queue, final latches, and pre-dispatch reveals without state-machine reactions obscuring order. `fdc4d3dcd` restores Lacklandist `RefreshDetection` under non-script AI locks: scans still update latches and suspects, delete one-shot detectables, and retain the exercised HEAR(A)→SHADOW(A)→SHADOW(C)→VIEW(A)→OUTOFVIEW(B)→VIEW(C)→SEESBODY→SEESOBJECT FIFO. It separates per-NPC `AILOCK_FREEZE` retention from static AI freeze, whose NPC Hourglass work still runs while `StartThink` discards stimuli; fixes EVENT_SEESOBJECT's Object payload; removes the duplicate out-of-band Lacklandist alert/reveal commit; marks `npc.alerted` only from an accepted handler; and rebuilds retained VIEW/OUTOFVIEW's live Enemy aggregate from the authoritative eye point. `a915046f6` then moves NPC `SeesBlip` into the same creation slot and rebuilds Enemy-list products live at every queued Think. This wave restores the cross-elevation coordinate split for human, object, synchronous, script-native, and cached officer-cone visibility: world-space eye/detection vectors drive radius, direction, close-range, and sharpness, while projected points remain the LOS inputs. The civilian, Lacklandist, and Royalist Enemy optical paths now share one creation-slot walk of the live mixed PC/soldier detectable list, select the Original per-entry cadence, share one suspect/commit decision, and build one ordered VIEW/OUTOFVIEW FIFO before Think can mutate detectables. The current non-straight melee slice moves lateral, push-aside, half-circle, and full-circle progression plus synchronous victim damage to each attacker's creation slot. The N1/N2 follow-ups below complete the NPC pre-detection and post-detection owner boundaries. The bounded base-actor slice now interleaves generic animation/Execute, synchronous Execute-side combat Think, same-actor completion/DoNext and priority effects, and ActionChange at every live legacy creation slot; callback-installed orders and WAKING_UP DONE therefore reach later actors in the same pass, while reverse creation order defers them. Enemy/Friendly `SetState` notifications now use a bounded owner FIFO at every engine-to-AI return boundary, before effects/orders/condolations/self-stimuli, with the Original Enemy conditional/Friendly unconditional gates, callback source, outgoing-state visibility, and ignored return. Stationary WAIT_TIMER/WAIT_FREE_LIFT and WaitingSword evaluation now share that owner slot. Movement, active melee, bow, abilities, NPC detection/tails, riders, and the remaining entity boundaries still have separate owners, so full Actor Hourglass and exact NPC nesting remain incomplete (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactor.cpp:534-709,7314-7380`; `RHelementactornpc.cpp:1371-1675,3495-3659`). |
+| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. Subsequent slices restore creation-ordered straight and non-straight melee, SEEK target sampling, acoustic and optical detection, full detectable FIFO handling, live per-Think inputs, Royalist/civilian detection, base Actor Execute/ActionChange, owner-local AI state callbacks, and stationary WAIT/Lift/WaitingSword work. This slice fuses the live Soldier prelude and patrol, Human concussion/shoot-list prelude, base Actor Execute/ActionChange, Human produced-noise/tiredness tail, PC auto-heal, and complete NPC detection/AI tail into one append-aware legacy-slot envelope. Each owner closes synchronous recursive work before the next slot; PC noise and mutable detection metadata are sampled at the consuming slot, and RNG-bearing forecasts are not built globally. Movement, active strike/bow/ability ownership, riders (including rider charge), non-NPC Listen/object discovery, and remaining entity-kind Hourglass boundaries remain PA-013 debt (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactorsoldier.cpp:2573-2605`; `RHelementactorhuman.cpp:277-324`; `RHelementactor.cpp:534-728`; `RHelementactorpc.cpp:1904-1947`; `RHelementactornpc.cpp:3495-3659`; `RHartificialintelligence.cpp:7172-7259,7272-7305`). |
 
 Focused PA-013 stationary/idle progress: the live actor-slot coordinator now
 applies WAIT_TIMER and WAIT_FREE_LIFT to the just-produced Execute result
@@ -167,12 +164,36 @@ for later creation slots. Evidence is traced to
 `RHelementactor.cpp:606-707` and
 `RHelementactorhuman.cpp:3486-3505,7988-8014,8222-8407`.
 
+2026-07-20 owner-envelope fusion: one live `while slot < entities.len()` walk
+now closes Soldier patrol/prelude, Human concussion and shoot-list work, base
+Actor Execute/ActionChange, PC noise/tiredness/heal, or the complete NPC
+detection/tail before advancing. Removed slots remain holes and callback-spawned
+later actors run in the same frame. Concussion FIT_AGAIN, patrol-coordinate
+Think, and all resulting owner FIFO work drain synchronously. Detection views
+are rebuilt at the consuming NPC slot. Earlier NPCs see later actors at the
+preserved pre-movement position, later NPCs see already-visited actors live,
+and callback-spawned targets absent from the oracle use their never-moved live
+position; patrol snapshots follow the same rule. Destination alternatives are
+prepared without RNG, while only the exact primary/missed-PC/officer handler
+that consumes a forecast resolves its building-exit draw. Optical target
+construction reads those same owner-relative snapshots instead of the later
+live position. Building exits retain the Original ordered all-gates rejection
+loop, including every rejected-entry RNG draw. FIT_AGAIN applies detectable
+restoration, resurrection, eye state, and every opposing NPC's `BlinkEnemy`
+inline at the waker slot even under FrozenAll; its owner-work FIFO also places
+the Enemy timer/eye writes after the SetState callback and the Friendly eye
+write before ReturnToDuty's callback. Patrol history has no extra
+chief-liveness gate, coordinate Think precedes its instructed direction per
+member, and macro `CMD_PATROL_DIRECTION` broadcasts (including waiting-member
+`FaceTo`) close synchronously. FrozenAll, static-AI freeze, script/AI locks,
+fried PCs, and inactive PC noise metadata retain their separate Original
+gates.
+
 Remaining PA-013 debt is deliberately unchanged outside this slice: movement,
-active strike and bow execution, rider charge, the complete NPC-derived
-Hourglass envelope, fully inline script-native `SetAIState`/Panic re-entry,
-and remaining entity-kind
-Hourglass boundaries still have separate owners. This slice does not claim
-save/replay shape compatibility with pre-change snapshots.
+active strike and bow execution, ability ownership, rider charge, non-NPC
+Listen/object discovery, and remaining entity-kind Hourglass boundaries still
+have separate owners. This slice does not claim save/replay shape compatibility
+with pre-change snapshots.
 
 2026-07-20 script-native AI-state slice: accepted `SetAIState` calls now yield
 at the native instruction to a typed owner-local barrier. `SCRIPT_DRIVEN`
@@ -312,14 +333,16 @@ follows `RHElementActorHuman::Hourglass` / `RHElementActorNPC::Hourglass`
 ordering at `RHelementactorhuman.cpp:277-305,335-405` and
 `RHelementactornpc.cpp:3495-3554`. At each NPC creation slot it drains the
 existing stimulus FIFO prefix through natural `EVENT_FITAGAIN`, applies that
-NPC's resurrection fan-out and eye change, applies targeted wake
-`BlinkEnemy` requests, consumes that NPC's `mbInformMyFriends`, refreshes
+NPC's resurrection fan-out and eye change, applies wake `BlinkEnemy` inline
+to every opposing NPC regardless of observer creation order, consumes that
+NPC's `mbInformMyFriends`, refreshes
 that NPC's stateful view once, and then runs its synchronous
 `RefreshDetection`. The canonical AI enqueue covers both soldier and
 civilian NPC controllers while retaining intentional non-NPC no-ops.
-Swapped-order regressions prove earlier body informs and wake blinks affect a
-later observer, while later work remains queued for an earlier observer's
-next slot; additional regressions cover both wake producers, civilian wake,
+Swapped-order regressions prove earlier body informs affect a later observer,
+while later body work remains queued for an earlier observer's next slot;
+wake blinks instead follow the Original inline all-observer mutation.
+Additional regressions cover both wake producers, civilian wake,
 FIFO prefix order, simultaneous recovery/inform flags, and earlier/later
 LOOKTHERE receivers. The N2 follow-up below closes the then-outstanding
 post-detection tail. Natural concussion wake still launches its
@@ -406,8 +429,8 @@ need their own review.
 | Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
-| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed; generic actor animation/Execute, synchronous completion effects, and ActionChange now share each live legacy creation slot. Movement/combat/ability owners and exact NPC nesting remain separate. |
-| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target, synchronous wake/recovery/blink/body-inform/view prelude, HEAR/VIEW/OUTOFVIEW ordering, the shared civilian/both-camp mixed Enemy walk, per-stimulus live contexts, live per-Think Enemy-list reconstruction, creation-ordered NPC blip/reveal, lift approach data, cross-elevation world-distance/projected-LOS coordinates, ambush/deafness, BUSY/ladder, wrapped phase, lock/timer/emoticon semantics, retained replay, owner-local Enemy/Friendly `SetState` callbacks, ordered owner-local speech settlement, and exact speech completion as the first `PerformHourglass` deferred-phase mutation are fixed at the creation boundary. Base actor animation/ActionChange is now creation-ordered, but exact derived/base nesting and fully inline pure-Rust intra-Think observation remain incomplete. |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot. Movement, active combat, abilities, riders, scrolls, and other entity kinds remain separate. |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, and patrol Think-before-direction are regression-covered. Non-NPC discovery and broader entity-owner debt remain open under PA-013. |
 | Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | live creation order, spawn-frame inclusion, straight/assault causality, non-straight phase timing, and synchronous melee victim ordering are verified by PA-013 regressions; riders and other combat maintenance remain batched |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |

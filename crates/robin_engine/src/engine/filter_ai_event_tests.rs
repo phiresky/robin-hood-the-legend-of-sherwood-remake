@@ -2345,6 +2345,53 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
 }
 
 #[test]
+fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
+    use super::tick::{ActorOwnerEnvelopePhase as Phase, capture_actor_owner_envelope};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_pc(true));
+    let removed = engine.add_entity(make_pc(false));
+    let later = engine.add_entity(make_pc(false));
+    engine.remove_entity(removed);
+    let assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let mut visited = Vec::new();
+    let mut spawned = None;
+
+    let (_, phases) = capture_actor_owner_envelope(|| {
+        engine.tick_actor_animation_action_change_slots_with_after_slot(
+            &sim,
+            &assets,
+            |engine, owner| {
+                visited.push(owner);
+                if owner == first {
+                    let id = engine.add_entity(make_pc(false));
+                    assert!(
+                        id.index() > later.index(),
+                        "runtime entities are append-only"
+                    );
+                    spawned = Some(id);
+                }
+            },
+        );
+    });
+    let spawned = spawned.expect("the first owner's callback must spawn an actor");
+
+    assert_eq!(visited, vec![first, later, spawned]);
+    assert_eq!(
+        phases
+            .into_iter()
+            .filter_map(|phase| match phase {
+                Phase::BaseActor(owner) => Some(owner),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![first, later, spawned],
+        "the live while-slot coordinator must execute the appended actor this frame without shifting across the removed slot"
+    );
+}
+
+#[test]
 fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
     use crate::order::OrderType;
 
@@ -2681,6 +2728,8 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
     engine.tick_actor_animation_action_change_slots_with_hooks(
         &crate::sim_rng::test_context(),
         &assets,
+        |_, _| {},
+        |_, _| {},
         |engine, callback_owner| {
             if callback_owner != actor || replacement_sequence.is_some() {
                 return;
@@ -3290,7 +3339,9 @@ fn waking_up_creation_order_engine(
         sprite.action_done_frame = 1;
         sprite.action_done_counter = 0;
     }
-    (engine, LevelAssets::new(), rescuer, target)
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    (engine, assets, rescuer, target)
 }
 
 #[test]
@@ -3950,7 +4001,7 @@ fn setup_ai_state_native_probe(
     (engine, assets, actor)
 }
 
-fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) {
+fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> EntityId {
     use crate::element::ActiveDoorPass;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -4017,6 +4068,7 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) {
         gate_indices: Vec::new(),
         underlying_sector: None,
     });
+    door_actor
 }
 
 #[test]
@@ -4333,6 +4385,99 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     assert!(
         !fleeing_trace.contains(&RngSite::BuildingExitGate),
         "Fleeing/Panic must not forecast an unrelated building actor"
+    );
+}
+
+#[test]
+fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
+    install_unrelated_multi_exit_building_actor(&mut engine);
+    engine
+        .get_entity_mut(owner)
+        .expect("forecast control owner exists")
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
+    let sim = crate::sim_rng::test_context();
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+
+    let (_, control_trace) = with_draw_trace(|| drop(engine.build_sim_scratch(&sim, &assets)));
+    assert!(
+        control_trace.contains(&RngSite::BuildingExitGate),
+        "the fixture must prove that a global forecast would draw for the unrelated door actor"
+    );
+    let (_, fused_trace) =
+        with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets, &positions));
+
+    assert!(engine.get_entity(owner).is_some());
+    assert!(
+        !fused_trace.contains(&RngSite::BuildingExitGate),
+        "the fused walk may forecast only at a consuming NPC owner, never because an unrelated actor exists: {fused_trace:?}"
+    );
+}
+
+#[test]
+fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_forecasts() {
+    use crate::ai::{AiLockFlags, Stimulus, StimulusType};
+    use crate::element::ActiveDoorPass;
+    use crate::gate::DoorIndex;
+    use crate::profiles::ProfileRank;
+    use crate::sim_rng::{RngSite, with_draw_trace};
+    use std::collections::VecDeque;
+
+    let (mut engine, assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
+    let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine);
+    let entering_officer = engine.add_entity(make_scripted_soldier(""));
+    let owner_camp = engine
+        .get_entity(owner)
+        .expect("detection RNG owner exists")
+        .camp();
+    let Entity::Soldier(officer) = engine.get_entity_mut(entering_officer).unwrap() else {
+        unreachable!()
+    };
+    officer.element.active = true;
+    officer.soldier.cached_camp = owner_camp;
+    officer.actor.active_door_pass = Some(ActiveDoorPass {
+        door_index: DoorIndex(0),
+        direct: true,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::default(),
+        current_reverse: false,
+        saved_action_state: None,
+    });
+    let officer_ai = officer.npc.ai_brain.enemy_mut().unwrap();
+    officer_ai.soldier_profile_rank = ProfileRank::Officer;
+    officer_ai.hth_weapon_id = 1;
+
+    let owner_ai = engine
+        .get_entity_mut(owner)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("detection RNG owner has Enemy AI");
+    owner_ai.base.primary_target = entering_primary.index();
+    owner_ai.missed_pc = entering_primary.index();
+    owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;
+    owner_ai
+        .base
+        .outbox
+        .detection
+        .stimuli
+        .push(Stimulus::with_human(
+            StimulusType::EventView,
+            entering_primary.index(),
+        ));
+
+    let sim = crate::sim_rng::test_context();
+    let (_, trace) = with_draw_trace(|| {
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None, None)
+    });
+    assert!(
+        !trace.contains(&RngSite::BuildingExitGate),
+        "retaining an unrelated EVENT_VIEW may prepare primary/missed/officer alternatives but must not resolve any forecast: {trace:?}"
     );
 }
 
@@ -5065,4 +5210,120 @@ fn unavailable_state_change_callbacks_are_consumed() {
         4,
         "disabled VM did not run"
     );
+}
+
+#[test]
+fn fit_again_engine_calls_surround_state_callback_in_original_order() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::element::{Detectable, DetectableType, EyeStatus};
+
+    fn observe(friendly: bool) {
+        let mut engine = EngineInner::new();
+        let class_name = if friendly {
+            "FriendlyWakeOrder"
+        } else {
+            "EnemyWakeOrder"
+        };
+        let owner = if friendly {
+            engine.add_entity(make_scripted_civilian(class_name))
+        } else {
+            engine.add_entity(make_scripted_soldier(class_name))
+        };
+        let observer = engine.add_entity(make_scripted_civilian(""));
+        let mut assets = install_state_change_script(
+            &mut engine,
+            state_change_scb(vec![ai_state_native_probe_class(class_name, 1, 1)]),
+        );
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles
+            .soldiers
+            .resize_with(1, crate::profiles::SoldierProfile::default);
+        profiles.hth_weapons.resize_with(1, Default::default);
+        profiles.soldiers[0].hth_weapon_id = 1;
+        bind_state_change_actor(&mut engine, owner, class_name);
+        if let Some(enemy) = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+        {
+            enemy.hth_weapon_id = 1;
+        }
+
+        let npc = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap();
+        npc.eye_status = EyeStatus::Closed;
+        let ai = npc.ai_brain.base_mut().unwrap();
+        ai.current_state = AiState::Sleeping;
+        ai.current_substate = Substate::SleepingUnconscious;
+        ai.timer_is_running = false;
+        ai.outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventFitAgain));
+        engine
+            .world
+            .entities
+            .get_mut(observer)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .detectable_lists[DetectableType::Body as usize]
+            .push(Detectable {
+                element: Some(owner),
+                detectable_type: DetectableType::Body,
+                ..Detectable::default()
+            });
+
+        let (woke, observations) = super::script::capture_ai_state_callback_observations(|| {
+            crate::sim_rng::with_seed(0xA013_F17A, |sim| {
+                engine.dispatch_pending_fit_again_for_npc(sim, owner, &assets)
+            })
+        });
+        assert!(woke);
+        let observation = observations
+            .iter()
+            .find(|observation| observation.owner == owner)
+            .unwrap_or_else(|| panic!("{class_name} emitted no state callback observation"));
+        assert_eq!(
+            observation.body_references_to_owner, 0,
+            "InformEveryoneOnMyResurrection must finish before SetState"
+        );
+        if friendly {
+            assert_eq!(
+                observation.eye_status,
+                EyeStatus::LookForward,
+                "friendly SetViewStatus precedes ReturnToDuty/SetState"
+            );
+        } else {
+            assert_eq!(
+                observation.eye_status,
+                EyeStatus::Closed,
+                "enemy SetViewStatus follows SetState"
+            );
+            assert!(
+                !observation.timer_is_running,
+                "enemy LaunchTimer follows SetState"
+            );
+        }
+        let owner_npc = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .npc_data()
+            .unwrap();
+        assert_eq!(owner_npc.eye_status, EyeStatus::LookForward);
+        if !friendly {
+            assert!(owner_npc.ai_brain.base().unwrap().timer_is_running);
+        }
+    }
+
+    observe(false);
+    observe(true);
 }
