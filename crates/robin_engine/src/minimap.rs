@@ -81,8 +81,12 @@ pub enum CustomDot {
 }
 
 impl CustomDot {
-    pub fn from_u16(v: u16) -> Self {
-        match v {
+    /// Decode one of the `CUSTOM_DOT_*` values defined by the original
+    /// minimap contract. The original renderer supports all of these values;
+    /// its `CustomizeMinimapDisplay` switch accidentally omitted the VIP
+    /// family.
+    pub fn try_from_u16(v: u16) -> Option<Self> {
+        Some(match v {
             0 => Self::Invisible,
             1 => Self::NotCustomized,
             100 => Self::Pc,
@@ -103,8 +107,21 @@ impl CustomDot {
             444 => Self::VipMulti,
             500 => Self::Item,
             666 => Self::Animal,
-            _ => panic!("undefined custom minimap dot ID: {v}"),
-        }
+            _ => return None,
+        })
+    }
+
+    pub fn from_u16(v: u16) -> Self {
+        Self::try_from_u16(v).unwrap_or_else(|| panic!("undefined custom minimap dot ID: {v}"))
+    }
+
+    /// Multi-state dots inspect human posture/death state when rendered and
+    /// are therefore invalid for non-human elements.
+    pub fn requires_human(self) -> bool {
+        matches!(
+            self,
+            Self::PcMulti | Self::VillainMulti | Self::CivilianMulti | Self::VipMulti
+        )
     }
 }
 
@@ -1274,7 +1291,24 @@ mod tests {
         assert_eq!(CustomDot::from_u16(1), CustomDot::NotCustomized);
         assert_eq!(CustomDot::from_u16(100), CustomDot::Pc);
         assert_eq!(CustomDot::from_u16(222), CustomDot::VillainMulti);
+        assert_eq!(CustomDot::from_u16(400), CustomDot::Vip);
+        assert_eq!(CustomDot::from_u16(401), CustomDot::VipLying);
+        assert_eq!(CustomDot::from_u16(402), CustomDot::VipDead);
+        assert_eq!(CustomDot::from_u16(444), CustomDot::VipMulti);
         assert_eq!(CustomDot::from_u16(666), CustomDot::Animal);
+    }
+
+    #[test]
+    fn all_multi_state_custom_dots_require_humans() {
+        for dot in [
+            CustomDot::PcMulti,
+            CustomDot::VillainMulti,
+            CustomDot::CivilianMulti,
+            CustomDot::VipMulti,
+        ] {
+            assert!(dot.requires_human(), "{dot:?}");
+        }
+        assert!(!CustomDot::Vip.requires_human());
     }
 
     #[test]

@@ -2967,16 +2967,19 @@ impl EngineInner {
     /// Resolve a script location handle to a map position.
     /// Script locations are points and sectors from the SCRIPT chunk,
     /// **not** entity handles. Handle 0 = null.
-    fn resolve_location_position(
-        assets: &LevelAssets,
-        handle: i32,
-    ) -> Option<crate::coordinates::MapPoint> {
+    fn resolve_location_position(&self, handle: i32) -> Option<crate::coordinates::MapPoint> {
         let idx = crate::natives::ScriptHandleCodec::location_index(handle)?;
-        assets
-            .scripts
-            .location_positions
-            .get(idx)
-            .map(|&(x, y)| crate::coordinates::MapPoint::new(x, y))
+        let script = self.scripts.mission.as_ref()?;
+        let (x, y) = if idx < script.bindings.script_location_count {
+            *script.bindings.location_positions.get(idx)?
+        } else {
+            script
+                .state
+                .computed_locations
+                .get(idx - script.bindings.script_location_count)?
+                .position
+        };
+        Some(crate::coordinates::MapPoint::new(x, y))
     }
 
     /// Process all deferred commands from script native calls.
@@ -2998,7 +3001,7 @@ impl EngineInner {
                     // Store the raw script point in `camera_wanted` so
                     // resize/zoom can re-derive the slide target later,
                     // and the centered+clamped result in `camera_slide`.
-                    if let Some(pos) = Self::resolve_location_position(assets, location_handle) {
+                    if let Some(pos) = self.resolve_location_position(location_handle) {
                         self.feedback.cutscene_camera.camera_wanted = pos;
                         self.feedback.cutscene_camera.camera_slide =
                             self.check_location_is_valid_for_camera(pos);
@@ -3012,7 +3015,7 @@ impl EngineInner {
                 EngineCommand::JumpCameraTo { location_handle } => {
                     // Snap the view to the script point and invalidate
                     // background validity so the next frame redraws.
-                    if let Some(pos) = Self::resolve_location_position(assets, location_handle) {
+                    if let Some(pos) = self.resolve_location_position(location_handle) {
                         self.feedback.cutscene_camera.view_position =
                             self.check_location_is_valid_for_camera(pos);
                         self.feedback.pending_side_effects.invalidate_background = true;
@@ -3062,7 +3065,7 @@ impl EngineInner {
                 } => {
                     // Validate the dot code against the known
                     // CUSTOM_DOT_* whitelist, gate the `_MULTI` variants
-                    // on `is_human()` (codes 111/222/333), and overwrite
+                    // on `is_human()` (codes 111/222/333/444), and overwrite
                     // the PC / Villain / Civilian outline colour slots
                     // for the codes that select a class.
                     use crate::element_kinds::OutlineColorName;
@@ -3084,25 +3087,7 @@ impl EngineInner {
                     // Any other code → log + skip both the dot update
                     // and the outline-colour write.
                     let dot_val = dot_type as u16;
-                    let dot = match dot_val {
-                        0 => Some(CustomDot::Invisible),
-                        1 => Some(CustomDot::NotCustomized),
-                        100 => Some(CustomDot::Pc),
-                        101 => Some(CustomDot::PcLying),
-                        102 => Some(CustomDot::PcDead),
-                        111 => Some(CustomDot::PcMulti),
-                        200 => Some(CustomDot::Villain),
-                        201 => Some(CustomDot::VillainLying),
-                        202 => Some(CustomDot::VillainDead),
-                        222 => Some(CustomDot::VillainMulti),
-                        300 => Some(CustomDot::Civilian),
-                        301 => Some(CustomDot::CivilianLying),
-                        302 => Some(CustomDot::CivilianDead),
-                        333 => Some(CustomDot::CivilianMulti),
-                        666 => Some(CustomDot::Animal),
-                        500 => Some(CustomDot::Item),
-                        _ => None,
-                    };
+                    let dot = CustomDot::try_from_u16(dot_val);
                     let Some(dot) = dot else {
                         tracing::warn!(
                             "Script Error: Trying to customize minimap display with illegal dot ID ({:#x}).",
@@ -3112,13 +3097,9 @@ impl EngineInner {
                     };
                     // `_MULTI` codes require an is_human() target;
                     // log + early return otherwise.
-                    let is_multi = matches!(
-                        dot,
-                        CustomDot::PcMulti | CustomDot::VillainMulti | CustomDot::CivilianMulti
-                    );
-                    if is_multi && !entity.is_human() {
+                    if dot.requires_human() && !entity.is_human() {
                         tracing::warn!(
-                            "Script Error: Minimap display codes 111, 222, 333 only valid for humans."
+                            "Script Error: Minimap multi-state display codes are only valid for humans (got {dot_val})."
                         );
                         continue;
                     }
@@ -3906,6 +3887,104 @@ mod script_context_tests {
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
+    }
+
+    #[test]
+    fn camera_location_resolution_includes_computed_script_locations() {
+        let mut script = empty_mission_script();
+        script.attach_bindings(crate::natives::AttachedScriptBindings {
+            script_location_count: 2,
+            script_point_count: 2,
+            location_positions: std::sync::Arc::new(vec![(12.0, 34.0), (56.0, 78.0)]),
+            ..Default::default()
+        });
+        script
+            .state
+            .computed_locations
+            .push(crate::natives::ComputedScriptLocation {
+                position: (90.0, 123.0),
+                layer_sector: Some((2, 44)),
+            });
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(script);
+
+        let static_handle = crate::natives::ScriptHandleCodec::location_handle_from_index(1);
+        let computed_handle = crate::natives::ScriptHandleCodec::location_handle_from_index(2);
+        assert_eq!(
+            engine.resolve_location_position(static_handle),
+            Some(crate::coordinates::MapPoint::new(56.0, 78.0))
+        );
+        assert_eq!(
+            engine.resolve_location_position(computed_handle),
+            Some(crate::coordinates::MapPoint::new(90.0, 123.0))
+        );
+    }
+
+    #[test]
+    fn customize_minimap_accepts_vip_dots_and_gates_vip_multi_to_humans() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        engine
+            .world
+            .entities
+            .push(Some(crate::element::Entity::Soldier(
+                crate::element::ActorSoldier {
+                    element: crate::element::ElementData {
+                        kind: crate::element::ElementKind::ActorSoldier,
+                        ..Default::default()
+                    },
+                    actor: crate::element::ActorData::default(),
+                    human: crate::element::HumanData::default(),
+                    npc: crate::element::NpcData::default(),
+                    soldier: crate::element::SoldierData::default(),
+                },
+            )));
+        engine.world.entities.push(Some(crate::element::Entity::Fx(
+            crate::element::ElementFx {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::Fx,
+                    custom_minimap_dot: crate::minimap::CustomDot::NotCustomized as u16,
+                    ..Default::default()
+                },
+                fx: crate::element::FxData::default(),
+            },
+        )));
+        let human_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
+        let non_human_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(1);
+
+        engine.apply_host_commands(
+            &sim,
+            &LevelAssets::default(),
+            vec![crate::natives::EngineCommand::CustomizeMinimapDisplay {
+                actor_handle: human_handle,
+                dot_type: crate::minimap::CustomDot::VipMulti as i32,
+            }],
+        );
+        assert_eq!(
+            engine
+                .get_entity(engine.entity_id_for_index(0).expect("human entity"))
+                .expect("human entity")
+                .element_data()
+                .custom_minimap_dot,
+            crate::minimap::CustomDot::VipMulti as u16
+        );
+
+        engine.apply_host_commands(
+            &sim,
+            &LevelAssets::default(),
+            vec![crate::natives::EngineCommand::CustomizeMinimapDisplay {
+                actor_handle: non_human_handle,
+                dot_type: crate::minimap::CustomDot::VipMulti as i32,
+            }],
+        );
+        assert_eq!(
+            engine
+                .get_entity(engine.entity_id_for_index(1).expect("non-human entity"))
+                .expect("non-human entity")
+                .element_data()
+                .custom_minimap_dot,
+            crate::minimap::CustomDot::NotCustomized as u16
+        );
     }
 
     #[test]

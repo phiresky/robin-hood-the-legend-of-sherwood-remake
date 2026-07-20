@@ -1496,15 +1496,15 @@ impl NativeContext<'_, '_> {
 
     /// Validate a script movement style argument. `RecordEnterGame`,
     /// `RecordLeaveGame`, and friends reject anything that isn't WALKING
-    /// (1) or RUNNING (2) with an error; we warn-log and let the caller
+    /// (0) or RUNNING (1) with an error; we warn-log and let the caller
     /// short-circuit so scripts that pass a bogus style don't silently
     /// default to RUNNING.
     fn validate_style(style: i32, native_name: &str) -> bool {
-        if style == 1 || style == 2 {
+        if style == 0 || style == 1 {
             true
         } else {
             tracing::warn!(
-                "{native_name}: illegal movement style {style} (expected 1=WALKING or 2=RUNNING)"
+                "{native_name}: illegal movement style {style} (expected 0=WALKING or 1=RUNNING)"
             );
             false
         }

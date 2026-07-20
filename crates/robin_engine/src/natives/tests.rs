@@ -451,6 +451,26 @@ fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCom
 }
 
 #[test]
+fn enter_and_leave_game_accept_original_movement_style_codes() {
+    assert!(NativeContext::validate_style(0, "RecordEnterGame"));
+    assert!(NativeContext::validate_style(1, "RecordLeaveGame"));
+    assert!(!NativeContext::validate_style(2, "RecordEnterGame"));
+    assert!(!NativeContext::validate_style(-1, "RecordLeaveGame"));
+}
+
+#[test]
+fn enter_and_leave_game_styles_map_to_expected_orders() {
+    assert_eq!(
+        NativeContext::movement_style(0),
+        crate::order::OrderType::WalkingUpright
+    );
+    assert_eq!(
+        NativeContext::movement_style(1),
+        crate::order::OrderType::RunningUpright
+    );
+}
+
+#[test]
 fn send_message_native_launches_and_yields_inline() {
     let (stop, commands) = run_native_deferred(NativeFn::SendMessage as u32, &[0, 1234]);
     assert!(matches!(
