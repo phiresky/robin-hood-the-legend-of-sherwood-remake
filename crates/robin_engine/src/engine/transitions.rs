@@ -1432,17 +1432,22 @@ fn make_posture_transition_soldier(
         .map(|e| e.element_data().posture)
         .unwrap_or(Posture::Upright);
 
-    if posture == Posture::LeaningOut
-        && flags.contains(CP::MUST_BE_UPRIGHT)
-        && !flags.contains(CP::CAN_BE_LEANING_OUT)
-    {
-        push_anim_order_no_dir(
-            engine,
-            seq_id,
-            elem_idx,
-            OrderType::TransitionLeaningOutWaitingAlerted,
-        );
-        set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+    if posture == Posture::LeaningOut {
+        if flags.contains(CP::MUST_BE_UPRIGHT) && !flags.contains(CP::CAN_BE_LEANING_OUT) {
+            push_anim_order_no_dir(
+                engine,
+                seq_id,
+                elem_idx,
+                OrderType::TransitionLeaningOutWaitingAlerted,
+            );
+            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+        }
+
+        // RHElementActorSoldier::MakePostureTransition owns the complete
+        // LEANING_OUT arm.  In particular LEAN_OUT itself carries both
+        // MUST_BE_UPRIGHT and CAN_BE_LEANING_OUT, so delegating that case
+        // to the base actor would feed a soldier-only posture into the
+        // base switch (and hit its unhandled-state assertion).
         return true;
     }
 
@@ -2301,6 +2306,29 @@ mod tests {
             orders.contains(&OrderType::TransitionLeaningOutWaitingAlerted),
             "expected LeaningOut→WaitingAlerted unstick, got {:?}",
             orders
+        );
+    }
+
+    /// LEAN_OUT is permitted while a soldier is already LeaningOut.  The
+    /// soldier override consumes that posture without asking the base actor
+    /// transition switch to interpret it.
+    #[test]
+    fn soldier_lean_out_from_leaning_out_stays_leaning_out() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
+        let (seq, idx) = launch(&mut engine, owner, Command::LeanOut);
+
+        let ok = engine.generate_transition(owner, seq, idx);
+        assert!(ok, "repeat lean-out transition should succeed");
+        assert!(orders_for(&engine, seq, idx).is_empty());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, idx)
+                .expect("sequence element")
+                .posture_after_transition,
+            P::LeaningOut
         );
     }
 
