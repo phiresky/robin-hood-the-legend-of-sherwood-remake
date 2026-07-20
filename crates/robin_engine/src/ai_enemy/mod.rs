@@ -2719,12 +2719,21 @@ impl EnemyAi {
         ctx: &AiContext,
         static_ai_frozen: bool,
     ) -> bool {
+        self.start_think_pre_filter(stimulus);
+        self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
+    }
+
+    /// `StartThink` work which precedes the script `FilterAIEvent` call.
+    /// Kept separate so script-native SetAIState can yield through the VM at
+    /// the exact callback boundary without aliasing the typed brain.
+    pub(crate) fn start_think_pre_filter(&mut self, stimulus: &Stimulus) {
         let stimulus_type = stimulus.stimulus_type;
 
         // Reset per-think flags
         self.base.couldnt_reachpoint = false;
         self.base.already_on_point = false;
         self.base.already_turned = false;
+        self.base.old_state = self.base.current_state;
         self.base.think_recursion_depth += 1;
 
         // Track stimulus actor
@@ -2736,6 +2745,24 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventLoseConsciousness {
             self.set_alert_status(AlertLevel::Green);
         }
+    }
+
+    /// `StartThink` work after `FilterAIEvent`. The return value is the
+    /// ordinary Think admission decision; SetAIState intentionally observes
+    /// these gates but ignores the bool before running SeekArea/Panic.
+    pub(crate) fn start_think_post_filter(
+        &mut self,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+        static_ai_frozen: bool,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+
+        // The original clears callback-produced completion flags again after
+        // an accepted filter and before evaluating the remaining gates.
+        self.base.couldnt_reachpoint = false;
+        self.base.already_on_point = false;
+        self.base.already_turned = false;
 
         // Script event filtering runs at the engine dispatch site
         // before this `think()` is invoked — see
@@ -2898,7 +2925,7 @@ impl EnemyAi {
     // EndThink — post-think event dispatch
     // -----------------------------------------------------------------------
 
-    fn end_think(
+    pub(crate) fn end_think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         _global: &mut AiGlobalState,
@@ -4343,7 +4370,7 @@ mod tests {
             is_tower_guard: false,
             company_number: 0,
             in_building: false,
-            forecast_destination: Position::default(),
+            forecast_destination: Some(Position::default()),
             detectable_bodies: Vec::new(),
             seek_position: Position::default(),
             current_task_priority: 0,

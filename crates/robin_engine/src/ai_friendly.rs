@@ -20,6 +20,38 @@ use crate::parameters_ai::{
 pub const APPLE_CHASE_IDEAL_DISTANCE: i32 = 300;
 pub const BEGGAR_NO_RANDOM_TALK_DISTANCE: i32 = 100;
 
+/// Truthful engine snapshot for the only cross-entity per-tick value consumed
+/// by Friendly AI. Deliberately has no `Default`/`stub`: handlers that require
+/// a patrol chief must demand the live snapshot contextually.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct FriendlyPerTickData {
+    patrol_chief: Option<FriendlyPatrolChief>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct FriendlyPatrolChief {
+    position: Position,
+    state: AiState,
+}
+
+impl FriendlyPerTickData {
+    pub(crate) fn without_patrol_chief() -> Self {
+        Self { patrol_chief: None }
+    }
+
+    pub(crate) fn with_patrol_chief(position: Position, state: AiState) -> Self {
+        Self {
+            patrol_chief: Some(FriendlyPatrolChief { position, state }),
+        }
+    }
+
+    fn required_patrol_chief(self, owner: NpcHandle) -> FriendlyPatrolChief {
+        self.patrol_chief.unwrap_or_else(|| {
+            panic!("Friendly AI owner {owner} requires a live patrol-chief snapshot")
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FriendlyAi — extends AiController with civilian-specific state
 // ---------------------------------------------------------------------------
@@ -244,13 +276,13 @@ impl FriendlyAi {
     // -----------------------------------------------------------------------
 
     /// Main entry point for civilian stimulus processing.
-    pub fn think(
+    pub(crate) fn think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
     ) -> bool {
@@ -264,7 +296,7 @@ impl FriendlyAi {
 
         // Pre-think checks
         if !self.start_think(stimulus, ctx, global.freeze) {
-            self.end_think(sim, global, ctx, tick, grid, doors);
+            self.end_think(sim, global, ctx);
             return true;
         }
 
@@ -349,7 +381,7 @@ impl FriendlyAi {
             }
         };
 
-        self.end_think(sim, global, ctx, tick, grid, doors);
+        self.end_think(sim, global, ctx);
         return_value
     }
 
@@ -363,6 +395,12 @@ impl FriendlyAi {
         ctx: &AiContext,
         static_ai_frozen: bool,
     ) -> bool {
+        self.start_think_pre_filter(stimulus);
+        self.start_think_post_filter(stimulus, ctx, static_ai_frozen)
+    }
+
+    /// `StartThink` work which precedes the script `FilterAIEvent` call.
+    pub(crate) fn start_think_pre_filter(&mut self, stimulus: &Stimulus) {
         // Civilian pre-think pipeline.  Civilians normally never
         // hit `EventWasp` / `EventNet`, but the gates live on the
         // base class so any scripted `SetSubstate` could reach them;
@@ -372,6 +410,7 @@ impl FriendlyAi {
         self.base.couldnt_reachpoint = false;
         self.base.already_on_point = false;
         self.base.already_turned = false;
+        self.base.old_state = self.base.current_state;
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_add(1);
 
         if let StimulusInfo::Human(h) = stimulus.info {
@@ -384,6 +423,21 @@ impl FriendlyAi {
         if stimulus_type == StimulusType::EventLoseConsciousness {
             self.base.set_alert_status(AlertLevel::Green);
         }
+    }
+
+    /// `StartThink` work after `FilterAIEvent`. SetAIState observes these
+    /// gates but deliberately ignores the returned admission decision.
+    pub(crate) fn start_think_post_filter(
+        &mut self,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+        static_ai_frozen: bool,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+
+        self.base.couldnt_reachpoint = false;
+        self.base.already_on_point = false;
+        self.base.already_turned = false;
 
         // Static AI freeze discards stimuli after the engine-side script
         // filter. It is not the per-NPC AILOCK_FREEZE retention bit.
@@ -499,14 +553,11 @@ impl FriendlyAi {
         true
     }
 
-    fn end_think(
+    pub(crate) fn end_think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
-        _tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        _doors: Option<&[crate::gate::Door]>,
     ) {
         // legacy implementation EndThink calls Think(EVENT_*) here, and Think runs the
         // script FilterAIEvent gate before dispatch. Queue these as
@@ -570,7 +621,7 @@ impl FriendlyAi {
         stimulus: &Stimulus,
         _global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         doors: Option<&[crate::gate::Door]>,
     ) -> bool {
@@ -640,7 +691,7 @@ impl FriendlyAi {
                     // engine caches the chief's AI state on
                     // `tick.patrol_chief_state` each frame so we
                     // don't need a second entity borrow.
-                    match tick.patrol_chief_state {
+                    match tick.required_patrol_chief(self.base.me).state {
                         AiState::Default | AiState::Wondering => {
                             self.base.launch_timer(200, ctx.frame);
                         }
@@ -1082,7 +1133,7 @@ impl FriendlyAi {
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         // `_doors` is not consumed by the Apple-Chase / Sees-Soldier
         // arms in this dispatcher; threaded for symmetry with the
@@ -1154,7 +1205,11 @@ impl FriendlyAi {
             }
 
             StimulusType::CallPatrolCoordinate => {
-                self.base.coordinate_patrol(&stimulus.info, ctx, tick);
+                self.base.coordinate_patrol(
+                    &stimulus.info,
+                    ctx,
+                    tick.required_patrol_chief(self.base.me).position,
+                );
             }
 
             StimulusType::EventAfterScriptGoOn => {
@@ -2344,7 +2399,7 @@ mod tests {
             &stimulus,
             &mut global,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2416,7 +2471,7 @@ mod tests {
             sim,
             &stimulus,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2438,7 +2493,7 @@ mod tests {
             sim,
             &stimulus,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2463,7 +2518,7 @@ mod tests {
             sim,
             &stimulus,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2597,7 +2652,7 @@ mod tests {
             sim,
             &stimulus,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2626,12 +2681,14 @@ mod tests {
             direction: 0,
             ..AiContext::default()
         };
-        let mut tick = AiPerTickData::stub();
-        tick.patrol_chief_position = Position {
-            x: 100.0,
-            y: 0.0,
-            ..ctx.position
-        };
+        let tick = FriendlyPerTickData::with_patrol_chief(
+            Position {
+                x: 100.0,
+                y: 0.0,
+                ..ctx.position
+            },
+            AiState::Default,
+        );
         let stimulus = Stimulus::with_position(
             StimulusType::CallPatrolCoordinate,
             Position {
@@ -2649,6 +2706,27 @@ mod tests {
         assert!(
             !ai.base.already_on_point,
             "near-backwards patrol coordinate must turn toward the chief, not walk to the slot"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "requires a live patrol-chief snapshot")]
+    fn patrol_handler_cannot_silently_consume_missing_friendly_tick_data() {
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        let mut ai = FriendlyAi::new(1);
+        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(2),
+        ));
+        ai.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut global,
+            &AiContext::default(),
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
         );
     }
 
@@ -2709,7 +2787,7 @@ mod tests {
             &stimulus,
             &mut global,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2743,7 +2821,7 @@ mod tests {
             &stimulus,
             &mut global,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2779,7 +2857,7 @@ mod tests {
             &stimulus,
             &mut global,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );
@@ -2804,7 +2882,7 @@ mod tests {
             &stimulus,
             &mut global,
             &AiContext::default(),
-            &AiPerTickData::stub(),
+            &FriendlyPerTickData::without_patrol_chief(),
             None,
             None,
         );

@@ -76,6 +76,11 @@ pub enum StopReason {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SynchronousScriptRequest {
+    ApplyAiStateNative {
+        actor: i32,
+        effect: ScriptAiStateNativeEffect,
+        native_return: i32,
+    },
     SetActorPosture {
         actor: i32,
         posture: i32,
@@ -101,6 +106,18 @@ pub enum SynchronousScriptRequest {
         state: i32,
         native_return: i32,
     },
+}
+
+/// One accepted `RHScript::SetAIState` operation. The native validates its
+/// public arguments, then yields this typed operation without mutating the AI.
+/// The engine can therefore run the SEEKING/FLEEING `StartThink(NO_EVENT)`
+/// callback before constructing the outer state-specific work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptAiStateNativeEffect {
+    Default,
+    Seeking,
+    Fleeing,
+    ScriptDriven,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,7 +155,8 @@ pub struct NativeYield {
 impl SynchronousScriptRequest {
     pub fn native_return(&self) -> i32 {
         match *self {
-            Self::SetActorPosture { native_return, .. }
+            Self::ApplyAiStateNative { native_return, .. }
+            | Self::SetActorPosture { native_return, .. }
             | Self::SetPersistentLifePoints { native_return, .. }
             | Self::SetPersistentConcussion { native_return, .. }
             | Self::SetActorLocation { native_return, .. }

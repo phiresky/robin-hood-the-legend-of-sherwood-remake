@@ -2361,7 +2361,7 @@ impl EngineInner {
                             is_tower_guard: ss.is_tower_guard,
                             company_number: ss.company_number,
                             in_building: ss.in_building,
-                            forecast_destination: ss.forecast_destination,
+                            forecast_destination: Some(ss.forecast_destination),
                             detectable_bodies: ss.detectable_bodies.clone(),
                             seek_position: ss.ai_seek_position,
                             current_task_priority: ss.current_task_priority,

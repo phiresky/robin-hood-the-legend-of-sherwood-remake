@@ -61,13 +61,6 @@ impl NativeContext<'_, '_> {
                 ai.view_alert_status as i32
             }
             SetAIState => {
-                // Takes `AISTATE_*` script constants; most match
-                // the internal `AiState` enum 1:1, but
-                // `AISTATE_SCRIPT_DRIVEN` (7) is NOT a state —
-                // it's an alias that writes
-                // `(Default, DefaultScriptDriven)` so scripts
-                // can park an NPC in "hands off, the script
-                // drives it" mode.
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity_mut(actor) else {
@@ -78,41 +71,92 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error: SetAIState target {actor} is not an NPC");
                     return 0;
                 }
-                // Script-driven pseudo-state (7).  Park the NPC in
-                // Default/DefaultScriptDriven; no stimulus fires.
-                if val as u32 == crate::ai::AiState::SCRIPT_DRIVEN {
-                    if let Some(ai) = entity.ai_controller_mut() {
-                        ai.set_ai_state(crate::ai::AiState::Default);
-                        ai.current_substate = crate::ai::Substate::DefaultScriptDriven;
+
+                // The public AISTATE_* values are not the internal enum after
+                // SEEKING: MENACING=4, FLEEING=5, ATTACKING=6, and the
+                // SCRIPT_DRIVEN pseudo-state is 7. Match RHScript's switch
+                // literally so rejected states return false without yielding.
+                match val {
+                    0 => {
+                        tracing::error!(
+                            "Script Error: Sleeping state cannot be set by script on actor {actor}"
+                        );
+                        return 0;
                     }
-                    return 1;
+                    2 => {
+                        tracing::error!(
+                            "Script Error: SetAIState illegal state value {val} on actor {actor}"
+                        );
+                        return 0;
+                    }
+                    4 => {
+                        tracing::error!(
+                            "Script Error: Menacing state cannot be set by script on actor {actor}"
+                        );
+                        return 0;
+                    }
+                    6 => {
+                        tracing::error!(
+                            "Script Error: Attacking state cannot be set by script on actor {actor}"
+                        );
+                        return 0;
+                    }
+                    1 | 3 | 5 | 7 => {}
+                    _ => {
+                        tracing::error!(
+                            "Script Error: SetAIState illegal state value {val} on actor {actor}"
+                        );
+                        return 0;
+                    }
                 }
-                let Ok(state) = AiState::try_from(val as u32) else {
-                    tracing::error!(
-                        "Script Error: SetAIState illegal state value {val} on actor {actor}"
-                    );
-                    return 0;
+
+                let effect = match (val, entity) {
+                    (1, Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::Default
+                    }
+                    (1, Entity::Civilian(c)) if c.npc.ai_brain.friendly().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::Default
+                    }
+                    (3, Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::Seeking
+                    }
+                    (3, Entity::Civilian(_)) => {
+                        tracing::error!(
+                            "Script Error: SetAIState(SEEKING) on civilian NPC {actor}"
+                        );
+                        return 0;
+                    }
+                    (5, Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::Fleeing
+                    }
+                    (5, Entity::Civilian(c)) if c.npc.ai_brain.friendly().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::Fleeing
+                    }
+                    (7, Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::ScriptDriven
+                    }
+                    (7, Entity::Civilian(c)) if c.npc.ai_brain.friendly().is_some() => {
+                        crate::interp::ScriptAiStateNativeEffect::ScriptDriven
+                    }
+                    (_, Entity::Soldier(_)) => {
+                        panic!("accepted SetAIState soldier {actor} requires Enemy AI")
+                    }
+                    (_, Entity::Civilian(_)) => {
+                        panic!("accepted SetAIState civilian {actor} requires Friendly AI")
+                    }
+                    _ => unreachable!("validated SetAIState owner stopped being an NPC"),
                 };
-                // The `in_macro` flag is only set by the
-                // internal macro-VM caller, never by a script
-                // native — pass `false` here.
-                let data = entity.element_data();
-                let p = data.position_map();
-                let current_position = crate::ai::Position {
-                    x: p.x,
-                    y: p.y,
-                    sector: data.sector(),
-                    level: data.layer(),
-                };
-                let self_is_soldier = matches!(entity, Entity::Soldier(_));
-                // SEEKING on a civilian warns and returns false.
-                if state == AiState::Seeking && !self_is_soldier {
-                    tracing::error!("Script Error: SetAIState(SEEKING) on civilian NPC {actor}");
-                    return 0;
-                }
-                if let Some(ai) = entity.ai_controller_mut() {
-                    ai.script_set_ai_state(state, current_position, false, self_is_soldier);
-                }
+
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    operation: crate::interp::NativeOperation::EngineAction(
+                        crate::interp::SynchronousScriptRequest::ApplyAiStateNative {
+                            actor,
+                            effect,
+                            native_return: 1,
+                        },
+                    ),
+                    resume: crate::interp::ResumePolicy::Fixed(1),
+                });
                 1
             }
             GetAIState => {

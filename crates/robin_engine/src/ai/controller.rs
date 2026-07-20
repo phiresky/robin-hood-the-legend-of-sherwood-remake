@@ -23,6 +23,9 @@ pub struct AiController {
     // -- State --
     pub current_state: AiState,
     pub current_substate: Substate,
+    /// State sampled by `StartThink` before the script filter runs.
+    /// The original serializes this independently from `current_state`.
+    pub old_state: AiState,
     /// Music-side alert level — feeds the per-frame villain-alert
     /// counters and the music-mode pump.
     pub current_music_alert_status: AlertLevel,
@@ -264,6 +267,7 @@ impl Default for AiController {
             alert_path_id: None,
             current_state: AiState::Default,
             current_substate: Substate::DefaultOnPost,
+            old_state: AiState::Default,
             current_music_alert_status: AlertLevel::Green,
             view_alert_status: AlertLevel::Green,
             substate_at_last_timer_launch: Substate::DefaultOnPost,
@@ -1362,59 +1366,29 @@ impl AiController {
     ///
     /// Unreachable arms (`Sleeping`, `Wondering`, `Menacing`,
     /// `Attacking`) are logged as warnings and skipped.
-    pub fn script_set_ai_state(
-        &mut self,
-        state: AiState,
-        current_position: Position,
-        in_macro: bool,
-        self_is_soldier: bool,
-    ) {
+    pub fn script_set_ai_state(&mut self, state: AiState, current_position: Position) {
         match state {
             AiState::Default => {
-                if in_macro {
-                    // SetState(STATE_DEFAULT, SUBSTATE_DEFAULT_INMACRO)
-                    self.set_ai_state(AiState::Default);
-                    self.current_substate = Substate::DefaultInMacro;
-                } else {
-                    // Think(EVENT_RETURN_TO_DUTY). Queue a self-stimulus
-                    // so the next tick dispatches it through the normal
-                    // think pipeline.
-                    self.fire_self_stimulus(StimulusType::EventReturnToDuty);
-                }
+                // The native barrier dispatches this through the real Think
+                // path before the VM resumes.
+                self.fire_self_stimulus(StimulusType::EventReturnToDuty);
             }
             AiState::Seeking => {
-                // Soldier-only.
-                if !self_is_soldier {
-                    tracing::warn!(
-                        npc = self.me,
-                        "SetAIState(SEEKING) on non-soldier NPC — ignored",
-                    );
-                    return;
-                }
                 self.outbox.actor.script_seek_area = Some(ScriptSeekAreaRequest {
                     center: current_position,
                     radius: crate::parameters_ai::AI_SCRIPT_SEEK_RADIUS as u16,
                 });
             }
             AiState::Fleeing => {
-                // Panic(AI_MACRO_PANIC_RUNS) undirected. The NULL
-                // flee-center is re-expressed as a directed flee away
-                // from the NPC's own position, matching the fall-through
-                // behaviour of `process_pending_begin_panic_for` when
-                // center == position (dot-product zero everywhere ⇒
-                // falls into the no-door branch).
+                // Panic(AI_MACRO_PANIC_RUNS) undirected. Panic itself routes
+                // through the owner's typed SetState at the engine barrier.
                 let runs = crate::parameters_ai::AI_MACRO_PANIC_RUNS as u8;
                 let was_already_fleeing = self.current_state == AiState::Fleeing
                     && matches!(
                         self.current_substate,
                         Substate::FleeingPanic | Substate::FleeingRunToDoor
                     );
-                self.panic_center_x = current_position.x;
-                self.panic_center_y = current_position.y;
-                self.lasting_panic_runs = runs;
                 self.directed_panic = false;
-                self.set_ai_state(AiState::Fleeing);
-                self.current_substate = Substate::FleeingPanic;
                 self.outbox.actor.begin_panic = Some(PanicRequest {
                     center: None,
                     runs,
@@ -1423,14 +1397,116 @@ impl AiController {
                 });
             }
             AiState::Sleeping | AiState::Wondering | AiState::Menacing | AiState::Attacking => {
-                // Scripts shouldn't invoke these directly.  Log and skip.
-                tracing::warn!(
-                    npc = self.me,
-                    ?state,
-                    "SetAIState: unsupported target state",
-                );
+                unreachable!("RHScript::SetAIState rejects {state:?} before AI dispatch")
             }
         }
+    }
+
+    /// Post-filter half of `StartThink(NO_EVENT)`. This path deliberately
+    /// reads only live owner state: building a global detection/forecast
+    /// snapshot here would consume unrelated actors' authoritative RNG.
+    pub fn start_no_event_post_filter(
+        &mut self,
+        static_ai_frozen: bool,
+        self_is_dead: bool,
+        self_is_unconscious: bool,
+    ) -> bool {
+        let stimulus = Stimulus::new(StimulusType::NoEvent);
+
+        self.couldnt_reachpoint = false;
+        self.already_on_point = false;
+        self.already_turned = false;
+        if static_ai_frozen {
+            self.register_log_line(LogLineType::EventRefused, 1);
+            return false;
+        }
+        if self.script_locked {
+            if self.remember_events {
+                self.stimulus_queue.push(stimulus);
+            }
+            self.register_log_line(LogLineType::EventRefused, 2);
+            return false;
+        }
+        if !self.locks_flag_field.is_empty() {
+            self.stimulus_queue.push(stimulus);
+            self.register_log_line(LogLineType::EventRefused, 3);
+            return false;
+        }
+        if self.current_substate == Substate::WonderingWaspInArmour {
+            self.register_log_line(LogLineType::EventRefused, 4);
+            return false;
+        }
+        if self.current_substate == Substate::WonderingUnderNet {
+            self.register_log_line(LogLineType::EventRefused, 5);
+            return false;
+        }
+        if self.current_substate == Substate::FleeingMerryManLeaveMap {
+            self.register_log_line(LogLineType::EventRefused, 6);
+            return false;
+        }
+        if self_is_unconscious {
+            self.register_log_line(LogLineType::EventRefused, 8);
+            return false;
+        }
+
+        self.standing_around_timer = 0;
+        if self.timer_is_running && self.current_substate != self.substate_at_last_timer_launch {
+            self.timer_is_running = false;
+        }
+        if self_is_dead {
+            self.register_log_line(LogLineType::EventRefused, 10);
+            return false;
+        }
+        if self.current_substate == Substate::SleepingUnconscious {
+            self.register_log_line(LogLineType::EventRefused, 11);
+            return false;
+        }
+        true
+    }
+
+    /// Context-free normal-depth `EndThink`. Returns `false` only for the
+    /// original 100.. recursion fallback, whose ReturnToDuty needs a typed
+    /// owner context.
+    pub fn end_think_completion_events(&mut self) -> bool {
+        assert!(
+            self.think_recursion_depth > 0,
+            "EndThink without StartThink"
+        );
+        let has_completion =
+            self.couldnt_reachpoint || self.already_on_point || self.already_turned;
+        if (100..111).contains(&self.think_recursion_depth) && has_completion {
+            return false;
+        }
+        if self.think_recursion_depth >= 100 {
+            self.couldnt_reachpoint = false;
+            self.already_on_point = false;
+            self.already_turned = false;
+            self.think_recursion_depth -= 1;
+            return true;
+        }
+        if self.couldnt_reachpoint {
+            self.couldnt_reachpoint = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventCouldntReachPoint);
+        }
+        if self.already_on_point {
+            self.already_on_point = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventReachPoint);
+        }
+        if self.already_turned {
+            self.already_turned = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventDone);
+        }
+        self.think_recursion_depth -= 1;
+        true
     }
 
     /// Broadcast a facing direction to every member of this NPC's patrol
@@ -3344,7 +3420,7 @@ impl AiController {
         &mut self,
         info: &StimulusInfo,
         ctx: &AiContext,
-        tick: &AiPerTickData,
+        patrol_chief_position: Position,
     ) {
         if self.patrol_chief.is_none() {
             // Can happen when stimulus was postponed on door
@@ -3366,13 +3442,13 @@ impl AiController {
             | Substate::DefaultGotoChief
             | Substate::DefaultOnPostLookingSidewards => {
                 self.stop_all();
-                self.coordinate_patrol_walk(target_pos, ctx, tick);
+                self.coordinate_patrol_walk(target_pos, ctx, patrol_chief_position);
             }
             // Already in patrol formation — just update target
             Substate::DefaultPatrolEnroute
             | Substate::DefaultPatrolEnrouteRunning
             | Substate::DefaultPatrolEnrouteWaiting => {
-                self.coordinate_patrol_walk(target_pos, ctx, tick);
+                self.coordinate_patrol_walk(target_pos, ctx, patrol_chief_position);
             }
             _ => {}
         }
@@ -3380,11 +3456,16 @@ impl AiController {
 
     /// Inner logic for coordinate_patrol — compute speed and walk/run to the
     /// assigned formation position.
-    fn coordinate_patrol_walk(&mut self, target: Position, ctx: &AiContext, tick: &AiPerTickData) {
+    fn coordinate_patrol_walk(
+        &mut self,
+        target: Position,
+        ctx: &AiContext,
+        patrol_chief_position: Position,
+    ) {
         let vec_to_point = [target.x - ctx.position.x, target.y - ctx.position.y];
         let vec_to_chief = [
-            tick.patrol_chief_position.x - ctx.position.x,
-            tick.patrol_chief_position.y - ctx.position.y,
+            patrol_chief_position.x - ctx.position.x,
+            patrol_chief_position.y - ctx.position.y,
         ];
         let distance =
             (vec_to_point[0] * vec_to_point[0] + vec_to_point[1] * vec_to_point[1]).sqrt();
@@ -3406,8 +3487,8 @@ impl AiController {
         if near_point_backwards {
             // Just turn to face the officer instead of walking backward
             self.face_position(Position {
-                x: tick.patrol_chief_position.x,
-                y: tick.patrol_chief_position.y,
+                x: patrol_chief_position.x,
+                y: patrol_chief_position.y,
                 ..ctx.position
             });
             return;

@@ -58,6 +58,85 @@ impl SequencePhase {
     }
 }
 
+impl EngineInner {
+    /// Complete the ordinary Move/Seek path translation after its destination
+    /// has been resolved. Both the regular hourglass and SetAIState's exact
+    /// owner-local native barrier use this same outcome handling.
+    fn dispatch_prepared_move_instruction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        dest: crate::coordinates::MapPoint,
+        move_action: crate::order::OrderType,
+    ) {
+        match self.try_dispatch_move_path(sim, owner, seq_id, elem_idx, dest, move_action) {
+            MovePathOutcome::Success | MovePathOutcome::Pending => {}
+            MovePathOutcome::ActorGone => {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+            }
+            MovePathOutcome::Failed => {
+                let source = self.get_entity(owner).map(|e| {
+                    let elem = e.element_data();
+                    (
+                        elem.position_map(),
+                        elem.layer(),
+                        elem.sector().map(u16::from),
+                    )
+                });
+                let movement_meta = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|elem| match &elem.data {
+                        crate::sequence::SequenceElementData::Movement {
+                            flags,
+                            line_id,
+                            gate_id,
+                            sector,
+                            layer,
+                            ..
+                        } => Some((*flags, *line_id, *gate_id, *sector, *layer)),
+                        _ => None,
+                    });
+                tracing::warn!(
+                    actor = ?owner,
+                    ?seq_id,
+                    elem_idx,
+                    dest_x = dest.x,
+                    dest_y = dest.y,
+                    src_x = source.map(|(p, _, _)| p.x),
+                    src_y = source.map(|(p, _, _)| p.y),
+                    src_layer = source.map(|(_, layer, _)| layer),
+                    src_sector = source.and_then(|(_, _, sector)| sector),
+                    elem_flags = ?movement_meta.map(|(flags, _, _, _, _)| flags),
+                    elem_line = ?movement_meta.and_then(|(_, line, _, _, _)| line),
+                    elem_gate = ?movement_meta.and_then(|(_, _, gate, _, _)| gate),
+                    elem_sector = ?movement_meta.and_then(|(_, _, _, sector, _)| sector),
+                    elem_layer = ?movement_meta.map(|(_, _, _, _, layer)| layer),
+                    action = ?move_action,
+                    frame = self.control.frame_counter,
+                    "Move path dispatch failed; queuing 100-frame failed_path timeout"
+                );
+                self.orders
+                    .failed_path_requests
+                    .push(crate::engine::movement::FailedPathRequest {
+                        owner,
+                        seq_id,
+                        elem_idx,
+                        first_fail_frame: self.control.frame_counter,
+                    });
+                self.orders
+                    .sequence_manager
+                    .element_in_progress(seq_id, elem_idx);
+            }
+        }
+    }
+}
+
 /// Whether an extracted owner-command dispatcher reaches the synchronous
 /// successor splice at the bottom of the action loop.
 ///

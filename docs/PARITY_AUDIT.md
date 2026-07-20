@@ -174,6 +174,22 @@ and remaining entity-kind
 Hourglass boundaries still have separate owners. This slice does not claim
 save/replay shape compatibility with pre-change snapshots.
 
+2026-07-20 script-native AI-state slice: accepted `SetAIState` calls now yield
+at the native instruction to a typed owner-local barrier. `SCRIPT_DRIVEN`
+uses the real Enemy/Friendly `SetState` callback-before-assignment path;
+`DEFAULT` runs ReturnToDuty synchronously; and `SEEKING`/`FLEEING` run the
+complete `StartThink(NULL, NO_EVENT)` prelude/filter/post-gates, effect, causal
+Move translation, matching `EndThink`, and recursive owner FIFO before the VM
+resumes. Panic classification occurs after the NO_EVENT callback, and speech,
+orders, condolences, and self-stimuli stabilize without forecasting unrelated
+actors. This matches `RHScript::SetAIState` (`RHScript.cpp:4274-4330`),
+`RHArtificialIntelligence::SetAIState`/`Panic`/`StartThink`
+(`RHartificialintelligence.cpp:4730-4778,2884-3035,914-1245`), and the Enemy
+and Friendly typed `SetState` callbacks (`RHartificialmalignity.cpp:9225-9272,
+9404-9406`; `RHartificialbonhomie.cpp:1185-1237`) for this focused entry path.
+It does not fuse the remaining movement/combat/NPC envelopes or complete the
+broader PA-013 Actor Hourglass ownership work described above.
+
 2026-07-19 ActionChange ordering slice: `RHElementActor::Hourglass`
 (`RHelementactor.cpp:686-721`) snapshots `GetAnimation()` and `moldAction`,
 calls the actor VM synchronously, then rereads the live animation into

@@ -3009,8 +3009,32 @@ impl EngineInner {
     pub(super) fn drain_pending_move_requests(&mut self) {
         let requests = std::mem::take(&mut self.orders.pending_move_requests);
         for (entity_id, intent) in requests {
-            self.do_launch_ai_move(entity_id, &intent);
+            let _ = self.do_launch_ai_move(entity_id, &intent);
         }
+    }
+
+    /// Launch only one owner's pending AI Move at a synchronous owner
+    /// boundary. Requests belonging to other creation slots retain their FIFO
+    /// positions for the normal tick drain.
+    pub(super) fn drain_pending_move_requests_for_owner(
+        &mut self,
+        owner: EntityId,
+    ) -> Vec<crate::sequence::SequenceId> {
+        let requests = std::mem::take(&mut self.orders.pending_move_requests);
+        let mut owner_requests = Vec::new();
+        let mut remaining = Vec::with_capacity(requests.len());
+        for request @ (entity_id, _) in requests {
+            if entity_id == owner {
+                owner_requests.push(request);
+            } else {
+                remaining.push(request);
+            }
+        }
+        self.orders.pending_move_requests = remaining;
+        owner_requests
+            .into_iter()
+            .filter_map(|(_, intent)| self.do_launch_ai_move(owner, &intent))
+            .collect()
     }
 
     /// Actually build and launch the Move sequence element for an AI
@@ -3018,7 +3042,11 @@ impl EngineInner {
     /// can be cheap (push into a Vec) and the heavier work (resolve
     /// entity state, build element, run arbitration + path) only
     /// happens once per actor per tick at drain time.
-    fn do_launch_ai_move(&mut self, entity_id: EntityId, intent: &crate::order::AiOrderIntent) {
+    fn do_launch_ai_move(
+        &mut self,
+        entity_id: EntityId,
+        intent: &crate::order::AiOrderIntent,
+    ) -> Option<crate::sequence::SequenceId> {
         let dest = crate::coordinates::MapPoint {
             x: intent.target_x,
             y: intent.target_y,
@@ -3026,7 +3054,7 @@ impl EngineInner {
         let (layer, sector) = {
             let Some(entity) = self.get_entity(entity_id) else {
                 tracing::warn!("do_launch_ai_move: entity {:?} not found", entity_id);
-                return;
+                return None;
             };
             let ed = entity.element_data();
             (ed.layer(), ed.sector())
@@ -3062,7 +3090,7 @@ impl EngineInner {
         // Use the engine wrapper so posture stamping + synchronous
         // arbitrate_instruct + generate_transition fire on the
         // standard Instruct path.
-        self.launch_element(elem);
+        let sequence_id = self.launch_element(elem);
 
         tracing::trace!(
             entity = ?entity_id,
@@ -3072,6 +3100,7 @@ impl EngineInner {
             move_flags = intent.move_flags,
             "AI movement launched via sequence element"
         );
+        Some(sequence_id)
     }
 
     /// Issue a movement order for a specific entity to a map position.

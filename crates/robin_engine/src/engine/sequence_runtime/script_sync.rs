@@ -120,7 +120,15 @@ impl EngineInner {
                     .ok_or_else(|| {
                         format!("missing synchronous owner element {sequence_id:?}/{element_index}")
                     })?;
-                if matches!(
+                if command == Command::Move {
+                    self.dispatch_synchronous_move_instruct(
+                        sim,
+                        assets,
+                        owner,
+                        sequence_id,
+                        element_index,
+                    )?;
+                } else if matches!(
                     command,
                     Command::SwordstrikeSmalltalkLeft
                         | Command::SwordstrikeSmalltalkRight
@@ -261,6 +269,85 @@ impl EngineInner {
             }
             _ => unreachable!("apply_script_user_lock received {command:?}"),
         }
+    }
+
+    /// Translate one exact plain Move using the same path/outcome pipeline as
+    /// the ordinary sequence hourglass. This is intentionally handle-based:
+    /// the native boundary must not consume older same-owner Move elements.
+    fn dispatch_synchronous_move_instruct(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) -> Result<(), crate::engine::script::ScriptDriverError> {
+        let (destination, move_action) = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement {
+                    destination,
+                    action,
+                    ..
+                } if element.command == Command::Move => Some((*destination, *action)),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                format!("synchronous Move element {sequence_id:?}/{element_index} has invalid data")
+            })?;
+
+        if self.beggar_rejects_command(owner, Command::Move) {
+            self.orders
+                .sequence_manager
+                .element_impossible(sequence_id, element_index);
+            return Ok(());
+        }
+        let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
+            entity.is_pc()
+                && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
+        });
+        if is_anonymous_archer_pc {
+            self.hero_speaking(
+                assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            self.orders
+                .sequence_manager
+                .element_impossible(sequence_id, element_index);
+            return Ok(());
+        }
+
+        let owner_sector = self
+            .get_entity(owner)
+            .and_then(|entity| entity.element_data().sector());
+        if self.sector_is_building(owner_sector) {
+            self.finalize_special_move_position(
+                assets,
+                owner,
+                super::special_motion::SpecialMovePosition::Map(destination),
+                None,
+                None,
+                Some(destination),
+                "building interior move",
+            );
+            self.orders
+                .sequence_manager
+                .element_terminated(sequence_id, element_index);
+            return Ok(());
+        }
+
+        self.dispatch_prepared_move_instruction(
+            sim,
+            owner,
+            sequence_id,
+            element_index,
+            destination,
+            move_action,
+        );
+        Ok(())
     }
 
     fn dispatch_script_immediate_engine(

@@ -466,6 +466,27 @@ fn q_iadd(dst: u16, a: u16, b: u16) -> Quad {
     }
 }
 
+fn q_ieq(dst: u16, a: u16, b: u16) -> Quad {
+    let mut ops = [0u8; 8];
+    ops[0..2].copy_from_slice(&dst.to_le_bytes());
+    ops[2..4].copy_from_slice(&a.to_le_bytes());
+    ops[4..6].copy_from_slice(&b.to_le_bytes());
+    Quad {
+        operation: Opcode::Aff2IEq as u8,
+        operands: ops,
+    }
+}
+
+fn q_if_not_zero_goto(sym: u16, addr: u32) -> Quad {
+    let mut ops = [0u8; 8];
+    ops[0..2].copy_from_slice(&sym.to_le_bytes());
+    ops[4..8].copy_from_slice(&addr.to_le_bytes());
+    Quad {
+        operation: Opcode::IfNotZeroGoto as u8,
+        operands: ops,
+    }
+}
+
 const TMP1: u16 = 0xC004;
 const TMP2: u16 = 0xC008;
 const TMP3: u16 = 0xC00C;
@@ -3472,13 +3493,33 @@ fn state_change_filter_class(
         q_aff0_iconstant(TMP3, 2),
     ]);
     quads.extend(q_set_custom(TMP2, TMP3, TMP4));
-    quads.extend([
-        q_native_param(TMP2),
-        q_native_call(crate::natives::NativeFn::GetAIAlertStatus as u32),
-        q_aff1_native_get_return(TMP4),
-        q_aff0_iconstant(TMP3, 3),
-    ]);
-    quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+    if mutate_state {
+        // Reserve slot 3 for proof that the StartThink(NO_EVENT) callback
+        // received the exact NULL source. Store source+1 only for code -2;
+        // the expected marker is therefore 1, not an ambiguous zero.
+        quads.extend([q_aff0_iconstant(TMP5, -2), q_ieq(TMP5, TMP1, TMP5)]);
+        let skip_no_event_marker = quads.len();
+        quads.push(q_if_not_zero_goto(TMP5, 0));
+        // Patch this as IfZero below once the target is known.
+        quads[skip_no_event_marker].operation = Opcode::IfZeroGoto as u8;
+        quads.extend([
+            q_aff0_iconstant(TMP5, 1),
+            q_iadd(TMP4, TMP0, TMP5),
+            q_aff0_iconstant(TMP3, 3),
+        ]);
+        quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+        let after_no_event_marker = quads.len() as u32;
+        quads[skip_no_event_marker].operands[4..8]
+            .copy_from_slice(&after_no_event_marker.to_le_bytes());
+    } else {
+        quads.extend([
+            q_native_param(TMP2),
+            q_native_call(crate::natives::NativeFn::GetAIAlertStatus as u32),
+            q_aff1_native_get_return(TMP4),
+            q_aff0_iconstant(TMP3, 3),
+        ]);
+        quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+    }
 
     // Slot 9 is a caller-seeded next-index cursor (initially 4). Record each
     // event code at that index, then increment the cursor.
@@ -3506,12 +3547,36 @@ fn state_change_filter_class(
     quads.extend(q_set_custom(TMP2, TMP3, TMP4));
 
     if mutate_state {
+        // Recurse only from the outer callback. Slot 8 is a script-visible
+        // guard so the nested Fleeing and ScriptDriven callbacks still run
+        // and record their event codes without recursing forever.
         quads.extend([
-            q_aff0_iconstant(TMP3, crate::ai::AiState::Fleeing as i32),
+            q_aff0_iconstant(TMP3, 8),
+            q_native_param(TMP2),
+            q_native_param(TMP3),
+            q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+            q_aff1_native_get_return(TMP4),
+        ]);
+        let skip_mutation = quads.len();
+        quads.push(q_if_not_zero_goto(TMP4, 0));
+        quads.push(q_aff0_iconstant(TMP4, 1));
+        quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+        quads.extend([
+            // Public AISTATE_FLEEING is 5 (the internal enum is 6).
+            q_aff0_iconstant(TMP3, 5),
             q_native_param(TMP2),
             q_native_param(TMP3),
             q_native_call(crate::natives::NativeFn::SetAIState as u32),
+            // This marker is deliberately adjacent to the native. Every
+            // nested callback copies the guard from slot 8 into slot 7. A
+            // true per-native barrier leaves slot 7 at the pre-marker value
+            // 1; an end-of-VM drain would let callbacks observe 77 instead.
+            q_aff0_iconstant(TMP4, 77),
+            q_aff0_iconstant(TMP3, 8),
         ]);
+        quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+        let after_mutation = quads.len() as u32;
+        quads[skip_mutation] = q_if_not_zero_goto(TMP4, after_mutation);
     }
     if let Some(other) = mutate_other {
         quads.extend([
@@ -3547,6 +3612,90 @@ fn state_change_filter_class(
     }
 }
 
+/// Fleeing probe whose NO_EVENT callback changes the actor to ScriptDriven.
+/// Panic must classify `is_new_panic` only after this callback returns.
+fn post_filter_panic_class(class_name: &str) -> ClassEntry {
+    let mut quads = vec![
+        q_begin_function(0, 5),
+        q_aff1_get_param(TMP0, 4),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP1),
+        q_aff0_iconstant(TMP2, 9),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP3),
+    ];
+    quads.extend(q_set_custom(TMP1, TMP3, TMP0));
+    quads.extend([q_aff0_iconstant(TMP4, 1), q_iadd(TMP3, TMP3, TMP4)]);
+    quads.extend(q_set_custom(TMP1, TMP2, TMP3));
+    quads.extend([q_aff0_iconstant(TMP2, -2), q_ieq(TMP2, TMP0, TMP2)]);
+    let skip_mutation = quads.len();
+    quads.push(q_if_not_zero_goto(TMP2, 0));
+    quads[skip_mutation].operation = Opcode::IfZeroGoto as u8;
+    quads.extend([
+        q_aff0_iconstant(TMP2, 7),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::SetAIState as u32),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::GetAIState as u32),
+        q_aff1_native_get_return(TMP3),
+        q_aff0_iconstant(TMP2, 0),
+    ]);
+    quads.extend(q_set_custom(TMP1, TMP2, TMP3));
+    let after_mutation = quads.len() as u32;
+    quads[skip_mutation].operands[4..8].copy_from_slice(&after_mutation.to_le_bytes());
+    quads.extend([
+        q_aff0_iconstant(TMP0, 1),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+
+    let run_address = quads.len() as i32;
+    quads.extend([
+        q_begin_function(0, 3),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP0),
+        q_aff0_iconstant(TMP1, 5),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::SetAIState as u32),
+        q_aff0_iconstant(TMP1, 8),
+        q_aff0_iconstant(TMP2, 77),
+    ]);
+    quads.extend(q_set_custom(TMP0, TMP1, TMP2));
+    quads.extend([q_return(), q_end_function()]);
+
+    ClassEntry {
+        source_file: "post_filter_panic_test.scs".into(),
+        class_name: class_name.into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![
+            Function {
+                name: "FilterAIEvent".into(),
+                address: 0,
+                num_parameters: 3,
+                size_of_return_value: 4,
+                size_of_parameters: 12,
+                size_of_volatile: 0,
+                size_of_temporary: 20,
+            },
+            Function {
+                name: "Run".into(),
+                address: run_address,
+                num_parameters: 0,
+                size_of_return_value: 0,
+                size_of_parameters: 0,
+                size_of_volatile: 0,
+                size_of_temporary: 12,
+            },
+        ],
+        quads,
+    }
+}
+
 fn state_change_scb(classes: Vec<ClassEntry>) -> ScbFile {
     let mut all = vec![ClassEntry {
         source_file: "state_change_test.scs".into(),
@@ -3560,6 +3709,109 @@ fn state_change_scb(classes: Vec<ClassEntry>) -> ScbFile {
     ScbFile {
         version: crate::scb::SCB_VERSION,
         classes: all,
+    }
+}
+
+/// Real SCB class with a `Run` method that invokes SetAIState and immediately
+/// snapshots the callback marker, AI state, and live sequence action. The
+/// instruction adjacency is intentional: an end-of-VM drain leaves these
+/// three observations stale.
+fn ai_state_native_probe_class(
+    class_name: &str,
+    public_state: i32,
+    filter_return: i32,
+) -> ClassEntry {
+    let mut quads = vec![
+        q_begin_function(0, 3),
+        q_aff1_get_param(TMP0, 4),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP1),
+        q_aff0_iconstant(TMP2, 0),
+    ];
+    quads.extend(q_set_custom(TMP1, TMP2, TMP0));
+    // Preserve callback FIFO independently from slot 0, which intentionally
+    // tracks only the last callback. Bind fixtures seed slot 9 to 4.
+    quads.extend([
+        q_aff0_iconstant(TMP2, 9),
+        q_native_param(TMP1),
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP2),
+    ]);
+    quads.extend(q_set_custom(TMP1, TMP2, TMP0));
+    quads.extend([
+        q_aff0_iconstant(TMP0, 1),
+        q_iadd(TMP2, TMP2, TMP0),
+        q_aff0_iconstant(TMP0, 9),
+    ]);
+    quads.extend(q_set_custom(TMP1, TMP0, TMP2));
+    quads.extend([
+        q_aff0_iconstant(TMP0, filter_return),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+    let run_address = quads.len() as i32;
+    quads.extend([
+        q_begin_function(0, 4),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP0),
+        q_aff0_iconstant(TMP1, public_state),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::SetAIState as u32),
+        // Adjacent observation 1: last state/NO_EVENT callback code.
+        q_aff0_iconstant(TMP1, 0),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP2),
+        q_aff0_iconstant(TMP1, 1),
+    ]);
+    quads.extend(q_set_custom(TMP0, TMP1, TMP2));
+    quads.extend([
+        // Adjacent observation 2: committed typed state.
+        q_native_param(TMP0),
+        q_native_call(crate::natives::NativeFn::GetAIState as u32),
+        q_aff1_native_get_return(TMP2),
+        q_aff0_iconstant(TMP1, 2),
+    ]);
+    quads.extend(q_set_custom(TMP0, TMP1, TMP2));
+    quads.extend([
+        // Adjacent observation 3: live SequenceManager order.
+        q_native_param(TMP0),
+        q_native_call(crate::natives::NativeFn::GetCurrentAction as u32),
+        q_aff1_native_get_return(TMP2),
+        q_aff0_iconstant(TMP1, 3),
+    ]);
+    quads.extend(q_set_custom(TMP0, TMP1, TMP2));
+    quads.extend([q_return(), q_end_function()]);
+
+    ClassEntry {
+        source_file: "ai_state_native_probe.scs".into(),
+        class_name: class_name.into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![
+            Function {
+                name: "FilterAIEvent".into(),
+                address: 0,
+                num_parameters: 3,
+                size_of_return_value: 4,
+                size_of_parameters: 12,
+                size_of_volatile: 0,
+                size_of_temporary: 12,
+            },
+            Function {
+                name: "Run".into(),
+                address: run_address,
+                num_parameters: 0,
+                size_of_return_value: 0,
+                size_of_parameters: 0,
+                size_of_volatile: 0,
+                size_of_temporary: 16,
+            },
+        ],
+        quads,
     }
 }
 
@@ -3615,15 +3867,659 @@ fn npc_custom_values(engine: &EngineInner, actor: EntityId) -> [i32; 10] {
         .custom_values
 }
 
+fn run_ai_state_native_probe(engine: &mut EngineInner, assets: &LevelAssets, actor: EntityId) {
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            assets,
+            crate::engine::ScriptVmKey::Actor(handle),
+            "Run",
+            &[],
+            crate::natives::ScriptCallFrame::actor(handle),
+        )
+        .expect("real SCB SetAIState probe completes");
+}
+
+fn setup_ai_state_native_probe(
+    class_name: &str,
+    public_state: i32,
+) -> (EngineInner, LevelAssets, EntityId) {
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(class_name));
+    let mut assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![ai_state_native_probe_class(
+            class_name,
+            public_state,
+            1,
+        )]),
+    );
+    {
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.hth_weapons.push(Default::default());
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            profile_name: format!("{class_name}-profile"),
+            exclamation_id: 501,
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+    }
+    bind_state_change_actor(&mut engine, actor, class_name);
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .hth_weapon_id = 1;
+
+    let seek_sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    let element = engine
+        .world
+        .entities
+        .get_mut(actor)
+        .unwrap()
+        .element_data_mut();
+    element.set_position(WorldPoint3D::new(100.0, 100.0, 0.0));
+    element.set_layer(0);
+    element.set_sector(Some(seek_sector));
+    element
+        .sprite
+        .position_iface
+        .set_move_box(crate::coordinates::MoveBox::from_corners(
+            crate::coordinates::MapVec::new(-2.0, -2.0),
+            crate::coordinates::MapVec::new(2.0, 2.0),
+        ));
+    engine.ai.global.seek_points.push(crate::ai::SeekPoint {
+        position: crate::ai::Position {
+            x: 200.0,
+            y: 100.0,
+            sector: Some(seek_sector),
+            level: 0,
+        },
+        frame_when_full_interest: 0,
+        directions: vec![0],
+        last_calculated_interest: 100,
+        locked: false,
+        id: 0,
+    });
+    (engine, assets, actor)
+}
+
+fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) {
+    use crate::element::ActiveDoorPass;
+    use crate::fast_find_grid::GridSector;
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::sector::{SectorNumber, SectorType};
+    use std::collections::VecDeque;
+
+    let door_actor = engine.add_entity(make_pc(true));
+    let Entity::Pc(pc) = engine
+        .world
+        .entities
+        .get_mut(door_actor)
+        .expect("unrelated door-passing actor exists")
+    else {
+        panic!("unrelated door-passing actor changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
+    pc.actor.active_door_pass = Some(ActiveDoorPass {
+        door_index: DoorIndex(0),
+        direct: true,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::default(),
+        current_reverse: false,
+        saved_action_state: None,
+    });
+
+    let building_sector = SectorNumber::new(8);
+    engine.script_domains.interactables.doors = vec![
+        Door {
+            door_type: DoorType::Building,
+            sector_out: SectorNumber::new(7),
+            sector_in: building_sector,
+            point_out: crate::coordinates::MapPoint::new(0.0, 0.0),
+            point_in: crate::coordinates::MapPoint::new(10.0, 0.0),
+            ..Door::default()
+        },
+        Door {
+            door_type: DoorType::Building,
+            sector_out: SectorNumber::new(9),
+            sector_in: building_sector,
+            point_out: crate::coordinates::MapPoint::new(100.0, 0.0),
+            point_in: crate::coordinates::MapPoint::new(90.0, 0.0),
+            ..Door::default()
+        },
+    ];
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+    level.sector_number_map.insert(building_sector, 0);
+    level.sectors.push(GridSector {
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type: SectorType::BUILDING,
+        layer: 0,
+        sector_number: building_sector,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+}
+
+#[test]
+fn script_native_state_effects_stabilize_before_adjacent_instruction() {
+    let mut engine = EngineInner::new();
+    let script_driven = engine.add_entity(make_scripted_soldier("ScriptDrivenProbe"));
+    let seeking = engine.add_entity(make_scripted_soldier("SeekingProbe"));
+    let seeking_filter_zero = engine.add_entity(make_scripted_soldier("SeekingFilterZero"));
+    let seeking_at_point = engine.add_entity(make_scripted_soldier("SeekingAtPoint"));
+    let default = engine.add_entity(make_scripted_soldier("DefaultProbe"));
+    let mut assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![
+            ai_state_native_probe_class("ScriptDrivenProbe", 7, 1),
+            ai_state_native_probe_class("SeekingProbe", 3, 1),
+            ai_state_native_probe_class("SeekingFilterZero", 3, 0),
+            ai_state_native_probe_class("SeekingAtPoint", 3, 1),
+            ai_state_native_probe_class("DefaultProbe", 1, 1),
+        ]),
+    );
+    {
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.hth_weapons.push(Default::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            profile_name: "native-probe".into(),
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+    }
+    for (actor, class_name) in [
+        (script_driven, "ScriptDrivenProbe"),
+        (seeking, "SeekingProbe"),
+        (seeking_filter_zero, "SeekingFilterZero"),
+        (seeking_at_point, "SeekingAtPoint"),
+        (default, "DefaultProbe"),
+    ] {
+        bind_state_change_actor(&mut engine, actor, class_name);
+        engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+    }
+    let seek_sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    for (actor, x) in [
+        (seeking, 100.0),
+        (seeking_filter_zero, 110.0),
+        (seeking_at_point, 198.0),
+    ] {
+        let element = engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .element_data_mut();
+        element.set_position(WorldPoint3D::new(x, 100.0, 0.0));
+        element.set_layer(0);
+        element.set_sector(Some(seek_sector));
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-2.0, -2.0),
+                crate::coordinates::MapVec::new(2.0, 2.0),
+            ));
+        if actor == seeking_at_point {
+            engine
+                .world
+                .entities
+                .get_mut(actor)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap()
+                .old_action = crate::order::OrderType::WaitingUpright;
+        }
+    }
+    engine.ai.global.seek_points.push(crate::ai::SeekPoint {
+        position: crate::ai::Position {
+            x: 200.0,
+            y: 100.0,
+            sector: Some(seek_sector),
+            level: 0,
+        },
+        frame_when_full_interest: 0,
+        directions: vec![0],
+        last_calculated_interest: 100,
+        locked: false,
+        id: 0,
+    });
+    engine
+        .world
+        .entities
+        .get_mut(default)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .set_state(
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingJustWatching,
+        );
+    engine.drain_ai_state_change_notifications_for(
+        &crate::sim_rng::test_context(),
+        &assets,
+        default,
+    );
+    engine
+        .world
+        .entities
+        .get_mut(default)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .custom_values = [0; 10];
+
+    run_ai_state_native_probe(&mut engine, &assets, script_driven);
+    assert_eq!(
+        &npc_custom_values(&engine, script_driven)[0..3],
+        &[101, 101, 1],
+        "ScriptDriven callback and real typed assignment precede the next instruction"
+    );
+
+    run_ai_state_native_probe(&mut engine, &assets, seeking);
+    let seeking_values = npc_custom_values(&engine, seeking);
+    assert_eq!(&seeking_values[0..3], &[103, 103, 3]);
+    assert_eq!(
+        seeking_values[3],
+        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
+        "SeekArea translates its GoTo transition before VM resumption"
+    );
+
+    engine.ai.global.seek_points[0].locked = false;
+    run_ai_state_native_probe(&mut engine, &assets, seeking_filter_zero);
+    let zero_values = npc_custom_values(&engine, seeking_filter_zero);
+    assert_eq!(&zero_values[0..3], &[103, 103, 3]);
+    assert_eq!(
+        zero_values[3],
+        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
+        "FilterAIEvent returning zero still allows SetAIState's SeekArea effect"
+    );
+
+    engine.ai.global.seek_points[0].locked = false;
+    run_ai_state_native_probe(&mut engine, &assets, seeking_at_point);
+    let at_point_values = npc_custom_values(&engine, seeking_at_point);
+    assert_eq!(
+        &at_point_values[4..8],
+        &[-2, 103, 3, 103],
+        "EndThink dispatches AI_EVENT_REACHPOINT before its recursive SeekNextPoint state callback"
+    );
+    assert_eq!(
+        at_point_values[0], 103,
+        "the complete recursive fixed point settles before the native-adjacent instruction"
+    );
+    let at_point_ai = engine
+        .world
+        .entities
+        .get(seeking_at_point)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert!(!at_point_ai.already_on_point);
+    assert_eq!(at_point_ai.think_recursion_depth, 0);
+
+    run_ai_state_native_probe(&mut engine, &assets, default);
+    assert_eq!(
+        &npc_custom_values(&engine, default)[0..3],
+        &[4, 4, 1],
+        "Think(EVENT_RETURN_TO_DUTY) is the synchronous callback and commits Default"
+    );
+}
+
+#[test]
+fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_move() {
+    let (mut engine, assets, actor) = setup_ai_state_native_probe("MoveSentinelProbe", 3);
+    let pending =
+        crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 333.0, 444.0);
+    engine.orders.pending_move_requests.push((actor, pending));
+
+    let mut deferred = crate::sequence::SequenceElement::new_movement(
+        1,
+        crate::element::Command::Move,
+        Some(actor),
+        crate::order::OrderType::WalkingWithSword,
+    );
+    let deferred_destination = crate::coordinates::MapPoint::new(555.0, 666.0);
+    let crate::sequence::SequenceElementData::Movement { destination, .. } = &mut deferred.data
+    else {
+        unreachable!("new_movement must construct movement data")
+    };
+    *destination = deferred_destination;
+    let deferred_sequence = engine.orders.sequence_manager.launch_element(deferred);
+
+    run_ai_state_native_probe(&mut engine, &assets, actor);
+
+    assert_eq!(
+        npc_custom_values(&engine, actor)[3],
+        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
+        "the causal SeekArea Move translates before VM resumption"
+    );
+    assert!(
+        engine.orders.pending_move_requests.is_empty(),
+        "StopAll/Halt cancels the older pre-sequence Move intent before SeekArea queues its causal Move"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(actor)
+                    && matches!(
+                        &element.data,
+                        crate::sequence::SequenceElementData::Movement { destination, .. }
+                            if *destination == crate::coordinates::MapPoint::new(333.0, 444.0)
+                    )
+            }),
+        "the stale pending 333/444 intent must be dropped at Halt, never translated before the causal Move"
+    );
+
+    let deferred_after = engine
+        .orders
+        .sequence_manager
+        .get_element(deferred_sequence, 0)
+        .expect("stopped deferred Move remains inspectable until sequence cleanup");
+    assert_eq!(deferred_after.command, crate::element::Command::Move);
+    assert_eq!(
+        deferred_after.state,
+        crate::sequence::SequenceState::Interrupted,
+        "Original Stop(PREFERENCE) intentionally interrupts the older deferred Move"
+    );
+    let crate::sequence::SequenceElementData::Movement {
+        destination,
+        action,
+        ..
+    } = &deferred_after.data
+    else {
+        panic!("pre-existing deferred Move changed data kind")
+    };
+    assert_eq!(*destination, deferred_destination);
+    assert_eq!(*action, crate::order::OrderType::WalkingWithSword);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .hourglass()
+            .iter()
+            .any(|action| {
+                matches!(
+                    action,
+                    crate::sequence::SequenceAction::InstructOwner {
+                        owner,
+                        sequence_id,
+                        element_index: 0,
+                    } if *owner == actor && *sequence_id == deferred_sequence
+                )
+            }),
+        "the stopped old Move must not be mistaken for the exact causal sequence ID"
+    );
+}
+
+#[test]
+fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng() {
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut seeking_engine, seeking_assets, seeking) =
+        setup_ai_state_native_probe("SeekingRngProbe", 3);
+    install_unrelated_multi_exit_building_actor(&mut seeking_engine);
+    {
+        let entity = seeking_engine.world.entities.get_mut(seeking).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
+        entity.actor_data_mut().unwrap().old_action = crate::order::OrderType::WaitingUpright;
+    }
+    let (_, control_trace) = with_draw_trace(|| {
+        drop(seeking_engine.build_sim_scratch(&sim, &seeking_assets));
+    });
+    assert!(
+        control_trace.contains(&RngSite::BuildingExitGate),
+        "the unrelated multi-exit fixture must exercise BuildingExitGate under global forecasting"
+    );
+    let (_, seeking_trace) = with_draw_trace(|| {
+        run_ai_state_native_probe(&mut seeking_engine, &seeking_assets, seeking);
+    });
+    assert!(
+        !seeking_trace.contains(&RngSite::BuildingExitGate),
+        "Seeking, including at-point EndThink recursion, must remain owner-local and forecast-free"
+    );
+    assert_eq!(
+        &npc_custom_values(&seeking_engine, seeking)[4..8],
+        &[-2, 103, 3, 103],
+        "the RNG-free recursive drain must still invoke FilterAIEvent for EventReachPoint"
+    );
+    let seeking_ai = seeking_engine
+        .world
+        .entities
+        .get(seeking)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert!(!seeking_ai.already_on_point);
+    assert_eq!(seeking_ai.think_recursion_depth, 0);
+
+    let (mut fleeing_engine, fleeing_assets, fleeing) =
+        setup_ai_state_native_probe("FleeingRngProbe", 5);
+    install_unrelated_multi_exit_building_actor(&mut fleeing_engine);
+    let (_, fleeing_trace) = with_draw_trace(|| {
+        run_ai_state_native_probe(&mut fleeing_engine, &fleeing_assets, fleeing);
+    });
+    assert!(
+        !fleeing_trace.contains(&RngSite::BuildingExitGate),
+        "Fleeing/Panic must not forecast an unrelated building actor"
+    );
+}
+
+#[test]
+#[should_panic(expected = "accepted SetAIState soldier 268435456 requires Enemy AI")]
+fn malformed_soldier_with_friendly_brain_fails_set_ai_state_contextually() {
+    let (mut engine, assets, actor) = setup_ai_state_native_probe("MalformedBrainProbe", 3);
+    let Entity::Soldier(soldier) = engine.world.entities.get_mut(actor).unwrap() else {
+        unreachable!("probe actor changed kind")
+    };
+    soldier.npc.ai_brain = AiBrain::Friendly(Box::default());
+
+    run_ai_state_native_probe(&mut engine, &assets, actor);
+}
+
+#[test]
+fn fleeing_panic_classification_occurs_after_no_event_callback_mutation() {
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier("PostFilterPanicProbe"));
+    let mut assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![post_filter_panic_class("PostFilterPanicProbe")]),
+    );
+    {
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.hth_weapons.push(Default::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            profile_name: "post-filter-panic".into(),
+            exclamation_id: 501,
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+    }
+    bind_state_change_actor(&mut engine, actor, "PostFilterPanicProbe");
+    engine.world.fast_grid.size_map(64, 64);
+    engine.world.fast_grid.allocate_layers(1);
+    let sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    {
+        let element = engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .element_data_mut();
+        // Keep every randomized panic segment inside a real, obstacle-free
+        // grid. Otherwise the fixture exercises the 111-call failed-path
+        // recursion fallback and ReturnToDuty instead of isolating the
+        // post-filter SetState commit.
+        element.set_position(WorldPoint3D::new(1000.0, 1000.0, 0.0));
+        element.set_layer(0);
+        element.set_sector(Some(sector));
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-2.0, -2.0),
+                crate::coordinates::MapVec::new(2.0, 2.0),
+            ));
+    }
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.hth_weapon_id = 1;
+        ai.base.current_state = crate::ai::AiState::Fleeing;
+        ai.base.current_substate = crate::ai::Substate::FleeingPanic;
+        ai.base.current_remark = crate::ai::Remark::TheSoundOfSilence;
+    }
+
+    run_ai_state_native_probe(&mut engine, &assets, actor);
+
+    let values = npc_custom_values(&engine, actor);
+    assert_eq!(
+        &values[4..7],
+        &[-2, 101, 106],
+        "NO_EVENT callback mutates to ScriptDriven before Panic classifies and emits its state callback"
+    );
+    assert_eq!(
+        values[0], 1,
+        "the NO_EVENT callback observes nested ScriptDriven committed before it returns"
+    );
+    assert_eq!(values[8], 77, "the adjacent instruction runs last");
+    let ai = engine
+        .world
+        .entities
+        .get(actor)
+        .unwrap()
+        .enemy_ai()
+        .unwrap();
+    assert_eq!(ai.base.current_state, crate::ai::AiState::Fleeing);
+    assert_eq!(ai.base.current_substate, crate::ai::Substate::FleeingPanic);
+    assert_eq!(
+        ai.base.current_remark,
+        crate::ai::Remark::Panic,
+        "post-callback ScriptDriven state makes this a new panic with synchronous speech"
+    );
+    assert_eq!(ai.base.think_recursion_depth, 0);
+}
+
+#[test]
+fn set_ai_state_ignores_start_think_freeze_script_lock_and_ai_lock_results() {
+    for (class_name, refusal, configure) in [
+        ("StaticFreezeProbe", 1, 0_u8),
+        ("ScriptLockProbe", 2, 1_u8),
+        ("AiLockProbe", 3, 2_u8),
+    ] {
+        let (mut engine, assets, actor) = setup_ai_state_native_probe(class_name, 3);
+        match configure {
+            0 => engine.ai.global.freeze = true,
+            1 => {
+                let ai = engine
+                    .world
+                    .entities
+                    .get_mut(actor)
+                    .unwrap()
+                    .ai_controller_mut()
+                    .unwrap();
+                ai.script_locked = true;
+                ai.remember_events = true;
+            }
+            2 => {
+                engine
+                    .world
+                    .entities
+                    .get_mut(actor)
+                    .unwrap()
+                    .ai_controller_mut()
+                    .unwrap()
+                    .locks_flag_field = crate::ai::AiLockFlags::FREEZE;
+            }
+            _ => unreachable!(),
+        }
+
+        run_ai_state_native_probe(&mut engine, &assets, actor);
+
+        let values = npc_custom_values(&engine, actor);
+        assert_eq!(
+            values[4], -2,
+            "{class_name} must run FilterAIEvent(NULL, NO_EVENT) before its post-filter gate"
+        );
+        let ai = engine
+            .world
+            .entities
+            .get(actor)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
+        assert_eq!(ai.think_recursion_depth, 0);
+        assert!(ai.ai_log.iter().any(|line| {
+            line.line_type == crate::ai::LogLineType::EventRefused && line.info == refusal
+        }));
+    }
+}
+
 #[test]
 fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero() {
     let mut engine = EngineInner::new();
     let enemy = engine.add_entity(make_scripted_soldier("StateMutator"));
-    let enemy_handle = crate::natives::ScriptHandleCodec::actor_handle(enemy);
-    let assets = install_state_change_script(
+    let mut assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![state_change_filter_class("StateMutator", true, None)]),
     );
+    {
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles.hth_weapons.push(Default::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            profile_name: "state-mutator".into(),
+            exclamation_id: 501,
+            hth_weapon_id: 1,
+            ..Default::default()
+        });
+    }
+    engine
+        .world
+        .entities
+        .get_mut(enemy)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .hth_weapon_id = 1;
     bind_state_change_actor(&mut engine, enemy, "StateMutator");
 
     engine
@@ -3640,11 +4536,21 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
     engine.drain_ai_state_change_notifications_for(&crate::sim_rng::test_context(), &assets, enemy);
 
     let values = npc_custom_values(&engine, enemy);
-    assert_eq!(values[0], enemy_handle, "Seeking source is ThisActor");
-    assert_eq!(values[1], 103);
-    assert_eq!(values[2], crate::ai::AiState::Default.to_script_code());
-    assert_eq!(values[4], 103, "the first FIFO slot records Seeking");
-    assert_eq!(values[9], 5, "exactly one callback ran");
+    assert_eq!(
+        &values[4..7],
+        &[103, -2, 106],
+        "outer callback, synchronous NULL/-2 prelude, then Panic state callback"
+    );
+    assert_eq!(
+        values[7], 1,
+        "nested callbacks complete before the adjacent instruction writes its marker"
+    );
+    assert_eq!(
+        values[8], 77,
+        "adjacent instruction ran after stabilization"
+    );
+    assert_eq!(values[3], 1, "NO_EVENT callback source was exactly NULL");
+    assert_eq!(values[9], 8, "four callbacks ran recursively");
     let ai = engine
         .world
         .entities
@@ -3657,11 +4563,27 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         ai.base.current_substate,
         crate::ai::Substate::SeekingHeardsteps
     );
-    assert!(
-        ai.base.outbox.actor.begin_panic.is_some(),
-        "callback SetAIState mutation remains queued while outer incoming state wins"
+    assert_eq!(ai.base.current_remark, crate::ai::Remark::Panic);
+    assert_eq!(
+        ai.base.think_recursion_depth, 0,
+        "nested StartThink/EndThink brackets balance before the outer callback resumes"
     );
+    assert!(ai.base.outbox.actor.begin_panic.is_none());
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+    let speak = ai
+        .base
+        .ai_log
+        .iter()
+        .position(|line| {
+            line.line_type == crate::ai::LogLineType::Speak
+                && line.info == crate::ai::Remark::Panic as u16
+        })
+        .expect("Panic Say settles at the nested native boundary");
+    assert_eq!(
+        ai.base.ai_log[speak].info,
+        crate::ai::Remark::Panic as u16,
+        "Panic Say settled at its exact merged owner-FIFO boundary"
+    );
 }
 
 #[test]

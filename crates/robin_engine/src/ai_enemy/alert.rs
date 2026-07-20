@@ -942,7 +942,12 @@ impl EnemyAi {
         let officer_handle = officer.handle;
         // nearest_officer.ForecastDestinationForIA(...)
         // — head to where the officer will be, not where they are now.
-        let officer_target_pos = officer.forecast_destination;
+        let officer_target_pos = officer.forecast_destination.unwrap_or_else(|| {
+            panic!(
+                "AlertOfficer selected soldier {} without a required destination forecast",
+                officer.handle
+            )
+        });
 
         self.current_task_priority = task_priority::ALERT;
         self.base.antagonist = officer_handle;

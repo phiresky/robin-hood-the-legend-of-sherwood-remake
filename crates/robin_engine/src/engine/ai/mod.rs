@@ -910,6 +910,17 @@ pub(super) fn build_entity_views(
     sim: &crate::sim_rng::SimulationContext,
     engine: &EngineInner,
 ) -> AiEntityViewMap {
+    build_entity_views_inner(Some(sim), engine)
+}
+
+fn build_entity_views_without_forecast(engine: &EngineInner) -> AiEntityViewMap {
+    build_entity_views_inner(None, engine)
+}
+
+fn build_entity_views_inner(
+    sim: Option<&crate::sim_rng::SimulationContext>,
+    engine: &EngineInner,
+) -> AiEntityViewMap {
     // Scratch views are also built by empty/pre-script engine fixtures.  Door
     // state is intentionally unavailable during that phase; `init_ai` emits a
     // warning when a real level reaches AI initialization without a script.
@@ -1020,7 +1031,8 @@ pub(super) fn build_entity_views(
         if matches!(
             entity,
             Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-        ) && let Some(input) = extract_forecast_input(entity)
+        ) && let Some(sim) = sim
+            && let Some(input) = extract_forecast_input(entity)
         {
             let forecast = crate::ai::forecast_destination_for_ia(
                 sim,
@@ -1064,6 +1076,13 @@ impl EngineInner {
         scratch
     }
 
+    fn build_owner_context_scratch_without_forecast(&self, assets: &LevelAssets) -> SimScratch {
+        SimScratch {
+            ai_entity_views: std::sync::Arc::new(build_entity_views_without_forecast(self)),
+            ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
+        }
+    }
+
     /// Build a per-NPC [`AiPerTickData`] snapshot on demand, outside
     /// the main detection pass.
     ///
@@ -1104,7 +1123,7 @@ impl EngineInner {
         scratch: &SimScratch,
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
-        self.build_npc_tick_data_for_target(sim, npc_id, scratch, assets, None)
+        self.build_npc_tick_data_for_target_mode(sim, npc_id, scratch, assets, None, true)
     }
 
     pub(super) fn build_npc_tick_data_for_target(
@@ -1114,6 +1133,105 @@ impl EngineInner {
         scratch: &SimScratch,
         assets: &LevelAssets,
         target_override: Option<crate::element::EntityId>,
+    ) -> crate::ai::AiPerTickData {
+        self.build_npc_tick_data_for_target_mode(
+            sim,
+            npc_id,
+            scratch,
+            assets,
+            target_override,
+            true,
+        )
+    }
+
+    fn build_npc_tick_data_without_forecasts(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> crate::ai::AiPerTickData {
+        match self.world.entities.get(npc_id) {
+            Some(Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some() => {}
+            Some(Entity::Soldier(_)) => panic!(
+                "owner-local tick context owner {} requires Enemy AI",
+                npc_id.index()
+            ),
+            Some(other) => panic!(
+                "owner-local tick context owner {} has invalid entity kind {:?}",
+                npc_id.index(),
+                other.element_data().kind
+            ),
+            None => panic!(
+                "owner-local tick context owner {} disappeared",
+                npc_id.index()
+            ),
+        }
+        self.build_npc_tick_data_for_target_mode(sim, npc_id, scratch, assets, None, false)
+    }
+
+    /// Build the typed live value consumed by Friendly AI. The narrow type
+    /// has no stub/default fields for future handlers to read accidentally.
+    pub(super) fn build_friendly_tick_data_without_forecasts(
+        &self,
+        npc_id: crate::element::EntityId,
+    ) -> crate::ai_friendly::FriendlyPerTickData {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "owner-local friendly tick context owner {} disappeared",
+                npc_id.index()
+            )
+        });
+        let Entity::Civilian(civilian) = entity else {
+            panic!(
+                "owner-local friendly tick context owner {} is not a Civilian",
+                npc_id.index()
+            )
+        };
+        let ai = civilian.npc.ai_brain.friendly().unwrap_or_else(|| {
+            panic!(
+                "owner-local friendly tick context owner {} requires Friendly AI",
+                npc_id.index()
+            )
+        });
+
+        if let Some(chief_id) = ai.base.patrol_chief {
+            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
+                panic!(
+                    "owner-local friendly tick context owner {} has stale patrol chief {}",
+                    npc_id.index(),
+                    chief_id.index()
+                )
+            });
+            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
+                panic!(
+                    "owner-local friendly tick context patrol chief {} has no AI",
+                    chief_id.index()
+                )
+            });
+            let point = chief.element_data().position_map();
+            crate::ai_friendly::FriendlyPerTickData::with_patrol_chief(
+                crate::ai::Position {
+                    x: point.x,
+                    y: point.y,
+                    sector: chief.element_data().sector(),
+                    level: chief.element_data().layer(),
+                },
+                chief_ai.current_state,
+            )
+        } else {
+            crate::ai_friendly::FriendlyPerTickData::without_patrol_chief()
+        }
+    }
+
+    fn build_npc_tick_data_for_target_mode(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+        target_override: Option<crate::element::EntityId>,
+        build_forecasts: bool,
     ) -> crate::ai::AiPerTickData {
         use crate::ai::AiPerTickData;
 
@@ -1152,8 +1270,10 @@ impl EngineInner {
 
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
-        tick.camp_soldiers = self.build_camp_soldier_tick_infos(sim, npc_id, my_camp, scratch);
-        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
+        tick.camp_soldiers =
+            self.build_camp_soldier_tick_infos(sim, npc_id, my_camp, scratch, build_forecasts);
+        if build_forecasts
+            && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
             && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
             && let Some(missed_entity) = self.world.entities.get(missed_id)
@@ -1226,7 +1346,8 @@ impl EngineInner {
         // primary_target_is_pc: look up the target's entity variant.
         tick.primary_target_is_pc =
             matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
-        if let Some(target_entity) = self.world.entities.get(target_id)
+        if build_forecasts
+            && let Some(target_entity) = self.world.entities.get(target_id)
             && let Some(input) = extract_forecast_input(target_entity)
         {
             let doors = self.script_domains.interactables.doors.as_slice();
@@ -1423,6 +1544,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
         scratch: &SimScratch,
+        forecast_destinations: bool,
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
         // Snapshot the ticking NPC (the brawler / self) once so each
         // officer's `is_detecting_cone` cache below evaluates
@@ -1457,7 +1579,7 @@ impl EngineInner {
                 continue;
             };
             let in_building = self.entity_data_inside_building(&s.element);
-            let forecast_destination = {
+            let forecast_destination = if forecast_destinations {
                 // Missing scripts are a recoverable developer-data load path;
                 // `init_ai` warns once before these per-NPC snapshots are built.
                 let doors = self
@@ -1486,14 +1608,18 @@ impl EngineInner {
                         .z,
                     door_pass,
                 };
-                crate::ai::forecast_destination_for_ia(
-                    sim,
-                    &input,
-                    doors,
-                    &self.world.fast_grid.level.sectors,
-                    &self.world.fast_grid.level.sector_number_map,
+                Some(
+                    crate::ai::forecast_destination_for_ia(
+                        sim,
+                        &input,
+                        doors,
+                        &self.world.fast_grid.level.sectors,
+                        &self.world.fast_grid.level.sector_number_map,
+                    )
+                    .position,
                 )
-                .position
+            } else {
+                None
             };
             let position = s.element.position_map();
             // Snapshot the soldier's `DETECTABLE_BODY` list — handles of
@@ -4640,9 +4766,19 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        self.drain_pending_for_npc_mode(sim, npc_id, assets, false);
+    }
+
+    fn drain_pending_for_npc_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+    ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for(sim, assets, npc_id);
+        self.drain_ai_owner_work_for_mode(sim, assets, npc_id, owner_local_no_forecast);
 
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
@@ -5714,7 +5850,7 @@ impl EngineInner {
             .and_then(Entity::ai_controller)
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let entity = self
                 .world
                 .entities
@@ -5747,7 +5883,7 @@ impl EngineInner {
         if has_panic_seek_fallback {
             // BeginPanic above can mutate the owner and world; do not reuse
             // its context snapshot at this later synchronous boundary.
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let entity = self
                 .world
                 .entities
@@ -5790,7 +5926,7 @@ impl EngineInner {
             // The panic boundaries above may have synchronously changed the
             // world. Script SeekArea gets a fresh owner snapshot and tick
             // data at its own Original call boundary.
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let entity = self
                 .world
                 .entities
@@ -5811,8 +5947,9 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
-            let tick_for_seek = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-            self.process_pending_script_seek_area_for(sim, npc_id, &ctx, &tick_for_seek);
+            let tick_for_seek =
+                self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            self.process_pending_script_seek_area_for(sim, assets, npc_id, &ctx, &tick_for_seek);
         }
     }
 
@@ -6418,6 +6555,13 @@ impl EngineInner {
                     .say(crate::ai::Remark::CivPanic);
                 self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
+            self.set_typed_npc_state(
+                npc_id,
+                crate::ai::AiState::Fleeing,
+                crate::ai::Substate::FleeingRunToDoor,
+                "Panic door entry",
+            );
+            self.drain_ai_owner_work_for(sim, assets, npc_id);
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                 panic!(
                     "panic owner {} disappeared before state tail",
@@ -6427,8 +6571,6 @@ impl EngineInner {
             let ai = entity.ai_controller_mut().unwrap_or_else(|| {
                 panic!("panic owner {} lost AI before state tail", npc_id.index())
             });
-            ai.set_ai_state(crate::ai::AiState::Fleeing);
-            ai.current_substate = crate::ai::Substate::FleeingRunToDoor;
             ai.set_alert_status(request.alert);
             ai.lasting_panic_runs = 0;
             ai.go_to(door_in, crate::ai::GotoFlags::RUN, ctx);
@@ -6582,19 +6724,22 @@ impl EngineInner {
 
         if is_new_panic {
             // New panic — full side-effect set.
-            let ai = self
-                .world
+            self.set_typed_npc_state(
+                npc_id,
+                crate::ai::AiState::Fleeing,
+                crate::ai::Substate::FleeingPanic,
+                "Panic run entry",
+            );
+            self.world
                 .entities
                 .get_mut(npc_id)
                 .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
-            ai.set_ai_state(crate::ai::AiState::Fleeing);
-            ai.current_substate = crate::ai::Substate::FleeingPanic;
-            ai.say(if is_civilian {
-                crate::ai::Remark::CivPanic
-            } else {
-                crate::ai::Remark::Panic
-            });
+                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()))
+                .say(if is_civilian {
+                    crate::ai::Remark::CivPanic
+                } else {
+                    crate::ai::Remark::Panic
+                });
             self.drain_ai_owner_work_for(sim, assets, npc_id);
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                 panic!("panic owner {} disappeared after speech", npc_id.index())
@@ -6622,6 +6767,209 @@ impl EngineInner {
         }
     }
 
+    /// Enter a virtual Enemy/Friendly `SetState` call after releasing the
+    /// engine's prior controller borrow. Required callers must not degrade a
+    /// missing owner or mismatched brain into a silent no-op.
+    pub(super) fn set_typed_npc_state(
+        &mut self,
+        npc_id: EntityId,
+        state: crate::ai::AiState,
+        substate: crate::ai::Substate,
+        context: &'static str,
+    ) {
+        match self.world.entities.get_mut(npc_id) {
+            Some(Entity::Soldier(s)) => s
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .unwrap_or_else(|| panic!("{context} owner {} requires Enemy AI", npc_id.index()))
+                .set_state(state, substate),
+            Some(Entity::Civilian(c)) => c
+                .npc
+                .ai_brain
+                .friendly_mut()
+                .unwrap_or_else(|| {
+                    panic!("{context} owner {} requires Friendly AI", npc_id.index())
+                })
+                .set_state(state, substate),
+            Some(other) => panic!(
+                "{context} owner {} has invalid entity kind {:?}",
+                npc_id.index(),
+                other.element_data().kind
+            ),
+            None => panic!("{context} owner {} disappeared", npc_id.index()),
+        }
+    }
+
+    /// Enter the pre-filter half of typed `StartThink(NO_EVENT)`.
+    pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
+        let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
+        match self.world.entities.get_mut(npc_id) {
+            Some(Entity::Soldier(s)) => s
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "SetAIState StartThink owner {} requires Enemy AI",
+                        npc_id.index()
+                    )
+                })
+                .start_think_pre_filter(&stimulus),
+            Some(Entity::Civilian(c)) => c
+                .npc
+                .ai_brain
+                .friendly_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "SetAIState StartThink owner {} requires Friendly AI",
+                        npc_id.index()
+                    )
+                })
+                .start_think_pre_filter(&stimulus),
+            Some(other) => panic!(
+                "SetAIState StartThink owner {} has invalid entity kind {:?}",
+                npc_id.index(),
+                other.element_data().kind
+            ),
+            None => panic!("SetAIState StartThink owner {} disappeared", npc_id.index()),
+        }
+    }
+
+    /// Run the post-filter half of typed `StartThink(NO_EVENT)` and return
+    /// its normal Think admission decision. SetAIState deliberately ignores
+    /// this bool, but the lock/freeze/special-state side effects still occur.
+    pub(super) fn start_script_ai_native_think_post_filter(&mut self, npc_id: EntityId) -> bool {
+        let (self_is_dead, self_is_unconscious) = self
+            .world
+            .entities
+            .get(npc_id)
+            .map(|entity| {
+                (
+                    entity.is_dead(),
+                    entity.human_data().is_some_and(|human| human.unconscious),
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "SetAIState post-filter StartThink owner {} disappeared",
+                    npc_id.index()
+                )
+            });
+        let static_ai_frozen = self.ai.global.freeze;
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SetAIState post-filter StartThink owner {} lost its typed AI",
+                    npc_id.index()
+                )
+            })
+            .start_no_event_post_filter(static_ai_frozen, self_is_dead, self_is_unconscious)
+    }
+
+    /// Close typed `EndThink` after SeekArea/Panic and their recursively
+    /// produced owner work have stabilized.
+    pub(super) fn end_script_ai_native_think(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        npc_id: EntityId,
+    ) {
+        let normal_depth_complete = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SetAIState EndThink owner {} lost its typed AI",
+                    npc_id.index()
+                )
+            })
+            .end_think_completion_events();
+        if normal_depth_complete {
+            return;
+        }
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let entity =
+            self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!("SetAIState EndThink owner {} disappeared", npc_id.index())
+            });
+        let ctx = build_ai_context_from_entity(
+            entity,
+            self.control.frame_counter,
+            self.entity_building_sector(entity.element_data().sector()),
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        let enemy_tick = matches!(self.world.entities.get(npc_id), Some(Entity::Soldier(_)))
+            .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets));
+        let stimulus_depth = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .map(|ai| ai.think_recursion_depth)
+            .unwrap_or(0);
+        assert!(
+            stimulus_depth > 0,
+            "SetAIState EndThink owner {} has no matching StartThink",
+            npc_id.index()
+        );
+        let global = &mut self.ai.global;
+        match self.world.entities.get_mut(npc_id) {
+            Some(Entity::Soldier(s)) => s
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "SetAIState EndThink owner {} requires Enemy AI",
+                        npc_id.index()
+                    )
+                })
+                .end_think(
+                    sim,
+                    global,
+                    &ctx,
+                    enemy_tick.as_ref().unwrap_or_else(|| {
+                        panic!(
+                            "SetAIState EndThink owner {} lost its Enemy tick context",
+                            npc_id.index()
+                        )
+                    }),
+                    None,
+                ),
+            Some(Entity::Civilian(c)) => c
+                .npc
+                .ai_brain
+                .friendly_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "SetAIState EndThink owner {} requires Friendly AI",
+                        npc_id.index()
+                    )
+                })
+                .end_think(sim, global, &ctx),
+            Some(other) => panic!(
+                "SetAIState EndThink owner {} has invalid entity kind {:?}",
+                npc_id.index(),
+                other.element_data().kind
+            ),
+            None => panic!("SetAIState EndThink owner {} disappeared", npc_id.index()),
+        }
+    }
+
     /// Drain a pending script-driven `SeekArea` request.  Consumes
     /// `AiController::outbox.actor.script_seek_area` set by
     /// `script_set_ai_state` when a script fires
@@ -6632,32 +6980,50 @@ impl EngineInner {
     pub(super) fn process_pending_script_seek_area_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
         tick: &crate::ai::AiPerTickData,
     ) {
         let request = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
-            let Some(req) = ai.outbox.actor.script_seek_area.take() else {
-                return;
-            };
-            req
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "accepted SetAIState SEEKING owner {} disappeared before SeekArea",
+                    npc_id.index()
+                )
+            });
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "accepted SetAIState SEEKING owner {} lost its AI before SeekArea",
+                    npc_id.index()
+                )
+            });
+            ai.outbox.actor.script_seek_area.take().unwrap_or_else(|| {
+                panic!(
+                    "accepted SetAIState SEEKING owner {} lost its required SeekArea request",
+                    npc_id.index()
+                )
+            })
         };
 
-        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
-            return;
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
+            panic!(
+                "accepted SetAIState SEEKING owner {} disappeared before typed SeekArea",
+                npc_id.index()
+            );
         };
-        let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() else {
-            // Non-enemy soldier (civilian-brained) — `seek_area` is
-            // undefined on non-soldier brains, same as the original
-            // assert.
-            return;
+        let Entity::Soldier(s) = entity else {
+            panic!(
+                "accepted SetAIState SEEKING owner {} is not a soldier",
+                npc_id.index()
+            );
         };
+        let enemy_ai = s.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+            panic!(
+                "accepted SetAIState SEEKING owner {} requires Enemy AI",
+                npc_id.index()
+            )
+        });
         enemy_ai.seek_area(
             sim,
             request.center,
@@ -6668,6 +7034,10 @@ impl EngineInner {
             ctx,
             tick,
         );
+        // SeekArea's typed SetState callback is inside the StartThink /
+        // EndThink pair and must finish before its later GoTo/order tail is
+        // exposed to the enclosing native barrier.
+        self.drain_ai_owner_work_for(sim, assets, npc_id);
     }
 
     // ─── Patrol coordination ───────────────────────────────────
@@ -8201,6 +8571,28 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, false);
+    }
+
+    /// Native `SetAIState` StartThink/EndThink recursion must remain
+    /// owner-local: forecasting unrelated actors here would advance their
+    /// authoritative BuildingExitGate RNG before the native returns.
+    pub(super) fn drain_self_stimuli_for_npc_without_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, true);
+    }
+
+    fn drain_self_stimuli_for_npc_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+    ) {
         const MAX_REENTRANT_STIMULI: usize = 111;
         let mut dispatched = 0usize;
 
@@ -8227,7 +8619,11 @@ impl EngineInner {
                 break;
             }
 
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = if owner_local_no_forecast {
+                self.build_owner_context_scratch_without_forecast(assets)
+            } else {
+                self.build_sim_scratch(sim, assets)
+            };
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
@@ -8253,18 +8649,40 @@ impl EngineInner {
                 ctx
             };
             let stimulus = crate::ai::Stimulus::new(stimulus_type);
-            // Pending self-stimuli drain: NPC could be enemy soldier
-            // (most common — EventDone from SendCondolationCard,
-            // MYTALK callbacks) or civilian.  Builder stubs for
-            // non-enemy, populates for enemy.
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-            self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
+            if owner_local_no_forecast {
+                match self.world.entities.get(npc_id) {
+                    Some(Entity::Soldier(_)) => {
+                        let tick_data = self
+                            .build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+                        self.dispatch_filtered_stimulus_without_forecast(
+                            sim, assets, npc_id, &stimulus, &ctx, &tick_data,
+                        );
+                    }
+                    Some(Entity::Civilian(_)) => {
+                        self.dispatch_filtered_friendly_stimulus_without_forecast(
+                            sim, assets, npc_id, &stimulus, &ctx,
+                        );
+                    }
+                    Some(other) => panic!(
+                        "owner-local self-stimulus recipient {} has invalid kind {:?}",
+                        npc_id.index(),
+                        other.element_data().kind
+                    ),
+                    None => panic!(
+                        "owner-local self-stimulus recipient {} disappeared",
+                        npc_id.index()
+                    ),
+                };
+            } else {
+                let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+                self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
+            }
 
             // Original Think calls execute their engine-facing side effects
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc(sim, npc_id, assets);
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
             self.process_synchronous_look_there_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
@@ -8391,15 +8809,34 @@ impl EngineInner {
     /// ladder recovery, The16thFrame, and macro continuation). This remains
     /// owner-local and includes the shared SetState/Say FIFO before later
     /// effects, orders, condolations, and recursive self-stimuli.
-    fn drain_direct_ai_owner_boundary(
+    pub(super) fn drain_direct_ai_owner_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
+        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, false);
+    }
+
+    pub(super) fn drain_direct_ai_owner_boundary_without_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true);
+    }
+
+    fn drain_direct_ai_owner_boundary_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+    ) {
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc(sim, npc_id, assets);
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
             self.process_synchronous_look_there_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
@@ -8416,7 +8853,11 @@ impl EngineInner {
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
-                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+                if owner_local_no_forecast {
+                    self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
+                } else {
+                    self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+                }
             }
 
             let still_pending = {
