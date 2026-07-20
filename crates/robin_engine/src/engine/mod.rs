@@ -472,7 +472,7 @@ impl EngineInner {
         if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
             self.world
                 .pathfinder
-                .initialize_from_graph(assets.pathfinder_graph.as_ref());
+                .initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut self.world.fast_grid);
         }
 
         // Original RHEngine::Initialize runs IEngineScript::Initialize(0)

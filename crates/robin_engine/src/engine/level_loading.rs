@@ -2033,7 +2033,7 @@ impl EngineInner {
         // runs before load_background_map processes the motion data.
         self.world
             .pathfinder
-            .initialize_from_graph(assets.pathfinder_graph.as_ref());
+            .initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut self.world.fast_grid);
 
         // ── Part 5: Register sectors in grid blocks ──
         //

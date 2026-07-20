@@ -905,12 +905,31 @@ impl PathFinder {
         runtime
     }
 
-    pub fn initialize_from_graph(&mut self, graph: &PathGraph) {
+    /// Initialize the default changing-obstacle state and synchronize the
+    /// corresponding fast-grid perimeter lines.
+    ///
+    /// `RHPathFinder::Initialize` delegates to `SetStatesAll`, whose original
+    /// implementation calls `SetLineForMotionSectorActive` for every motion
+    /// obstacle moved to or from the alternative list. Keeping only the state
+    /// words leaves all load-time obstacle lines active even when their
+    /// default state is absent, so otherwise-valid patrol and move segments
+    /// are rejected by the fast grid.
+    pub fn initialize_from_graph(&mut self, graph: &PathGraph, grid: &mut FastFindGrid) {
         let mut runtime = PathFinderRuntime::new();
         runtime.graph = graph.clone();
         runtime.initialize();
-        self.states = runtime.graph.states;
+        self.states = runtime.graph.states.clone();
         self.number_of_attempts = runtime.number_of_attempts;
+
+        for layer in &runtime.graph.static_data.move_layers {
+            for area in layer {
+                for obstacle in &area.motion_obstacles {
+                    for &line_idx in &obstacle.grid_line_indices {
+                        grid.set_line_active(line_idx, obstacle.active);
+                    }
+                }
+            }
+        }
     }
 
     pub fn try_convert_sector(&self, graph: &PathGraph, sector: u16) -> Option<u16> {
@@ -2204,6 +2223,56 @@ impl PathFinderRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initialize_syncs_default_motion_obstacle_lines_to_fast_grid() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+        let active_line = grid.add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(32.0, 32.0),
+                MapPoint::new(96.0, 32.0),
+                true,
+            ),
+            0,
+        );
+        let inactive_line = grid.add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(32.0, 64.0),
+                MapPoint::new(96.0, 64.0),
+                true,
+            ),
+            0,
+        );
+
+        let obstacle = |state_id, line_idx| MotionObstacle {
+            state_id,
+            active: true,
+            bounding_box: MapBBox::default(),
+            polygon: Vec::new(),
+            grid_line_indices: vec![line_idx],
+        };
+        let mut graph = PathGraph::new();
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            // Default state is 0x5555_5555. Bit 0 is present and bit 1
+            // is absent, so these obstacles must initialize active and
+            // inactive respectively.
+            motion_obstacles: vec![obstacle(1, active_line), obstacle(2, inactive_line)],
+        }]);
+        graph.layers = vec![vec![vec![Vec::new(), Vec::new()]]];
+        graph.alternative_layers = vec![vec![vec![Vec::new(), Vec::new()]]];
+        graph.states = vec![vec![0]];
+
+        let mut pathfinder = PathFinder::new();
+        pathfinder.initialize_from_graph(&graph, &mut grid);
+
+        assert_eq!(pathfinder.states, vec![vec![0x5555_5555]]);
+        assert!(grid.is_line_active(active_line));
+        assert!(!grid.is_line_active(inactive_line));
+    }
 
     #[test]
     fn test_docking_place_count() {
