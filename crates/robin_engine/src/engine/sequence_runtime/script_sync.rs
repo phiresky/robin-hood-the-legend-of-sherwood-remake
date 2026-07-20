@@ -120,7 +120,23 @@ impl EngineInner {
                     .ok_or_else(|| {
                         format!("missing synchronous owner element {sequence_id:?}/{element_index}")
                     })?;
-                if matches!(command, Command::Wait | Command::WaitTimer) {
+                if matches!(
+                    command,
+                    Command::SwordstrikeSmalltalkLeft
+                        | Command::SwordstrikeSmalltalkRight
+                        | Command::ParrySmalltalkLeft
+                        | Command::ParrySmalltalkRight
+                ) {
+                    SmalltalkCommandContext {
+                        entities: &self.world.entities,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                        next_order_id: &mut self.orders.next_order_id,
+                    }
+                    .dispatch(owner, command, sequence_id, element_index);
+                } else if matches!(
+                    command,
+                    Command::Wait | Command::WaitTimer | Command::WaitFreeLift
+                ) {
                     WaitCommandContext {
                         entities: &mut self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,

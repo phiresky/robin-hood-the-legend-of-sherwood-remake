@@ -8,6 +8,46 @@ use crate::element::{ActionState, Command, Entity, EntityId};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+fn required_hth_weapon_profile<'a>(
+    entity: &Entity,
+    entity_id: EntityId,
+    profiles: &'a crate::profiles::ProfileManager,
+    context: &str,
+) -> &'a crate::profiles::HtHWeaponProfile {
+    let weapon_id =
+        match entity {
+            Entity::Pc(pc) => {
+                profiles
+                    .get_character(pc.pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{context}: PC {entity_id:?} references missing character profile {:?}",
+                            pc.pc.profile_index
+                        )
+                    })
+                    .hth_weapon_id
+            }
+            Entity::Soldier(soldier) => profiles
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{context}: soldier {entity_id:?} references missing soldier profile {:?}",
+                        soldier.soldier.soldier_profile_index
+                    )
+                })
+                .hth_weapon_id,
+            other => panic!(
+                "{context}: combatant {entity_id:?} has no hand-to-hand profile ({:?})",
+                std::mem::discriminant(other)
+            ),
+        };
+    profiles.get_hth_weapon(weapon_id).unwrap_or_else(|| {
+        panic!(
+            "{context}: combatant {entity_id:?} references missing hand-to-hand weapon {weapon_id}"
+        )
+    })
+}
+
 impl EngineInner {
     // ─── Smalltalk initiative ─────────────────────────────────────
 
@@ -159,19 +199,15 @@ impl EngineInner {
         // Read all the geometry / profile data we need without holding
         // a borrow into self.world.entities.
         let snapshot = {
-            let Some(entity) = self.get_entity(entity_id) else {
-                return false;
-            };
-            let Some(human) = entity.human_data() else {
-                return false;
-            };
-            if human.opponents.is_empty() {
-                return false;
-            }
-            let principal = match human.opponents.first() {
-                Some(&p) => p,
-                None => return false,
-            };
+            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
+                panic!("EvaluateSwordfight distance owner {entity_id:?} is missing")
+            });
+            let human = entity.human_data().unwrap_or_else(|| {
+                panic!("EvaluateSwordfight distance owner {entity_id:?} is not human")
+            });
+            let principal = human.opponents.first().copied().unwrap_or_else(|| {
+                panic!("EvaluateSwordfight distance owner {entity_id:?} has no principal")
+            });
             let last_step_back = human.last_motion_was_step_back_in_combat;
             let opp_jump_line = human.opponent_jump_lines.first().copied().flatten();
 
@@ -189,21 +225,29 @@ impl EngineInner {
             let pos_map = entity.element_data().position_map();
             let layer = entity.element_data().layer();
             let move_box = *entity.position_iface().get_move_box();
-            let sector = entity.element_data().sector().map(i16::from).unwrap_or(0);
+            let sector = entity
+                .element_data()
+                .sector()
+                .map(i16::from)
+                .unwrap_or_else(|| {
+                    panic!("EvaluateSwordfight distance owner {entity_id:?} has no sector")
+                });
             let backward_dist = (entity
                 .element_data()
                 .sprite
                 .distance_for_animation(crate::order::OrderType::WalkingBackwardsSword)
                 as f32)
                 .abs();
-            let my_max_range = get_hth_weapon_id_full(entity, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-                .unwrap_or(0.0);
-            let my_min_range = get_hth_weapon_id_full(entity, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Minimal as usize] as f32)
-                .unwrap_or(0.0);
+            let weapon = required_hth_weapon_profile(
+                entity,
+                entity_id,
+                &assets.profile_manager,
+                "EvaluateSwordfight distance range",
+            );
+            let my_max_range =
+                weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32;
+            let my_min_range =
+                weapon.distance[crate::weapons::WeaponDistance::Minimal as usize] as f32;
             (
                 principal,
                 last_step_back,
@@ -234,16 +278,18 @@ impl EngineInner {
 
         // ── Table-swordfight branch ───────────────────────────────
         if let Some(jl_idx) = opp_jump_line {
-            let Some(jump_line) = self
+            let jump_line = self
                 .world
                 .fast_grid
                 .level
                 .jump_lines
                 .get(u32::from(jl_idx) as usize)
                 .cloned()
-            else {
-                return false;
-            };
+                .unwrap_or_else(|| {
+                    panic!(
+                        "EvaluateSwordfight distance owner {entity_id:?} references missing jump line {jl_idx:?}"
+                    )
+                });
             let dest = match find_position_for_table_swordfight(
                 &self.world.entities,
                 my_pos_map,
@@ -282,16 +328,30 @@ impl EngineInner {
         }
 
         // ── Distance branch ───────────────────────────────────────
-        let Some(opp) = self.get_entity(principal_id) else {
-            return false;
-        };
+        let opp = self.get_entity(principal_id).unwrap_or_else(|| {
+            panic!(
+                "EvaluateSwordfight distance owner {entity_id:?} references missing principal {principal_id:?}"
+            )
+        });
         let opp_pos_3d = opp.element_data().position();
         let opp_pos_map = opp.element_data().position_map();
-        let opp_sector = opp.element_data().sector().map(i16::from).unwrap_or(0);
-        let opp_max_range = get_hth_weapon_id_full(opp, &assets.profile_manager)
-            .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-            .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-            .unwrap_or(0.0);
+        let opp_sector = opp
+            .element_data()
+            .sector()
+            .map(i16::from)
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight distance principal {principal_id:?} for {entity_id:?} has no sector"
+                )
+            });
+        let opp_max_range = required_hth_weapon_profile(
+            opp,
+            principal_id,
+            &assets.profile_manager,
+            "EvaluateSwordfight principal distance range",
+        )
+        .distance[crate::weapons::WeaponDistance::Maximal as usize]
+            as f32;
 
         // Stretch-Y 3D distance.  The stretching collapses the
         // isometric Y compression so distance comparisons line up
@@ -425,307 +485,384 @@ impl EngineInner {
         self.launch_element(elem);
     }
 
-    /// Per-frame swordfight evaluation, run from the WaitingSword
-    /// arm of execute.
-    ///
-    /// - This function handles: idle-WaitingSword elevation /
-    ///   distance / LOS prune, PC tiredness → SwordstrikeTired, PC
-    ///   1-in-3 principal reshuffle, non-selected PC propose-strike,
-    ///   and `update_swordfight_distance` for the !mutual /
-    ///   !initiative arms.
-    /// - The mutual-initiative exchange and the L/R smalltalk strike
-    ///   pick remain in `tick_smalltalk`.
-    /// - The step-back check is invoked from `tick_smalltalk`
-    ///   already.
-    pub(crate) fn tick_evaluate_swordfight(
+    /// Run the non-animation work in one human actor's WaitingSword Execute
+    /// arm. The caller has already performed Turn/PerformAction for this exact
+    /// owner slot.
+    pub(crate) fn tick_waiting_sword_execute_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) -> Vec<EntityId> {
-        // legacy implementation runs EvaluateSmalltalkHint() from the WaitingSword execute
-        // arm before EvaluateSwordfight().  Keep this as a pre-pass so a
-        // stored hint suppresses all normal swordfight evaluation for
-        // this frame.
-        let mut hint_actors = Vec::new();
-        for (entity_id, entity) in self.world.entities.humans() {
-            if entity.is_dead() {
-                continue;
-            }
-            let Some(human) = entity.human_data() else {
-                continue;
-            };
-            if human.unconscious || human.smalltalk_hint == crate::element::SmalltalkHint::None {
-                continue;
-            }
-            let action = entity
-                .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or_default();
-            if action != ActionState::WaitingSword
-                || !self.is_waiting_sword_idle_for_evaluate(entity_id)
-            {
-                continue;
-            }
-            if let Entity::Soldier(s) = entity
-                && s.is_soldier_observing_swordfight()
-            {
-                continue;
-            }
-            hint_actors.push(entity_id);
-        }
-        let mut consumed_smalltalk_hint_actors = Vec::new();
-        for entity_id in hint_actors {
-            if self.evaluate_smalltalk_hint(entity_id) {
-                consumed_smalltalk_hint_actors.push(entity_id.into());
-            }
+        entity_id: EntityId,
+    ) {
+        let entity = self
+            .get_entity(entity_id)
+            .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is missing"));
+        let human = entity
+            .human_data()
+            .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is not human"));
+        assert!(
+            !entity.is_dead() && !human.unconscious,
+            "WaitingSword Execute owner {entity_id:?} is dead or unconscious"
+        );
+        if let Entity::Soldier(soldier) = entity
+            && soldier.is_soldier_observing_swordfight()
+        {
+            return;
         }
 
-        // Build a cheap snapshot up-front so we can mutate self per
-        // entity without reborrowing `self.world.entities` mid-iteration.
-        struct Snap {
-            entity_id: EntityId,
-            principal_id: EntityId,
-            is_pc: bool,
-            is_selected_pc: bool,
-            is_soldier: bool,
-            tiredness: u16,
-            num_opponents: usize,
-            mutual: bool,
-            has_initiative: bool,
-            self_pos_3d: crate::coordinates::WorldPoint3D,
-            opp_pos_3d: crate::coordinates::WorldPoint3D,
-            self_sector: i16,
-            opp_sector: i16,
-            self_uber: f32,
-            opp_uber: f32,
-            self_max: f32,
+        // EvaluateSmalltalkHint precedes EvaluateSwordfight and suppresses the
+        // latter whenever it launches a useful parry.
+        if self.evaluate_smalltalk_hint(entity_id) {
+            return;
         }
-        let mut snaps: Vec<Snap> = Vec::new();
-        for (entity_id, entity) in self.world.entities.humans() {
-            if entity.is_dead() {
-                continue;
-            }
-            let Some(human) = entity.human_data() else {
-                continue;
-            };
-            if human.unconscious || human.opponents.is_empty() {
-                continue;
-            }
-            let action = entity
-                .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or_default();
-            // EvaluateSwordfight runs from the WaitingSword arm of
-            // execute, so the action gate is built into the dispatch.
-            if action != ActionState::WaitingSword
-                || !self.is_waiting_sword_idle_for_evaluate(entity_id)
-            {
-                continue;
-            }
-            // `is_soldier_observing_swordfight` short-circuits
-            // before evaluation.
-            if let Entity::Soldier(s) = entity
-                && s.is_soldier_observing_swordfight()
-            {
-                continue;
-            }
-            let principal_id = *human.opponents.first().unwrap();
-            // Principal must be swordfighting too.
-            let principal_swordfighting = self
-                .get_entity(principal_id)
-                .and_then(|e| e.actor_data())
-                .map(|a| a.action_state.is_sword())
-                .unwrap_or(false);
-            if !principal_swordfighting {
-                continue;
-            }
-            let mutual = self
-                .get_entity(principal_id)
-                .and_then(|e| e.human_data())
-                .and_then(|h| h.opponents.first().copied())
-                .map(|opp| opp == entity_id)
-                .unwrap_or(false);
-            let is_pc = entity.is_pc();
-            let is_selected_pc = is_pc && self.selected_pc_ids().iter().any(|&id| id == entity_id);
-            let is_soldier = entity.is_soldier();
-
-            let self_pos_3d = entity.element_data().position();
-            let self_sector = entity.element_data().sector().map(i16::from).unwrap_or(0);
-            let opp = match self.get_entity(principal_id) {
-                Some(e) => e,
-                None => continue,
-            };
-            let opp_pos_3d = opp.element_data().position();
-            let opp_sector = opp.element_data().sector().map(i16::from).unwrap_or(0);
-
-            let self_uber = get_hth_weapon_id_full(entity, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Uber as usize] as f32)
-                .unwrap_or(70.0);
-            let self_max = get_hth_weapon_id_full(entity, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-                .unwrap_or(50.0);
-            let opp_uber = get_hth_weapon_id_full(opp, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Uber as usize] as f32)
-                .unwrap_or(70.0);
-
-            snaps.push(Snap {
-                entity_id: entity_id.into(),
-                principal_id,
-                is_pc,
-                is_selected_pc,
-                is_soldier,
-                tiredness: human.tiredness,
-                num_opponents: human.opponents.len(),
-                mutual,
-                has_initiative: human.smalltalk_initiative,
-                self_pos_3d,
-                opp_pos_3d,
-                self_sector,
-                opp_sector,
-                self_uber,
-                opp_uber,
-                self_max,
-            });
-        }
-
-        for snap in snaps {
-            // Elevation-diff + different-sector mutual
-            // delete.  The principal pair is dropped and re-evaluated
-            // when the height gap becomes too steep across a sector
-            // boundary (e.g. one combatant standing on a ledge).
-            let elev_gap = (snap.self_pos_3d.z - snap.opp_pos_3d.z).abs();
-            if elev_gap > MAX_ELEVATION_SWORDFIGHT && snap.self_sector != snap.opp_sector {
-                Self::remove_opponent(&mut self.world.entities, snap.entity_id, snap.principal_id);
-                Self::remove_opponent(&mut self.world.entities, snap.principal_id, snap.entity_id);
-                self.recompute_relative_fighting_ability(snap.entity_id, assets);
-                self.recompute_relative_fighting_ability(snap.principal_id, assets);
-                self.evaluate_opponents(sim, assets, snap.entity_id);
-                self.evaluate_opponents(sim, assets, snap.principal_id);
-                continue;
-            }
-
-            // 3D-distance + line-of-sight mutual delete.  Either
-            // UBER overrun or a sight obstacle between the two eye
-            // points triggers the prune.  Distance check first, then
-            // LOS only when the distance is still in range (LOS is
-            // the expensive arm).
-            let dx = snap.self_pos_3d.x - snap.opp_pos_3d.x;
-            let dy = snap.self_pos_3d.y - snap.opp_pos_3d.y;
-            let dz = snap.self_pos_3d.z - snap.opp_pos_3d.z;
-            let dist3d = (dx * dx + dy * dy + dz * dz).sqrt();
-            let mut prune_for_distance = dist3d > snap.self_uber || dist3d > snap.opp_uber;
-            if !prune_for_distance {
-                // LOS check via the eyes-to-eyes ray.  Fail-safe: if
-                // either eye point is missing, skip the LOS prune
-                // rather than dropping the opponent on insufficient
-                // data.
-                let self_eye = self
-                    .get_entity(snap.entity_id)
-                    .and_then(|e| e.compute_eyes_point(Some(crate::element::Posture::Upright)));
-                let opp_eye = self
-                    .get_entity(snap.principal_id)
-                    .and_then(|e| e.compute_eyes_point(Some(crate::element::Posture::Upright)));
-                if let (Some(p1e), Some(p2e)) = (self_eye, opp_eye) {
-                    // C++ `RHFastFindGrid::IsReachable(SBGeoPoint3D, ...)`
-                    // only queries 3D sight obstacles. It does not test
-                    // 2D motion lines: those belong to a separate movement
-                    // overload. Including them here makes a valid sector
-                    // boundary (notably Leicester's bridge) repeatedly
-                    // cancel an otherwise valid swordfight.
-                    let los_clear = crate::sight_obstacle::is_reachable_3d(
-                        self.sight_obstacles(assets),
-                        [p1e.x, p1e.y, p1e.z],
-                        [p2e.x, p2e.y, p2e.z],
-                        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                    );
-                    if !los_clear {
-                        prune_for_distance = true;
-                    }
-                }
-            }
-            if prune_for_distance {
-                Self::remove_opponent(&mut self.world.entities, snap.entity_id, snap.principal_id);
-                Self::remove_opponent(&mut self.world.entities, snap.principal_id, snap.entity_id);
-                self.recompute_relative_fighting_ability(snap.entity_id, assets);
-                self.recompute_relative_fighting_ability(snap.principal_id, assets);
-                self.evaluate_opponents(sim, assets, snap.entity_id);
-                self.evaluate_opponents(sim, assets, snap.principal_id);
-                continue;
-            }
-
-            // Tiredness ≥ threshold → launch SwordstrikeTired.  For
-            // PCs (and any human other than soldiers — soldiers are
-            // already handled by `tick_enemy_sword_attacks` and run
-            // the weak/stunned star side-effects there).
-            if snap.tiredness >= TIREDNESS_WEAK_THRESHOLD && !snap.is_soldier {
-                let elem = crate::sequence::SequenceElement::new(
-                    1,
-                    crate::element::Command::SwordstrikeTired,
-                    Some(snap.entity_id),
-                );
-                self.launch_element(elem);
-                continue;
-            }
-
-            // PC-only 1-in-3 principal reshuffle when we have ≥ 2
-            // opponents.  NPCs delegate this to their AI.
-            if snap.is_pc
-                && snap.num_opponents >= 2
-                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3)
-                    == 0
-            {
-                self.choose_principal_opponent(sim, snap.entity_id);
-                // Principal may have changed; the rest of this
-                // iteration operates on the snapshot's old principal
-                // — that's acceptable, the swap-to-front updates the
-                // same slot we're reading.
-            }
-
-            // Non-mutual fighters fall through with a 10%
-            // probability.  Mutual fighters with initiative are
-            // handled by `tick_smalltalk`; mutual fighters without
-            // initiative go straight to `update_swordfight_distance`.
-            if snap.mutual {
-                if snap.has_initiative {
-                    // Strike pick / step-back / smalltalk fire from
-                    // `tick_smalltalk`.
-                    continue;
-                }
-                // Doesn't have the initiative → run distance
-                // maintenance.
-                self.update_swordfight_distance(sim, assets, snap.entity_id);
-                continue;
-            } else if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100)
-                >= 10
-            {
-                continue;
-            }
-
-            // ── Non-mutual fall-through (10% chance) ─────────────────
-            // Range gate against MAXIMAL.
-            let dx_map = snap.self_pos_3d.x - snap.opp_pos_3d.x;
-            let dy_map = snap.self_pos_3d.y - snap.opp_pos_3d.y;
-            let sq_dist = dx_map * dx_map + dy_map * dy_map;
-            let near = (snap.self_max * snap.self_max) >= sq_dist;
-            if !near {
-                // Out of range → adjust distance.
-                self.update_swordfight_distance(sim, assets, snap.entity_id);
-                continue;
-            }
-
-            // Non-selected PC autopilot — propose a good sword strike
-            // and launch it as a sequence element.
-            if snap.is_pc && !snap.is_selected_pc {
-                self.pc_propose_and_launch_strike(sim, assets, snap.entity_id, snap.principal_id);
-            }
-        }
-        consumed_smalltalk_hint_actors
+        self.evaluate_swordfight_for(sim, assets, entity_id);
     }
 
-    /// Companion to `tick_evaluate_swordfight`: build the strike
+    /// Owner-local translation of RHElementActorHuman::EvaluateSwordfight.
+    fn evaluate_swordfight_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        let opponents = self
+            .get_entity(entity_id)
+            .unwrap_or_else(|| panic!("EvaluateSwordfight owner {entity_id:?} is missing"))
+            .human_data()
+            .unwrap_or_else(|| panic!("EvaluateSwordfight owner {entity_id:?} is not human"))
+            .opponents
+            .clone();
+        for opponent_id in opponents.iter().copied() {
+            let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight owner {entity_id:?} references missing opponent {opponent_id:?}"
+                )
+            });
+            assert!(
+                opponent.human_data().is_some(),
+                "EvaluateSwordfight owner {entity_id:?} opponent {opponent_id:?} is not human"
+            );
+        }
+
+        if opponents.is_empty() {
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                Command::QuitSwordfight,
+                Some(entity_id),
+            ));
+            return;
+        }
+
+        let first_principal = opponents[0];
+        let principal_is_swordfighting = !self
+            .get_entity(first_principal)
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight owner {entity_id:?} principal {first_principal:?} vanished"
+                )
+            })
+            .human_data()
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight owner {entity_id:?} principal {first_principal:?} is not human"
+                )
+            })
+            .opponents
+            .is_empty();
+        if !principal_is_swordfighting {
+            return;
+        }
+
+        let (self_pos, self_sector, self_uber, tiredness, is_pc, num_opponents) = {
+            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
+                panic!("EvaluateSwordfight owner {entity_id:?} vanished before snapshot")
+            });
+            let human = entity.human_data().unwrap_or_else(|| {
+                panic!("EvaluateSwordfight owner {entity_id:?} lost human data")
+            });
+            let uber = required_hth_weapon_profile(
+                entity,
+                entity_id,
+                &assets.profile_manager,
+                "EvaluateSwordfight Uber range",
+            )
+            .distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
+            (
+                entity.element_data().position(),
+                entity
+                    .element_data()
+                    .sector()
+                    .map(i16::from)
+                    .unwrap_or_else(|| {
+                        panic!("EvaluateSwordfight owner {entity_id:?} has no sector")
+                    }),
+                uber,
+                human.tiredness,
+                entity.is_pc(),
+                human.opponents.len(),
+            )
+        };
+        let (principal_pos, principal_sector, principal_uber) = {
+            let principal = self.get_entity(first_principal).unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight owner {entity_id:?} principal {first_principal:?} vanished before range check"
+                )
+            });
+            let uber = required_hth_weapon_profile(
+                principal,
+                first_principal,
+                &assets.profile_manager,
+                "EvaluateSwordfight principal Uber range",
+            )
+            .distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
+            (
+                principal.element_data().position(),
+                principal
+                    .element_data()
+                    .sector()
+                    .map(i16::from)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "EvaluateSwordfight principal {first_principal:?} for owner {entity_id:?} has no sector"
+                        )
+                    }),
+                uber,
+            )
+        };
+
+        let elevation_prune = (self_pos.z - principal_pos.z).abs() > MAX_ELEVATION_SWORDFIGHT
+            && self_sector != principal_sector;
+        let dx = self_pos.x - principal_pos.x;
+        let dy = self_pos.y - principal_pos.y;
+        let dz = self_pos.z - principal_pos.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let mut range_or_los_prune = distance > self_uber || distance > principal_uber;
+        if !range_or_los_prune {
+            let self_eye = self
+                .get_entity(entity_id)
+                .and_then(|entity| {
+                    entity.compute_eyes_point(Some(crate::element::Posture::Upright))
+                })
+                .unwrap_or_else(|| {
+                    panic!("EvaluateSwordfight owner {entity_id:?} has no upright eye point")
+                });
+            let principal_eye = self
+                .get_entity(first_principal)
+                .and_then(|entity| {
+                    entity.compute_eyes_point(Some(crate::element::Posture::Upright))
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "EvaluateSwordfight principal {first_principal:?} for owner {entity_id:?} has no upright eye point"
+                    )
+                });
+            range_or_los_prune = !crate::sight_obstacle::is_reachable_3d(
+                self.sight_obstacles(assets),
+                [self_eye.x, self_eye.y, self_eye.z],
+                [principal_eye.x, principal_eye.y, principal_eye.z],
+                crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+            );
+        }
+        if elevation_prune || range_or_los_prune {
+            Self::remove_opponent(&mut self.world.entities, entity_id, first_principal);
+            Self::remove_opponent(&mut self.world.entities, first_principal, entity_id);
+            self.recompute_relative_fighting_ability(entity_id, assets);
+            self.recompute_relative_fighting_ability(first_principal, assets);
+            self.evaluate_opponents(sim, assets, entity_id);
+            self.evaluate_opponents(sim, assets, first_principal);
+            return;
+        }
+
+        if tiredness >= TIREDNESS_WEAK_THRESHOLD {
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                Command::SwordstrikeTired,
+                Some(entity_id),
+            ));
+            return;
+        }
+
+        if is_pc
+            && num_opponents >= 2
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3) == 0
+        {
+            self.choose_principal_opponent(sim, entity_id);
+        }
+
+        // ChoosePrincipalOpponent can swap the live list. Every subsequent
+        // read follows the new first entry, exactly like the Original.
+        let principal_id = self
+            .get_entity(entity_id)
+            .and_then(Entity::human_data)
+            .and_then(|human| human.opponents.first().copied())
+            .unwrap_or_else(|| {
+                panic!("EvaluateSwordfight owner {entity_id:?} lost its principal after selection")
+            });
+        let principal = self.get_entity(principal_id).unwrap_or_else(|| {
+            panic!(
+                "EvaluateSwordfight owner {entity_id:?} selected missing principal {principal_id:?}"
+            )
+        });
+        let principal_human = principal.human_data().unwrap_or_else(|| {
+            panic!(
+                "EvaluateSwordfight owner {entity_id:?} selected non-human principal {principal_id:?}"
+            )
+        });
+        let mutual = principal_human.opponents.first().copied() == Some(entity_id);
+
+        if mutual {
+            let (has_initiative, received, relative_ability) = self
+                .get_entity(entity_id)
+                .and_then(Entity::human_data)
+                .map(|human| {
+                    (
+                        human.smalltalk_initiative,
+                        human.received_smalltalk_initiative,
+                        human.relative_fighting_ability,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    panic!("EvaluateSwordfight owner {entity_id:?} lost human state")
+                });
+            if has_initiative {
+                if received {
+                    self.get_entity_mut(entity_id)
+                        .and_then(Entity::human_data_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "EvaluateSwordfight owner {entity_id:?} vanished while consuming initiative"
+                            )
+                        })
+                        .received_smalltalk_initiative = false;
+                } else {
+                    let loses =
+                        crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
+                            <= u32::from(relative_ability);
+                    if loses || self.can_he_kill_me_but_me_not(entity_id, principal_id, assets) {
+                        self.get_entity_mut(entity_id)
+                            .and_then(Entity::human_data_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "EvaluateSwordfight owner {entity_id:?} vanished during initiative transfer"
+                                )
+                            })
+                            .smalltalk_initiative = false;
+                        let opponent_human = self
+                            .get_entity_mut(principal_id)
+                            .and_then(Entity::human_data_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "EvaluateSwordfight owner {entity_id:?} principal {principal_id:?} vanished during initiative transfer"
+                                )
+                            });
+                        opponent_human.smalltalk_initiative = true;
+                        opponent_human.received_smalltalk_initiative = true;
+                        return;
+                    }
+                }
+            } else {
+                self.update_swordfight_distance(sim, assets, entity_id);
+                return;
+            }
+        } else if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100)
+            >= 10
+        {
+            return;
+        }
+
+        let (self_pos, self_max, selected_pc) = {
+            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
+                panic!("EvaluateSwordfight owner {entity_id:?} vanished before strike selection")
+            });
+            let max = required_hth_weapon_profile(
+                entity,
+                entity_id,
+                &assets.profile_manager,
+                "EvaluateSwordfight maximal range",
+            )
+            .distance[crate::weapons::WeaponDistance::Maximal as usize]
+                as f32;
+            (
+                entity.element_data().position(),
+                max,
+                entity.is_pc() && self.selected_pc_ids().contains(&entity_id),
+            )
+        };
+        let principal_pos = self
+            .get_entity(principal_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight owner {entity_id:?} principal {principal_id:?} vanished before strike selection"
+                )
+            })
+            .element_data()
+            .position();
+        let dx = principal_pos.x - self_pos.x;
+        let dy = principal_pos.y - self_pos.y;
+        let dz = principal_pos.z - self_pos.z;
+        let near = self_max * self_max >= dx * dx + dy * dy + dz * dz;
+        if !near {
+            self.update_swordfight_distance(sim, assets, entity_id);
+            return;
+        }
+
+        if is_pc && !selected_pc {
+            self.pc_propose_and_launch_strike(sim, assets, entity_id, principal_id);
+        }
+
+        if let Some(destination) = self.is_step_back_needed(sim, entity_id, assets) {
+            let layer = self
+                .get_entity(entity_id)
+                .unwrap_or_else(|| {
+                    panic!("EvaluateSwordfight step-back owner {entity_id:?} is missing")
+                })
+                .element_data()
+                .layer();
+            self.get_entity_mut(entity_id)
+                .and_then(Entity::human_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("EvaluateSwordfight step-back owner {entity_id:?} is not human")
+                })
+                .last_motion_was_step_back_in_combat = true;
+            let mut element = crate::sequence::SequenceElement::new_movement(
+                1,
+                Command::Move,
+                Some(entity_id),
+                crate::order::OrderType::WalkingUpright,
+            );
+            element.data = crate::sequence::SequenceElementData::Movement {
+                destination,
+                layer,
+                sector: None,
+                gate_id: None,
+                line_id: None,
+                element: None,
+                flags: crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
+                tolerance: 0.0,
+                direction: 0,
+                action: crate::order::OrderType::WalkingUpright,
+                speed_factor: 1.0,
+                post_seek_sequence: None,
+            };
+            self.launch_element(element);
+            return;
+        }
+
+        let is_left = crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide);
+        let command = if is_left {
+            Command::SwordstrikeSmalltalkLeft
+        } else {
+            Command::SwordstrikeSmalltalkRight
+        };
+        self.launch_element(crate::sequence::SequenceElement::new_interaction(
+            1,
+            command,
+            Some(entity_id),
+            Some(principal_id),
+        ));
+        self.receive_smalltalk_hint(entity_id, principal_id, is_left);
+    }
+    /// Build the strike
     /// selection context for a non-selected PC, query
     /// `propose_good_sword_strike`, and launch the resulting strike
     /// as a sequence element interaction.  No hulk build-up, no
@@ -739,28 +876,36 @@ impl EngineInner {
         target_id: EntityId,
     ) {
         // Skip if PC already has an active strike in flight.
-        let already_striking = self
-            .get_entity(pc_id)
-            .and_then(|e| e.actor_data())
-            .map(|a| a.active_melee.is_active())
-            .unwrap_or(false);
+        let pc = self.get_entity(pc_id).unwrap_or_else(|| {
+            panic!("EvaluateSwordfight strike proposal PC {pc_id:?} is missing")
+        });
+        let already_striking = pc
+            .actor_data()
+            .unwrap_or_else(|| {
+                panic!("EvaluateSwordfight strike proposal PC {pc_id:?} is not an actor")
+            })
+            .active_melee
+            .is_active();
         if already_striking {
             return;
         }
 
         // Read PC profile + sprite snapshots up front.
-        let Some(pc) = self.get_entity(pc_id) else {
-            return;
-        };
         let pc_data = match pc {
             Entity::Pc(p) => p,
-            _ => return,
+            _ => panic!("EvaluateSwordfight strike proposal owner {pc_id:?} is not a PC"),
         };
         let character = assets
             .profile_manager
-            .get_character(pc_data.pc.profile_index);
-        let weapon_id = character.map(|c| c.hth_weapon_id).unwrap_or(0);
-        let fighting_ability = character.map(|c| c.fighting).unwrap_or(50);
+            .get_character(pc_data.pc.profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight strike proposal PC {pc_id:?} references missing character profile {:?}",
+                    pc_data.pc.profile_index
+                )
+            });
+        let weapon_id = character.hth_weapon_id;
+        let fighting_ability = character.fighting;
         let direction = pc.element_data().direction();
         let elevation = pc.element_data().position().z;
         let attacker_pos = (
@@ -769,9 +914,14 @@ impl EngineInner {
         );
         let attacker_layer = pc.element_data().layer();
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
-        let Some(attacker_profile) = assets.profile_manager.get_hth_weapon(weapon_id) else {
-            return;
-        };
+        let attacker_profile = assets
+            .profile_manager
+            .get_hth_weapon(weapon_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight strike proposal PC {pc_id:?} references missing hand-to-hand weapon {weapon_id}"
+                )
+            });
 
         // Sprite-derived timing data for the strike-selection context.
         let attacker_sprite_frames: Option<[i16; crate::weapons::NUM_NORMAL_SWORD_STRIKES]> = self
@@ -794,9 +944,18 @@ impl EngineInner {
                     crate::order::OrderType::TransitionWaitingSwordParryingSword,
                 ) as i16
             });
-        let opponent_time_limit: Option<i16> = self.get_entity(target_id).and_then(|e| {
-            let actor = e.actor_data()?;
-            let sprite = &e.element_data().sprite;
+        let opponent_time_limit: Option<i16> = {
+            let target = self.get_entity(target_id).unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight strike proposal PC {pc_id:?} references missing target {target_id:?}"
+                )
+            });
+            let actor = target.actor_data().unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
+                )
+            });
+            let sprite = &target.element_data().sprite;
             use crate::order::OrderType as OT;
             let in_active_strike = matches!(
                 actor.old_action,
@@ -811,11 +970,12 @@ impl EngineInner {
                     | OT::StrikingDownSword
             );
             if !in_active_strike {
-                return Some(1000i16);
+                Some(1000i16)
+            } else {
+                let ftad = sprite.frames_from_now_till_action_done();
+                Some(if ftad == -1 { 1000 } else { ftad })
             }
-            let ftad = sprite.frames_from_now_till_action_done();
-            Some(if ftad == -1 { 1000 } else { ftad })
-        });
+        };
 
         // Build the nearby-victim list (same shape as the soldier path).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -954,7 +1114,9 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
         let entity_id = entity_id.into();
-        let entity = self.get_entity(entity_id)?;
+        let entity = self.get_entity(entity_id).unwrap_or_else(|| {
+            panic!("EvaluateSwordfight step-back owner {entity_id:?} is missing")
+        });
 
         if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
             return None;
@@ -968,20 +1130,45 @@ impl EngineInner {
             return None;
         }
 
-        let opponents: Vec<EntityId> = entity.human_data().map(|h| h.opponents.clone())?;
+        let opponents: Vec<EntityId> = entity
+            .human_data()
+            .unwrap_or_else(|| {
+                panic!("EvaluateSwordfight step-back owner {entity_id:?} is not human")
+            })
+            .opponents
+            .clone();
         if opponents.is_empty() {
             return None;
         }
-        let principal_id = *opponents.first()?;
+        let principal_id = *opponents
+            .first()
+            .expect("nonempty opponent list checked above");
 
         // `uwFriendsAbility = GetPrincipalOpponent()->GetOpponentsFightingAbility()`
-        let friends_ability: u16 = self
+        let friends = self
             .get_entity(principal_id)
-            .and_then(|e| e.human_data())
-            .map(|h| h.opponents.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight step-back owner {entity_id:?} references missing principal {principal_id:?}"
+                )
+            })
+            .human_data()
+            .unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight step-back principal {principal_id:?} for {entity_id:?} is not human"
+                )
+            })
+            .opponents
+            .clone();
+        let friends_ability: u16 = friends
             .iter()
-            .filter_map(|id| self.get_entity(*id))
+            .map(|id| {
+                self.get_entity(*id).unwrap_or_else(|| {
+                    panic!(
+                        "EvaluateSwordfight step-back principal {principal_id:?} references missing friend {id:?}"
+                    )
+                })
+            })
             .map(|e| {
                 fighting_ability_from_profile(
                     e,
@@ -995,17 +1182,22 @@ impl EngineInner {
             crate::element_kinds::direction_vector_16(entity.element_data().direction());
         let my_pos = entity.element_data().position();
 
-        let my_max_range = get_hth_weapon_id_full(entity, &assets.profile_manager)
-            .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-            .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-            .unwrap_or(0.0);
+        let my_max_range = required_hth_weapon_profile(
+            entity,
+            entity_id,
+            &assets.profile_manager,
+            "EvaluateSwordfight step-back range",
+        )
+        .distance[crate::weapons::WeaponDistance::Maximal as usize]
+            as f32;
 
         let mut opponents_ability: u16 = 0;
         for opp_id in opponents.iter().copied() {
-            let opp = match self.get_entity(opp_id) {
-                Some(e) => e,
-                None => continue,
-            };
+            let opp = self.get_entity(opp_id).unwrap_or_else(|| {
+                panic!(
+                    "EvaluateSwordfight step-back owner {entity_id:?} references missing opponent {opp_id:?}"
+                )
+            });
             let opp_pos = opp.element_data().position();
             let rel_x = opp_pos.x - my_pos.x;
             let rel_y = (opp_pos.y - my_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1013,10 +1205,14 @@ impl EngineInner {
             if dx_dir * rel_x + dy_dir * rel_y < 0.0 {
                 continue;
             }
-            let opp_max_range = get_hth_weapon_id_full(opp, &assets.profile_manager)
-                .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-                .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-                .unwrap_or(0.0);
+            let opp_max_range = required_hth_weapon_profile(
+                opp,
+                opp_id,
+                &assets.profile_manager,
+                "EvaluateSwordfight opponent step-back range",
+            )
+            .distance[crate::weapons::WeaponDistance::Maximal as usize]
+                as f32;
             let max_range = my_max_range.max(opp_max_range);
             let sq_range = max_range * max_range;
             let sq_dist = rel_x * rel_x + rel_y * rel_y;
@@ -1078,32 +1274,38 @@ impl EngineInner {
     ) -> bool {
         let me_id = me_id.into();
         let opponent_id = opponent_id.into();
-        let (me_pos, opp_pos) = match (
-            self.get_entity(me_id).map(|e| e.element_data().position()),
-            self.get_entity(opponent_id)
-                .map(|e| e.element_data().position()),
-        ) {
-            (Some(a), Some(b)) => (a, b),
-            _ => return false,
-        };
+        let me = self.get_entity(me_id).unwrap_or_else(|| {
+            panic!("EvaluateSwordfight range comparison owner {me_id:?} is missing")
+        });
+        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
+            panic!(
+                "EvaluateSwordfight range comparison opponent {opponent_id:?} for {me_id:?} is missing"
+            )
+        });
+        let me_pos = me.element_data().position();
+        let opp_pos = opponent.element_data().position();
 
         let dx = opp_pos.x - me_pos.x;
         let dy = (opp_pos.y - me_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let dz = opp_pos.z - me_pos.z;
         let dist = (dx * dx + dy * dy + dz * dz).sqrt();
 
-        let my_max_range = self
-            .get_entity(me_id)
-            .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
-            .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-            .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-            .unwrap_or(0.0);
-        let opp_max_range = self
-            .get_entity(opponent_id)
-            .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
-            .and_then(|id| assets.profile_manager.get_hth_weapon(id))
-            .map(|w| w.distance[crate::weapons::WeaponDistance::Maximal as usize] as f32)
-            .unwrap_or(0.0);
+        let my_max_range = required_hth_weapon_profile(
+            me,
+            me_id,
+            &assets.profile_manager,
+            "EvaluateSwordfight initiative range",
+        )
+        .distance[crate::weapons::WeaponDistance::Maximal as usize]
+            as f32;
+        let opp_max_range = required_hth_weapon_profile(
+            opponent,
+            opponent_id,
+            &assets.profile_manager,
+            "EvaluateSwordfight opponent initiative range",
+        )
+        .distance[crate::weapons::WeaponDistance::Maximal as usize]
+            as f32;
 
         dist > my_max_range && dist < opp_max_range
     }

@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::element::{ActionState, Command, Entity, EyeStatus, Posture};
-use crate::order::OrderCompletion;
 use crate::sprite::{FrameProgression, MotionState};
 
 const WEAKNESS_DISMISH: u16 = 5;
@@ -2836,6 +2835,18 @@ pub(super) struct AnimCompletionOutcomes {
     pub execute_sides: ExecuteSideOutcomes,
 }
 
+/// The base-Actor completion control that must remain unresolved until every
+/// synchronous callback inside the derived Execute arm has drained.
+/// TERMINATED targets the owner's then-live sequence element; ABORTED retains
+/// the element snapshot taken on entry to Execute.
+#[derive(Debug, Clone)]
+pub(super) struct ActorExecuteResult {
+    pub order_type: OrderType,
+    pub entry_seq_id: crate::sequence::SequenceId,
+    pub entry_elem_idx: usize,
+    pub motion: MotionState,
+}
+
 impl EngineInner {
     /// Advance non-actor sprite animation exactly once per engine tick.
     ///
@@ -3001,17 +3012,22 @@ impl EngineInner {
     /// live legacy creation slot.
     ///
     /// Eligibility remains deliberately narrower than actor `Hourglass`:
-    /// movement, melee, bow, and frozen/inactive actors keep their existing
-    /// owners. The caller must still run `ActionChange` for those skipped
-    /// actors.
+    /// movement, melee, bow, and inactive actors keep their existing owners.
+    /// Execution-frozen actors remain skipped unless an installed
+    /// WAIT_TIMER/WAIT_FREE_LIFT needs the Original's post-Execute check. The
+    /// caller must still run `ActionChange` for skipped actors.
     pub(super) fn tick_actor_animation_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::types::LevelAssets,
         entity_id: EntityId,
-    ) -> (Vec<EntityId>, AnimCompletionOutcomes) {
+    ) -> (
+        Vec<EntityId>,
+        AnimCompletionOutcomes,
+        Option<ActorExecuteResult>,
+    ) {
         if self.actors_frozen() {
-            return (Vec::new(), AnimCompletionOutcomes::default());
+            return (Vec::new(), AnimCompletionOutcomes::default(), None);
         }
 
         let mut combat_injury_terminated: Vec<EntityId> = Vec::new();
@@ -3022,11 +3038,13 @@ impl EngineInner {
         // Applied after the entity loop so we don't double-borrow
         // `self.orders.sequence_manager` while iterating `self.world.entities`.
         let mut completion_outcomes = AnimCompletionOutcomes::default();
+        let mut execute_result = None;
         let (
             principal_frames_from_now,
             drinking_ale_antagonist_active,
             door_pass_crenel_transition_dir,
             validated_antagonist,
+            waiting_sword_direction_goal,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -3041,7 +3059,6 @@ impl EngineInner {
                 )
             });
             if !entity.is_active()
-                || actor.execution_frozen
                 || actor.action_state.is_moving()
                 || matches!(
                     actor.action_state,
@@ -3052,7 +3069,7 @@ impl EngineInner {
                 || actor.active_melee.is_active()
                 || actor.active_shot.is_active()
             {
-                return (Vec::new(), AnimCompletionOutcomes::default());
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
 
             let Some((seq_id, elem_idx, order)) = self
@@ -3060,7 +3077,7 @@ impl EngineInner {
                 .sequence_manager
                 .current_order_for_actor(entity_id)
             else {
-                return (Vec::new(), AnimCompletionOutcomes::default());
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
             };
             let cur_command = self
                 .orders
@@ -3074,8 +3091,15 @@ impl EngineInner {
                 })
                 .command;
             let anim_type = order.order_type;
-            let driving_one_shot =
-                cur_command != Command::Wait && cur_command != Command::WaitTimer;
+            if actor.execution_frozen
+                && !matches!(cur_command, Command::WaitTimer | Command::WaitFreeLift)
+            {
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
+            }
+            let driving_one_shot = !matches!(
+                cur_command,
+                Command::Wait | Command::WaitTimer | Command::WaitFreeLift
+            );
             let settled_dead_or_ko_hold = matches!(
                 anim_type,
                 OrderType::BeingDead
@@ -3096,14 +3120,14 @@ impl EngineInner {
                 && !driving_one_shot
                 && !settled_dead_or_ko_hold
             {
-                return (Vec::new(), AnimCompletionOutcomes::default());
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
             if matches!(
                 cur_command,
                 Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor
             ) && is_sword_movement_nonanimation(anim_type)
             {
-                return (Vec::new(), AnimCompletionOutcomes::default());
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
 
             let principal_frames = if anim_type == OrderType::TransitionWaitingSwordParryingSwordLow
@@ -3240,11 +3264,38 @@ impl EngineInner {
                 None
             };
 
+            // RHElementActorHuman::Execute sets the WaitingSword direction
+            // goal toward the live principal opponent before Turn() and
+            // PerformAction(). A stale opponent reference is an invariant
+            // failure here: the Original dereferences it directly.
+            let waiting_sword_direction = if anim_type == OrderType::WaitingSword {
+                entity
+                    .human_data()
+                    .and_then(|human| human.opponents.first().copied())
+                    .map(|opponent_id| {
+                        let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
+                            panic!(
+                                "actor {entity_id:?} WaitingSword principal opponent {opponent_id:?} is missing at legacy slot {}",
+                                entity_id.index()
+                            )
+                        });
+                        let from = entity.element_data().position();
+                        let to = opponent.element_data().position();
+                        crate::position_interface::vector_to_sector_0_to_15_iso(
+                            to.x - from.x,
+                            to.y - from.y,
+                        )
+                    })
+            } else {
+                None
+            };
+
             (
                 principal_frames,
                 antagonist_active,
                 door_direction,
                 validated_antagonist,
+                waiting_sword_direction,
             )
         };
 
@@ -3275,10 +3326,6 @@ impl EngineInner {
                             | crate::element::ActionState::MovingShield
                     )
                 {
-                    break 'actor;
-                }
-
-                if actor.execution_frozen {
                     break 'actor;
                 }
 
@@ -3314,23 +3361,16 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .current_order_for_actor(entity_id);
-                let (order_seq_elem, anim_type, order_id, order_antagonist, completion) =
+                let (order_seq_elem, anim_type, order_id, order_antagonist) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
                         (
                             Some((seq_id, elem_idx)),
                             order.order_type,
                             Some(order.order_id),
                             order.antagonist,
-                            order.completion.clone(),
                         )
                     } else {
-                        (
-                            None,
-                            crate::order::OrderType::Invalid,
-                            None,
-                            None,
-                            OrderCompletion::AdvanceElement,
-                        )
+                        (None, crate::order::OrderType::Invalid, None, None)
                     };
                 let antagonist = validated_antagonist.or(order_antagonist);
 
@@ -3354,7 +3394,10 @@ impl EngineInner {
                         .get_element(s, e)
                         .map(|el| el.command_level)
                 });
-                let driving_one_shot = matches!(cur_command, Some(cmd) if cmd != Command::Wait && cmd != Command::WaitTimer);
+                let driving_one_shot = matches!(cur_command, Some(cmd) if !matches!(
+                    cmd,
+                    Command::Wait | Command::WaitTimer | Command::WaitFreeLift
+                ));
                 let settled_dead_or_ko_hold = matches!(
                     anim_type,
                     OrderType::BeingDead
@@ -3461,6 +3504,9 @@ impl EngineInner {
                     let order_is_initialising = order_id.is_some_and(|oid| {
                         entity.element_data().sprite.last_processed_order_id != oid.get()
                     });
+                    if let Some(direction) = waiting_sword_direction_goal {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
                     if order_is_initialising
                         && matches!(
                             anim_type,
@@ -3872,11 +3918,12 @@ impl EngineInner {
                             ));
                         }
                     }
-                    // Dispatch the per-arm return decision, then apply
-                    // `Hourglass`-style semantics to the forwarded
-                    // motion state (TERMINATED → advance, ABORTED →
-                    // set Impossible, DONE / START / InProgress →
-                    // no-op).
+                    // Dispatch the per-arm return decision, but retain the
+                    // resulting base-Actor motion until the coordinator has
+                    // drained synchronous derived-Execute callbacks. Those
+                    // callbacks may replace this owner's live sequence
+                    // element; Original TERMINATED uses that live pointer,
+                    // while ABORTED uses the entry snapshot.
                     let is_npc = matches!(entity, Entity::Soldier(_) | Entity::Civilian(_));
                     let is_unconscious =
                         entity.human_data().map(|h| h.unconscious).unwrap_or(false);
@@ -3892,61 +3939,20 @@ impl EngineInner {
                     };
                     let outcome =
                         motion.map(|m| dispatch_arm_completion(sim, anim_type, m, &mut arm_ctx));
-                    let forwarded = match outcome {
-                        Some(ExecuteOutcome::Forward(m)) => Some(m),
-                        Some(ExecuteOutcome::Consumed) | None => None,
+                    let effective_motion = match outcome.unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} {anim_type:?} produced no Execute motion at {seq_id:?}/{elem_idx}"
+                        )
+                    }) {
+                        ExecuteOutcome::Forward(motion) => motion,
+                        ExecuteOutcome::Consumed => MotionState::InProgress,
                     };
-                    // ABORTED: set sequence element to Impossible.
-                    // The Hourglass dispatch flips state to Impossible
-                    // with a non-interruptable-priority assertion —
-                    // matched by `element_impossible`'s own guard.
-                    if matches!(forwarded, Some(MotionState::Aborted)) {
-                        completion_outcomes.seq_impossible.push((seq_id, elem_idx));
-                    }
-                    // TERMINATED: advance via OrderCompletion.
-                    let advance = matches!(forwarded, Some(MotionState::Terminated));
-                    if advance {
-                        match completion {
-                            OrderCompletion::AdvanceElement => {
-                                // Default path: `do_next_order` pops this
-                                // order and advances the owning element
-                                // (or terminates on empty, auto-relaunching
-                                // a wait element).
-                                completion_outcomes.seq_advance.push((seq_id, elem_idx));
-                            }
-                            OrderCompletion::UnlockDoor { door_id } => {
-                                completion_outcomes
-                                    .unlock_door
-                                    .push((door_id, seq_id, elem_idx));
-                            }
-                            OrderCompletion::ResumeDoorPass => {
-                                completion_outcomes.resume_door_pass.push(entity_id);
-                            }
-                            OrderCompletion::NextJumpStep => {
-                                completion_outcomes.next_jump_step.push(entity_id);
-                            }
-                            OrderCompletion::WaspStruggleCycle { cycles_remaining } => {
-                                if cycles_remaining <= 1 {
-                                    // Last cycle just finished — terminate
-                                    // the sequence element so wasp-victim
-                                    // cleanup and EVENT_WASP_AWAY fire.
-                                    completion_outcomes.seq_terminate.push((seq_id, elem_idx));
-                                } else {
-                                    // Re-arm the next struggle cycle.
-                                    // The original engine inserts
-                                    // bee_time discrete orders; we
-                                    // model that by re-pushing a new
-                                    // order with a decremented counter
-                                    // after the loop finishes.
-                                    completion_outcomes.wasp_next_cycle.push((
-                                        seq_id,
-                                        elem_idx,
-                                        cycles_remaining - 1,
-                                    ));
-                                }
-                            }
-                        }
-                    }
+                    execute_result = Some(ActorExecuteResult {
+                        order_type: anim_type,
+                        entry_seq_id: seq_id,
+                        entry_elem_idx: elem_idx,
+                        motion: effective_motion,
+                    });
                     break 'actor;
                 }
 
@@ -3962,7 +3968,11 @@ impl EngineInner {
             }
         }
 
-        (combat_injury_terminated, completion_outcomes)
+        (
+            combat_injury_terminated,
+            completion_outcomes,
+            execute_result,
+        )
     }
 
     /// Dispatch per-frame animation sound triggers.

@@ -153,8 +153,6 @@ impl EngineInner {
         self.tick_push_flights(sim, assets);
         self.tick_rider_charges(sim, assets);
         self.tick_enemy_sword_attacks(sim, assets);
-        let consumed_smalltalk_hint_actors = self.tick_evaluate_swordfight(sim, assets);
-        self.tick_smalltalk(sim, assets, &consumed_smalltalk_hint_actors);
         self.tick_refresh_hero_mouth();
         self.tick_pc_combat_anim_speech(sim, assets);
         self.tick_refresh_purse_disable(assets);
@@ -283,366 +281,51 @@ impl EngineInner {
         }
     }
 
-    /// True when the actor's animation is `WaitingSword` for purposes
-    /// of running `EvaluateSwordfight`.
-    ///
-    /// Some sequence-driven combat commands keep `action_state` at
-    /// `WaitingSword` until the sprite pipeline consumes their order;
-    /// the gate here works on the current animation, so those
-    /// in-flight commands must not run the spacing/smalltalk
-    /// evaluator in the same window.
-    pub(super) fn is_waiting_sword_idle_for_evaluate<I: Into<EntityId>>(
-        &self,
-        entity_id: I,
-    ) -> bool {
-        use crate::element::Command;
-
-        let entity_id = entity_id.into();
-        let Some(actor) = self.get_entity(entity_id).and_then(|e| e.actor_data()) else {
-            return false;
-        };
-        if actor.active_melee.is_active() {
-            return false;
-        }
-        if self
-            .orders
-            .sequence_manager
-            .has_live_element_for_actor_matching(entity_id, |command| {
-                matches!(
-                    command,
-                    Command::SwordstrikeSmalltalkLeft
-                        | Command::SwordstrikeSmalltalkRight
-                        | Command::ParrySmalltalkLeft
-                        | Command::ParrySmalltalkRight
-                )
-            })
-        {
-            return false;
-        }
-
-        let principal_opponent = self
-            .get_entity(entity_id)
-            .and_then(|e| e.human_data())
-            .and_then(|h| h.opponents.first().copied());
-
-        !self
-            .orders
-            .sequence_manager
-            .has_unpostponed_element_for_actor_matching_element(entity_id, |elem| {
-                let blocks_waiting_sword = matches!(
-                    elem.command,
-                    Command::SwordstrikeThrustA
-                        | Command::SwordstrikeThrustB
-                        | Command::SwordstrikeThrustC
-                        | Command::SwordstrikeThrustD
-                        | Command::SwordstrikeThrustE
-                        | Command::SwordstrikeThrustF
-                        | Command::SwordstrikeThrustG
-                        | Command::SwordstrikeThrustH
-                        | Command::SwordstrikeThrustI
-                        | Command::SwordstrikeTired
-                        | Command::ParrySword
-                        | Command::ParrySwordLow
-                );
-                if !blocks_waiting_sword {
-                    return false;
-                }
-
-                let crate::sequence::SequenceElementData::Interaction {
-                    antagonist: Some(antagonist),
-                } = elem.data
-                else {
-                    return true;
-                };
-
-                Some(antagonist) == principal_opponent
-                    && self
-                        .get_entity(antagonist)
-                        .map(|e| e.is_human() && !e.is_dead())
-                        .unwrap_or(false)
-            })
-    }
-
-    /// Per-frame smalltalk paired strike/parry system.
-    ///
-    /// For every entity that is the principal opponent of its primary
-    /// opponent, choose a smalltalk strike/parry. This drives the
-    /// choreographed back-and-forth visible in classic swordfights.
-    ///
-    pub(crate) fn tick_smalltalk(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        suppressed_actors: &[EntityId],
-    ) {
-        let mut pending_smalltalk_strikes: Vec<(EntityId, EntityId, bool)> = Vec::new();
-        let mut pending_initiative_transfers: Vec<EntityId> = Vec::new();
-        let mut pending_step_backs: Vec<(EntityId, crate::coordinates::MapPoint)> = Vec::new();
-
-        // Collect entities with smalltalk_initiative who are principal opponents.
-        // The follow-up decision path mutates engine state, so keep this
-        // first pass read-only and stage typed ids.
-        let mut smalltalk_candidates = Vec::new();
-        for (entity_id, entity) in self.world.entities.humans() {
-            let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
-                if entity.is_dead() {
-                    continue;
-                }
-                let Some(human) = entity.human_data() else {
-                    continue;
-                };
-                if human.unconscious {
-                    continue;
-                }
-                let action = entity
-                    .actor_data()
-                    .map(|a| a.action_state)
-                    .unwrap_or_default();
-                let action_ok = action == ActionState::WaitingSword
-                    && self.is_waiting_sword_idle_for_evaluate(entity_id);
-                let principal = human.opponents.first().copied();
-                // EvaluateSwordfight (and the smalltalk-strike pick)
-                // is gated on `is_soldier_observing_swordfight() ==
-                // false`.  The base human always returns false, so
-                // only soldiers can short-circuit here.
-                let observing = match entity {
-                    Entity::Soldier(s) => s.is_soldier_observing_swordfight(),
-                    _ => false,
-                };
-                (
-                    human.smalltalk_initiative,
-                    human.opponents.is_empty(),
-                    principal,
-                    action_ok,
-                    observing,
-                )
-            };
-            if opponents_empty || !action_ok || observing {
-                continue;
-            }
-            let Some(principal_id) = principal_id else {
-                continue;
-            };
-
-            if suppressed_actors.iter().any(|&id| id == entity_id) {
-                continue;
-            }
-
-            // Verify mutual principal opponents
-            let is_mutual = self
-                .world
-                .entities
-                .get(principal_id)
-                .and_then(|e| e.human_data())
-                .and_then(|h| h.opponents.first().copied())
-                .map(|opp| opp == entity_id)
-                .unwrap_or(false);
-            if !is_mutual {
-                continue;
-            }
-            smalltalk_candidates.push((entity_id, principal_id, has_initiative));
-        }
-
-        for (entity_id, principal_id, has_initiative) in smalltalk_candidates {
-            if self.evaluate_smalltalk_hint(entity_id) {
-                continue;
-            }
-
-            if !has_initiative {
-                // No initiative: the legacy implementation waiting-sword path updates
-                // swordfight distance and returns without picking a
-                // smalltalk strike.
-                continue;
-            }
-
-            // Initiative-exchange block:
-            //   - If `received_smalltalk_initiative` just flipped on,
-            //     consume it once and proceed to strike.
-            //   - Otherwise roll `rand%100 <= relative_fighting_ability`,
-            //     or check `can_he_kill_me_but_me_not`: if either is
-            //     true, transfer initiative back to the opponent and
-            //     skip this strike.
-            let received = self
-                .get_entity(entity_id)
-                .and_then(|e| e.human_data())
-                .map(|h| h.received_smalltalk_initiative)
-                .unwrap_or(false);
-            if received {
-                if let Some(entity) = self.get_entity_mut(entity_id)
-                    && let Some(human) = entity.human_data_mut()
-                {
-                    human.received_smalltalk_initiative = false;
-                }
-            } else {
-                let rfa = self
-                    .get_entity(entity_id)
-                    .and_then(|e| e.human_data())
-                    .map(|h| h.relative_fighting_ability)
-                    .unwrap_or(50);
-                let roll_loses =
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
-                        <= rfa as u32;
-                let out_of_range = self.can_he_kill_me_but_me_not(entity_id, principal_id, assets);
-                if roll_loses || out_of_range {
-                    // Lose initiative and hand it to the opponent; skip
-                    // striking this frame.
-                    pending_initiative_transfers.push(principal_id);
-                    if let Some(entity) = self.get_entity_mut(entity_id)
-                        && let Some(human) = entity.human_data_mut()
-                    {
-                        human.smalltalk_initiative = false;
-                    }
-                    continue;
-                }
-            }
-
-            // Step-back check.  The step-back arm fires between the
-            // "we're in range" check and the left/right smalltalk
-            // strike pick, and suppresses the strike for this frame
-            // when the actor wants to break the encirclement.
-            if let Some(dest) = self.is_step_back_needed(sim, entity_id, assets) {
-                pending_step_backs.push((entity_id.into(), dest));
-                continue;
-            }
-
-            // Pick left or right smalltalk strike
-            let is_left = crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide);
-            pending_smalltalk_strikes.push((entity_id.into(), principal_id, is_left));
-        }
-
-        for new_owner in pending_initiative_transfers {
-            self.take_smalltalk_initiative(new_owner);
-        }
-
-        for (actor_id, dest) in pending_step_backs {
-            // Face the principal opponent before stepping back so the
-            // chosen animation lines up with the iso direction
-            // picker.
-            let principal_id = self
-                .get_entity(actor_id)
-                .and_then(|e| e.human_data())
-                .and_then(|h| h.opponents.first().copied());
-            if let Some(pid) = principal_id {
-                let dir = direction_to(&self.world.entities, actor_id, pid);
-                if let Some(entity) = self.world.entities.get_mut(actor_id) {
-                    entity.element_data_mut().set_direction_instantly(dir);
-                }
-            }
-            if let Some(entity) = self.world.entities.get_mut(actor_id)
-                && let Some(human) = entity.human_data_mut()
-            {
-                human.last_motion_was_step_back_in_combat = true;
-            }
-            let mut elem = crate::sequence::SequenceElement::new_movement(
-                1,
-                crate::element::Command::Move,
-                Some(actor_id),
-                crate::order::OrderType::WalkingUpright,
-            );
-            elem.data = crate::sequence::SequenceElementData::Movement {
-                destination: crate::coordinates::MapPoint {
-                    x: dest.x,
-                    y: dest.y,
-                },
-                layer: self
-                    .get_entity(actor_id)
-                    .map(|e| e.element_data().layer())
-                    .unwrap_or(0),
-                sector: None,
-                gate_id: None,
-                line_id: None,
-                element: None,
-                flags: crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
-                tolerance: 0.0,
-                direction: 0,
-                action: crate::order::OrderType::WalkingUpright,
-                speed_factor: 1.0,
-                post_seek_sequence: None,
-            };
-            self.launch_element(elem);
-            tracing::debug!(
-                actor = ?actor_id,
-                destination = ?dest,
-                "Step-back in combat launched"
-            );
-        }
-
-        for (attacker_id, target_id, is_left) in pending_smalltalk_strikes {
-            // Smalltalk strike / parry commands are Wait-priority
-            // sequence elements, so any real action (Preference,
-            // Normal, Injury, etc.) will interrupt them via
-            // `DecidePriorities(Wait, _) → InterruptCurrent`.  Launch
-            // them as real sequence elements here so the arbitration +
-            // animation-completion pipelines run the same way as any
-            // other per-element command — rather than poking
-            // `actor.combat_anim` directly, which bypassed priority
-            // handling and caused smalltalk parries to stick on the
-            // sprite for seconds at a time.
-            let strike_cmd = if is_left {
-                crate::element::Command::SwordstrikeSmalltalkLeft
-            } else {
-                crate::element::Command::SwordstrikeSmalltalkRight
-            };
-
-            // Face the target and set yellow outline for smalltalk
-            let dir = direction_to(&self.world.entities, attacker_id, target_id);
-            if let Some(entity) = self.world.entities.get_mut(attacker_id) {
-                entity.element_data_mut().set_direction_instantly(dir);
-                entity.element_data_mut().current_outline =
-                    crate::element::OutlineColorName::Striking;
-            }
-            let strike_elem = crate::sequence::SequenceElement::new_interaction(
-                1,
-                strike_cmd,
-                Some(attacker_id),
-                Some(target_id),
-            );
-            self.launch_element(strike_elem);
-
-            self.receive_smalltalk_hint(attacker_id, target_id, is_left);
-
-            tracing::debug!(
-                attacker = ?attacker_id,
-                target = ?target_id,
-                ?is_left,
-                "Smalltalk paired strike"
-            );
-        }
-    }
-
-    fn receive_smalltalk_hint(
+    pub(super) fn receive_smalltalk_hint(
         &mut self,
         attacker_id: EntityId,
         target_id: EntityId,
         is_left: bool,
     ) {
-        let is_principal = self
-            .get_entity(target_id)
-            .and_then(|e| e.human_data())
-            .and_then(|h| h.opponents.first().copied())
-            .map(|principal| principal == attacker_id)
-            .unwrap_or(false);
+        let target = self.get_entity(target_id).unwrap_or_else(|| {
+            panic!("smalltalk attacker {attacker_id:?} tried to hint missing target {target_id:?}")
+        });
+        let target_human = target.human_data().unwrap_or_else(|| {
+            panic!(
+                "smalltalk attacker {attacker_id:?} tried to hint non-human target {target_id:?}"
+            )
+        });
+        let is_principal = target_human.opponents.first().copied() == Some(attacker_id);
         if !is_principal {
             return;
         }
-        if let Some(target) = self.world.entities.get_mut(target_id)
-            && let Some(human) = target.human_data_mut()
-        {
-            human.smalltalk_hint = if is_left {
-                crate::element::SmalltalkHint::Left
-            } else {
-                crate::element::SmalltalkHint::Right
-            };
-            human.smalltalk_hint_opponent = Some(attacker_id);
-        }
+        let human = self
+            .world
+            .entities
+            .get_mut(target_id)
+            .and_then(Entity::human_data_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "smalltalk attacker {attacker_id:?} target {target_id:?} vanished while receiving hint"
+                )
+            });
+        human.smalltalk_hint = if is_left {
+            crate::element::SmalltalkHint::Left
+        } else {
+            crate::element::SmalltalkHint::Right
+        };
+        human.smalltalk_hint_opponent = Some(attacker_id);
     }
 
     pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(&mut self, entity_id: I) -> bool {
         let entity_id = entity_id.into();
         let (hint, hint_opponent) = {
-            let Some(human) = self.get_entity(entity_id).and_then(|e| e.human_data()) else {
-                return false;
-            };
+            let entity = self
+                .get_entity(entity_id)
+                .unwrap_or_else(|| panic!("EvaluateSmalltalkHint owner {entity_id:?} is missing"));
+            let human = entity.human_data().unwrap_or_else(|| {
+                panic!("EvaluateSmalltalkHint owner {entity_id:?} is not human")
+            });
             (human.smalltalk_hint, human.smalltalk_hint_opponent)
         };
 
@@ -653,16 +336,29 @@ impl EngineInner {
             crate::element::SmalltalkHint::None => return false,
         };
 
-        if let Some(entity) = self.world.entities.get_mut(entity_id)
-            && let Some(human) = entity.human_data_mut()
-        {
-            human.smalltalk_hint = crate::element::SmalltalkHint::None;
-            human.smalltalk_hint_opponent = None;
-        }
+        let opponent_id = hint_opponent.unwrap_or_else(|| {
+            panic!("EvaluateSmalltalkHint owner {entity_id:?} has {hint:?} without a hint opponent")
+        });
+        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
+            panic!(
+                "EvaluateSmalltalkHint owner {entity_id:?} references missing hint opponent {opponent_id:?}"
+            )
+        });
+        assert!(
+            opponent.human_data().is_some(),
+            "EvaluateSmalltalkHint owner {entity_id:?} hint opponent {opponent_id:?} is not human"
+        );
 
-        let Some(opponent_id) = hint_opponent else {
-            return false;
-        };
+        let human = self
+            .world
+            .entities
+            .get_mut(entity_id)
+            .and_then(Entity::human_data_mut)
+            .unwrap_or_else(|| {
+                panic!("EvaluateSmalltalkHint owner {entity_id:?} vanished while clearing hint")
+            });
+        human.smalltalk_hint = crate::element::SmalltalkHint::None;
+        human.smalltalk_hint_opponent = None;
 
         let elem = crate::sequence::SequenceElement::new_interaction(
             1,

@@ -645,26 +645,25 @@ impl EngineInner {
                             .dispatch(owner, seq_id, elem_idx);
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
-                        // Wait until the lift sector is authorized to
-                        // be entered in this direction, then proceed:
-                        //   DOOR_LIFT_HIGH → go downwards → authorized-downwards
-                        //   DOOR_LIFT_LOW  → go upwards   → authorized-upwards
-                        // Inserted before PASS_DOOR for ladder lifts.
-                        //
-                        // The authorization check decrements the
-                        // lift's wait-time cooldown while blocked and
-                        // allows a second actor to ride the lift in
-                        // the same direction as the first.
+                        // Translation is identical to WAIT: book the
+                        // stationary actor order and enter InProgress. The
+                        // live actor-slot coordinator rechecks/reserves the
+                        // lift after each actual Execute, matching
+                        // RHElementActor::Hourglass rather than this one-shot
+                        // Instruct boundary.
                         Command::WaitFreeLift => {
-                            LiftWaitCommandContext {
+                            WaitCommandContext {
                                 entities: &mut self.world.entities,
-                                fast_grid: &mut self.world.fast_grid,
-                                // Runtime door state is authoritative and does
-                                // not depend on mission-script presence.
-                                doors: self.script_domains.interactables.doors.as_slice(),
                                 sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
+                                profiles: &assets.profile_manager,
                             }
-                            .dispatch(owner, seq_id, elem_idx);
+                            .dispatch(
+                                owner,
+                                Command::WaitFreeLift,
+                                seq_id,
+                                elem_idx,
+                            );
                         }
                         // ── Sword strike commands ────────────────
                         Command::SwordstrikeThrustA
@@ -1105,84 +1104,20 @@ impl EngineInner {
                             }
                         }
                         // ── Smalltalk strikes / parries (Wait priority) ─
-                        // The smalltalk strike / parry commands carry
-                        // a single cosmetic animation order.  Drive
-                        // it via `active_ai_anim` so completion
-                        // terminates the element naturally AND
-                        // arbitration (Wait vs anything else →
-                        // InterruptCurrent) can tear it down cleanly
-                        // when a real action arrives.
+                        // WAIT-priority launch is synchronous. Use the same
+                        // narrow translator from both the normal sequence
+                        // phase and owner-local WaitingSword callbacks.
                         Command::SwordstrikeSmalltalkLeft
                         | Command::SwordstrikeSmalltalkRight
                         | Command::ParrySmalltalkLeft
                         | Command::ParrySmalltalkRight => {
-                            let antagonist = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .and_then(|elem| match elem.data {
-                                    crate::sequence::SequenceElementData::Interaction {
-                                        antagonist,
-                                    } => antagonist,
-                                    _ => None,
-                                });
-                            let owner_higher = antagonist
-                                .and_then(|id| {
-                                    let owner_z = self
-                                        .get_entity(owner)
-                                        .map(|e| e.element_data().position().z)?;
-                                    let opponent_z = self
-                                        .get_entity(id)
-                                        .map(|e| e.element_data().position().z)?;
-                                    Some(owner_z >= opponent_z + 20.0)
-                                })
-                                .unwrap_or(false);
-                            let order_type = match cmd {
-                                Command::SwordstrikeSmalltalkLeft if owner_higher => {
-                                    crate::order::OrderType::StrikingLowLeftSmalltalk
-                                }
-                                Command::SwordstrikeSmalltalkLeft => {
-                                    crate::order::OrderType::StrikingLeftSmalltalk
-                                }
-                                Command::SwordstrikeSmalltalkRight if owner_higher => {
-                                    crate::order::OrderType::StrikingLowRightSmalltalk
-                                }
-                                Command::SwordstrikeSmalltalkRight => {
-                                    crate::order::OrderType::StrikingRightSmalltalk
-                                }
-                                Command::ParrySmalltalkLeft if owner_higher => {
-                                    crate::order::OrderType::ParryingLowLeftSmalltalk
-                                }
-                                Command::ParrySmalltalkLeft => {
-                                    crate::order::OrderType::ParryingLeftSmalltalk
-                                }
-                                Command::ParrySmalltalkRight if owner_higher => {
-                                    crate::order::OrderType::ParryingLowRightSmalltalk
-                                }
-                                Command::ParrySmalltalkRight => {
-                                    crate::order::OrderType::ParryingRightSmalltalk
-                                }
-                                _ => unreachable!(),
-                            };
-                            // Guard: skip if a higher-priority action is
-                            // already running for this actor (combat).
-                            let blocked = self
-                                .get_entity(owner)
-                                .and_then(|e| e.actor_data())
-                                .map(|a| a.active_melee.is_active())
-                                .unwrap_or(true);
-                            if !blocked {
-                                self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
-                                self.orders
-                                    .sequence_manager
-                                    .element_in_progress(seq_id, elem_idx);
-                            } else {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                            SmalltalkCommandContext {
+                                entities: &self.world.entities,
+                                sequence_manager: &mut self.orders.sequence_manager,
+                                next_order_id: &mut self.orders.next_order_id,
                             }
+                            .dispatch(owner, cmd, seq_id, elem_idx);
                         }
-
                         // ── Provoke (taunt) ─────────────────────
                         // Say `ProvokesCombat` and queue a `Provoking`
                         // animation order (with `compute_direction =
@@ -2059,9 +1994,9 @@ impl EngineInner {
                         //     which matches the existing catch-all).
                         // WAIT_TIMER additionally records `wait_time`
                         // from the element's Timer property.
-                        // WAIT_FREE_LIFT is kept on its own path
-                        // above for the lift-occupancy bookkeeping;
-                        // we don't intercept it here.
+                        // WAIT_FREE_LIFT is translated by the identical
+                        // stationary-order path above, then rechecked by its
+                        // owner after Execute.
                         Command::Wait | Command::WaitTimer => {
                             let barrier = WaitCommandContext {
                                 entities: &mut self.world.entities,

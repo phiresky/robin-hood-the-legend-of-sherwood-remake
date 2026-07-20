@@ -464,9 +464,9 @@ pub fn receive_sword_damage(
     let mut cutting_inflicted: u16 = 0;
 
     // Check if the defender is parrying.
-    // Note: smalltalk strikes (tick_smalltalk in melee.rs) are purely
-    // animation-driven and never route through this function, so the
-    // parry check here does not apply to them — which is correct.
+    // Smalltalk strikes are animation-driven from the attacker's
+    // WaitingSword Execute arm and never route through this function, so the
+    // parry check here does not apply to them.
     let is_parrying = defender.action_state == ActionState::ParryingSwordLow
         || defender.action_state == ActionState::ParryingSword;
 

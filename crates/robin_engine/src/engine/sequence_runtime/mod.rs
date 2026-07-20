@@ -177,14 +177,11 @@ impl PositionAssertionContext<'_> {
     }
 }
 
-/// Lift-entry arbitration owns only door metadata, the mutable spatial lift
-/// runtime, entity occupancy bookkeeping, and sequence state.
+/// Owner-local WAIT_FREE_LIFT arbitration after Actor::Execute.
 ///
-/// TODO(parity): the original actor translators group `WAIT_FREE_LIFT` with
-/// `WAIT` (`RHelementactor.cpp:3340`, `RHelementactorpc.cpp:2580`, and
-/// `RHelementactorsoldier.cpp:395`). The Rust movement planner instead uses
-/// this command as an explicit lift occupancy gate. Keep that policy local to
-/// this context until the planner/translator difference is reconciled.
+/// Translation books the same stationary order as WAIT. This context is then
+/// invoked once per actual owner Execute while the element remains current,
+/// matching `RHelementactor.cpp:624-657`.
 pub(in crate::engine) struct LiftWaitCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -193,75 +190,211 @@ pub(in crate::engine) struct LiftWaitCommandContext<'a> {
 }
 
 impl LiftWaitCommandContext<'_> {
-    pub(in crate::engine) fn dispatch(
+    pub(in crate::engine) fn authorize_and_reserve(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
-        let gate_id = self
+    ) -> bool {
+        let element = self
             .sequence_manager
             .get_element(seq_id, elem_idx)
-            .and_then(|element| match &element.data {
-                crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
-                _ => None,
+            .unwrap_or_else(|| {
+                panic!("WAIT_FREE_LIFT owner {owner:?} lost current element {seq_id:?}/{elem_idx}")
             });
-        let gate_info = gate_id.and_then(|door_idx| {
-            self.doors.get(usize::from(door_idx)).map(|door| {
-                (
-                    door.sector_in,
-                    matches!(
-                        door.door_type,
-                        crate::gate::DoorType::LiftHigh | crate::gate::DoorType::LiftHighCrenel
-                    ),
+        assert_eq!(
+            element.command,
+            Command::WaitFreeLift,
+            "WAIT_FREE_LIFT owner {owner:?} modifier received {:?} at {seq_id:?}/{elem_idx}",
+            element.command
+        );
+        let (gate_id, target_sector) = match &element.data {
+            crate::sequence::SequenceElementData::Movement {
+                gate_id: Some(gate_id),
+                sector: Some(sector),
+                ..
+            } => (*gate_id, *sector),
+            data => panic!(
+                "WAIT_FREE_LIFT owner {owner:?} requires movement gate and sector at {seq_id:?}/{elem_idx}, found {data:?}"
+            ),
+        };
+        let door = self.doors.get(usize::from(gate_id)).unwrap_or_else(|| {
+            panic!(
+                "WAIT_FREE_LIFT owner {owner:?} references missing door {gate_id} at {seq_id:?}/{elem_idx}"
+            )
+        });
+        let is_high = match door.door_type {
+            crate::gate::DoorType::LiftHigh => true,
+            crate::gate::DoorType::LiftLow => false,
+            other => panic!(
+                "WAIT_FREE_LIFT owner {owner:?} door {gate_id} must be LiftHigh or LiftLow, found {other:?}"
+            ),
+        };
+        assert_eq!(
+            i16::from(target_sector),
+            i16::from(door.sector_in),
+            "WAIT_FREE_LIFT owner {owner:?} target sector {} disagrees with door {gate_id} inside sector {}",
+            u16::from(target_sector),
+            i16::from(door.sector_in)
+        );
+        let owner_sector = self
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} is missing"))
+            .element_data()
+            .sector()
+            .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} has no current sector"));
+        if i16::from(owner_sector) != i16::from(door.sector_out) {
+            return false;
+        }
+        let sector_number = door.sector_in;
+        let grid_idx = *self
+            .fast_grid
+            .level
+            .sector_number_map
+            .get(&sector_number)
+            .unwrap_or_else(|| {
+                panic!(
+                    "WAIT_FREE_LIFT owner {owner:?} door {gate_id} references missing lift sector {sector_number:?}"
                 )
-            })
-        });
-        let grid_idx = gate_info.and_then(|(sector_number, _)| {
-            self.fast_grid
-                .level
-                .sector_number_map
-                .get(&sector_number)
-                .copied()
-        });
-        let is_high = gate_info.is_some_and(|(_, is_high)| is_high);
+            });
+        let sector = self
+            .fast_grid
+            .level
+            .sectors
+            .get(grid_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "WAIT_FREE_LIFT owner {owner:?} door {gate_id} resolved invalid sector index {grid_idx}"
+                )
+            });
+        assert!(
+            sector.lift_type.is_some(),
+            "WAIT_FREE_LIFT owner {owner:?} door {gate_id} inside sector {sector_number:?} is not a lift"
+        );
 
         // Authorization decrements the cooldown while blocked. Once free,
         // occupancy is recorded before the element terminates so another
         // actor dispatched in the same frame observes the reservation.
-        let authorized = grid_idx.is_none_or(|idx| {
-            let lift = self.fast_grid.lift_state_mut(idx as u32);
+        let authorized = {
+            let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
             if is_high {
                 lift.is_authorized_downwards()
             } else {
                 lift.is_authorized_upwards()
             }
-        });
+        };
 
         if authorized {
-            if let (Some((sector_number, _)), Some(idx)) = (gate_info, grid_idx) {
-                let lift = self.fast_grid.lift_state_mut(idx as u32);
-                if is_high {
-                    lift.set_occupied_downwards(true);
-                } else {
-                    lift.set_occupied_upwards(true);
-                }
-                if let Some(actor) = self
-                    .entities
-                    .get_mut(owner)
-                    .and_then(Entity::actor_data_mut)
-                {
-                    actor.active_lift = Some(crate::element::ActiveLiftClimb {
-                        sector_number: u16::from(sector_number),
-                        upwards: !is_high,
-                    });
-                }
+            let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
+            if is_high {
+                lift.set_occupied_downwards(true);
+            } else {
+                lift.set_occupied_upwards(true);
             }
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
-        } else {
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            let actor = self
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| {
+                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
+                })
+                .actor_data_mut()
+                .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} is not an actor"));
+            actor.active_lift = Some(crate::element::ActiveLiftClimb {
+                sector_number: u16::from(target_sector),
+                upwards: !is_high,
+            });
         }
-        OwnerActionBarrier::Reach
+        authorized
+    }
+}
+
+/// Translate one WAIT-priority smalltalk strike/parry at the synchronous
+/// owner boundary where it was launched.
+pub(in crate::engine) struct SmalltalkCommandContext<'a> {
+    pub(in crate::engine) entities: &'a crate::entities::Entities,
+    pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
+    pub(in crate::engine) next_order_id: &'a mut u32,
+}
+
+impl SmalltalkCommandContext<'_> {
+    pub(in crate::engine) fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let antagonist = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "smalltalk owner {owner:?} lost element {seq_id:?}/{elem_idx} during translation"
+                )
+            });
+        let antagonist = match antagonist.data {
+            crate::sequence::SequenceElementData::Interaction {
+                antagonist: Some(antagonist),
+            } => antagonist,
+            ref data => panic!(
+                "smalltalk owner {owner:?} command {command:?} requires an interaction antagonist at {seq_id:?}/{elem_idx}, found {data:?}"
+            ),
+        };
+        let owner_entity = self
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("smalltalk command {command:?} owner {owner:?} is missing"));
+        let opponent = self.entities.get(antagonist).unwrap_or_else(|| {
+            panic!(
+                "smalltalk command {command:?} owner {owner:?} references missing antagonist {antagonist:?}"
+            )
+        });
+        assert!(
+            opponent.human_data().is_some(),
+            "smalltalk command {command:?} owner {owner:?} antagonist {antagonist:?} is not human"
+        );
+        let owner_higher =
+            owner_entity.element_data().position().z >= opponent.element_data().position().z + 20.0;
+        let order_type = match command {
+            Command::SwordstrikeSmalltalkLeft if owner_higher => {
+                crate::order::OrderType::StrikingLowLeftSmalltalk
+            }
+            Command::SwordstrikeSmalltalkLeft => crate::order::OrderType::StrikingLeftSmalltalk,
+            Command::SwordstrikeSmalltalkRight if owner_higher => {
+                crate::order::OrderType::StrikingLowRightSmalltalk
+            }
+            Command::SwordstrikeSmalltalkRight => crate::order::OrderType::StrikingRightSmalltalk,
+            Command::ParrySmalltalkLeft if owner_higher => {
+                crate::order::OrderType::ParryingLowLeftSmalltalk
+            }
+            Command::ParrySmalltalkLeft => crate::order::OrderType::ParryingLeftSmalltalk,
+            Command::ParrySmalltalkRight if owner_higher => {
+                crate::order::OrderType::ParryingLowRightSmalltalk
+            }
+            Command::ParrySmalltalkRight => crate::order::OrderType::ParryingRightSmalltalk,
+            _ => unreachable!("non-smalltalk command passed to SmalltalkCommandContext"),
+        };
+        let blocked = owner_entity
+            .actor_data()
+            .unwrap_or_else(|| {
+                panic!("smalltalk command {command:?} owner {owner:?} is not an actor")
+            })
+            .active_melee
+            .is_active();
+        if blocked {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return;
+        }
+
+        let order = crate::order::Order::new(
+            order_type,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(self.next_order_id),
+        );
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 }
 
@@ -815,44 +948,63 @@ impl WaitCommandContext<'_> {
             is_stuck_under_net,
             carrier_is_vip,
         ) = {
-            let entity = self.entities.get(owner);
-            let carrier = entity
-                .and_then(|entity| entity.human_data())
-                .and_then(|human| human.carrier);
+            let entity = self.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "Wait translation owner {owner:?} is missing for {command:?} at {seq_id:?}/{elem_idx}"
+                )
+            });
+            let actor = entity.actor_data().unwrap_or_else(|| {
+                panic!(
+                    "Wait translation owner {owner:?} is not an actor for {command:?} at {seq_id:?}/{elem_idx}"
+                )
+            });
+            let carrier = entity.human_data().and_then(|human| human.carrier);
             (
-                entity.is_some_and(Entity::is_soldier),
-                entity.is_some_and(Entity::is_pc),
+                entity.is_soldier(),
+                entity.is_pc(),
+                entity.element_data().posture,
+                actor.action_state,
+                entity.enemy_ai().is_some_and(|enemy| enemy.attentive),
+                entity.is_dead(),
                 entity
-                    .map(|entity| entity.element_data().posture)
-                    .unwrap_or_default(),
-                entity
-                    .and_then(Entity::actor_data)
-                    .map(|actor| actor.action_state)
-                    .unwrap_or_default(),
-                entity
-                    .and_then(Entity::enemy_ai)
-                    .is_some_and(|enemy| enemy.attentive),
-                entity.is_some_and(Entity::is_dead),
-                entity
-                    .and_then(Entity::human_data)
+                    .human_data()
                     .is_some_and(|human| human.unconscious),
                 entity
-                    .and_then(Entity::human_data)
+                    .human_data()
                     .is_some_and(|human| !human.opponents.is_empty()),
                 entity
-                    .and_then(Entity::human_data)
+                    .human_data()
                     .is_some_and(|human| human.stuck_under_nets_counter > 0),
-                carrier
-                    .and_then(|carrier| self.entities.get(carrier))
-                    .is_some_and(|carrier| self.is_entity_vip(carrier)),
+                carrier.is_some_and(|carrier_id| {
+                    let carrier = self.entities.get(carrier_id).unwrap_or_else(|| {
+                        panic!(
+                            "Wait translation owner {owner:?} references missing carrier {carrier_id:?} at {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                    self.is_entity_vip(carrier)
+                }),
             )
         };
 
-        let after_state = self
+        let wait_element = self
             .sequence_manager
             .get_element(seq_id, elem_idx)
-            .map(|element| element.action_state_after_transition)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "Wait translation owner {owner:?} lost sequence element {seq_id:?}/{elem_idx} for {command:?}"
+                )
+            });
+        assert_eq!(
+            wait_element.owner,
+            Some(owner),
+            "Wait translation owner {owner:?} does not own {seq_id:?}/{elem_idx}"
+        );
+        assert_eq!(
+            wait_element.command, command,
+            "Wait translation owner {owner:?} dispatched {command:?} for {:?} at {seq_id:?}/{elem_idx}",
+            wait_element.command
+        );
+        let after_state = wait_element.action_state_after_transition;
         let pc_posture_animation = if is_pc {
             use crate::element::{ActionState as AS, Posture as P};
             use crate::order::OrderType as OT;
@@ -977,32 +1129,44 @@ impl WaitCommandContext<'_> {
             let timer = self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .and_then(|element| element.get_property(crate::sequence::Field::Timer))
-                .and_then(|value| match value {
-                    crate::sequence::FieldValue::Integer(timer) => Some(*timer),
-                    _ => None,
+                .unwrap_or_else(|| {
+                    panic!("WAIT_TIMER owner {owner:?} lost sequence element {seq_id:?}/{elem_idx}")
                 })
-                .unwrap_or(0);
-            if let Some(actor) = self
+                .get_property(crate::sequence::Field::Timer)
+                .unwrap_or_else(|| {
+                    panic!("WAIT_TIMER owner {owner:?} has no Timer at {seq_id:?}/{elem_idx}")
+                });
+            let timer = match timer {
+                crate::sequence::FieldValue::Integer(timer) => *timer,
+                other => panic!(
+                    "WAIT_TIMER owner {owner:?} requires integer Timer at {seq_id:?}/{elem_idx}, found {other:?}"
+                ),
+            };
+            let actor = self
                 .entities
                 .get_mut(owner)
                 .and_then(Entity::actor_data_mut)
-            {
-                actor.wait_time = timer;
-            }
+                .unwrap_or_else(|| {
+                    panic!("WAIT_TIMER owner {owner:?} vanished during translation")
+                });
+            actor.wait_time = timer;
         }
         if is_pc
             && posture == crate::element::Posture::Upright
             && action_state == crate::element::ActionState::Listening
-            && let Some(actor) = self
+        {
+            let actor = self
                 .entities
                 .get_mut(owner)
                 .and_then(Entity::actor_data_mut)
-        {
+                .unwrap_or_else(|| panic!("Wait translation listening owner {owner:?} vanished"));
             const TIME_LISTEN_WAIT: u32 = 25;
             actor.wait_time = TIME_LISTEN_WAIT;
         }
-        if set_posture_stuck_under_net && let Some(entity) = self.entities.get_mut(owner) {
+        if set_posture_stuck_under_net {
+            let entity = self.entities.get_mut(owner).unwrap_or_else(|| {
+                panic!("Wait translation owner {owner:?} vanished while setting net posture")
+            });
             entity
                 .element_data_mut()
                 .set_posture(crate::element::Posture::StuckUnderNet);
