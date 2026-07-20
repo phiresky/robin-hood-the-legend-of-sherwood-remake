@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::element::{ActionState, Command, Entity, EyeStatus, Posture};
-use crate::entities::EntitySlots;
 use crate::order::OrderCompletion;
 use crate::sprite::{FrameProgression, MotionState};
 
@@ -47,7 +46,10 @@ fn alerted_variant(anim: OrderType) -> Option<OrderType> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementKind, Entity};
+    use crate::element::{
+        ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementFx, ElementKind, Entity, FxData,
+    };
+    use crate::engine::EngineInner;
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
         let mut entity = Entity::Soldier(ActorSoldier {
@@ -76,6 +78,40 @@ mod tests {
             human: Default::default(),
             npc: Default::default(),
             civilian: Default::default(),
+        })
+    }
+
+    fn animated_fx(patch_index: Option<crate::patch::PatchIndex>) -> Entity {
+        let script = crate::sprite_script::SpriteScript {
+            action_id: 0,
+            action_done: 2,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+        };
+        let mut sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]),
+        );
+        sprite.current_row = 0;
+        sprite.current_frame = 0;
+        sprite.frame_count = 0;
+        Entity::Fx(ElementFx {
+            element: ElementData {
+                kind: ElementKind::Fx,
+                active: true,
+                sprite,
+                ..ElementData::default()
+            },
+            fx: FxData {
+                patch_index,
+                ..FxData::default()
+            },
         })
     }
 
@@ -124,6 +160,82 @@ mod tests {
             &mut terminated,
         );
         assert_eq!(terminated, vec![EntityId::Pc(crate::entity_id::PcId(7))]);
+
+        terminated.clear();
+        apply_combat_injury_side_effect(
+            &entity,
+            OrderType::StandingUpSword,
+            MotionState::Terminated,
+            EntityId::Pc(crate::entity_id::PcId(7)),
+            &mut terminated,
+        );
+        assert_eq!(terminated, vec![EntityId::Pc(crate::entity_id::PcId(7))]);
+    }
+
+    #[test]
+    fn global_actor_freeze_also_stops_nonactor_animation() {
+        let mut engine = EngineInner::new();
+        let fx = engine.add_entity(animated_fx(None));
+        let assets = crate::engine::types::LevelAssets::new();
+
+        engine.set_actors_frozen(true);
+        engine.tick_nonactor_entity_animations(&crate::sim_rng::test_context(), &assets);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(fx)
+                .expect("frozen FX remains installed")
+                .element_data()
+                .sprite
+                .current_frame,
+            0
+        );
+
+        engine.set_actors_frozen(false);
+        engine.tick_nonactor_entity_animations(&crate::sim_rng::test_context(), &assets);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(fx)
+                .expect("unfrozen FX remains installed")
+                .element_data()
+                .sprite
+                .current_frame,
+            1
+        );
+    }
+
+    #[test]
+    fn patch_fx_without_mission_vm_uses_default_progression_without_finalization() {
+        let mut engine = EngineInner::new();
+        assert!(engine.scripts.mission.is_none());
+        let fx = engine.add_entity(animated_fx(Some(
+            crate::patch::PatchIndex::new(0).expect("zero is a valid patch index"),
+        )));
+
+        engine.tick_nonactor_entity_animations(
+            &crate::sim_rng::test_context(),
+            &crate::engine::types::LevelAssets::new(),
+        );
+
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(fx)
+                .expect("no-script patch FX remains installed")
+                .element_data()
+                .sprite
+                .current_frame,
+            1,
+            "no-script patch FX retains the legacy default frame progression"
+        );
+        assert!(
+            engine.script_domains.interactables.patches.is_empty(),
+            "the no-VM compatibility path must not invent or finalize a patch"
+        );
     }
 
     #[test]
@@ -918,7 +1030,7 @@ pub(super) struct ExecuteSideOutcomes {
 /// DRINKING_ALE / TAKING / SPECIAL / GETTING_FREE_FROM_WASP
 /// antagonist-dependent effects.
 ///
-/// Invoked from `tick_entity_animations` after each `perform_action`
+/// Invoked from `tick_actor_animation_for` after each `perform_action`
 /// call on an `active_ai_anim`.  Mutations that can be applied to
 /// `entity` directly are; cross-entity mutations (bottle hide,
 /// coin pickup) accumulate in the returned [`ExecuteSideOutcomes`]
@@ -2164,7 +2276,8 @@ fn apply_falling_completion_side_effect(
 }
 
 /// Soldier combat-injury anims (`BEING_HIT_SWORD`,
-/// `EXTRACTING_ARROW_SWORD`, `BEING_WEAK_SWORD`, `BEING_STUNNED_SWORD`)
+/// `EXTRACTING_ARROW_SWORD`, `BEING_WEAK_SWORD`, `BEING_STUNNED_SWORD`,
+/// `STANDING_UP_SWORD`)
 /// dispatch `EventAfterCombatInjury` to the AI when they terminate so
 /// the soldier can resume the fight.  Pushes onto the caller-owned
 /// `combat_injury_terminated` list (which the post-tick loop in
@@ -2183,6 +2296,7 @@ fn apply_combat_injury_side_effect(
                 | OrderType::ExtractingArrowSword
                 | OrderType::BeingWeakSword
                 | OrderType::BeingStunnedSword
+                | OrderType::StandingUpSword
         )
         && matches!(entity, Entity::Soldier(_))
     {
@@ -2676,7 +2790,7 @@ fn dispatch_arm_completion(
     ExecuteOutcome::Forward(motion)
 }
 
-/// Side-effects collected by `tick_entity_animations` when an order's
+/// Side-effects collected by `tick_actor_animation_for` when an order's
 /// animation completes.  Matches the non-default variants of
 /// [`OrderCompletion`](crate::order::OrderCompletion), plus a generic
 /// "advance the owning element via `do_next_order`" bucket and the
@@ -2687,6 +2801,9 @@ fn dispatch_arm_completion(
 /// speech manager, etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct AnimCompletionOutcomes {
+    /// Sequence elements whose priority must become non-interruptable as soon
+    /// as their actor's animation enters `Start`.
+    pub non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)>,
     /// Default path: `do_next_order` pops the just-completed front order
     /// and advances the owning element (or terminates + ensures a wait
     /// element when the queue is empty).
@@ -2720,24 +2837,183 @@ pub(super) struct AnimCompletionOutcomes {
 }
 
 impl EngineInner {
-    /// Tick animations.
+    /// Advance non-actor sprite animation exactly once per engine tick.
     ///
-    /// Returns two lists:
-    /// - `ai_anim_done`: entities whose `active_ai_anim` completed this
-    ///   frame (need EventDone dispatch).
-    /// - `combat_injury_terminated`: entities whose combat-hit / extracting-
-    ///   arrow / being-weak / being-stunned `combat_anim` just terminated
-    ///   (need EventAfterCombatInjury dispatch for soldiers).
-    pub(super) fn tick_entity_animations(
+    /// Actor animation is owned by the live legacy-slot coordinator so its
+    /// synchronous completion effects can run before the same actor's
+    /// `ActionChange` and before any later actor reaches its slot.
+    pub(super) fn tick_nonactor_entity_animations(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::types::LevelAssets,
-    ) -> (Vec<EntityId>, Vec<EntityId>, AnimCompletionOutcomes) {
+    ) {
         if self.actors_frozen() {
-            return (Vec::new(), Vec::new(), AnimCompletionOutcomes::default());
+            return;
         }
 
-        let ai_anim_done: Vec<EntityId> = Vec::new();
+        // Snapshot patch (applied, in_transition) states before entity
+        // iteration. We need this to decide Reversed vs Default progression
+        // for patch FX entities, but cannot borrow the canonical patch domain
+        // during the mutable entity loop.
+        let patch_states: Option<Vec<(bool, bool)>> = self.scripts.mission.as_ref().map(|_| {
+            self.script_domains
+                .interactables
+                .patches
+                .iter()
+                .map(|p| (p.applied, p.in_transition))
+                .collect()
+        });
+        let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
+
+        for (_entity_id, entity) in self.world.entities.occupied_mut() {
+            if !entity.is_active() || entity.actor_data().is_some() {
+                continue;
+            }
+
+            // FX entities: frame advance. Mobile children freeze with their
+            // stopped master (RHElementFXMasked::Hourglass checks
+            // IsStopped before advancing). Patch FX entities need
+            // special handling: reversed playback during unapply
+            // transitions, and final patch effects on completion.
+            if entity.is_fx() {
+                if let Entity::Fx(fx) = entity
+                    && let Some(mobile_index) = fx.fx.mobile_index
+                {
+                    let stopped = self
+                        .world
+                        .mobile_elements
+                        .get(usize::from(mobile_index))
+                        .unwrap_or_else(|| {
+                            panic!("mobile FX references missing master {mobile_index}")
+                        })
+                        .stopped;
+                    if !stopped {
+                        fx.element
+                            .sprite
+                            .increment_frame_modulated(fx.fx.animation_speed);
+                    }
+                    continue;
+                }
+                let patch_idx = match entity {
+                    Entity::Fx(fx) => fx.fx.patch_index,
+                    _ => None,
+                };
+
+                if let Some(pidx) = patch_idx {
+                    let (applied, in_transition) = match patch_states.as_ref() {
+                        Some(states) => states.get(usize::from(pidx)).copied().unwrap_or_else(|| {
+                            panic!(
+                                "patch FX references missing patch {pidx} while advancing nonactor animation"
+                            )
+                        }),
+                        // `--no-script` intentionally omits the VM while
+                        // retaining authored non-script entities/domains. The
+                        // legacy batch treated patch FX as ordinary forward
+                        // animation and could not finalize script patch state.
+                        None => (false, false),
+                    };
+                    let progression = if applied && in_transition {
+                        FrameProgression::Reversed
+                    } else {
+                        FrameProgression::Default
+                    };
+                    let motion = entity
+                        .element_data_mut()
+                        .sprite
+                        .perform_virgin_increment(sim, progression);
+                    if matches!(motion, MotionState::Terminated) && in_transition {
+                        completed_patch_transitions.push(pidx);
+                    }
+                } else {
+                    let progression = if let Entity::Target(t) = entity {
+                        FrameProgression::from_ordinal(t.target.progression)
+                    } else {
+                        FrameProgression::Default
+                    };
+                    entity
+                        .element_data_mut()
+                        .sprite
+                        .perform_virgin_increment(sim, progression);
+                }
+                continue;
+            }
+
+            // Flying purse/coin projectiles skip their shadow frame; landed
+            // ones hold the final bursting frame.
+            if let Entity::Projectile(p) = entity
+                && matches!(
+                    p.object.object_type,
+                    crate::element::ObjectType::Purse | crate::element::ObjectType::Coin
+                )
+            {
+                let progression = if p.projectile.flying {
+                    FrameProgression::SkipShadow
+                } else {
+                    FrameProgression::FreezeWhenTerminated
+                };
+                p.element.sprite.perform_virgin_increment(sim, progression);
+                continue;
+            }
+
+            // Bonus, Scroll, Mobile, Net, and remaining projectiles all use
+            // the plain cyclical frame advance.
+            entity
+                .element_data_mut()
+                .sprite
+                .increment_frame(sim, FrameProgression::Cyclically);
+        }
+
+        for patch_idx in completed_patch_transitions {
+            let effects = {
+                let patch = self
+                    .script_domains
+                    .interactables
+                    .patches
+                    .get_mut(usize::from(patch_idx))
+                    .unwrap_or_else(|| {
+                        panic!("completed patch animation references missing patch {patch_idx}")
+                    });
+                patch.in_transition = false;
+                patch.apply_final(false)
+            };
+
+            for door in self.script_domains.interactables.doors.iter_mut() {
+                if door.patch_index == Some(patch_idx) {
+                    door.gate_state.finish_transition();
+                    tracing::debug!(
+                        %patch_idx,
+                        new_state = ?door.gate_state,
+                        "gate_state advanced on patch transition complete"
+                    );
+                }
+            }
+
+            tracing::debug!(
+                %patch_idx,
+                num_effects = effects.len(),
+                "Patch transition animation completed → ApplyFinal"
+            );
+            self.process_patch_effects(sim, assets, patch_idx, effects);
+        }
+    }
+
+    /// Run the existing generic actor animation/`Execute` dispatch for one
+    /// live legacy creation slot.
+    ///
+    /// Eligibility remains deliberately narrower than actor `Hourglass`:
+    /// movement, melee, bow, and frozen/inactive actors keep their existing
+    /// owners. The caller must still run `ActionChange` for those skipped
+    /// actors.
+    pub(super) fn tick_actor_animation_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::types::LevelAssets,
+        entity_id: EntityId,
+    ) -> (Vec<EntityId>, AnimCompletionOutcomes) {
+        if self.actors_frozen() {
+            return (Vec::new(), AnimCompletionOutcomes::default());
+        }
+
         let mut combat_injury_terminated: Vec<EntityId> = Vec::new();
         // Sequence elements whose priority should be lifted to
         // `NonInterruptable` because their currently-driven anim hit
@@ -2745,83 +3021,239 @@ impl EngineInner {
         // families (see `anim_forces_non_interruptable_on_start`).
         // Applied after the entity loop so we don't double-borrow
         // `self.orders.sequence_manager` while iterating `self.world.entities`.
-        let mut non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
         let mut completion_outcomes = AnimCompletionOutcomes::default();
+        let (
+            principal_frames_from_now,
+            drinking_ale_antagonist_active,
+            door_pass_crenel_transition_dir,
+            validated_antagonist,
+        ) = {
+            let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "actor animation creation slot {} lost entity {entity_id:?}",
+                    entity_id.index()
+                )
+            });
+            let actor = entity.actor_data().unwrap_or_else(|| {
+                panic!(
+                    "actor animation creation slot {} resolved non-actor {entity_id:?}",
+                    entity_id.index()
+                )
+            });
+            if !entity.is_active()
+                || actor.execution_frozen
+                || actor.action_state.is_moving()
+                || matches!(
+                    actor.action_state,
+                    crate::element::ActionState::MovingSword
+                        | crate::element::ActionState::MovingFastSword
+                        | crate::element::ActionState::MovingShield
+                )
+                || actor.active_melee.is_active()
+                || actor.active_shot.is_active()
+            {
+                return (Vec::new(), AnimCompletionOutcomes::default());
+            }
 
-        // Snapshot patch (applied, in_transition) states before entity
-        // iteration. We need this to decide Reversed vs Default progression
-        // for patch FX entities, but cannot borrow the canonical patch domain
-        // during the mutable entity loop.
-        let patch_states: Vec<(bool, bool)> = self
-            .scripts
-            .mission
-            .as_ref()
-            .map(|_| {
-                self.script_domains
-                    .interactables
-                    .patches
-                    .iter()
-                    .map(|p| (p.applied, p.in_transition))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut frames_from_now_till_action_done =
-            EntitySlots::filled(self.world.entities.len(), None);
-        let mut active_entity_flags = EntitySlots::filled(self.world.entities.len(), false);
-        let mut door_pass_crenel_transition_dirs =
-            EntitySlots::filled(self.world.entities.len(), None);
-        for (entity_id, entity) in self.world.entities.occupied() {
-            let sprite = &entity.element_data().sprite;
-            frames_from_now_till_action_done[entity_id] =
-                safe_frames_from_now_till_action_done(sprite);
-            active_entity_flags[entity_id] = entity.is_active();
-            door_pass_crenel_transition_dirs[entity_id] = (|| {
-                let dp = entity.actor_data()?.active_door_pass.as_ref()?;
-                let reverse_direction = match dp.current_action {
-                    OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel => false,
-                    OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel => true,
-                    _ => return None,
-                };
-                let sector_in = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .and_then(|_| {
-                        self.script_domains
-                            .interactables
-                            .doors
-                            .get(usize::from(dp.door_index))
+            let Some((seq_id, elem_idx, order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+            else {
+                return (Vec::new(), AnimCompletionOutcomes::default());
+            };
+            let cur_command = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} current order references missing sequence element {seq_id:?}/{elem_idx} at legacy slot {}",
+                        entity_id.index()
+                    )
+                })
+                .command;
+            let anim_type = order.order_type;
+            let driving_one_shot =
+                cur_command != Command::Wait && cur_command != Command::WaitTimer;
+            let settled_dead_or_ko_hold = matches!(
+                anim_type,
+                OrderType::BeingDead
+                    | OrderType::BeingDeadFallenBack
+                    | OrderType::BeingDeadSword
+                    | OrderType::BeingDeadBow
+                    | OrderType::BeingDeadFallenBackSword
+                    | OrderType::BeingDeadFallenBackBow
+                    | OrderType::BeingUnconscious
+                    | OrderType::BeingUnconsciousSword
+                    | OrderType::BeingUnconsciousBow
+            );
+            if (entity.is_dead()
+                || entity
+                    .human_data()
+                    .map(|human| human.unconscious)
+                    .unwrap_or(false))
+                && !driving_one_shot
+                && !settled_dead_or_ko_hold
+            {
+                return (Vec::new(), AnimCompletionOutcomes::default());
+            }
+            if matches!(
+                cur_command,
+                Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor
+            ) && is_sword_movement_nonanimation(anim_type)
+            {
+                return (Vec::new(), AnimCompletionOutcomes::default());
+            }
+
+            let principal_frames = if anim_type == OrderType::TransitionWaitingSwordParryingSwordLow
+            {
+                entity
+                    .human_data()
+                    .and_then(|human| human.opponents.first().copied())
+                    .map(|opponent| {
+                        let opponent_entity =
+                            self.world.entities.get(opponent).unwrap_or_else(|| {
+                                panic!(
+                                    "actor {entity_id:?} low-parry opponent {opponent:?} is missing at legacy slot {}",
+                                    entity_id.index()
+                                )
+                            });
+                        safe_frames_from_now_till_action_done(
+                            &opponent_entity.element_data().sprite,
+                        )
                     })
-                    .map(|door| door.sector_in)?;
-                let direction = self
+                    .flatten()
+            } else {
+                None
+            };
+
+            let anim_uses_antagonist = matches!(
+                anim_type,
+                OrderType::DrinkingAle
+                    | OrderType::Taking
+                    | OrderType::Searching
+                    | OrderType::TakingNet
+                    | OrderType::WakingUp
+                    | OrderType::HittingTarget
+                    | OrderType::HandlingTarget
+                    | OrderType::TakingTarget
+                    | OrderType::UsingLever
+                    | OrderType::StrikingDownSword
+            );
+            let anim_requires_antagonist =
+                anim_uses_antagonist && (anim_type != OrderType::Searching || entity.is_pc());
+            let validated_antagonist = if anim_requires_antagonist {
+                order.antagonist.or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} {anim_type:?} requires antagonist at legacy slot {}",
+                        entity_id.index()
+                    )
+                })
+            } else if anim_uses_antagonist {
+                order.antagonist
+            } else {
+                None
+            };
+            let antagonist_active = validated_antagonist.map(|antagonist| {
+                let antagonist_entity =
+                    self.world.entities.get(antagonist).unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} required {anim_type:?} antagonist {antagonist:?} is missing at legacy slot {}",
+                            entity_id.index()
+                        )
+                    });
+                if anim_type == OrderType::DrinkingAle {
+                    Some(antagonist_entity.is_active())
+                } else {
+                    None
+                }
+            }).flatten();
+
+            let door_direction = if matches!(
+                anim_type,
+                OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+                    | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+            ) && entity.element_data().sprite.last_processed_order_id
+                != order.order_id.get()
+            {
+                let dp = actor.active_door_pass.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} {anim_type:?} lacks required active door pass at legacy slot {}",
+                        entity_id.index()
+                    )
+                });
+                let reverse_direction =
+                    anim_type == OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel;
+                let door = self
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(dp.door_index))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} crenel transition references missing door {} at legacy slot {}",
+                            dp.door_index,
+                            entity_id.index()
+                        )
+                    });
+                let sector_number = crate::sector::SectorNumber::new(i16::from(door.sector_in));
+                let sector_index = self
                     .world
                     .fast_grid
                     .level
                     .sector_number_map
-                    .get(&crate::sector::SectorNumber::new(i16::from(sector_in)))
-                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
-                    .and_then(|sector| {
-                        if sector.lift_type == Some(crate::sector::LiftType::Wall) {
-                            Some(sector.lift_direction)
-                        } else {
-                            None
-                        }
-                    })?;
+                    .get(&sector_number)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} crenel door {} references missing sector {sector_number:?} at legacy slot {}",
+                            dp.door_index,
+                            entity_id.index()
+                        )
+                    });
+                let sector = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(sector_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} crenel door {} resolved invalid sector index {sector_index} at legacy slot {}",
+                            dp.door_index,
+                            entity_id.index()
+                        )
+                    });
+                if sector.lift_type != Some(crate::sector::LiftType::Wall) {
+                    panic!(
+                        "actor {entity_id:?} crenel door {} requires wall-lift sector {sector_number:?}, found {:?}",
+                        dp.door_index, sector.lift_type
+                    );
+                }
                 Some(if reverse_direction {
-                    (direction + 8) & 15
+                    (sector.lift_direction + 8) & 15
                 } else {
-                    direction
+                    sector.lift_direction
                 })
-            })();
-        }
+            } else {
+                None
+            };
 
-        // Collect patch indices whose transitions completed this tick.
-        // Processed after the entity loop to avoid borrowing conflicts.
-        let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
+            (
+                principal_frames,
+                antagonist_active,
+                door_direction,
+                validated_antagonist,
+            )
+        };
 
-        for (entity_id, entity) in self.world.entities.occupied_mut() {
+        'actor: loop {
+            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+                panic!("actor {entity_id:?} vanished before generic animation dispatch")
+            });
             if !entity.is_active() {
-                continue;
+                break 'actor;
             }
 
             // Actors: animate based on current action state
@@ -2843,11 +3275,11 @@ impl EngineInner {
                             | crate::element::ActionState::MovingShield
                     )
                 {
-                    continue;
+                    break 'actor;
                 }
 
                 if actor.execution_frozen {
-                    continue;
+                    break 'actor;
                 }
 
                 // Active melee strike: `tick_melee_strikes` drives the
@@ -2861,10 +3293,10 @@ impl EngineInner {
                 // `MotionState::Start` forever — which is exactly the
                 // strike-animation-stuck bug from the replay.
                 if actor.active_melee.is_active() {
-                    continue;
+                    break 'actor;
                 }
                 if actor.active_shot.is_active() {
-                    continue;
+                    break 'actor;
                 }
 
                 let direction = entity.element_data().direction() as u16;
@@ -2882,7 +3314,7 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .current_order_for_actor(entity_id);
-                let (order_seq_elem, anim_type, order_id, antagonist, completion) =
+                let (order_seq_elem, anim_type, order_id, order_antagonist, completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
                         (
                             Some((seq_id, elem_idx)),
@@ -2900,6 +3332,7 @@ impl EngineInner {
                             OrderCompletion::AdvanceElement,
                         )
                     };
+                let antagonist = validated_antagonist.or(order_antagonist);
 
                 // Is the current element a one-shot action (not the
                 // actor's `Command::Wait` idle element)?  One-shots
@@ -2944,7 +3377,7 @@ impl EngineInner {
                 // early here meant killed enemies snapped to the
                 // ground / held their last pose without ever falling.
                 if entity.is_dead() && !driving_one_shot && !settled_dead_or_ko_hold {
-                    continue;
+                    break 'actor;
                 }
 
                 // Unconscious entities: freeze on last frame unless a
@@ -2958,7 +3391,7 @@ impl EngineInner {
                     && !driving_one_shot
                     && !settled_dead_or_ko_hold
                 {
-                    continue;
+                    break 'actor;
                 }
 
                 // AI-driven animation (Pointing, RaisingShield, dying,
@@ -2980,7 +3413,7 @@ impl EngineInner {
                         // visible here while the actor state has
                         // already left Moving, do not try to play its
                         // logical movement token as a sprite row.
-                        continue;
+                        break 'actor;
                     }
                     tracing::trace!(
                         entity = entity_id.index(),
@@ -3034,19 +3467,15 @@ impl EngineInner {
                             OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
                                 | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
                         )
-                        && let Some(direction) = door_pass_crenel_transition_dirs
-                            .get(entity_id)
-                            .copied()
-                            .flatten()
+                        && let Some(direction) = door_pass_crenel_transition_dir
                     {
                         entity.element_data_mut().set_direction_instantly(direction);
                         entity.set_posture(crate::element::Posture::Flying);
                     }
                     let drinking_ale_antagonist_inactive =
                         matches!(anim_type, OrderType::DrinkingAle)
-                            && antagonist.is_some_and(|a| {
-                                !active_entity_flags.get(a).copied().unwrap_or(false)
-                            });
+                            && antagonist.is_some()
+                            && drinking_ale_antagonist_active == Some(false);
                     let motion = if is_turn {
                         // Play the turn sprite animation (alerted
                         // variant for attentive soldiers) at the
@@ -3298,15 +3727,6 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
-                        let principal_frames_from_now = entity
-                            .human_data()
-                            .and_then(|h| h.opponents.first().copied())
-                            .and_then(|opponent| {
-                                frames_from_now_till_action_done
-                                    .get(opponent)
-                                    .copied()
-                                    .flatten()
-                            });
                         apply_soldier_execute_side_effects(
                             entity,
                             anim_type,
@@ -3438,7 +3858,9 @@ impl EngineInner {
                         if matches!(motion_state, MotionState::Start)
                             && anim_forces_non_interruptable_on_start(anim_type)
                         {
-                            non_interruptable_lifts.push((seq_id, elem_idx));
+                            completion_outcomes
+                                .non_interruptable_lifts
+                                .push((seq_id, elem_idx));
                         }
                         if matches!(motion_state, MotionState::Terminated)
                             && cur_command == Some(Command::PlayAnimFreeze)
@@ -3525,7 +3947,7 @@ impl EngineInner {
                             }
                         }
                     }
-                    continue;
+                    break 'actor;
                 }
 
                 // No current order on the actor.  Dispatch only ever
@@ -3536,193 +3958,11 @@ impl EngineInner {
                 // any, and the newly-launched wait element will take
                 // over next hourglass.
                 let _ = direction;
-                continue;
+                break 'actor;
             }
-
-            // FX entities: frame advance. Mobile children freeze with their
-            // stopped master (RHElementFXMasked::Hourglass checks
-            // IsStopped before advancing). Patch FX entities need
-            // special handling: reversed playback during unapply
-            // transitions, and final patch effects on completion.
-            if entity.is_fx() {
-                if let Entity::Fx(fx) = entity
-                    && let Some(mobile_index) = fx.fx.mobile_index
-                {
-                    let stopped = self
-                        .world
-                        .mobile_elements
-                        .get(usize::from(mobile_index))
-                        .unwrap_or_else(|| {
-                            panic!("mobile FX references missing master {mobile_index}")
-                        })
-                        .stopped;
-                    if !stopped {
-                        fx.element
-                            .sprite
-                            .increment_frame_modulated(fx.fx.animation_speed);
-                    }
-                    continue;
-                }
-                // Check if this is a patch FX entity.
-                let patch_idx = match entity {
-                    Entity::Fx(fx) => fx.fx.patch_index,
-                    _ => None,
-                };
-
-                if let Some(pidx) = patch_idx {
-                    // Patch FX progression depends on transition state.
-                    let (applied, in_transition) = patch_states
-                        .get(usize::from(pidx))
-                        .copied()
-                        .unwrap_or((false, false));
-
-                    // If applied && in_transition → REVERSED, else DEFAULT.
-                    let progression = if applied && in_transition {
-                        FrameProgression::Reversed
-                    } else {
-                        FrameProgression::Default
-                    };
-
-                    let motion = {
-                        let elem = entity.element_data_mut();
-                        elem.sprite.perform_virgin_increment(sim, progression)
-                    };
-
-                    // When transition animation finishes, queue the
-                    // patch's final-apply effects.
-                    if matches!(motion, MotionState::Terminated) && in_transition {
-                        completed_patch_transitions.push(pidx);
-                    }
-                } else {
-                    // Non-patch FX / Target: simple frame advance.
-                    // Placeholder sprites no-op via the
-                    // `increment_frame` empty-scripts guard.
-                    //
-                    // Target entities honour their stamped
-                    // `TargetData.progression` so scripts that
-                    // recorded `PlayAnimLoop` (→ Cyclically) or
-                    // `PlayAnimFreeze` (→ FreezeWhenTerminated) keep
-                    // cycling or hold the last frame instead of
-                    // silently running with `Default`.
-                    let progression = if let Entity::Target(t) = entity {
-                        FrameProgression::from_ordinal(t.target.progression)
-                    } else {
-                        FrameProgression::Default
-                    };
-                    entity
-                        .element_data_mut()
-                        .sprite
-                        .perform_virgin_increment(sim, progression);
-                }
-                continue;
-            }
-
-            // Purses / coins use distinct progression flags depending
-            // on flight phase:
-            //   - flying  → `SkipShadow` (drops the trailing shadow
-            //     frame so the animation stays tight).
-            //   - landed  → switch to `OBJECT_BURSTING` and freeze on
-            //     the last frame via `FreezeWhenTerminated`.
-            // The default `Cyclically` flag would loop the bursting
-            // animation forever instead of holding the empty-pouch
-            // frame, so handle these projectiles explicitly here.
-            if let Entity::Projectile(p) = entity
-                && matches!(
-                    p.object.object_type,
-                    crate::element::ObjectType::Purse | crate::element::ObjectType::Coin
-                )
-            {
-                let progression = if p.projectile.flying {
-                    FrameProgression::SkipShadow
-                } else {
-                    FrameProgression::FreezeWhenTerminated
-                };
-                p.element.sprite.perform_virgin_increment(sim, progression);
-                continue;
-            }
-
-            // Other non-actor entities: Bonus (including Cape, which
-            // advances with the default progression — frame state
-            // matches `Cyclically` here), Scroll (advances the sprite
-            // with the default progression in the same block that
-            // fires the per-25-tick script Hourglass — the script
-            // side is handled separately in
-            // `dispatch_scroll_hourglasses`), Mobile, Net, and
-            // projectiles without a custom progression branch above.
-            // All of them want a plain cyclical frame advance;
-            // `MotionState::Terminated` isn't consulted for any of
-            // these element kinds, so calling the cheaper
-            // `increment_frame` is equivalent to a default-progression
-            // virgin increment for the sprite state.
-            entity
-                .element_data_mut()
-                .sprite
-                .increment_frame(sim, FrameProgression::Cyclically);
         }
 
-        // Process completed patch transitions (deferred to avoid borrow
-        // conflicts during entity iteration).  Clear the in-transition
-        // flag and apply the patch's final effects.
-        for patch_idx in completed_patch_transitions {
-            let effects = {
-                if self.scripts.mission.is_none() {
-                    continue;
-                }
-                let patch = match self
-                    .script_domains
-                    .interactables
-                    .patches
-                    .get_mut(usize::from(patch_idx))
-                {
-                    Some(p) => p,
-                    None => continue,
-                };
-                patch.in_transition = false;
-                patch.apply_final(false)
-            };
-
-            // Advance the gate-state machine of any door whose patch
-            // just finished transitioning.  The drawbridge / portcullis
-            // visual is driven by the patch FX entity; `gate_state`
-            // is bookkeeping that mirrors that visual so downstream
-            // code (pathfinding, AI planning) can query an accurate
-            // passable/impassable answer instead of inspecting patch
-            // internals.  "Applied" == "Open"; the state changes
-            // atomically at apply-final time.
-            for door in self.script_domains.interactables.doors.iter_mut() {
-                if door.patch_index == Some(patch_idx) {
-                    door.gate_state.finish_transition();
-                    tracing::debug!(
-                        %patch_idx,
-                        new_state = ?door.gate_state,
-                        "gate_state advanced on patch transition complete"
-                    );
-                }
-            }
-
-            tracing::debug!(
-                %patch_idx,
-                num_effects = effects.len(),
-                "Patch transition animation completed → ApplyFinal"
-            );
-
-            self.process_patch_effects(sim, assets, patch_idx, effects);
-        }
-
-        // Drain `non_interruptable_lifts` after the entity loop ends.
-        // Lifts the sequence-element priority to NonInterruptable on
-        // initialisation for the
-        // FALLING_HIT_*/ROLLING/FALLING_LADDER_WALL/FALLING_PUSHED
-        // anim families.
-        for (seq_id, elem_idx) in non_interruptable_lifts {
-            self.orders.sequence_manager.set_element_priority(
-                seq_id,
-                elem_idx,
-                crate::sequence::SequencePriority::NonInterruptable,
-            );
-        }
-
-        (ai_anim_done, combat_injury_terminated, completion_outcomes)
+        (combat_injury_terminated, completion_outcomes)
     }
 
     /// Dispatch per-frame animation sound triggers.
@@ -3733,8 +3973,9 @@ impl EngineInner {
     /// position (with material for actors and projectiles, without
     /// for scenic FX/objects).
     ///
-    /// Called once per tick, after [`EngineInner::tick_entity_movement`] and
-    /// [`EngineInner::tick_entity_animations`] have advanced all sprite frames.
+    /// Called once per tick, after [`EngineInner::tick_entity_movement`], the
+    /// live actor-slot coordinator, and nonactor animation have advanced all
+    /// sprite frames.
     pub(super) fn dispatch_frame_sounds(&mut self) {
         use crate::element::GameMaterial;
         use crate::sound_cache::Material;

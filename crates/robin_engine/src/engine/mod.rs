@@ -1960,8 +1960,9 @@ impl EngineInner {
     /// field is fresh for the next tick.
     ///
     /// The per-actor sprite advance is split across several per-system
-    /// passes (`tick_entity_movement`, `tick_entity_animations`,
-    /// `tick_melee_combat`, `tick_active_jumps`, `tick_bow_shots`,
+    /// passes (`tick_entity_movement`, the live actor coordinator through
+    /// `tick_actor_animation_for`, `tick_nonactor_entity_animations`,
+    /// `tick_melee_combat`, `tick_active_jumps`, `tick_bow_shots`, and
     /// `tick_abilities`); each one funnels through
     /// [`Sprite::record_motion_state`](crate::sprite::Sprite), which
     /// stashes the result in [`Sprite::last_motion_state`].  This pass
@@ -3101,24 +3102,6 @@ impl EngineInner {
         elem.posture_after_transition = posture;
         elem.action_state_after_transition = action_state;
         self.orders.sequence_manager.launch_element(elem);
-    }
-
-    /// Restore the lazy `Wait()` invariant for actors that have no
-    /// current sequence element.  Most paths call
-    /// `ensure_wait_element` when a queue drains, but some direct
-    /// terminations can still leave an actor with no order.  Without
-    /// the wait element, idle/sword-idle animations are not driven
-    /// and the sprite can remain on the last movement frame.
-    pub(crate) fn ensure_wait_elements_for_idle_actors(&mut self) {
-        let actor_ids: Vec<EntityId> = self
-            .world
-            .entities
-            .actors()
-            .filter_map(|(id, entity)| entity.is_active().then_some(id.into()))
-            .collect();
-        for actor_id in actor_ids {
-            self.ensure_wait_element(actor_id);
-        }
     }
 
     /// Consume the typed motion-stage input and feed it into

@@ -1514,6 +1514,82 @@ fn install_test_action(
     );
 }
 
+fn bind_test_actor_animations(
+    engine: &mut EngineInner,
+    actor: EntityId,
+    actions: &[crate::order::OrderType],
+) {
+    let mut scripts = Vec::new();
+    let mut conversion =
+        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    for &action in actions {
+        conversion[action as usize] = scripts.len() as u16;
+        let script = crate::sprite_script::SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+        };
+        scripts.extend(std::iter::repeat_n(script, 16));
+    }
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .expect("actor-animation fixture actor exists")
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(scripts),
+        std::sync::Arc::new(conversion),
+    );
+}
+
+fn install_test_order_queue(
+    engine: &mut EngineInner,
+    actor: EntityId,
+    orders: impl IntoIterator<Item = crate::order::Order>,
+) -> crate::sequence::SequenceId {
+    let mut element =
+        crate::sequence::SequenceElement::new(1, crate::element::Command::PlayAnim, Some(actor));
+    for order in orders {
+        element.orders.push_back(order);
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+    sequence
+}
+
+fn bind_action_observer(engine: &mut EngineInner, assets: &LevelAssets, actor: EntityId) {
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(build_action_change_scb(handle, handle))
+            .expect("action-observer SCB builds"),
+    );
+    engine.attach_script_bindings(assets);
+    engine
+        .with_script_session(
+            &crate::sim_rng::test_context(),
+            assets,
+            |script, domains, capabilities| {
+                assert!(script.bind_actor(handle, "ActionObserver", domains, capabilities));
+            },
+        )
+        .expect("action-observer mission remains installed");
+}
+
 fn action_change_ordering_engine(
     mutator_before_observer: bool,
 ) -> (EngineInner, LevelAssets, EntityId, EntityId) {
@@ -1718,4 +1794,776 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
         crate::order::OrderType::WaitingCrouched,
         "old_action must retain the post-callback live animation"
     );
+}
+
+#[test]
+fn generic_animation_skip_does_not_skip_action_change() {
+    use crate::element::ActionState;
+    use crate::order::OrderType;
+
+    for skip in [
+        "global-frozen",
+        "inactive",
+        "execution-frozen",
+        "moving",
+        "dead",
+        "unconscious",
+        "active-melee",
+        "active-shot",
+    ] {
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = crate::campaign::Campaign::default();
+        let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+        let stale = engine.add_entity(make_scripted_soldier(""));
+        engine.remove_entity(stale);
+        let assets = LevelAssets::new();
+        bind_action_observer(&mut engine, &assets, actor);
+        bind_test_actor_animations(&mut engine, actor, &[OrderType::WalkingUpright]);
+        install_test_action(
+            &mut engine,
+            actor,
+            OrderType::WalkingUpright,
+            OrderType::WaitingUpright,
+        );
+        let (seq_id, elem_idx) = engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor)
+            .expect("skipped actor has a current element");
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .expect("skipped actor element remains installed")
+            .orders
+            .front_mut()
+            .expect("skipped actor has a current order")
+            .antagonist = Some(stale);
+        {
+            let entity = engine
+                .world
+                .entities
+                .get_mut(actor)
+                .expect("skipped actor exists for stale-reference setup");
+            entity
+                .human_data_mut()
+                .expect("skipped actor is human")
+                .opponents
+                .push(stale);
+            entity
+                .actor_data_mut()
+                .expect("skipped actor is typed")
+                .active_door_pass = Some(crate::element::ActiveDoorPass {
+                door_index: crate::gate::DoorIndex(u32::MAX),
+                direct: true,
+                steps: std::collections::VecDeque::new(),
+                triggers_fired: 0,
+                current_action: OrderType::Invalid,
+                current_reverse: false,
+                saved_action_state: None,
+            });
+        }
+        let last_action_before = engine
+            .world
+            .entities
+            .get(actor)
+            .expect("skipped actor exists before setup")
+            .element_data()
+            .sprite
+            .last_action;
+        if skip == "global-frozen" {
+            engine.set_actors_frozen(true);
+        } else {
+            let entity = engine
+                .world
+                .entities
+                .get_mut(actor)
+                .expect("skipped actor exists");
+            match skip {
+                "inactive" => entity.element_data_mut().active = false,
+                "execution-frozen" => {
+                    entity
+                        .actor_data_mut()
+                        .expect("skipped actor is typed")
+                        .execution_frozen = true;
+                }
+                "moving" => {
+                    entity
+                        .actor_data_mut()
+                        .expect("skipped actor is typed")
+                        .action_state = ActionState::Moving;
+                }
+                "dead" => {
+                    entity
+                        .npc_data_mut()
+                        .expect("skipped actor is an NPC")
+                        .life_points = 0;
+                }
+                "unconscious" => {
+                    entity
+                        .human_data_mut()
+                        .expect("skipped actor is human")
+                        .unconscious = true;
+                }
+                "active-melee" => {
+                    entity
+                        .actor_data_mut()
+                        .expect("skipped actor is typed")
+                        .active_melee = crate::movement::ActiveMelee::new(
+                        stale,
+                        crate::weapons::SwordStrike::default(),
+                        Some(seq_id),
+                        elem_idx,
+                    );
+                }
+                "active-shot" => {
+                    entity
+                        .actor_data_mut()
+                        .expect("skipped actor is typed")
+                        .active_shot = crate::movement::ActiveShot {
+                        sequence_id: Some(seq_id),
+                        element_index: elem_idx,
+                        target: Some(stale),
+                        ..Default::default()
+                    };
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+        assert_eq!(
+            observed_action_args(&engine, actor),
+            (
+                OrderType::WalkingUpright as i32,
+                OrderType::WaitingUpright as i32,
+            ),
+            "{skip} actors still own the base-Hourglass ActionChange boundary"
+        );
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(actor)
+                .expect("skipped actor remains installed")
+                .element_data()
+                .sprite
+                .last_action,
+            last_action_before,
+            "{skip} must skip generic sprite execution"
+        );
+    }
+}
+
+#[test]
+fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let stale = engine.add_entity(make_scripted_soldier(""));
+    engine.remove_entity(stale);
+    {
+        let entity = engine
+            .world
+            .entities
+            .get_mut(actor)
+            .expect("token-skip actor exists");
+        entity
+            .human_data_mut()
+            .expect("token-skip actor is human")
+            .opponents
+            .push(stale);
+        entity
+            .actor_data_mut()
+            .expect("token-skip actor is typed")
+            .active_door_pass = Some(crate::element::ActiveDoorPass {
+            door_index: crate::gate::DoorIndex(u32::MAX),
+            direct: true,
+            steps: std::collections::VecDeque::new(),
+            triggers_fired: 0,
+            current_action: OrderType::Invalid,
+            current_reverse: false,
+            saved_action_state: None,
+        });
+    }
+    let order = crate::order::Order::new(
+        OrderType::WalkingWithSword,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    )
+    .with_antagonist(stale);
+    let mut element =
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(actor));
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+
+    let (injuries, outcomes) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        actor,
+    );
+
+    assert!(injuries.is_empty());
+    assert!(outcomes.seq_advance.is_empty());
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .expect("token-skip actor remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        OrderType::NonanimationEnd,
+        "the movement-owned token must skip generic Execute without dereferencing stale inputs"
+    );
+}
+
+#[test]
+fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback() {
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let first = engine.add_entity(make_scripted_soldier("WaitProbe"));
+    let later = engine.add_entity(make_scripted_soldier(""));
+    let first_handle = crate::natives::ScriptHandleCodec::actor_handle(first);
+    let later_handle = crate::natives::ScriptHandleCodec::actor_handle(later);
+    let body = vec![
+        q_aff0_iconstant(TMP0, later_handle),
+        q_native_param(TMP0),
+        q_native_call(crate::natives::NativeFn::GetCurrentAction as u32),
+        q_aff1_native_get_return(TMP1),
+        q_aff0_iconstant(TMP2, first_handle),
+        q_aff0_iconstant(TMP3, 0),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_param(TMP1),
+        q_native_call(crate::natives::NativeFn::SetCustomNPCValue as u32),
+    ];
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![
+                ClassEntry {
+                    source_file: "wait_isolation_test.scs".into(),
+                    class_name: "StartUp".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![],
+                    quads: vec![],
+                },
+                action_change_class("WaitProbe", 4, body),
+            ],
+        })
+        .expect("wait-isolation SCB builds"),
+    );
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    engine
+        .with_script_session(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |script, domains, capabilities| {
+                assert!(script.bind_actor(first_handle, "WaitProbe", domains, capabilities));
+            },
+        )
+        .expect("wait-isolation mission remains installed");
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(first)
+            .expect("first wait-probe actor remains installed")
+            .npc_data()
+            .expect("first wait-probe actor remains NPC")
+            .custom_values[0],
+        0,
+        "the earlier callback must observe the later actor before that actor's lazy Wait slot"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(later)
+            .is_some(),
+        "the later actor must initialize and dispatch its Wait only upon reaching its own slot"
+    );
+}
+
+#[test]
+fn combat_injury_think_finishes_before_same_slot_action_change() {
+    use super::tick::{ActorAnimationBoundaryPhase as Phase, capture_actor_animation_boundary};
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .and_then(|entity| entity.npc_data_mut())
+        .and_then(|npc| npc.ai_brain.enemy_mut())
+        .expect("combat-injury fixture has enemy AI")
+        .hth_weapon_id = 1;
+    let mut assets = LevelAssets::new();
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles
+        .soldiers
+        .push(crate::profiles::SoldierProfile::default());
+    profiles
+        .hth_weapons
+        .push(crate::profiles::HtHWeaponProfile::default());
+    bind_test_actor_animations(
+        &mut engine,
+        actor,
+        &[crate::order::OrderType::StandingUpSword],
+    );
+    let order = crate::order::Order::new(
+        crate::order::OrderType::StandingUpSword,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let order_id = order.order_id;
+    install_test_order_queue(&mut engine, actor, [order]);
+    {
+        let sprite = &mut engine
+            .world
+            .entities
+            .get_mut(actor)
+            .expect("combat-injury actor exists for sprite priming")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = order_id.get();
+        sprite.last_action = crate::order::OrderType::StandingUpSword;
+        sprite.current_row = 0;
+        sprite.current_frame = 1;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+    engine.dispatch_ai_stimulus(
+        actor,
+        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+    );
+
+    let (_, phases) = capture_actor_animation_boundary(|| {
+        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets)
+    });
+
+    let think = phases
+        .iter()
+        .position(|phase| *phase == Phase::CombatInjuryThink(actor))
+        .expect("terminating combat injury synchronously enters Think");
+    let action_change = phases
+        .iter()
+        .position(|phase| *phase == Phase::ActionChange(actor))
+        .expect("same actor reaches ActionChange");
+    let completion = phases
+        .iter()
+        .position(|phase| *phase == Phase::CompletionEffects(actor))
+        .expect("same actor applies completion effects");
+    assert!(
+        think < completion && completion < action_change,
+        "StandingUpSword must run combat Think before completion/DoNext and ActionChange: {phases:?}"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .and_then(|entity| entity.ai_controller())
+            .expect("combat-injury actor retains AI")
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![crate::ai::StimulusType::EventTimer],
+        "the synchronous combat Think must preserve the older unrelated FIFO entry"
+    );
+}
+
+#[test]
+fn earlier_action_change_replacement_is_animated_at_the_later_actor_slot() {
+    let (mut engine, assets, mutator, observer) = action_change_ordering_engine(true);
+    bind_test_actor_animations(
+        &mut engine,
+        mutator,
+        &[
+            crate::order::OrderType::RunningUpright,
+            crate::order::OrderType::WaitingCrouched,
+        ],
+    );
+    bind_test_actor_animations(
+        &mut engine,
+        observer,
+        &[
+            crate::order::OrderType::WalkingUpright,
+            crate::order::OrderType::WaitingCrouched,
+        ],
+    );
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(observer)
+            .expect("later observer remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        crate::order::OrderType::WaitingCrouched,
+        "the later actor must execute the order synchronously installed by the earlier ActionChange"
+    );
+}
+
+#[test]
+fn later_action_change_replacement_defers_already_visited_actor_animation() {
+    let (mut engine, assets, mutator, observer) = action_change_ordering_engine(false);
+    bind_test_actor_animations(
+        &mut engine,
+        mutator,
+        &[
+            crate::order::OrderType::RunningUpright,
+            crate::order::OrderType::WaitingCrouched,
+        ],
+    );
+    bind_test_actor_animations(
+        &mut engine,
+        observer,
+        &[
+            crate::order::OrderType::WalkingUpright,
+            crate::order::OrderType::WaitingCrouched,
+        ],
+    );
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(observer)
+            .expect("earlier observer remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        crate::order::OrderType::WalkingUpright,
+        "a later callback cannot retroactively replace animation at an already visited slot"
+    );
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(observer)
+            .expect("earlier observer remains installed next pass")
+            .element_data()
+            .sprite
+            .last_action,
+        crate::order::OrderType::WaitingCrouched,
+        "the replacement must execute when the actor reaches its next-pass slot"
+    );
+}
+
+#[test]
+fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let assets = LevelAssets::new();
+    bind_action_observer(&mut engine, &assets, actor);
+    bind_test_actor_animations(
+        &mut engine,
+        actor,
+        &[OrderType::Pointing, OrderType::Searching],
+    );
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .expect("terminating actor exists")
+        .actor_data_mut()
+        .expect("terminating actor is typed")
+        .old_action = OrderType::Pointing;
+
+    let first = crate::order::Order::new(
+        OrderType::Pointing,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let first_order_id = first.order_id;
+    let second = crate::order::Order::new(
+        OrderType::Searching,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    install_test_order_queue(&mut engine, actor, [first, second]);
+    {
+        let sprite = &mut engine
+            .world
+            .entities
+            .get_mut(actor)
+            .expect("terminating actor exists for sprite priming")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = first_order_id.get();
+        sprite.last_action = OrderType::Pointing;
+        sprite.current_row = 0;
+        sprite.current_frame = 1;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    assert_eq!(
+        observed_action_args(&engine, actor),
+        (OrderType::Searching as i32, OrderType::Pointing as i32),
+        "ActionChange must receive the order promoted by same-actor TERMINATED handling"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .expect("terminating actor remains installed")
+            .actor_data()
+            .expect("terminating actor remains typed")
+            .old_action,
+        OrderType::Searching,
+        "retention must store the promoted live order"
+    );
+}
+
+fn waking_up_creation_order_engine(
+    rescuer_before_target: bool,
+) -> (EngineInner, LevelAssets, EntityId, EntityId) {
+    use crate::combat::CONCUSSION_THRESHOLD;
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_scripted_soldier(""));
+    let second = engine.add_entity(make_scripted_soldier(""));
+    let (rescuer, target) = if rescuer_before_target {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    {
+        let target_entity = engine
+            .world
+            .entities
+            .get_mut(target)
+            .expect("wake target exists");
+        target_entity.element_data_mut().posture = Posture::Lying;
+        target_entity
+            .human_data_mut()
+            .expect("wake target is human")
+            .unconscious = true;
+        target_entity
+            .human_data_mut()
+            .expect("wake target is human")
+            .concussion_of_the_brain = CONCUSSION_THRESHOLD;
+    }
+    bind_test_actor_animations(&mut engine, rescuer, &[OrderType::WakingUp]);
+    bind_test_actor_animations(
+        &mut engine,
+        target,
+        &[OrderType::BeingUnconscious, OrderType::StandingUp],
+    );
+
+    let waking = crate::order::Order::new(
+        OrderType::WakingUp,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    )
+    .with_antagonist(target);
+    let waking_id = waking.order_id;
+    install_test_order_queue(&mut engine, rescuer, [waking]);
+    let unconscious = crate::order::Order::new(
+        OrderType::BeingUnconscious,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    install_test_order_queue(&mut engine, target, [unconscious]);
+    {
+        let sprite = &mut engine
+            .world
+            .entities
+            .get_mut(rescuer)
+            .expect("rescuer exists for sprite priming")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = waking_id.get();
+        sprite.last_action = OrderType::WakingUp;
+        sprite.current_row = 0;
+        sprite.current_frame = 0;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+    (engine, LevelAssets::new(), rescuer, target)
+}
+
+#[test]
+fn earlier_waking_up_done_changes_later_actor_before_its_animation_slot() {
+    let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let target_entity = engine
+        .world
+        .entities
+        .get(target)
+        .expect("later wake target remains installed");
+    assert!(
+        !target_entity
+            .human_data()
+            .expect("target is human")
+            .unconscious
+    );
+    assert_eq!(
+        target_entity.element_data().sprite.last_action,
+        crate::order::OrderType::StandingUp,
+        "the later target must execute the recovery order synchronously installed by WAKING_UP DONE"
+    );
+}
+
+#[test]
+fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
+    let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(false);
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    let target_entity = engine
+        .world
+        .entities
+        .get(target)
+        .expect("earlier wake target remains installed");
+    assert!(
+        !target_entity
+            .human_data()
+            .expect("target is human")
+            .unconscious
+    );
+    assert_eq!(
+        target_entity.element_data().sprite.last_action,
+        crate::order::OrderType::BeingUnconscious,
+        "later WAKING_UP DONE cannot retroactively animate an already visited target"
+    );
+
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(target)
+            .expect("wake target remains installed next pass")
+            .element_data()
+            .sprite
+            .last_action,
+        crate::order::OrderType::StandingUp,
+        "the recovery order must animate at the target's next creation slot"
+    );
+}
+
+#[test]
+#[should_panic(expected = "WakingUp requires antagonist at legacy slot")]
+fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
+    let (mut engine, assets, rescuer, _target) = waking_up_creation_order_engine(true);
+    let (sequence, element, _) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(rescuer)
+        .expect("rescuer has its WakingUp order");
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, element)
+        .expect("rescuer WakingUp element remains installed")
+        .orders
+        .front_mut()
+        .expect("rescuer WakingUp order remains installed")
+        .antagonist = None;
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+}
+
+#[test]
+fn npc_searching_animation_allows_missing_antagonist() {
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    bind_test_actor_animations(&mut engine, actor, &[crate::order::OrderType::Searching]);
+    let order_id = engine.orders.allocate_order_id();
+    install_test_order_queue(
+        &mut engine,
+        actor,
+        [crate::order::Order::new(
+            crate::order::OrderType::Searching,
+            0.0,
+            0.0,
+            order_id,
+        )],
+    );
+
+    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), actor);
+
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .expect("searching NPC remains installed")
+            .element_data()
+            .sprite
+            .last_action,
+        crate::order::OrderType::Searching,
+        "NPC Searching must preserve the Original optional antagonist path"
+    );
+}
+
+#[test]
+#[should_panic(expected = "required Searching antagonist")]
+fn npc_searching_animation_rejects_present_stale_antagonist() {
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let stale = engine.add_entity(make_scripted_soldier(""));
+    engine.remove_entity(stale);
+    bind_test_actor_animations(&mut engine, actor, &[crate::order::OrderType::Searching]);
+    let order_id = engine.orders.allocate_order_id();
+    install_test_order_queue(
+        &mut engine,
+        actor,
+        [
+            crate::order::Order::new(crate::order::OrderType::Searching, 0.0, 0.0, order_id)
+                .with_antagonist(stale),
+        ],
+    );
+
+    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), actor);
 }

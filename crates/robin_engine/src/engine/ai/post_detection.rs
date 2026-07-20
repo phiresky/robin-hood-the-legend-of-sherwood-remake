@@ -424,6 +424,54 @@ impl EngineInner {
         }
     }
 
+    /// Run the base-actor `Execute` combat-injury Think synchronously without
+    /// stealing older work from the NPC's ordinary deferred stimulus FIFO.
+    /// Any stimuli emitted by the Think are restored behind that older work.
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
+    pub(in crate::engine) fn dispatch_combat_injury_think_for_actor_hourglass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        let mut preexisting = {
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "combat-injury Think lost NPC {} before detaching its stimulus FIFO",
+                    npc_id.index()
+                )
+            });
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "combat-injury Think requires an AI controller for NPC {}",
+                    npc_id.index()
+                )
+            });
+            std::mem::take(&mut ai.outbox.detection.stimuli)
+        };
+
+        self.dispatch_ai_stimulus(
+            npc_id,
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
+        );
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "combat-injury Think lost NPC {} before restoring its stimulus FIFO",
+                npc_id.index()
+            )
+        });
+        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+            panic!(
+                "combat-injury Think lost the AI controller for NPC {} before restoring its stimulus FIFO",
+                npc_id.index()
+            )
+        });
+        preexisting.append(&mut ai.outbox.detection.stimuli);
+        ai.outbox.detection.stimuli = preexisting;
+    }
+
     /// P6d inner — per-NPC body of [`Self::tick_enemy_ai_drain_pending_stimuli`].
     /// Replays deferred stimuli for one NPC; carries the per-NPC tracing
     /// span so the `dispatch_think_with_drain` events emit with `npc=<id>`.

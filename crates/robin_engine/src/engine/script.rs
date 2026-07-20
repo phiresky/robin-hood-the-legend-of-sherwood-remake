@@ -1371,7 +1371,7 @@ impl EngineInner {
 
     /// Check one actor for an animation change and synchronously dispatch
     /// `ActionChange(newAction, oldAction)` to its per-actor script.
-    fn dispatch_actor_action_change_for(
+    pub(super) fn dispatch_actor_action_change_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1467,6 +1467,7 @@ impl EngineInner {
 
     /// Walk the live legacy element array in creation order and dispatch each
     /// scripted actor's animation change before advancing to the next slot.
+    #[cfg(test)]
     pub(crate) fn dispatch_actor_action_changes(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1476,8 +1477,6 @@ impl EngineInner {
             return;
         }
 
-        // TODO(original-parity): this coordinator remains after batched
-        // animation, not yet at the exact per-actor base-Hourglass position.
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
