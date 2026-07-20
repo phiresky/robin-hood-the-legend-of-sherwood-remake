@@ -109,7 +109,13 @@ impl FriendlyAi {
             .outbox
             .reentrant
             .state_change_notifications
-            .push((state, source));
+            .push(AiStateChangeNotification {
+                outgoing_state: self.base.current_state,
+                outgoing_substate: self.base.current_substate,
+                incoming_state: state,
+                incoming_substate: substate,
+                source,
+            });
 
         self.base.set_ai_state(state);
         self.base.current_substate = substate;

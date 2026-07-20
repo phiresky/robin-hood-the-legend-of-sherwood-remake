@@ -4446,6 +4446,10 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        // Direct engine-owned AI calls also enter this drain. Close the
+        // SetState callback boundary before consuming halt/effect/order work.
+        self.drain_ai_state_change_notifications_for(sim, assets, npc_id);
+
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.

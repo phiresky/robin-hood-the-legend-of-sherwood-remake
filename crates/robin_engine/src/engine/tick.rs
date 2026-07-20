@@ -1935,11 +1935,19 @@ impl EngineInner {
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
 
-        // ── Post-AI script state-change notifications ───────────
-        // Notify per-actor scripts of AI state transitions via
-        // FilterAIEvent(source, AI_STATE_CHANGE_TO_*).  Return value
-        // ignored — informational only.
-        self.dispatch_ai_state_change_notifications(sim, assets);
+        // Every engine-entered AI call closes its owner-local SetState
+        // callback boundary before returning to effects/orders. Nothing may
+        // survive into the old post-NPC global batch position.
+        for (npc_id, entity) in self.world.entities.npcs() {
+            let leaked = entity
+                .ai_controller()
+                .is_some_and(|ai| !ai.outbox.reentrant.state_change_notifications.is_empty());
+            assert!(
+                !leaked,
+                "NPC {} leaked owner-local AI SetState notifications past its Hourglass slot",
+                npc_id.index()
+            );
+        }
 
         // ── NPC speech ──────────────────────────────────────────
         // Drain pending AI remarks (set by `say` during AI ticks)
@@ -1952,10 +1960,10 @@ impl EngineInner {
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
 
-        // TODO(original-parity): SetState script notifications and Say audio
-        // dispatch are still deferred to these system passes. The original
-        // performs both synchronously and can re-enter script/AI before the
-        // next creation slot; restore that in a later narrowly-audited slice.
+        // TODO(original-parity): Say audio dispatch is still deferred to this
+        // system pass. Exact Say/SetState ordering, exact placement between
+        // multiple SetState calls inside one pure-Rust Think,
+        // script-recursive SetAIState, and animation interleaving remain debt.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that

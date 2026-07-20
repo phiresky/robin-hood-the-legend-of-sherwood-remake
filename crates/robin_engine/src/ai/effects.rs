@@ -87,8 +87,25 @@ pub struct AiDetectionOutbox {
 pub struct AiReentrantOutbox {
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<StimulusType>,
-    pub state_change_notifications: Vec<(AiState, AiStateChangeSource)>,
+    pub state_change_notifications: Vec<AiStateChangeNotification>,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
+}
+
+/// One owner-local `SetState` script notification.
+///
+/// The AI method has to finish its pure-Rust tail before releasing its entity
+/// borrow, so the engine records both sides of the transition. The callback
+/// barrier temporarily restores `outgoing_*`, invokes `FilterAIEvent`, then
+/// re-resolves the typed AI owner and commits `incoming_*`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AiStateChangeNotification {
+    pub outgoing_state: AiState,
+    pub outgoing_substate: Substate,
+    pub incoming_state: AiState,
+    pub incoming_substate: Substate,
+    pub source: AiStateChangeSource,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
