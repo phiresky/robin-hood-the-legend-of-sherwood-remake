@@ -184,11 +184,12 @@ the Engine snapshot.
   integer-only or half-open samples.
 - Script `Rand(max)` rejects `max <= 0` loudly and without consuming a draw;
   valid calls remain one draw in `[0,max)`.
-- PA-013 owner-tail scratch construction is gated at the actual ambush,
-  The16thFrame, macro, Charly, panic, and seek consumer boundaries. Because
-  scratch forecasts all humans and can draw `BuildingExitGate`, empty common
-  drains and quiet/off-phase owners must not build it; a draw-trace regression
-  proves both no-op paths remain silent with a live door-passing actor.
+- PA-013 owner-tail views are prepared without forecast draws. Only the exact
+  ambush, The16thFrame, macro, Charly, panic, or seek behavior that consumes a
+  destination resolves its `BuildingExitGate` choice. Empty common drains,
+  quiet/off-phase owners, and unrelated macro/FIFO work therefore remain
+  silent with a live door-passing actor; draw-trace regressions cover those
+  negative paths and the Original ordered all-gates rejection loop.
 - Spellforge Lua still has the broader PA-034 state-policy gap: its RNG calls
   are inventoried and typed here, but Lua VM state is not yet part of Engine
   snapshots and deterministic modes must continue to reject unsupported Lua
