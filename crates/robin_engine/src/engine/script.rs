@@ -1515,7 +1515,7 @@ impl EngineInner {
         self.initialize_zone_scripts(sim, assets);
 
         // ── Phase 4: Populate initial zone occupants ──
-        self.initialize_zone_occupants(sim, assets);
+        self.initialize_zone_occupants(assets);
     }
 
     /// Finalize the mission script (called on mission end).
@@ -1878,10 +1878,12 @@ impl EngineInner {
             .iter()
             .enumerate()
             .filter_map(|(zone_idx, zone_data)| {
-                zone_data
-                    .script_class_name
-                    .as_ref()
-                    .map(|name| (zone_idx, name.clone()))
+                zone_data.script_associated.then(|| {
+                    let name = zone_data.script_class_name.as_ref().unwrap_or_else(|| {
+                        panic!("script-associated zone {zone_idx} has no class name")
+                    });
+                    (zone_idx, name.clone())
+                })
             })
             .collect();
 
@@ -2009,7 +2011,7 @@ impl EngineInner {
         entries: &[(usize, crate::entity_id::EntityId, i32)],
     ) {
         for &(zone_idx, entity_idx, _) in entries {
-            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
+            self.script_domains.zones.scripts[zone_idx].add_occupant(entity_idx);
             let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
@@ -2041,23 +2043,12 @@ impl EngineInner {
     }
 
     /// Populate initial zone occupants by checking all actor positions
-    /// against zone polygons, and fire `EnterZone` for each.
+    /// against zone polygons without firing script callbacks.
     ///
-    /// Called once after zone scripts and actor scripts are initialized.
-    ///
-    /// Divergence kept by design: `AddOccupant` is a pure list push —
-    /// it does **not** fire `EnterZone`.  This function additionally
-    /// dispatches `EnterZone` at init so zone scripts see their
-    /// starting occupants; removing this would silently change the
-    /// first-frame observable behaviour of every scripted level and
-    /// can't be safely done without a full mission-script playthrough.
-    /// The refresh path (`refresh_zone_occupants_silent`) uses the
-    /// silent helpers and skips the dispatch.
-    pub(crate) fn initialize_zone_occupants(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    /// Original `RHFastFindGrid::InitializeScriptSectorOccupants` calls
+    /// `RHSectorScript::AddOccupant`, which only appends to the list. Zone
+    /// callbacks begin with later boundary crossings through `Enter`/`Leave`.
+    pub(crate) fn initialize_zone_occupants(&mut self, assets: &LevelAssets) {
         if assets.scripts.zone_grid_indices.is_empty() {
             return;
         }
@@ -2068,20 +2059,6 @@ impl EngineInner {
         }
 
         self.apply_zone_occupant_entries(&entries);
-
-        // Phase 3: Dispatch EnterZone to zone scripts.
-        for &(zone_idx, _, handle) in &entries {
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Zone(zone_idx),
-                "EnterZone",
-                &[handle],
-                crate::natives::ScriptCallFrame::default(),
-            ) {
-                tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {error}");
-            }
-        }
 
         tracing::info!(
             "Initialized {} zone occupant entries across {} zones",
@@ -2208,6 +2185,9 @@ impl EngineInner {
         // Phase 3: Dispatch enters before exits, preserving the original
         // batch order used by this port.
         for &(zone_idx, _, handle) in &enter_events {
+            if !self.script_domains.zones.scripts[zone_idx].script_associated {
+                continue;
+            }
             if let Err(error) = self.call_script_vm(
                 sim,
                 assets,
@@ -2220,6 +2200,9 @@ impl EngineInner {
             }
         }
         for &(zone_idx, _, handle) in &exit_events {
+            if !self.script_domains.zones.scripts[zone_idx].script_associated {
+                continue;
+            }
             if let Err(error) = self.call_script_vm(
                 sim,
                 assets,

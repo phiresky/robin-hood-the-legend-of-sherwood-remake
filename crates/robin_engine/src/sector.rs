@@ -526,6 +526,15 @@ impl ScriptSectorData {
         self.occupant_indices.contains(&element_index)
     }
 
+    /// Populate an occupant during the engine's bulk zone scan.
+    ///
+    /// Original `RHSectorScript::AddOccupant` appends without firing a
+    /// script callback; runtime boundary crossings use [`Self::enter`]
+    /// instead and insert at the front.
+    pub fn add_occupant(&mut self, element_index: crate::entity_id::EntityId) {
+        self.occupant_indices.push(element_index);
+    }
+
     pub fn enter(&mut self, element_index: crate::entity_id::EntityId) {
         if self.occupant_indices.contains(&element_index) {
             tracing::warn!(
@@ -965,6 +974,19 @@ mod tests {
         script.leave(EntityId::Pc(crate::entity_id::PcId(10)));
         assert!(!script.is_inside(EntityId::Pc(crate::entity_id::PcId(10))));
         assert_eq!(script.num_occupants(), 1);
+    }
+
+    #[test]
+    fn script_sector_bulk_occupants_append_in_scan_order() {
+        use crate::entity_id::{EntityId, PcId};
+
+        let first = EntityId::Pc(PcId(10));
+        let second = EntityId::Pc(PcId(20));
+        let mut script = ScriptSectorData::new();
+        script.add_occupant(first);
+        script.add_occupant(second);
+
+        assert_eq!(script.occupant_indices, vec![first, second]);
     }
 
     #[test]
