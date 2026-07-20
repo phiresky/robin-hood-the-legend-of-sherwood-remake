@@ -1,7 +1,62 @@
-//! Post-detection orchestration phases for `tick_enemy_ai`: normal timers,
-//! pending swordfight requests, and replay of deferred stimuli.
+//! Creation-ordered post-detection NPC Hourglass tail, plus test-only legacy
+//! drains used by focused detection seams.
 
 use super::*;
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NpcPostDetectionTailPhase {
+    Ambush,
+    Deafness,
+    Busy,
+    Ladder,
+    RandomSpeech,
+    LockGate,
+    SixteenthFrame,
+    NormalTimer,
+    MacroTimer,
+    Emoticon,
+    QueuedStimuli,
+}
+
+#[cfg(test)]
+thread_local! {
+    static NPC_POST_DETECTION_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, NpcPostDetectionTailPhase)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_npc_post_detection_tail_phase(npc_id: EntityId, phase: NpcPostDetectionTailPhase) {
+    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((npc_id, phase));
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn observe_npc_post_detection_tail_phase(_npc_id: EntityId, _phase: ()) {}
+
+#[cfg(test)]
+pub(crate) fn capture_npc_post_detection_tail_phases<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, NpcPostDetectionTailPhase)>) {
+    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
+        assert!(
+            trace.borrow().is_none(),
+            "tail phase capture is not re-entrant"
+        );
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let phases = NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("tail phase capture must remain active")
+    });
+    (result, phases)
+}
 
 /// Final scan aggregate attached to the contiguous Enemy stimulus block queued
 /// by `RefreshDetection`. The absolute queue start preserves FIFO order. Live
@@ -108,96 +163,105 @@ fn take_enemy_detection_tick_data(
 use crate::element::{Entity, EntityId};
 
 impl EngineInner {
-    /// Normal-timer phase from `RHElementActorNPC::Hourglass`.
+    /// Creation-ordered tail of `RHElementActorNPC::Hourglass`.
     ///
-    /// Runs after `The16thFrame` and before the macro timer. For every
-    /// unlocked NPC whose timer elapsed, stop it and dispatch
-    /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
-    /// original post-dispatch combat-stance and civilian-panic effects.
-    pub(crate) fn tick_ai_normal_timers(
+    /// This is entered immediately after the owner's complete
+    /// `RefreshDetection` FIFO and returns before the next NPC creation slot.
+    /// Original order: `RHelementactornpc.cpp:3548-3657`.
+    pub(crate) fn tick_npc_post_detection_tail_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self.actors_frozen() {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "creation-ordered post-detection owner {} disappeared",
+                npc_id.index()
+            )
+        });
+        assert!(
+            entity.npc_data().is_some(),
+            "post-detection owner {} has no NPC data",
+            npc_id.index()
+        );
+        assert!(
+            entity.ai_controller().is_some(),
+            "post-detection NPC {} has no AI controller",
+            npc_id.index()
+        );
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ambush);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_refresh_ambush_points_for_npc(sim, npc_id, assets);
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Deafness);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_npc_refresh_deafness_for_npc(npc_id);
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Busy);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_npc_busy_edge_detect_for_npc(npc_id);
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ladder);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_npc_stuck_on_ladder_for_npc(sim, npc_id, assets);
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::RandomSpeech);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_civilian_random_speech_for_npc(sim, npc_id, assets);
+
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::LockGate);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        if self.tick_npc_lock_gate_for_npc(npc_id) {
             return;
         }
 
-        let scratch = self.build_sim_scratch(sim, assets);
-        let current_frame = self.control.frame_counter;
-        let mut panic_calls: Vec<EntityId> = Vec::new();
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::SixteenthFrame);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_periodic_ai_for_npc(sim, npc_id, assets);
 
-        // EVENT_TIMER dispatch. For every NPC whose timer has
-        // elapsed, stop the timer and fire `Think(EVENT_TIMER)` through
-        // the filter gate so the AI state machine advances (bored idle
-        // → `default_bored_standard_procedure`, alerted →
-        // `reconsider_enemy_approach` / `reconsider_swordfight`).
-        //
-        // The wrap-around guard (`when_does_timer_ring > current_frame +
-        // 1_000_000`) is an overflow-safety clause: wait times are
-        // 1-600 frames so a ring-frame that "overshoots" by a million
-        // always indicates an unsigned underflow, never a future tick.
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            self.tick_enemy_ai_pursuit_approach_timer_for_npc(
-                sim,
-                npc_id,
-                assets,
-                &scratch,
-                current_frame,
-                &mut panic_calls,
-            );
-        }
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::NormalTimer);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_ai_normal_timer_for_npc(sim, npc_id, assets);
 
-        // For every enemy that just entered melee:
-        //   1. Apply the soldier's combat-stance action_state
-        //      (so the WaitingSword sprite plays).
-        //   2. Stop and freeze the primary target if they're a PC
-        //      (target->stop() if moving), so the swordfight has a
-        //      stable position.
-        //   3. `nearby_civilians_panic` — bystanders flee.
-        for enemy in panic_calls {
-            // Look up the soldier's primary target.
-            let target_id = {
-                let Some(Entity::Soldier(s)) = self.world.entities.get(enemy) else {
-                    continue;
-                };
-                s.npc
-                    .ai_brain
-                    .base()
-                    .map(|ai| EntityId::Pc(crate::entity_id::PcId(ai.primary_target)))
-            };
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::MacroTimer);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_ai_macro_timer_for_npc(sim, npc_id, assets);
 
-            // Set the soldier into combat stance.  Clearing
-            // `active_movement` decouples the actor from any in-
-            // progress Move element — the element itself gets
-            // interrupted by the subsequent combat-sequence launch
-            // via priority arbitration (same pattern used by every
-            // ability teardown).
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(enemy) {
-                s.actor.active_movement.clear();
-                s.actor.action_state = crate::element::ActionState::WaitingSword;
-            }
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Emoticon);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_npc_emoticon_expiration_for_npc(npc_id);
 
-            // Stop the target PC's path so the soldier has a stable
-            // melee anchor.
-            if let Some(target_id) = target_id
-                && target_id.index() != 0
-                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(target_id)
-            {
-                pc.actor.active_movement.clear();
-                // Don't force the PC into WaitingSword — that's
-                // controlled by the player input layer.  Just
-                // halt their current movement.
-            }
-
-            // Civilian panic.
-            self.nearby_civilians_panic(sim, assets, enemy);
-        }
+        #[cfg(test)]
+        observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::QueuedStimuli);
+        #[cfg(not(test))]
+        observe_npc_post_detection_tail_phase(npc_id, ());
+        self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
     }
 
-    /// Per-NPC body of [`Self::tick_ai_normal_timers`]. Carries the per-NPC
-    /// tracing span for `Think(EVENT_TIMER)` dispatches.
+    /// Per-owner normal-timer phase. Carries the owner span for the
+    /// synchronous `Think(EVENT_TIMER)` dispatch.
     ///
     /// Handles both soldiers (enemy AI) and civilians (friendly AI).
     /// `Think(EVENT_TIMER)` fires for every NPC whose timer has
@@ -205,32 +269,29 @@ impl EngineInner {
     /// from `WonderingCivilianAdmiringHero` /
     /// `WonderingCivilianEnemyReactiontime` and would otherwise stick
     /// in those substates indefinitely.  The soldier-only pre-dispatch
-    /// facing snap and post-dispatch swordfight-entry detection are
-    /// gated on `Entity::Soldier`.
+    /// facing snap is gated on `Entity::Soldier`.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    fn tick_enemy_ai_pursuit_approach_timer_for_npc(
+    pub(crate) fn tick_ai_normal_timer_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        scratch: &SimScratch,
-        current_frame: u32,
-        panic_calls: &mut Vec<EntityId>,
     ) {
+        let current_frame = self.control.frame_counter;
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
-        let (timer_fires, alerted, target_id, enemy_pos, is_soldier) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller() else {
-                return;
-            };
-            let unlocked = ai.locks_flag_field.is_empty() && !ai.script_locked;
-            let fires = unlocked
-                && ai.timer_is_running
+        let (timer_fires, alerted, target_id, enemy_pos) = {
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("normal-timer NPC {} disappeared", npc_id.index()));
+            let ai = entity.ai_controller().unwrap_or_else(|| {
+                panic!("normal-timer NPC {} has no AI controller", npc_id.index())
+            });
+            let fires = ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
-                    || ai.when_does_timer_ring > current_frame.saturating_add(1_000_000));
+                    || ai.when_does_timer_ring > current_frame.wrapping_add(1_000_000));
             // `primary_target == 0` means "no target selected" — the AI
             // hasn't seen a PC yet.  Treating 0 as an EntityId would
             // route target lookups to the first level entity.
@@ -240,29 +301,14 @@ impl EngineInner {
                 Entity::Soldier(s) => s.npc.alerted,
                 _ => false,
             };
-            (
-                fires,
-                alerted,
-                tid,
-                entity.element_data().position_map(),
-                matches!(entity, Entity::Soldier(_)),
-            )
+            (fires, alerted, tid, entity.element_data().position_map())
         };
         if !timer_fires {
             return;
         }
-        // Soldier-only swordfight entry tracking — civilians never
-        // transition into `AttackingSwordfight` so the post-dispatch
-        // panic_calls push is gated on this snapshot too.
-        let in_swordfight = if is_soldier {
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            soldier.npc.ai_substate() == crate::ai::Substate::AttackingSwordfight
-        } else {
-            false
-        };
-
+        // Every synchronous Think boundary receives a fresh view of the live
+        // world, including mutations made by earlier owners in this frame.
+        let scratch = self.build_sim_scratch(sim, assets);
         // Pre-dispatch facing snap: only when the AI is alerted
         // and has a live target.  Surfaces the primary-target
         // facing through a pre-dispatch snap alongside the
@@ -285,14 +331,23 @@ impl EngineInner {
         // candidates, avenger-on-roof wait position, and seeded
         // enemy_sq_distances.  Matches (and supersedes) the
         // bespoke hand-roll this block used to do.
-        let tick_data = self.build_npc_tick_data(sim, npc_id, scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
 
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        let building_sector = self
+            .world
+            .entities
+            .get(npc_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("normal-timer NPC {} disappeared", npc_id.index()));
         let ctx = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "normal-timer NPC {} disappeared before Think",
+                    npc_id.index()
+                )
+            });
             // Only snap facing when the AI is alerted and has a
             // target — idle soldiers keep whatever direction their
             // look-sidewards cascade left them in.
@@ -302,7 +357,7 @@ impl EngineInner {
             let mut ctx = build_ai_context_from_entity(
                 entity,
                 current_frame,
-                None,
+                building_sector,
                 self.world.weather.is_forest_level,
                 self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
@@ -320,33 +375,25 @@ impl EngineInner {
                 .element_is_about_to_be_launched(npc_id, crate::element::Command::EnterSwordfight);
             // Clear `timer_is_running` before dispatching
             // `Think(EVENT_TIMER)`.
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "normal-timer NPC {} lost its AI controller before Think",
+                    npc_id.index()
+                )
+            });
             ai.timer_is_running = false;
             ctx
         };
 
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
         self.dispatch_think_with_drain(sim, npc_id, &timer_stimulus, &ctx, &tick_data, assets);
-
-        // Post-think: detect swordfight entry so the caller can fire
-        // `nearby_civilians_panic` + combat-stance bookkeeping below.
-        // Civilians never enter `AttackingSwordfight`, so this check
-        // can stay gated on the Soldier-only `enemy_ai()` accessor.
-        if !in_swordfight
-            && let Some(entity) = self.world.entities.get(npc_id)
-            && let Some(ai) = entity.enemy_ai()
-            && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
-        {
-            panic_calls.push(npc_id);
-        }
     }
 
     /// P6c — drain `pending_*` AI swordfight / order flags for every NPC.
     /// AI decisions set flags on `AiController`; we consume them here
     /// after all think calls are done, since they require engine-side
     /// entity mutations (opponent lists, sequences).
+    #[cfg(test)]
     pub(super) fn tick_enemy_ai_drain_swordfight_requests(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -365,6 +412,7 @@ impl EngineInner {
     /// `AiController::outbox.detection.stimuli` by `dispatch_ai_stimulus()`
     /// during the combat tick.  We defer them to avoid re-entrant
     /// borrow issues, then replay them now.
+    #[cfg(test)]
     pub(super) fn tick_enemy_ai_drain_pending_stimuli(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -524,6 +572,7 @@ impl EngineInner {
     /// Drain stimuli retained by `start_think` while an NPC was AI- or
     /// script-locked. This is the final unlocked phase of
     /// `RHElementActorNPC::Hourglass`, after both timer kinds.
+    #[cfg(test)]
     pub(crate) fn tick_ai_queued_stimuli(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -535,86 +584,96 @@ impl EngineInner {
 
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            loop {
-                let stimulus = {
-                    let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                        break;
-                    };
-                    let Some(ai) = entity.ai_controller_mut() else {
-                        break;
-                    };
-                    // A previous queued Think may acquire a new lock. The
-                    // original loop stops immediately and preserves the rest.
-                    if !ai.locks_flag_field.is_empty() || ai.script_locked {
-                        break;
-                    }
-                    if ai.stimulus_queue.is_empty() {
-                        break;
-                    }
-                    ai.stimulus_queue.remove(0)
-                };
+            self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
+        }
+    }
 
-                // Every retained Think is a fresh synchronous boundary. An
-                // earlier replay may mutate positions, latches, or targets
-                // consumed by the next retained stimulus.
-                let scratch = self.build_sim_scratch(sim, assets);
-                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-                let ctx = {
-                    let Some(entity) = self.world.entities.get(npc_id) else {
-                        break;
-                    };
-                    let building_sector =
-                        self.entity_building_sector(entity.element_data().sector());
-                    let mut ctx = build_ai_context_from_entity(
-                        entity,
-                        self.control.frame_counter,
-                        building_sector,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.hiking_paths,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
-                    );
-                    ctx.in_uninterruptible_command = in_uninterruptible_command;
-                    ctx
-                };
-                let target_override = match stimulus.info {
-                    crate::ai::StimulusInfo::Human(handle)
-                        if matches!(
-                            stimulus.stimulus_type,
-                            crate::ai::StimulusType::EventView
-                                | crate::ai::StimulusType::EventOutOfView
-                                | crate::ai::StimulusType::EventSeesBeggar
-                                | crate::ai::StimulusType::EventEnemyNear
-                        ) =>
-                    {
-                        self.entity_id_for_index(handle)
-                    }
-                    _ => None,
-                };
-                let mut tick_data = self.build_npc_tick_data_for_target(
-                    sim,
-                    npc_id,
-                    &scratch,
-                    assets,
-                    target_override,
-                );
-                if matches!(
-                    stimulus.stimulus_type,
-                    crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
-                ) {
-                    self.overlay_live_enemy_detection_scan_for_think(
-                        npc_id,
-                        &scratch,
-                        &mut tick_data,
-                    );
+    pub(crate) fn tick_ai_queued_stimuli_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        loop {
+            let stimulus = {
+                let entity =
+                    self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                        panic!("retained-FIFO NPC {} disappeared", npc_id.index())
+                    });
+                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                    panic!("retained-FIFO NPC {} has no AI controller", npc_id.index())
+                });
+                // A previous queued Think may acquire a new lock. The
+                // original loop stops immediately and preserves the rest.
+                if !ai.locks_flag_field.is_empty() || ai.script_locked {
+                    break;
                 }
-                self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+                if ai.stimulus_queue.is_empty() {
+                    break;
+                }
+                ai.stimulus_queue.remove(0)
+            };
+
+            // Every retained Think is a fresh synchronous boundary. An
+            // earlier replay may mutate positions, latches, or targets
+            // consumed by the next retained stimulus.
+            let scratch = self.build_sim_scratch(sim, assets);
+            let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+            let ctx = {
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "retained-FIFO NPC {} disappeared before Think",
+                        npc_id.index()
+                    )
+                });
+                let building_sector = self.entity_building_sector(entity.element_data().sector());
+                let mut ctx = build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                );
+                ctx.in_uninterruptible_command = in_uninterruptible_command;
+                ctx
+            };
+            let target_override = match stimulus.info {
+                crate::ai::StimulusInfo::Human(handle)
+                    if matches!(
+                        stimulus.stimulus_type,
+                        crate::ai::StimulusType::EventView
+                            | crate::ai::StimulusType::EventOutOfView
+                            | crate::ai::StimulusType::EventSeesBeggar
+                            | crate::ai::StimulusType::EventEnemyNear
+                    ) =>
+                {
+                    Some(self.entity_id_for_index(handle).unwrap_or_else(|| {
+                        panic!(
+                            "retained {:?} for NPC {} references missing entity {}",
+                            stimulus.stimulus_type,
+                            npc_id.index(),
+                            handle
+                        )
+                    }))
+                }
+                _ => None,
+            };
+            let mut tick_data =
+                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, target_override);
+            if matches!(
+                stimulus.stimulus_type,
+                crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
+            ) {
+                self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut tick_data);
             }
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 

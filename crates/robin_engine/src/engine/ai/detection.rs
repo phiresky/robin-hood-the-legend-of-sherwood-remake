@@ -1279,15 +1279,22 @@ impl EngineInner {
                     enemy_detection_tick_data.is_none(),
                     "queued Enemy detection block lost its stimuli before the per-NPC drain"
                 );
-                continue;
+            } else {
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                    sim,
+                    npc_id,
+                    assets,
+                    enemy_detection_tick_data,
+                );
             }
 
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(
-                sim,
-                npc_id,
-                assets,
-                enemy_detection_tick_data,
-            );
+            // Production NPC Hourglass continues with this same owner's
+            // complete tail before advancing to the next creation slot. The
+            // focused detection-only seam passes no pre-movement positions
+            // and deliberately stops at the RefreshDetection boundary.
+            if positions_before_movement.is_some() {
+                self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
+            }
         }
     }
 

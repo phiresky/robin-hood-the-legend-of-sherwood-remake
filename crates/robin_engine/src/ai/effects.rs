@@ -255,6 +255,55 @@ pub(crate) struct AiActorCoreEffects {
 }
 
 impl AiActorOutbox {
+    /// Whether an owner-local synchronous drain has more actor work to apply.
+    /// Speech/state-script channels intentionally live outside this outbox and
+    /// remain explicit PA-013 audit debt. `blink_enemy_specific` is also
+    /// intentionally excluded: it belongs to the observer's next
+    /// pre-detection creation slot and is consumed only by
+    /// `tick_pending_specific_enemy_blinks_for_npc`.
+    pub(crate) fn has_boundary_work(&self) -> bool {
+        !self.orders.is_empty()
+            || self.quit_swordfight
+            || self.stop_menace
+            || self.lower_shield
+            || self.deactivate
+            || self.halt
+            || self.broadcast_panic
+            || self.blink_all_enemies
+            || self.enemy_in_house_alert
+            || !self.add_detectables.is_empty()
+            || !self.delete_detectables.is_empty()
+            || !self.delete_detectable_entity.is_empty()
+            || !self.delete_beggar_for_all_npc.is_empty()
+            || self.enter_swordfight.is_some()
+            || self.enter_swordfight_jump_line.is_some()
+            || self.stop_target.is_some()
+            || self.set_principal.is_some()
+            || self.friend_primary_target_swap.is_some()
+            || self.shoot_target.is_some()
+            || self.focus.is_some()
+            || self.unalert_near_charly_seekers.is_some()
+            || self.refill_bow_ammo
+            || !self.set_reported_to_officer.is_empty()
+            || self.unfocus
+            || self.focus_point.is_some()
+            || self.slowly_open_eyes
+            || self.restore_detectable_objects
+            || self.forget_nearby_coins.is_some()
+            || self.set_direction_instantly.is_some()
+            || self.set_attentive_mode.is_some()
+            || self.set_guarded_pc.is_some()
+            || !self.launch_commands.is_empty()
+            || !self.launch_on_target.is_empty()
+            || !self.launch_sequences.is_empty()
+            || self.look_sidewards.is_some()
+            || self.posture.is_some()
+            || self.begin_panic.is_some()
+            || self.panic_seek_fallback
+            || self.script_seek_area.is_some()
+            || self.archery_reservation_release != ArcheryReservationRelease::default()
+    }
+
     /// Drain actor halt alone. Its application can re-enter engine sequence
     /// handling, so the later movement-prefix barrier must not be taken yet.
     pub(crate) fn take_halt(&mut self) -> bool {

@@ -71,8 +71,8 @@ inclusive `0..=32767 / 32767` fraction matching Original's MSVC-era
 | `CampaignReservistReturn` | 2 | `Campaign::add_new_peasant_to_gang` | One 50% draw; on true, `[0,reservist_count)` | `RHCampaign::AddNewPeasantToGang`, `RHCampaign.cpp:758-761` | Post-mission recruitment | E |
 | `CharlySorrow` | 2 | `ai_enemy/substate_handlers.rs`: looking for Charly | `[0,5000)`; conditional `[0,2)` look direction only when sorrow triggers | `RHArtificialMalignity::ThinkExpectedEvent`, `RHartificialmalignity.cpp:571-576` | Enemy timer event | E |
 | `CheckForLookDirection` | 1 | `AiController::check_for` | `[0,2)` after synchronization bookkeeping | `RHArtificialIntelligence::CheckFor`, `RHartificialintelligence.cpp` | Patrol/check-for setup | E |
-| `CivilianBeggarSpeechChoice` | 1 | `AiFriendly::random_speech` | `[0,5)` only after the speech gate succeeds | `RHArtificialBonhomie::The16thFrame`, `RHartificialbonhomie.cpp:1128` | Civilian 16th-frame work | E |
-| `CivilianBeggarSpeechGate` | 1 | `AiFriendly::random_speech` | `[0,3) == 0` after silence/cooldown gates | `RHArtificialBonhomie::The16thFrame`, `RHartificialbonhomie.cpp:1125` | Civilian 16th-frame work | E |
+| `CivilianBeggarSpeechChoice` | 1 | `AiFriendly::random_speech` | `[0,5)` only after the speech gate succeeds | `RHArtificialBonhomie::RandomSpeech`, `RHartificialbonhomie.cpp:1128` | Creation-ordered civilian NPC tail at wrapped phase 0 | E |
+| `CivilianBeggarSpeechGate` | 1 | `AiFriendly::random_speech` | `[0,3) == 0` after silence/cooldown gates | `RHArtificialBonhomie::RandomSpeech`, `RHartificialbonhomie.cpp:1125` | Creation-ordered civilian NPC tail at wrapped phase 0 | E |
 | `CivilianFirstLookTimer` | 1 | `AiFriendly::init` | `AB_MIN + [0,AB_DELTA)` | `RHArtificialBonhomie::Init`, `RHartificialbonhomie.cpp:1360` | Civilian AI initialization | E |
 | `CivilianPanicDirection` | 1 | `AiFriendly::panic_from_point` | `[0,5)-2`, wrapped to 16 sectors | `RHArtificialBonhomie::Panic`, `RHartificialbonhomie.cpp:1628` | Civilian panic start | E |
 | `CombatObserveSideStep` | 1 | `ai_enemy/combat_positions.rs`: observer reposition | 50%, only after straight movement was rejected | `RHArtificialMalignity`, `RHartificialmalignity.cpp:15180` | Enemy combat positioning | E |
@@ -184,6 +184,11 @@ the Engine snapshot.
   integer-only or half-open samples.
 - Script `Rand(max)` rejects `max <= 0` loudly and without consuming a draw;
   valid calls remain one draw in `[0,max)`.
+- PA-013 owner-tail scratch construction is gated at the actual ambush,
+  The16thFrame, macro, Charly, panic, and seek consumer boundaries. Because
+  scratch forecasts all humans and can draw `BuildingExitGate`, empty common
+  drains and quiet/off-phase owners must not build it; a draw-trace regression
+  proves both no-op paths remain silent with a live door-passing actor.
 - Spellforge Lua still has the broader PA-034 state-policy gap: its RNG calls
   are inventoried and typed here, but Lua VM state is not yet part of Engine
   snapshots and deterministic modes must continue to reject unsupported Lua

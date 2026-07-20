@@ -347,7 +347,7 @@ impl EngineInner {
                         // Mid-transition postures can't accept a fresh
                         // move, so the AI holds on AILOCK_BUSY until
                         // the posture clears.  The per-tick edge
-                        // detector (`tick_npc_busy_edge_detect`)
+                        // detector (`tick_npc_busy_edge_detect_for_npc`)
                         // handles the symmetric unlock when the busy
                         // state clears.
                         if self.is_very_very_busy(owner)
