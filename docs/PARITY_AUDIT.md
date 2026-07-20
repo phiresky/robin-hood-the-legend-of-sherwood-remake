@@ -305,9 +305,9 @@ callback re-entry; Friendly alert is correctly pre-callback and visible.
 Synthetic SCB/native tests
 cover state/source/alert visibility, FIFO, callback mutation, owner order, and
 all skip gates. Exact `Say`/`SetState` ordering, placement between multiple
-`SetState` calls inside one pure-Rust Think, script-recursive `SetAIState`, and
-animation interleaving remain explicit PA-013 debt; `Say` sound dispatch is
-still deferred.
+`SetState` calls inside one pure-Rust Think, script-driven `SetAIState`/Panic
+routing (including recursive calls), and animation interleaving remain
+explicit PA-013 debt; `Say` sound dispatch is still deferred.
 
 Movement follow-up `3daf2efaf` removed the two warning-and-reseed fallbacks for
 same-ID motion orders. A started order now requires its cached goal and map

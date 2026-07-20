@@ -273,9 +273,11 @@ pub(crate) struct AiActorCoreEffects {
 
 impl AiActorOutbox {
     /// Whether an owner-local synchronous drain has more actor work to apply.
-    /// Speech/state-script channels intentionally live outside this outbox and
-    /// remain explicit PA-013 audit debt. `blink_enemy_specific` is also
-    /// intentionally excluded: it belongs to the observer's next
+    /// Speech intentionally lives outside this outbox. State-script
+    /// notifications live in the sibling `AiReentrantOutbox` queue and the
+    /// owner fixed-point predicates check them separately; only their exact
+    /// intra-`SetState` placement remains PA-013 debt. `blink_enemy_specific`
+    /// is also intentionally excluded: it belongs to the observer's next
     /// pre-detection creation slot and is consumed only by
     /// `tick_pending_specific_enemy_blinks_for_npc`.
     pub(crate) fn has_boundary_work(&self) -> bool {
