@@ -1,5 +1,1054 @@
 use super::*;
 
+fn install_rider_charge_fixture(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    order_type: crate::order::OrderType,
+    frame_delays: Vec<u16>,
+) -> (EntityId, crate::sequence::SequenceId, std::num::NonZeroU32) {
+    use crate::element::{ActionState, Camp, Command, Entity, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::Order;
+    use crate::profiles::{CharacterProfile, HtHWeaponProfile, SoldierProfile};
+    use crate::sequence::{MoveFlags, SequenceElement};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    profiles.soldiers.push(SoldierProfile {
+        hth_weapon_id: 1,
+        rider: true,
+        ..SoldierProfile::default()
+    });
+    let mut weapon = HtHWeaponProfile::default();
+    weapon.thrusts[crate::weapons::SwordStrike::Charge as usize].cutting = 9;
+    weapon.thrusts[crate::weapons::SwordStrike::Charge as usize].repulsion = 30;
+    profiles.hth_weapons.push(weapon);
+    profiles.characters.push(CharacterProfile {
+        hth_weapon_id: 1,
+        endurance: 50,
+        ..CharacterProfile::default()
+    });
+
+    let mut rider = make_test_ai_soldier(Camp::Royalists);
+    let Entity::Soldier(soldier) = &mut rider else {
+        unreachable!()
+    };
+    soldier.soldier.rider = true;
+    soldier.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
+    soldier.element.active = true;
+    soldier.element.posture = Posture::Upright;
+    soldier
+        .element
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    soldier.element.set_direction_instantly(0);
+    soldier.actor.action_state = ActionState::MovingFast;
+
+    let action = crate::order::OrderType::TransitionCharging;
+    let frames = frame_delays.len();
+    let script = SpriteScript {
+        action_id: action as u16,
+        action_done: frames.saturating_sub(1) as u16,
+        average_speed: 4.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: frames as u16 * 4,
+        frame_ids: (0..frames as u32).collect(),
+        delays: frame_delays,
+        distances: vec![4; frames],
+        offsets: vec![SpriteFrameOffset::ZERO; frames],
+        sound_ids: vec![0; frames],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[action as usize] = 0;
+    soldier.element.sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    soldier
+        .element
+        .sprite
+        .position_iface
+        .set_anti_collision_on(false);
+    soldier
+        .element
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    let rider_id = engine.add_entity(rider);
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut order = Order::new(order_type, 300.0, 100.0, order_id);
+    order.compute_direction = true;
+    order.tolerance = 7.0;
+    order.lock_ai = true;
+    order.move_flags = MoveFlags::RIDER_CHARGE.bits() as u16;
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(rider_id), order_type);
+    if let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut movement.data {
+        *flags = MoveFlags::RIDER_CHARGE;
+    }
+    movement.orders.push_back(order);
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    engine
+        .get_entity_mut(rider_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(sequence_id, 0);
+    (rider_id, sequence_id, order_id)
+}
+
+fn rider_charge_point(origin: MapPoint, direction: i16, forward: f32, side: f32) -> MapPoint {
+    let [forward_x, forward_y] = crate::position_interface::sector_to_vector_iso(direction);
+    let [side_x, side_y] = crate::position_interface::sector_to_vector_iso((direction + 4) & 15);
+    MapPoint::new(
+        origin.x + forward * forward_x + side * side_x,
+        origin.y + forward * forward_y + side * side_y,
+    )
+}
+
+fn add_charge_victim(engine: &mut EngineInner, position: MapPoint) -> EntityId {
+    let mut victim = make_test_pc(crate::element::Posture::Upright);
+    victim.element_data_mut().active = true;
+    victim.element_data_mut().set_position_map(position);
+    victim
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -4.0, -4.0, 4.0, 4.0,
+        ));
+    engine.add_entity(victim)
+}
+
+fn install_charge_victim_motion(
+    engine: &mut EngineInner,
+    victim_id: EntityId,
+    start: MapPoint,
+    goal: MapPoint,
+) {
+    use crate::element::{ActionState, Command};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let action = OrderType::WalkingUpright;
+    let script = SpriteScript {
+        action_id: action as u16,
+        action_done: 0,
+        average_speed: 10.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 10,
+        frame_ids: vec![1],
+        delays: vec![20],
+        distances: vec![10],
+        offsets: vec![SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[action as usize] = 0;
+    let entity = engine.get_entity_mut(victim_id).unwrap();
+    entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    entity
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_anti_collision_on(false);
+    entity
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -4.0, -4.0, 4.0, 4.0,
+        ));
+    entity.element_data_mut().set_position_map(start);
+    entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+
+    let order_id = engine.orders.allocate_order_id();
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(victim_id), action);
+    movement
+        .orders
+        .push_back(Order::new(action, goal.x, goal.y, order_id));
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(victim_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(sequence, 0);
+}
+
+#[test]
+fn rider_charge_approach_never_initializes_from_flags_alone() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RunningUpright,
+        vec![0, 0, 0],
+    );
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_none(),
+        "RIDER_CHARGE on RunningUpright is only the approach/gallop loop"
+    );
+}
+
+#[test]
+fn rider_charging_action_executes_without_rider_charge_flag() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1],
+    );
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap();
+    if let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut element.data {
+        *flags = crate::sequence::MoveFlags::empty();
+    }
+    element.orders.front_mut().unwrap().move_flags = 0;
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_some(),
+        "RiderCharging dispatch is keyed solely by the live action"
+    );
+}
+
+#[test]
+fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immediately() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, sequence, old_order_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 20],
+    );
+    let stale = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 80.0, 30.0));
+    let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_entity_movement(&sim, &assets);
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![stale]
+    );
+
+    engine
+        .get_entity_mut(stale)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(900.0, 900.0));
+    engine
+        .get_entity_mut(replacement)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(rider_charge_point(origin, 0, 100.0, 30.0));
+    let replacement_order_id = engine.orders.allocate_order_id();
+    assert_ne!(replacement_order_id, old_order_id);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap()
+        .order_id = replacement_order_id;
+
+    engine.tick_entity_movement(&sim, &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![replacement],
+        "fresh same-action identity clears and rebuilds candidates before motion"
+    );
+}
+
+#[test]
+fn rider_charge_uses_actual_sprite_waits_and_rewrites_same_order_on_actual_last_frame() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, old_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![2, 1, 1],
+    );
+    let sim = crate::sim_rng::test_context();
+
+    let mut observed_frames = Vec::new();
+    for _ in 0..6 {
+        engine.tick_entity_movement(&sim, &assets);
+        observed_frames.push(engine.get_entity(rider).unwrap().sprite().current_frame);
+    }
+    assert_eq!(observed_frames, vec![0, 0, 0, 0, 1, 1]);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_some()
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_type,
+        crate::order::OrderType::RiderCharging,
+        "path progress cannot fabricate an early last frame"
+    );
+    engine.tick_entity_movement(&sim, &assets);
+
+    let rewritten = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap()
+        .current_order()
+        .unwrap();
+    assert_eq!(
+        rewritten.order_type,
+        crate::order::OrderType::RunningUpright
+    );
+    assert_ne!(rewritten.order_id, old_id);
+    assert_eq!(rewritten.tolerance, 7.0);
+    assert!(rewritten.lock_ai);
+    assert!(rewritten.compute_direction);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_none()
+    );
+}
+
+#[test]
+fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pending() {
+    use crate::element::Posture;
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1, 1],
+    );
+    let mut victim = make_test_pc(Posture::Upright);
+    victim.element_data_mut().active = true;
+    let [forward_x, forward_y] = crate::position_interface::sector_to_vector_iso(0);
+    let [side_x, side_y] = crate::position_interface::sector_to_vector_iso(4);
+    victim.element_data_mut().set_position_map(MapPoint::new(
+        100.0 + 100.0 * forward_x + 30.0 * side_x,
+        100.0 + 100.0 * forward_y + 30.0 * side_y,
+    ));
+    let victim_id = engine.add_entity(victim);
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_entity_movement(&sim, &assets);
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![victim_id]
+    );
+
+    // Move both participants after initialization. The second polygon must
+    // use the rider's new sample, while eligibility must not be rerun.
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(200.0, 100.0));
+    engine
+        .get_entity_mut(victim_id)
+        .unwrap()
+        .element_data_mut()
+        .set_layer(1);
+    engine.tick_entity_movement(&sim, &assets);
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![victim_id],
+        "a candidate on another live layer stays pending"
+    );
+}
+
+#[test]
+fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1],
+    );
+    let sim = crate::sim_rng::test_context();
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_some()
+    );
+
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap()
+        .order_type = crate::order::OrderType::RunningUpright;
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_none()
+    );
+
+    let fresh_id = engine.orders.allocate_order_id();
+    let order = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap();
+    order.order_type = crate::order::OrderType::RiderCharging;
+    order.order_id = fresh_id;
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_some()
+    );
+}
+
+#[test]
+fn rider_charge_frozen_all_still_initializes_and_runs_polygon_on_frozen_frame() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![3, 1],
+    );
+    engine.set_actors_frozen(true);
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+    let entity = engine.get_entity(rider).unwrap();
+    assert_eq!(entity.sprite().current_frame, 0);
+    assert_eq!(
+        entity.element_data().position_map(),
+        MapPoint::new(100.0, 100.0)
+    );
+    assert!(
+        entity.actor_data().unwrap().active_rider_charge.is_some(),
+        "FrozenAll preserves ExecuteRiderCharge initialization/polygon work"
+    );
+}
+
+#[test]
+fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, _, order_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![3, 1],
+    );
+    let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
+    engine.set_actors_frozen(true);
+    let sim = crate::sim_rng::test_context();
+    clear_test_sword_damage_observations();
+
+    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_entity_movement(&sim, &assets);
+
+    let observations = take_test_sword_damage_observations();
+    assert_eq!(observations.len(), 1, "frozen ticks must not rebuild hits");
+    assert_eq!(observations[0].victim_id, victim);
+    assert!(observations[0].life_points_after > 0, "victim is nonlethal");
+    let entity = engine.get_entity(rider).unwrap();
+    assert_eq!(entity.sprite().current_frame, 0);
+    assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .last_executed_rider_charge_order_id,
+        Some(order_id)
+    );
+    assert!(
+        entity
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims
+            .is_empty(),
+        "the resolved victim remains removed while FrozenAll persists"
+    );
+}
+
+#[test]
+fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, sequence, old_order_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![3, 1],
+    );
+    let stale = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 80.0, 30.0));
+    let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
+    engine.set_actors_frozen(true);
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_entity_movement(&sim, &assets);
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .last_executed_rider_charge_order_id,
+        Some(old_order_id)
+    );
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        u32::MAX
+    );
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![stale]
+    );
+
+    engine
+        .get_entity_mut(stale)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(900.0, 900.0));
+    engine
+        .get_entity_mut(replacement)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(rider_charge_point(origin, 0, 100.0, 30.0));
+    let fresh_id = engine.orders.allocate_order_id();
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap()
+        .order_id = fresh_id;
+
+    engine.tick_entity_movement(&sim, &assets);
+
+    let entity = engine.get_entity(rider).unwrap();
+    assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .last_executed_rider_charge_order_id,
+        Some(fresh_id)
+    );
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims,
+        vec![replacement],
+        "fresh frozen identity rebuilds candidates without a noncharge tick"
+    );
+}
+
+#[test]
+fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tick() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, order_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![3, 1],
+    );
+    let sim = crate::sim_rng::test_context();
+    engine.set_actors_frozen(true);
+
+    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_entity_movement(&sim, &assets);
+    {
+        let entity = engine.get_entity(rider).unwrap();
+        assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+        assert_eq!(
+            entity
+                .actor_data()
+                .unwrap()
+                .last_executed_rider_charge_order_id,
+            Some(order_id)
+        );
+    }
+
+    engine.set_actors_frozen(false);
+    engine.tick_entity_movement(&sim, &assets);
+
+    let entity = engine.get_entity(rider).unwrap();
+    assert_eq!(entity.sprite().last_processed_order_id, order_id.get());
+    assert_eq!(
+        entity.sprite().last_action,
+        crate::order::OrderType::TransitionCharging
+    );
+    assert_eq!(
+        entity.sprite().position_iface.map_goal(),
+        MapPoint::new(300.0, 100.0)
+    );
+    assert!(entity.sprite().position_iface.is_increment_map_computed());
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
+        crate::element::ActionState::MovingFast,
+        "the first unfrozen PerformMotion reports Start"
+    );
+}
+
+#[test]
+fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_direction() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 1],
+    );
+    // Frame zero's polygon is the one-sided width segment at the pre-Turn
+    // origin. The fixture's eastward goal turns the live rider from 0 to 1.
+    let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
+    clear_test_sword_damage_observations();
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+    let observations = take_test_sword_damage_observations();
+    assert_eq!(observations.len(), 1);
+    let hit = &observations[0];
+    assert_eq!((hit.attacker_id, hit.victim_id), (rider, victim));
+    assert_eq!(hit.strike, crate::weapons::SwordStrike::Charge);
+    assert!(hit.active_rider_charge);
+    assert!(
+        hit.pending_victims.is_empty(),
+        "hit is removed before damage dispatch"
+    );
+    assert!(
+        hit.life_points_after < hit.life_points_before,
+        "damage applies inline"
+    );
+    assert_eq!(
+        hit.attacker_direction, 1,
+        "flight samples live post-Turn facing"
+    );
+    let [flight_x, flight_y] = crate::position_interface::sector_to_vector_iso(1);
+    let expected_facing =
+        (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) & 15;
+    assert_eq!(
+        hit.victim_direction_after, expected_facing,
+        "prepare_hit_fall/push faces the victim opposite live rider direction 1"
+    );
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .as_ref()
+            .unwrap()
+            .pending_victims
+            .is_empty()
+    );
+
+    clear_test_sword_damage_observations();
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    assert!(
+        take_test_sword_damage_observations().is_empty(),
+        "victim is hit once"
+    );
+}
+
+#[test]
+fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+
+    fn run() -> Vec<(u32, i16, i16, Vec<u32>)> {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let origin = MapPoint::new(100.0, 100.0);
+        let (_rider, _, _) = install_rider_charge_fixture(
+            &mut engine,
+            &mut assets,
+            crate::order::OrderType::RiderCharging,
+            vec![20, 1],
+        );
+        let first = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 20.0));
+        let hole = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
+        let second = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 40.0));
+        engine.remove_entity(hole);
+        clear_test_sword_damage_observations();
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+        let observations = take_test_sword_damage_observations();
+        assert_eq!(
+            observations
+                .iter()
+                .map(|hit| hit.victim_id)
+                .collect::<Vec<_>>(),
+            vec![first, second],
+            "candidate order follows live creation slots across a hole"
+        );
+        assert_eq!(observations[0].pending_victims, vec![second]);
+        assert!(observations[1].pending_victims.is_empty());
+        observations
+            .into_iter()
+            .map(|hit| {
+                (
+                    hit.victim_id.index(),
+                    hit.life_points_before,
+                    hit.life_points_after,
+                    hit.pending_victims
+                        .into_iter()
+                        .map(EntityId::index)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    assert_eq!(
+        run(),
+        run(),
+        "damage/RNG and state mutation order is deterministic"
+    );
+}
+
+#[test]
+fn rider_charge_last_frame_damage_observes_active_state_before_rewrite_and_clear() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+    let (rider, sequence, old_id) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![0],
+    );
+    add_charge_victim(&mut engine, rider_charge_point(origin, 0, 10.0, 30.0));
+    clear_test_sword_damage_observations();
+
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+    let observations = take_test_sword_damage_observations();
+    assert_eq!(observations.len(), 1);
+    assert!(observations[0].active_rider_charge);
+    let order = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap()
+        .current_order()
+        .unwrap();
+    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
+    assert_ne!(order.order_id, old_id);
+    assert!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_rider_charge
+            .is_none()
+    );
+}
+
+#[test]
+fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 20],
+    );
+    let victim = add_charge_victim(
+        &mut engine,
+        rider_charge_point(MapPoint::new(100.0, 100.0), 0, 80.0, 30.0),
+    );
+    let sim = crate::sim_rng::test_context();
+    clear_test_sword_damage_observations();
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(take_test_sword_damage_observations().is_empty());
+
+    // Eligibility changes after initialization are intentionally ignored.
+    // Wrong layer merely postpones geometry; returning to the sampled layer
+    // later permits the already-retained candidate to hit.
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_layer(1);
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(take_test_sword_damage_observations().is_empty());
+    let rider_origin = engine
+        .get_entity(rider)
+        .unwrap()
+        .element_data()
+        .position_map();
+    let rider_direction = engine.get_entity(rider).unwrap().element_data().direction();
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(rider_charge_point(rider_origin, rider_direction, 0.0, 30.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_layer(0);
+    engine.tick_entity_movement(&sim, &assets);
+    assert_eq!(take_test_sword_damage_observations().len(), 1);
+}
+
+#[test]
+fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_movement() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let origin = MapPoint::new(100.0, 100.0);
+
+    // Reserve the earlier creation slot before installing the rider.
+    let earlier = add_charge_victim(&mut engine, MapPoint::new(100.0, 100.0));
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![20, 20],
+    );
+    let hit_point = rider_charge_point(origin, 1, 0.0, 30.0);
+    let [move_x, move_y] = crate::position_interface::sector_to_vector_iso(4);
+    let earlier_start = MapPoint::new(hit_point.x - 6.0 * move_x, hit_point.y - 6.0 * move_y);
+    let earlier_goal = MapPoint::new(hit_point.x + 20.0 * move_x, hit_point.y + 20.0 * move_y);
+    install_charge_victim_motion(&mut engine, earlier, earlier_start, earlier_goal);
+
+    let later = add_charge_victim(&mut engine, hit_point);
+    let later_goal = MapPoint::new(hit_point.x + 10.0 * move_x, hit_point.y + 10.0 * move_y);
+    install_charge_victim_motion(&mut engine, later, hit_point, later_goal);
+    assert!(earlier.index() < rider.index() && rider.index() < later.index());
+    let sim = crate::sim_rng::test_context();
+    clear_test_sword_damage_observations();
+
+    // First tick initializes all three motions and the charge candidates.
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(take_test_sword_damage_observations().is_empty());
+    clear_test_sword_damage_observations();
+    engine.tick_entity_movement(&sim, &assets);
+
+    let observations = take_test_sword_damage_observations();
+    assert_eq!(
+        observations
+            .iter()
+            .map(|hit| hit.victim_id)
+            .collect::<Vec<_>>(),
+        vec![earlier, later]
+    );
+    assert_eq!(
+        engine
+            .get_entity(earlier)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        hit_point,
+        "earlier victim completes its movement before the rider samples it"
+    );
+    assert_eq!(
+        engine
+            .get_entity(later)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        hit_point,
+        "later victim is damaged/interrupted before its movement slot"
+    );
+}
+
+#[test]
+#[should_panic(expected = "missing TransitionCharging animation")]
+fn rider_charge_requires_transition_animation() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![1],
+    );
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .conversion = std::sync::Arc::new(vec![
+        crate::sprite_script::UNMAPPED;
+        crate::sprite_script::NONANIMATION_END
+    ]);
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+}
+
+#[test]
+#[should_panic(expected = "missing hand-to-hand weapon profile")]
+fn rider_charge_requires_weapon_profile() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![1],
+    );
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .hth_weapons
+        .clear();
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+}
+
 #[test]
 fn current_movement_bootstraps_from_waiting_with_destination_state() {
     use crate::element::{ActionState, Command, Posture};

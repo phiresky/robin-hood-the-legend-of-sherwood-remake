@@ -474,29 +474,14 @@ pub struct ActiveFlight {
 
 /// Active rider charge state.
 ///
-/// When a rider enters charging mode, this struct tracks the hit zone
-/// polygon and potential victims.  Each frame, victims inside
-/// the expanding hit zone take `SWORDSTRIKE_CHARGE` damage and are removed
-/// from the candidate list.
+/// The Original keeps only the candidate list between calls to
+/// `ExecuteRiderCharge`; origin, direction, layer, and animation frame are
+/// sampled live on every owner movement slot.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ActiveRiderCharge {
-    /// Forward direction vector (from sector, with aspect ratio).
-    pub forward: (f32, f32),
-    /// Sidewards direction vector (forward rotated +4 sectors).
-    pub sidewards: (f32, f32),
-    /// Position at charge start (map coords).
-    pub origin: MapPoint,
-    /// Layer at charge start.
-    pub layer: u16,
     /// Candidate victims (entities inside the initial large hit zone).
     /// Removed as they get hit.
     pub pending_victims: Vec<EntityId>,
-    /// Current animation frame counter (incremented each tick).
-    pub current_frame: u16,
-    /// Total frames in the charging animation.
-    pub total_frames: u16,
-    /// Whether the charge has been initialized (first-frame setup done).
-    pub initialized: bool,
 }
 
 /// One step in a door-pass sub-order chain.
@@ -704,6 +689,12 @@ pub struct ActorData {
     /// polygon hit zone each frame.
     pub active_rider_charge: Option<ActiveRiderCharge>,
 
+    /// Actor-level identity of the last `RiderCharging` order whose
+    /// `ExecuteRiderCharge` pass completed. This is intentionally distinct
+    /// from `Sprite::last_processed_order_id`: FrozenAll still executes the
+    /// charge polygon but must leave sprite motion initialization pending.
+    pub last_executed_rider_charge_order_id: Option<std::num::NonZeroU32>,
+
     /// 3D bounding-box obstacle representing the shield held in front of
     /// this actor.  Computed by `update_shield_obstacles` each frame while
     /// the actor is in a shield action state.  Used by `tick_arrows` to
@@ -779,6 +770,7 @@ impl Default for ActorData {
             active_flight: None,
             active_lift: None,
             active_rider_charge: None,
+            last_executed_rider_charge_order_id: None,
             shield_obstacle: None,
             last_noise_volume: 0,
             produced_noise: None,

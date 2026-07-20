@@ -3,6 +3,46 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct TestSwordDamageObservation {
+    pub victim_id: EntityId,
+    pub attacker_id: EntityId,
+    pub strike: SwordStrike,
+    pub attacker_direction: i16,
+    pub active_rider_charge: bool,
+    pub pending_victims: Vec<EntityId>,
+    pub life_points_before: i16,
+    pub life_points_after: i16,
+    pub victim_direction_after: i16,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SWORD_DAMAGE_OBSERVATIONS: std::cell::RefCell<Vec<TestSwordDamageObservation>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_sword_damage_observations() {
+    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn take_test_sword_damage_observations() -> Vec<TestSwordDamageObservation> {
+    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.take())
+}
+
+#[cfg(test)]
+fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
+    match entity {
+        crate::element::Entity::Pc(pc) => Some(pc.pc.life_points),
+        crate::element::Entity::Soldier(soldier) => Some(soldier.npc.life_points),
+        crate::element::Entity::Civilian(civilian) => Some(civilian.npc.life_points),
+        _ => None,
+    }
+}
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
 use crate::element::{ActionState, Camp, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
@@ -104,6 +144,28 @@ impl EngineInner {
             return;
         }
 
+        #[cfg(test)]
+        let test_before = {
+            let attacker = self
+                .get_entity(attacker_id)
+                .expect("sword damage test attacker exists");
+            let actor = attacker
+                .actor_data()
+                .expect("sword damage attacker is actor");
+            (
+                attacker.element_data().direction(),
+                actor.active_rider_charge.is_some(),
+                actor
+                    .active_rider_charge
+                    .as_ref()
+                    .map(|charge| charge.pending_victims.clone())
+                    .unwrap_or_default(),
+                self.get_entity(victim_id)
+                    .and_then(test_human_life_points)
+                    .expect("sword damage test victim is human"),
+            )
+        };
+
         let mut elem = crate::sequence::SequenceElement::new(
             1,
             crate::element::Command::ReceiveSwordDamage,
@@ -125,6 +187,32 @@ impl EngineInner {
             return;
         }
         self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
+
+        #[cfg(test)]
+        {
+            let life_points_after = self
+                .get_entity(victim_id)
+                .and_then(test_human_life_points)
+                .expect("sword damage test victim remains human");
+            let victim_direction_after = self
+                .get_entity(victim_id)
+                .expect("sword damage test victim remains present")
+                .element_data()
+                .direction();
+            TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| {
+                observations.borrow_mut().push(TestSwordDamageObservation {
+                    victim_id,
+                    attacker_id,
+                    strike: sword_strike,
+                    attacker_direction: test_before.0,
+                    active_rider_charge: test_before.1,
+                    pending_victims: test_before.2,
+                    life_points_before: test_before.3,
+                    life_points_after,
+                    victim_direction_after,
+                });
+            });
+        }
     }
 
     /// Apply sword damage to a victim.
