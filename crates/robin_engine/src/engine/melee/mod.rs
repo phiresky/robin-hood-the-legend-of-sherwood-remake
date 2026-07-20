@@ -426,17 +426,6 @@ fn expression_allowed_by_amount(expression: u16, amount: u16) -> bool {
     true
 }
 
-// ─── Remark IDs (NPC speech) ────────────────────────────────────────
-// Only the combat-related remarks are listed; values are offsets within
-// the full remark enum (REMARK_AWAITS_ORDERS=0, REMARK_WOUNDED=30, etc.).
-
-const REMARK_WOUNDED: u16 = 30;
-const REMARK_DIES: u16 = 31;
-const CIV_REMARK_WOUNDED: u16 = 86;
-const CIV_REMARK_DIES: u16 = 87;
-const VIP_REMARK_WOUNDED: u16 = 117;
-const VIP_REMARK_DIES: u16 = 118;
-
 // ─── Helpers ────────────────────────────────────────────────────────
 
 impl EngineInner {
@@ -686,7 +675,7 @@ impl EngineInner {
         );
         let damage = (before - after).max(0) as u16;
         if is_pc && damage > 0 {
-            self.say_ouch(assets, entity_id, Some(damage));
+            self.say_ouch(sim, assets, entity_id, Some(damage));
         }
         if died {
             self.apply_scripted_virtual_kill(sim, assets, entity_id);
@@ -2330,6 +2319,7 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 life_points: 50,
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                 ..NpcData::default()
             },
             soldier: SoldierData {

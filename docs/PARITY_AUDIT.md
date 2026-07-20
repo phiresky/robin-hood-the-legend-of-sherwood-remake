@@ -194,10 +194,12 @@ isolated to each actor slot, so an earlier actor cannot consume or observe a
 later owner's pending Wait work. Execute-arm inputs are sampled live only
 after the animation skip gates select an eligible arm, so skipped actors do not
 dereference stale opponent, antagonist, or door references. Movement, melee,
-bow, abilities, NPC detection/tails, AI state callbacks, and speech deliberately
-retain their existing order owners;
-these prevent a full Actor Hourglass coordinator, and exact NPC derived-class
-nesting around the base actor remains absent.
+bow, abilities, and NPC detection/tails deliberately retain separate subsystem
+owners. AI state callbacks and speech now close one ordered owner-local FIFO at
+every audited return boundary, but that barrier is not a claim of arbitrary
+inline observation between pure-Rust statements. These remaining boundaries
+prevent a full Actor Hourglass coordinator, and exact NPC derived-class nesting
+around the base actor remains absent.
 
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier
@@ -332,10 +334,24 @@ restore does not undo an Enemy post-`SetState` tail already applied before
 callback re-entry; Friendly alert is correctly pre-callback and visible.
 Synthetic SCB/native tests
 cover state/source/alert visibility, FIFO, callback mutation, owner order, and
-all skip gates. Exact `Say`/`SetState` ordering, placement between multiple
-`SetState` calls inside one pure-Rust Think, script-driven `SetAIState`/Panic
-routing (including recursive calls), and animation interleaving remain
-explicit PA-013 debt; `Say` sound dispatch is still deferred.
+all skip gates. `Say` now shares this serialized/state-hashed owner FIFO with
+`SetState`: every engine return boundary settles attempts in statement order,
+and a rejected MYTALK callback plus recursively produced work finishes before
+the outer FIFO tail resumes. Direct sequence Speak/Provoke, nets, wasps,
+scrolls, animation remarks, melee warcries and `SayOuch`, panic paths, and
+cross-NPC Say calls close that boundary at their source before the following
+termination/order/noise/effect. This restores the source-verified
+`RHArtificialIntelligence::Say` filter/category/ID-zero/display/forbid order,
+shared CYCLE_3 placement, and the lazy ordered forbidden-list scan
+(`RHartificialintelligence.cpp:5846-6182,6273-6390`). Exact-ID
+`SoundIsFinished` completion is the first mutation of the next
+`PerformHourglass` deferred-effects phase, before every deferred simulation
+mutation and NPC Hourglass;
+emergency replacement removes the old schedule and mismatch callbacks retain
+the replacement (`RHelementactornpc.cpp:6408-6511`). Exact arbitrary
+pure-Rust reads between queued `Say`/`SetState` statements, fully inline
+intra-`Think` placement, and exact nesting with every remaining actor subtype
+are still explicit PA-013 debt; this slice does not complete PA-013.
 
 Movement follow-up `3daf2efaf` removed the two warning-and-reseed fallbacks for
 same-ID motion orders. A started order now requires its cached goal and map
@@ -358,7 +374,7 @@ need their own review.
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
 | Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed; generic actor animation/Execute, synchronous completion effects, and ActionChange now share each live legacy creation slot. Movement/combat/ability owners and exact NPC nesting remain separate. |
-| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target, synchronous wake/recovery/blink/body-inform/view prelude, HEAR/VIEW/OUTOFVIEW ordering, the shared civilian/both-camp mixed Enemy walk, per-stimulus live contexts, live per-Think Enemy-list reconstruction, creation-ordered NPC blip/reveal, lift approach data, cross-elevation world-distance/projected-LOS coordinates, ambush/deafness, BUSY/ladder, wrapped phase, lock/timer/emoticon semantics, retained replay, and owner-local Enemy/Friendly `SetState` script callbacks are fixed at the creation boundary. Base actor animation/ActionChange is now creation-ordered, but exact nesting with the NPC-derived tail plus synchronous speech dispatch remains incomplete; the narrower `SetState` ordering debts listed above remain open. |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target, synchronous wake/recovery/blink/body-inform/view prelude, HEAR/VIEW/OUTOFVIEW ordering, the shared civilian/both-camp mixed Enemy walk, per-stimulus live contexts, live per-Think Enemy-list reconstruction, creation-ordered NPC blip/reveal, lift approach data, cross-elevation world-distance/projected-LOS coordinates, ambush/deafness, BUSY/ladder, wrapped phase, lock/timer/emoticon semantics, retained replay, owner-local Enemy/Friendly `SetState` callbacks, ordered owner-local speech settlement, and exact speech completion as the first `PerformHourglass` deferred-phase mutation are fixed at the creation boundary. Base actor animation/ActionChange is now creation-ordered, but exact derived/base nesting and fully inline pure-Rust intra-Think observation remain incomplete. |
 | Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | live creation order, spawn-frame inclusion, straight/assault causality, non-straight phase timing, and synchronous melee victim ordering are verified by PA-013 regressions; riders and other combat maintenance remain batched |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |

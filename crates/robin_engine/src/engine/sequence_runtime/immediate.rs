@@ -25,6 +25,7 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => self.dispatch_execute_immediate_owner(
+                sim,
                 assets,
                 owner,
                 sequence_id,
@@ -114,6 +115,7 @@ impl EngineInner {
     /// DeactivateMobile, Unblip, owner-bound SendMessage).
     pub(super) fn dispatch_execute_immediate_owner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -200,6 +202,7 @@ impl EngineInner {
                     let flags_bits = speak_flags.unwrap_or(0) as u16;
                     let flags = crate::ai::SpeechFlags::from_bits_truncate(flags_bits);
                     ai.say_with_flags(remark, flags);
+                    self.drain_ai_owner_work_for(sim, assets, owner);
                 } else {
                     tracing::warn!(
                         ?owner,

@@ -216,7 +216,8 @@ pub(super) fn capture_ordered_gameplay_entities<T>(f: impl FnOnce() -> T) -> (T,
 }
 
 /// Move exclamations whose decoded-duration deadline has arrived into
-/// the callback queue consumed by `process_npc_speech` later this tick.
+/// the callback queue consumed as the first mutation of the next
+/// `PerformHourglass` deferred-effects phase.
 pub(super) fn drain_matured_exclamations(
     sound_sim: &mut crate::sound::SoundSimState,
     cur_frame: u32,
@@ -624,11 +625,18 @@ impl EngineInner {
     /// `RHEngine::PerformHourglass` with host/widget and mission-state work.
     /// These Rust-owned queues have no one-to-one original equivalent; their
     /// relative placement is retained from the pre-decomposition Rust tick.
-    fn hourglass_phase_deferred_effects_start(
+    pub(super) fn hourglass_phase_deferred_effects_start(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> bool {
+        // Sound Hourglass completes after the preceding Engine frame in the
+        // Original. Its callbacks therefore finish before the next
+        // PerformHourglass begins and must be the first mutation here.
+        let cur_frame = self.control.frame_counter;
+        drain_matured_exclamations(&mut self.feedback.sound_sim, cur_frame);
+        self.settle_npc_speech_completions(sim, assets);
+
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
@@ -643,15 +651,6 @@ impl EngineInner {
         self.drain_pending_hero_speeches(assets);
         self.drain_pending_hades_kills(sim, assets);
         self.drain_pending_concussion_side_effects(sim, assets);
-
-        // Drain matured exclamations into `finished_exclamations` so the
-        // AI MYTALK handler (later in this tick) sees them. Used to be
-        // populated host-side by audio-backend playback completion,
-        // which made rollback non-deterministic — now scheduled at
-        // emit time using the host-supplied `exclamation_durations`
-        // table.
-        let cur_frame = self.control.frame_counter;
-        drain_matured_exclamations(&mut self.feedback.sound_sim, cur_frame);
 
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on
@@ -2093,24 +2092,19 @@ impl EngineInner {
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
 
-        // Every engine-entered AI call closes its owner-local SetState
-        // callback boundary before returning to effects/orders. Nothing may
-        // survive into the old post-NPC global batch position.
+        // Every engine-entered AI call closes its ordered owner-local
+        // SetState/Say boundary before returning to effects/orders. Nothing
+        // may survive into the obsolete post-NPC speech batch position.
         for (npc_id, entity) in self.world.entities.npcs() {
             let leaked = entity
                 .ai_controller()
-                .is_some_and(|ai| !ai.outbox.reentrant.state_change_notifications.is_empty());
+                .is_some_and(|ai| !ai.outbox.reentrant.owner_work.is_empty());
             assert!(
                 !leaked,
-                "NPC {} leaked owner-local AI SetState notifications past its Hourglass slot",
+                "NPC {} leaked owner-local AI work past its Hourglass slot",
                 npc_id.index()
             );
         }
-
-        // ── NPC speech ──────────────────────────────────────────
-        // Drain pending AI remarks (set by `say` during AI ticks)
-        // and dispatch to the sound manager as exclamation playback.
-        self.process_npc_speech(assets);
 
         // ── HUD speech-log decay ────────────────────────────────
         // Decrement the per-remark display timer and evict expired
@@ -2118,10 +2112,9 @@ impl EngineInner {
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
 
-        // TODO(original-parity): Say audio dispatch is still deferred to this
-        // system pass. Exact Say/SetState ordering, exact placement between
-        // multiple SetState calls inside one pure-Rust Think,
-        // script-recursive SetAIState, and animation interleaving remain debt.
+        // TODO(PA-013): pure-Rust handlers still enqueue until their AI borrow
+        // returns, so arbitrary reads between Say/SetState statements cannot
+        // yet observe the Original's fully inline engine/audio call stack.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that
@@ -3392,6 +3385,7 @@ impl EngineInner {
             {
                 base.say(crate::ai::Remark::WaspSting);
             }
+            self.drain_ai_owner_work_for(sim, assets, speaker);
         }
 
         // SPECIAL START — `make_special_action_remark`.  Branches
@@ -3434,6 +3428,7 @@ impl EngineInner {
             {
                 enemy.make_special_action_remark(sim, is_shield_bearer);
             }
+            self.drain_ai_owner_work_for(sim, assets, speaker);
         }
 
         // LYING_STUCK_UNDER_NET 1/31 cycle — NPCs say
@@ -3466,6 +3461,7 @@ impl EngineInner {
             {
                 base.say(remark);
             }
+            self.drain_ai_owner_work_for(sim, assets, speaker);
             self.broadcast_noise(
                 crate::ai::NoiseType::Heeelp,
                 origin,

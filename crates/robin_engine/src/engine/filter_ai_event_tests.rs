@@ -2829,13 +2829,7 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
         ai.base.outbox.actor.begin_panic.is_some(),
         "callback SetAIState mutation remains queued while outer incoming state wins"
     );
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .state_change_notifications
-            .is_empty()
-    );
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 }
 
 #[test]
@@ -3126,13 +3120,7 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
         .enemy_ai()
         .unwrap();
     assert!(ai.pending_special_strike);
-    assert!(
-        ai.base
-            .outbox
-            .reentrant
-            .state_change_notifications
-            .is_empty()
-    );
+    assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert_eq!(
         npc_custom_values(&engine, enemy)[9],
         5,
@@ -3163,7 +3151,7 @@ fn unavailable_state_change_callbacks_are_consumed() {
             .unwrap()
             .ai_controller()
             .unwrap();
-        assert!(ai.outbox.reentrant.state_change_notifications.is_empty());
+        assert!(ai.outbox.reentrant.owner_work.is_empty());
         assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
     }
 

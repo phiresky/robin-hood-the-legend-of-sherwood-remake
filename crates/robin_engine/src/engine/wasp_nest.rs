@@ -207,7 +207,7 @@ impl EngineInner {
         //    the sting.
         if timeout == 0 {
             if !stinging {
-                self.wasp_change_victim(assets, wasp_id);
+                self.wasp_change_victim(sim, assets, wasp_id);
                 self.wasp_change_direction(sim, assets, wasp_id);
                 // Reset timeout — `DIRECTION_CHANGE_TIMEOUT` plus a
                 // 0..3 jitter.
@@ -314,7 +314,12 @@ impl EngineInner {
     }
 
     /// Pick / drop the wasp's victim.
-    fn wasp_change_victim(&mut self, assets: &LevelAssets, wasp_id: EntityId) {
+    fn wasp_change_victim(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        wasp_id: EntityId,
+    ) {
         let (cur_victim, wasp_pos) = match self.get_entity(wasp_id) {
             Some(Entity::Projectile(p)) => (p.projectile.wasp.victim, p.element.position()),
             _ => return,
@@ -348,7 +353,7 @@ impl EngineInner {
         }
 
         // No victim — pick one.
-        let new_victim = self.wasp_choose_victim(assets, wasp_id);
+        let new_victim = self.wasp_choose_victim(sim, assets, wasp_id);
         if let Some(vid) = new_victim {
             if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                 p.projectile.wasp.victim = Some(vid);
@@ -368,7 +373,12 @@ impl EngineInner {
     ///   2. Nearest non-smelling soldier.
     ///
     /// VIPs are filtered out and trigger `VipWaspsNo`.
-    fn wasp_choose_victim(&mut self, assets: &LevelAssets, wasp_id: EntityId) -> Option<EntityId> {
+    fn wasp_choose_victim(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        wasp_id: EntityId,
+    ) -> Option<EntityId> {
         let wasp_pos = match self.get_entity(wasp_id) {
             Some(Entity::Projectile(p)) => p.element.position(),
             _ => return None,
@@ -454,11 +464,14 @@ impl EngineInner {
 
         // VIPs say `VipWaspsNo` instead of being targeted.
         for vid in vip_remarks {
-            if let Some(entity) = self.world.entities.get_mut(vid)
-                && let Some(base) = entity.ai_controller_mut()
-            {
-                base.say(crate::ai::Remark::VipWaspsNo);
-            }
+            self.world
+                .entities
+                .get_mut(vid)
+                .unwrap_or_else(|| panic!("wasp speech owner {} disappeared", vid.index()))
+                .ai_controller_mut()
+                .unwrap_or_else(|| panic!("wasp speech owner {} has no AI", vid.index()))
+                .say(crate::ai::Remark::VipWaspsNo);
+            self.drain_ai_owner_work_for(sim, assets, vid);
         }
 
         // Priority: smelling-apple first, nearest within that group.

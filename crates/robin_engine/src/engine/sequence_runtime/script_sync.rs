@@ -191,6 +191,7 @@ impl EngineInner {
                 } else {
                     let mut messages = Vec::new();
                     self.dispatch_execute_immediate_owner(
+                        sim,
                         assets,
                         owner,
                         sequence_id,

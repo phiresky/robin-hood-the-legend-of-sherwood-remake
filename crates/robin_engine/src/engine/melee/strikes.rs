@@ -2876,7 +2876,7 @@ impl EngineInner {
             {
                 ai.begin_special_strike();
             }
-            self.drain_ai_state_change_notifications_for(sim, assets, attack.soldier_id);
+            self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.
@@ -2899,6 +2899,7 @@ impl EngineInner {
                     };
                     ai.say(remark);
                 }
+                self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
             }
 
             // Build sequence: level-1 wait timer (preparation delay),

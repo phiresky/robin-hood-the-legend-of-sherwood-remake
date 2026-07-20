@@ -18,13 +18,19 @@ impl EngineInner {
     /// "fire" to match the previous behaviour.
     pub(crate) fn say_ouch(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         damage: Option<u16>,
     ) {
-        use crate::sound::ExclamationGroup;
+        #[derive(Clone, Copy)]
+        enum OuchOwner {
+            Pc,
+            Soldier(crate::profiles::SoldierProfileIdx),
+            Civilian(crate::profiles::CivilianProfileIdx),
+        }
 
-        let (group, profile_id, position, is_dead, is_unconscious, is_vip, is_npc_busy) = {
+        let (owner, position, is_dead, is_unconscious, is_npc_busy) = {
             let entity = match self.get_entity(entity_id) {
                 Some(e) => e,
                 None => return,
@@ -32,7 +38,6 @@ impl EngineInner {
             let pos = entity.element_data().position_map();
             let dead = entity.is_dead();
             let unc = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-            let vip = is_vip_from_profile(entity, &assets.profile_manager);
             // Brawling / looting NPCs (any take-money or
             // fight-for-money substate) skip the wounded remark
             // entirely — they're focused on the money / fight and
@@ -45,69 +50,13 @@ impl EngineInner {
                     sub.is_take_money() || sub.is_fight_for_money()
                 })
                 .unwrap_or(false);
-            match entity {
-                Entity::Pc(pc) => {
-                    let profile = assets
-                        .profile_manager
-                        .get_character(pc.pc.profile_index)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing PC profile {:?} for melee speech",
-                                pc.pc.profile_index
-                            )
-                        });
-                    (
-                        ExclamationGroup::Pc,
-                        profile.exclamation_id,
-                        pos,
-                        dead,
-                        unc,
-                        vip,
-                        busy,
-                    )
-                }
-                Entity::Soldier(s) => {
-                    let profile = assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing soldier profile {:?} for melee speech",
-                                s.soldier.soldier_profile_index
-                            )
-                        });
-                    (
-                        ExclamationGroup::Soldier,
-                        profile.exclamation_id,
-                        pos,
-                        dead,
-                        unc,
-                        vip,
-                        busy,
-                    )
-                }
-                Entity::Civilian(c) => {
-                    let profile = assets
-                        .profile_manager
-                        .get_civilian(c.civilian.civilian_profile_index)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing civilian profile {:?} for melee speech",
-                                c.civilian.civilian_profile_index
-                            )
-                        });
-                    (
-                        ExclamationGroup::Civilian,
-                        profile.exclamation_id,
-                        pos,
-                        dead,
-                        unc,
-                        profile.civilian_type == crate::profiles::CivilianType::Vip,
-                        busy,
-                    )
-                }
+            let owner = match entity {
+                Entity::Pc(_) => OuchOwner::Pc,
+                Entity::Soldier(s) => OuchOwner::Soldier(s.soldier.soldier_profile_index),
+                Entity::Civilian(c) => OuchOwner::Civilian(c.civilian.civilian_profile_index),
                 _ => return,
-            }
+            };
+            (owner, pos, dead, unc, busy)
         };
 
         // Brawling / looting NPCs silently swallow the hit.
@@ -120,26 +69,36 @@ impl EngineInner {
         // `current_remark = TheSoundOfSilence`), clearing both the
         // host-side channel and the sim-side scheduled finish.
         if is_unconscious {
-            if group != ExclamationGroup::Pc {
-                self.feedback.pending_side_effects.sounds.push(
-                    super::SoundCommand::StopExclamation {
-                        actor_id: entity_id,
-                    },
-                );
-                if let Some(entity) = self.world.entities.get_mut(entity_id)
-                    && let Some(npc) = entity.npc_data_mut()
-                    && let Some(base) = npc.ai_brain.base_mut()
-                    && (base.current_remark != crate::ai::Remark::TheSoundOfSilence
-                        || base.speech_in_flight)
-                {
+            if !matches!(owner, OuchOwner::Pc) {
+                let was_speaking = self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .and_then(Entity::ai_controller)
+                    .is_some_and(|base| {
+                        base.current_remark != crate::ai::Remark::TheSoundOfSilence
+                    });
+                if was_speaking {
+                    self.feedback.pending_side_effects.sounds.push(
+                        super::SoundCommand::StopExclamation {
+                            actor_id: entity_id,
+                        },
+                    );
+                    let base = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("unconscious NPC {} lost its AI", entity_id.index())
+                        });
                     base.current_remark = crate::ai::Remark::TheSoundOfSilence;
                     base.current_remark_flags = 0;
-                    base.speech_in_flight = false;
+                    self.feedback
+                        .sound_sim
+                        .playing_exclamations
+                        .retain(|p| p.actor_id != entity_id.index());
                 }
-                self.feedback
-                    .sound_sim
-                    .playing_exclamations
-                    .retain(|p| p.actor_id != entity_id.index());
             }
             return;
         }
@@ -153,7 +112,7 @@ impl EngineInner {
         // through (shoulder, push visuals); both of those follow the
         // main damage apply call which already gated the speech
         // correctly.
-        if group == ExclamationGroup::Pc {
+        if let OuchOwner::Pc = owner {
             if is_dead {
                 let in_coma = self
                     .get_entity(entity_id)
@@ -172,56 +131,65 @@ impl EngineInner {
             return;
         }
 
-        // NPC remarks
+        // NPC SayOuch routes through the ordinary Say filters with EMERGENCY,
+        // exactly like RHElementActorNPC::SayOuch. Profile lookup happens only
+        // after the money-fight and unconscious skip gates above.
+        let (is_vip, is_civilian) = match owner {
+            OuchOwner::Soldier(profile_index) => (
+                assets
+                    .profile_manager
+                    .get_soldier(profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "SayOuch owner {} requires missing soldier profile {}",
+                            entity_id.index(),
+                            profile_index
+                        )
+                    })
+                    .vip,
+                false,
+            ),
+            OuchOwner::Civilian(profile_index) => (
+                assets
+                    .profile_manager
+                    .get_civilian(profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "SayOuch owner {} requires missing civilian profile {}",
+                            entity_id.index(),
+                            profile_index
+                        )
+                    })
+                    .civilian_type
+                    == crate::profiles::CivilianType::Vip,
+                true,
+            ),
+            OuchOwner::Pc => unreachable!(),
+        };
         let remark = if is_vip {
             if is_dead {
-                VIP_REMARK_DIES
+                crate::ai::Remark::VipDies
             } else {
-                VIP_REMARK_WOUNDED
+                crate::ai::Remark::VipWounded
             }
-        } else if group == ExclamationGroup::Civilian {
+        } else if is_civilian {
             if is_dead {
-                CIV_REMARK_DIES
+                crate::ai::Remark::CivDies
             } else {
-                CIV_REMARK_WOUNDED
+                crate::ai::Remark::CivWounded
             }
         } else if is_dead {
-            REMARK_DIES
+            crate::ai::Remark::Dies
         } else {
-            REMARK_WOUNDED
+            crate::ai::Remark::Wounded
         };
-
-        self.feedback
-            .pending_side_effects
-            .sounds
-            .push(super::SoundCommand::StopExclamation {
-                actor_id: entity_id,
-            });
-        self.feedback
-            .sound_sim
-            .playing_exclamations
-            .retain(|p| p.actor_id != entity_id.index());
-        self.feedback
-            .pending_side_effects
-            .sounds
-            .push(super::SoundCommand::Exclamation {
-                group,
-                profile_id,
-                exclamation_id: remark,
-                variant: -1,
-                position,
-                actor_id: Some(entity_id),
-            });
-        let duration =
-            exclamation_duration_frames(&assets.exclamation_durations, group, profile_id, remark);
-        self.feedback
-            .sound_sim
-            .playing_exclamations
-            .push(crate::sound::PlayingExclamation {
-                actor_id: entity_id.index(),
-                exclamation_id: remark as u32,
-                finish_frame: self.control.frame_counter + duration,
-            });
+        self.world
+            .entities
+            .get_mut(entity_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("SayOuch owner {} has no AI", entity_id.index()))
+            .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
+        self.drain_ai_owner_work_for(sim, assets, entity_id);
 
         // Broadcast the AAARGH so nearby NPCs notice the cry.
         let (layer, elevation) = self

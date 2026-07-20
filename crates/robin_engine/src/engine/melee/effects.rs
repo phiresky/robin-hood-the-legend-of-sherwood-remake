@@ -390,6 +390,7 @@ impl EngineInner {
     ///   to `Lying` / `DeadBack` when the sprite terminates.
     pub(super) fn translate_shoulder_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
@@ -406,7 +407,7 @@ impl EngineInner {
         // (`apply_generic_damage`, `apply_piercing_damage`, etc.)
         // skip their own `say_ouch` when routing here to avoid the
         // double-trigger compounding further.
-        self.say_ouch(assets, victim_id, None);
+        self.say_ouch(sim, assets, victim_id, None);
 
         // Read posture + carrier/carried relationships.
         let (posture, carrier_id, carried_id) = {
@@ -598,7 +599,7 @@ impl EngineInner {
 
         // SayOuch.  Push visuals follow an already-resolved damage
         // apply; pass `None` so HERO_HURT still fires as before.
-        self.say_ouch(assets, victim_id, None);
+        self.say_ouch(sim, assets, victim_id, None);
 
         // Shoulder-posture victims route through
         // `translate_shoulder_damage` before falling through to the
@@ -611,7 +612,7 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(assets, victim_id, damage_element);
+            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
             return true;
         }
 

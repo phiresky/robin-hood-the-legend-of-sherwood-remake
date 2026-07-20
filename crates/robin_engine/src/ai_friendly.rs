@@ -108,14 +108,14 @@ impl FriendlyAi {
         self.base
             .outbox
             .reentrant
-            .state_change_notifications
-            .push(AiStateChangeNotification {
+            .owner_work
+            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
                 outgoing_state: self.base.current_state,
                 outgoing_substate: self.base.current_substate,
                 incoming_state: state,
                 incoming_substate: substate,
                 source,
-            });
+            }));
 
         self.base.set_ai_state(state);
         self.base.current_substate = substate;
@@ -2661,7 +2661,16 @@ mod tests {
             ai.base.current_substate,
             Substate::WonderingCivilianBodyReactiontime,
         );
-        assert_eq!(ai.base.current_remark, Remark::CivSeesBody);
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+                    remark: Remark::CivSeesBody,
+                    flags: 0,
+                }))
+        );
         assert_eq!(
             ai.base.my_reconnaissance_report.report_type,
             ReportType::Body
@@ -2708,7 +2717,16 @@ mod tests {
         // AlertSoldier returns false (stub) → should panic
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-        assert_eq!(ai.base.current_remark, Remark::CivPanic);
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+                    remark: Remark::CivPanic,
+                    flags: 0,
+                }))
+        );
     }
 
     #[test]
@@ -2735,7 +2753,16 @@ mod tests {
             ai.base.current_substate,
             Substate::WonderingChildApproachingWhistling,
         );
-        assert_eq!(ai.base.current_remark, Remark::CivWhistling);
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+                    remark: Remark::CivWhistling,
+                    flags: 0,
+                }))
+        );
     }
 
     #[test]

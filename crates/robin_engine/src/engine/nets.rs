@@ -169,6 +169,9 @@ impl EngineInner {
                 {
                     base.say(crate::ai::Remark::VipNetNo);
                 }
+                if is_soldier_vip {
+                    self.drain_ai_owner_work_for(sim, assets, actor_id);
+                }
                 if victims_snapshot.is_empty() {
                     should_crumple = true;
                     break;
