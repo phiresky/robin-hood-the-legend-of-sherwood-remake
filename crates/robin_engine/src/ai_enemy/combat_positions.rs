@@ -2216,7 +2216,8 @@ impl EnemyAi {
         // positions while still engaged.
         if !self.is_detecting_360_degrees(self.base.primary_target, ctx) {
             // Lost sight: forecast their direction and abandon the fight.
-            if let Some(forecast) = tick.primary_target_forecast {
+            if let Some(prepared) = &tick.primary_target_forecast {
+                let forecast = prepared.resolve(sim);
                 self.base.seek_position = forecast.position;
                 self.pc_gone_away_in_this_direction = forecast.direction;
             }

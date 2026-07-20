@@ -510,7 +510,8 @@ impl EnemyAi {
                 // Lost enemy — re-forecast and seek with direction hint.
                 self.base.say(Remark::HuntsEnemy);
                 // Re-predict missed PC's destination before seeking.
-                if let Some(forecast) = tick.missed_pc_forecast {
+                if let Some(prepared) = &tick.missed_pc_forecast {
+                    let forecast = prepared.resolve(sim);
                     self.base.seek_position = forecast.position;
                     self.pc_gone_away_in_this_direction = forecast.direction;
                 }
@@ -1024,7 +1025,7 @@ impl EnemyAi {
                         cs.handle != self.base.me
                             && cs.ai_substate == Substate::SeekingRunningToOfficer
                     });
-                    if alerting_soldier_near || !self.alert_officer(center, 0, ctx, tick) {
+                    if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
                         decision = Decision::Cassos;
                         continue;
                     } else {

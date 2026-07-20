@@ -495,7 +495,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
         capture_ordered_gameplay_entities(|| {
-            engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets)
+            engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[])
         })
     });
 
@@ -761,7 +761,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
     });
 
     let Entity::Pc(target) = engine
@@ -924,7 +924,7 @@ fn chained_nonstraight_strike_lives(
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
     });
 
     let Entity::Pc(target) = engine

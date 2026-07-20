@@ -63,7 +63,7 @@ pub(crate) fn capture_npc_post_detection_tail_phases<T>(
 /// context and target-dependent combat fields are rebuilt for each Think; only
 /// fields whose value belongs to the completed detection scan are copied from
 /// this aggregate.
-pub(super) struct PendingEnemyDetectionTickData {
+pub(in crate::engine) struct PendingEnemyDetectionTickData {
     pub(super) queue_start: usize,
     pub(super) stimuli: Vec<crate::ai::Stimulus>,
     pub(super) tick_data: crate::ai::AiPerTickData,
@@ -306,9 +306,10 @@ impl EngineInner {
         if !timer_fires {
             return;
         }
-        // Every synchronous Think boundary receives a fresh view of the live
-        // world, including mutations made by earlier owners in this frame.
-        let scratch = self.build_sim_scratch(sim, assets);
+        // Every synchronous Think boundary receives a fresh RNG-free view of
+        // the live world. Forecast alternatives are prepared below and only
+        // the handler that consumes one resolves it.
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         // Pre-dispatch facing snap: only when the AI is alerted
         // and has a live target.  Surfaces the primary-target
         // facing through a pre-dispatch snap alongside the
@@ -386,7 +387,14 @@ impl EngineInner {
         };
 
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
-        self.dispatch_think_with_drain(sim, npc_id, &timer_stimulus, &ctx, &tick_data, assets);
+        self.dispatch_think_with_drain_without_forecast(
+            sim,
+            npc_id,
+            &timer_stimulus,
+            &ctx,
+            &tick_data,
+            assets,
+        );
     }
 
     /// P6c — drain `pending_*` AI swordfight / order flags for every NPC.
@@ -420,7 +428,7 @@ impl EngineInner {
     ) {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
         }
     }
 
@@ -454,7 +462,7 @@ impl EngineInner {
             npc_id,
             crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
         );
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
@@ -476,12 +484,13 @@ impl EngineInner {
     /// Replays deferred stimuli for one NPC; carries the per-NPC tracing
     /// span so the `dispatch_think_with_drain` events emit with `npc=<id>`.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    pub(super) fn tick_enemy_ai_drain_pending_stimuli_for_npc(
+    pub(in crate::engine) fn tick_enemy_ai_drain_pending_stimuli_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
         mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
+        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
     ) {
         let stimuli = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -500,7 +509,13 @@ impl EngineInner {
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
             // its predecessor rather than the tick-start entity-view map.
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = positions_before_movement
+                .map(|positions| {
+                    self.build_owner_context_scratch_at_slot_without_forecast(
+                        assets, npc_id, positions, true,
+                    )
+                })
+                .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.world.entities.get(npc_id) else {
@@ -582,6 +597,14 @@ impl EngineInner {
                 );
                 overlay_final_detection_scan(&mut live, &aggregate);
                 self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut live);
+                if let Some(positions) = positions_before_movement {
+                    self.apply_owner_relative_tick_positions(
+                        npc_id,
+                        Some(target_id),
+                        positions,
+                        &mut live,
+                    );
+                }
                 live
             } else {
                 let target_override = match stimulus.info {
@@ -604,7 +627,22 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, target_override)
+                let mut live = self.build_npc_tick_data_for_target(
+                    sim,
+                    npc_id,
+                    &scratch,
+                    assets,
+                    target_override,
+                );
+                if let Some(positions) = positions_before_movement {
+                    self.apply_owner_relative_tick_positions(
+                        npc_id,
+                        target_override,
+                        positions,
+                        &mut live,
+                    );
+                }
+                live
             };
             self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
@@ -665,7 +703,7 @@ impl EngineInner {
             // Every retained Think is a fresh synchronous boundary. An
             // earlier replay may mutate positions, latches, or targets
             // consumed by the next retained stimulus.
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
@@ -721,7 +759,9 @@ impl EngineInner {
             ) {
                 self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut tick_data);
             }
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain_without_forecast(
+                sim, npc_id, &stimulus, &ctx, &tick_data, assets,
+            );
         }
     }
 

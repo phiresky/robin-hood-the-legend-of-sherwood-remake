@@ -428,6 +428,119 @@ pub struct ForecastedDestination {
     pub direction: u16,
 }
 
+/// RNG-free destination forecast prepared from live actor/door state.
+/// Building exits remain alternatives until the exact AI consumer resolves
+/// the forecast, preserving Original draw ownership.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreparedForecastDestination {
+    fallback: ForecastedDestination,
+    building_gates: Vec<ForecastedDestination>,
+    entry_gate: Option<usize>,
+}
+
+impl PreparedForecastDestination {
+    pub fn fixed(position: Position, direction: u16) -> Self {
+        Self {
+            fallback: ForecastedDestination {
+                position,
+                direction,
+            },
+            building_gates: Vec::new(),
+            entry_gate: None,
+        }
+    }
+
+    pub fn resolve(&self, sim: &crate::sim_rng::SimulationContext) -> ForecastedDestination {
+        let Some(entry_gate) = self.entry_gate else {
+            return self.fallback;
+        };
+        assert!(
+            self.building_gates.len() > 1 && entry_gate < self.building_gates.len(),
+            "prepared building forecast has an invalid entry gate"
+        );
+        loop {
+            let selected = crate::sim_rng::usize(
+                sim,
+                crate::sim_rng::RngSite::BuildingExitGate,
+                ..self.building_gates.len(),
+            );
+            if selected != entry_gate {
+                return self.building_gates[selected];
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod prepared_forecast_tests {
+    use super::{ForecastedDestination, Position, PreparedForecastDestination};
+    use crate::sim_rng::{RngSite, SimulationContext, with_draw_trace};
+
+    #[test]
+    fn building_exit_rejects_entry_against_the_full_ordered_gate_list() {
+        let prepared = PreparedForecastDestination {
+            fallback: ForecastedDestination {
+                position: Position::default(),
+                direction: 0,
+            },
+            building_gates: vec![
+                ForecastedDestination {
+                    position: Position {
+                        x: 10.0,
+                        ..Position::default()
+                    },
+                    direction: 1,
+                },
+                ForecastedDestination {
+                    position: Position {
+                        x: 20.0,
+                        ..Position::default()
+                    },
+                    direction: 2,
+                },
+                ForecastedDestination {
+                    position: Position {
+                        x: 30.0,
+                        ..Position::default()
+                    },
+                    direction: 3,
+                },
+            ],
+            entry_gate: Some(1),
+        };
+
+        let seed = (0..10_000)
+            .find(|seed| {
+                let sim = SimulationContext::with_seed(*seed);
+                crate::sim_rng::usize(&sim, RngSite::BuildingExitGate, ..3) == 1
+                    && crate::sim_rng::usize(&sim, RngSite::BuildingExitGate, ..3) != 1
+            })
+            .expect("find a deterministic entry-then-exit draw sequence");
+        let expected_sim = SimulationContext::with_seed(seed);
+        assert_eq!(
+            crate::sim_rng::usize(&expected_sim, RngSite::BuildingExitGate, ..3),
+            1
+        );
+        let expected_exit = crate::sim_rng::usize(&expected_sim, RngSite::BuildingExitGate, ..3);
+
+        let sim = SimulationContext::with_seed(seed);
+        let (resolved, trace) = with_draw_trace(|| prepared.resolve(&sim));
+        assert_eq!(
+            resolved.position.x,
+            prepared.building_gates[expected_exit].position.x
+        );
+        assert_eq!(
+            resolved.direction, prepared.building_gates[expected_exit].direction,
+            "rejection must retain the Original all-gates index mapping"
+        );
+        assert_eq!(
+            trace,
+            vec![RngSite::BuildingExitGate, RngSite::BuildingExitGate],
+            "selecting the entry gate must consume another authoritative draw"
+        );
+    }
+}
+
 /// Snapshot of a target actor's state needed for destination forecasting.
 /// Extracted from the target entity by the engine.
 #[derive(Debug, Clone, Copy)]
@@ -461,12 +574,23 @@ pub struct ForecastInput {
 /// 4. Otherwise fall back to the target's current position and direction.
 pub fn forecast_destination_for_ia(
     sim: &crate::sim_rng::SimulationContext,
-
     input: &ForecastInput,
     doors: &[crate::gate::Door],
     sectors: &[crate::fast_find_grid::GridSector],
     sector_map: &std::collections::HashMap<crate::sector::SectorNumber, usize>,
 ) -> ForecastedDestination {
+    prepare_forecast_destination_for_ia(input, doors, sectors, sector_map).resolve(sim)
+}
+
+/// Prepare every deterministic branch of `ForecastDestinationForIA` without
+/// consuming the authoritative RNG. Only [`PreparedForecastDestination::resolve`]
+/// selects a building exit.
+pub fn prepare_forecast_destination_for_ia(
+    input: &ForecastInput,
+    doors: &[crate::gate::Door],
+    sectors: &[crate::fast_find_grid::GridSector],
+    sector_map: &std::collections::HashMap<crate::sector::SectorNumber, usize>,
+) -> PreparedForecastDestination {
     use crate::gate::DoorType;
 
     let (mut sector, mut layer, mut point, moving_upwards, current_door_index) =
@@ -520,6 +644,8 @@ pub fn forecast_destination_for_ia(
             )
         };
     let mut direction = input.direction;
+    let mut building_gates = Vec::new();
+    let mut entry_gate = None;
 
     // Look up the destination sector in the grid.
     let grid_sector = sector_map
@@ -544,26 +670,52 @@ pub fn forecast_destination_for_ia(
             // Target entering a building (direct only) — predict exit
             // through a random other gate.
             // Direction uses `(PointOut - PointIn)`.
-            if let Some(current_door) = current_door_index
-                && let Some(exit_door) = pick_building_exit_gate(sim, sector, current_door, doors)
-            {
-                sector = u16::from(exit_door.sector_out);
-                layer = exit_door.layer_out;
-                point = exit_door.point_out;
-                direction = door_exit_direction_from_in(exit_door);
+            if let Some(current_door) = current_door_index {
+                for (door_index, door) in doors
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, door)| door.sector_in == sector)
+                {
+                    if door_index as u32 == u32::from(current_door) {
+                        entry_gate = Some(building_gates.len());
+                    }
+                    building_gates.push(ForecastedDestination {
+                        position: Position {
+                            x: door.point_out.x,
+                            y: door.point_out.y,
+                            sector: SectorHandle::new(u16::from(door.sector_out)),
+                            level: door.layer_out,
+                        },
+                        direction: door_exit_direction_from_in(door),
+                    });
+                }
+                if building_gates.len() <= 1 {
+                    building_gates.clear();
+                    entry_gate = None;
+                } else {
+                    assert!(
+                        entry_gate.is_some(),
+                        "building sector {sector} has no entry door {} in its ordered gate list",
+                        u32::from(current_door)
+                    );
+                }
             }
         }
         // else: position is fine, keep current direction.
     }
 
-    ForecastedDestination {
-        position: Position {
-            x: point.x,
-            y: point.y,
-            sector: SectorHandle::new(sector),
-            level: layer,
+    PreparedForecastDestination {
+        fallback: ForecastedDestination {
+            position: Position {
+                x: point.x,
+                y: point.y,
+                sector: SectorHandle::new(sector),
+                level: layer,
+            },
+            direction,
         },
-        direction,
+        building_gates,
+        entry_gate,
     }
 }
 
@@ -590,33 +742,6 @@ fn find_lift_exit_door(
 /// Pick a random building exit gate that isn't the entry door.
 ///
 /// Collects candidates and draws from the caller's explicit simulation stream.
-fn pick_building_exit_gate<'a>(
-    sim: &crate::sim_rng::SimulationContext,
-
-    building_sector: u16,
-    exclude_door: crate::gate::DoorIndex,
-    doors: &'a [crate::gate::Door],
-) -> Option<&'a crate::gate::Door> {
-    let exclude = u32::from(exclude_door);
-    let candidates: Vec<&crate::gate::Door> = doors
-        .iter()
-        .enumerate()
-        .filter(|(i, d)| d.sector_in == building_sector && *i as u32 != exclude)
-        .map(|(_, d)| d)
-        .collect();
-    if candidates.is_empty() {
-        None
-    } else {
-        Some(
-            candidates[crate::sim_rng::usize(
-                sim,
-                crate::sim_rng::RngSite::BuildingExitGate,
-                ..candidates.len(),
-            )],
-        )
-    }
-}
-
 /// Compute the exit direction from a door's geometry.
 ///
 /// For lifts: `(GetPointOut() - GetPointMid()).GetSector0to15(ASPECT_RATIO)`.

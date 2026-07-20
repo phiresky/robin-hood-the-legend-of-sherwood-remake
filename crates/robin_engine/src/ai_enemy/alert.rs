@@ -816,6 +816,7 @@ impl EnemyAi {
 
     pub fn alert_officer(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         center: Position,
         _flags: u16,
         ctx: &AiContext,
@@ -942,12 +943,17 @@ impl EnemyAi {
         let officer_handle = officer.handle;
         // nearest_officer.ForecastDestinationForIA(...)
         // — head to where the officer will be, not where they are now.
-        let officer_target_pos = officer.forecast_destination.unwrap_or_else(|| {
-            panic!(
-                "AlertOfficer selected soldier {} without a required destination forecast",
-                officer.handle
-            )
-        });
+        let officer_target_pos = officer
+            .forecast_destination
+            .as_ref()
+            .unwrap_or_else(|| {
+                panic!(
+                    "AlertOfficer selected soldier {} without a required destination forecast",
+                    officer.handle
+                )
+            })
+            .resolve(sim)
+            .position;
 
         self.current_task_priority = task_priority::ALERT;
         self.base.antagonist = officer_handle;

@@ -761,7 +761,7 @@ impl EnemyAi {
                         ctx,
                         tick,
                     );
-                } else if !self.alert_officer(pos_center, flags.bits(), ctx, tick) {
+                } else if !self.alert_officer(sim, pos_center, flags.bits(), ctx, tick) {
                     self.seek_area(
                         sim,
                         pos_center,

@@ -2350,7 +2350,7 @@ impl EnemyAi {
                                     ctx,
                                     tick,
                                 );
-                            } else if !self.alert_officer(seek_pos, 0, ctx, tick) {
+                            } else if !self.alert_officer(sim, seek_pos, 0, ctx, tick) {
                                 self.seek_area(
                                     sim,
                                     seek_pos,
@@ -3260,7 +3260,7 @@ impl EnemyAi {
                             }
                         } else {
                             // Officer busy — look for another
-                            if !self.alert_officer(self.base.seek_position, 0, ctx, tick) {
+                            if !self.alert_officer(sim, self.base.seek_position, 0, ctx, tick) {
                                 self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                             }
                         }
@@ -3806,9 +3806,13 @@ impl EnemyAi {
                             .push((self.base.checkpoint_charly as NpcHandle, false));
                     }
                     let alert_handled = match self.get_rank() {
-                        ProfileRank::Soldier => {
-                            self.alert_officer(my_pos, SeekFlags::CHARLY_SEEK.bits(), ctx, tick)
-                        }
+                        ProfileRank::Soldier => self.alert_officer(
+                            sim,
+                            my_pos,
+                            SeekFlags::CHARLY_SEEK.bits(),
+                            ctx,
+                            tick,
+                        ),
                         ProfileRank::Officer => self.alert_soldiers(
                             my_pos,
                             SeekFlags::CHARLY_SEEK.bits(),
