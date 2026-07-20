@@ -2056,12 +2056,47 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) -> Vec<EntityId> {
+        self.tick_actor_owner_envelopes_with_owner_hook(
+            sim,
+            assets,
+            positions_before_movement,
+            |_, _| {},
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn tick_actor_owner_envelopes_with_test_owner_hook(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        owner_hook: impl FnMut(&mut Self, EntityId),
+    ) -> Vec<EntityId> {
+        self.tick_actor_owner_envelopes_with_owner_hook(
+            sim,
+            assets,
+            positions_before_movement,
+            owner_hook,
+        )
+    }
+
+    fn tick_actor_owner_envelopes_with_owner_hook(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        mut owner_hook: impl FnMut(&mut Self, EntityId),
+    ) -> Vec<EntityId> {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
         let mut processed_projectiles = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
             |engine, owner| {
+                if matches!(owner, EntityId::Bonus(_)) {
+                    engine.refresh_bonus_discovered_for(assets, owner);
+                    return;
+                }
                 let Some(Entity::Projectile(projectile)) = engine.get_entity(owner) else {
                     return;
                 };
@@ -2167,6 +2202,7 @@ impl EngineInner {
                         owner.index()
                     ),
                 }
+                owner_hook(engine, owner);
             },
         );
         self.finish_npc_owner_pass();
@@ -2296,9 +2332,10 @@ impl EngineInner {
         assets: &LevelAssets,
         _positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
-        // Listen and object/FX blip discovery are not owned by an NPC
-        // Hourglass. Keep this mutating work out of the prepare-once owner
-        // inputs; those must stay immutable and RNG-free.
+        // TODO(PA-013): PC Listen/object reveal and Target Heard remain in
+        // this batch until the active-ability owner slice lands. Bonus-owned
+        // RefreshDiscovered runs in the live non-actor slot above and is not
+        // gated by FrozenAll.
         if !self.actors_frozen() {
             self.tick_non_npc_blip_detection(sim, assets);
         }

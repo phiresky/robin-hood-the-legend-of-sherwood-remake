@@ -5103,3 +5103,264 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
         StimulusInfo::Human(pc_id.index())
     );
 }
+
+fn make_discovery_bonus(x: f32) -> Entity {
+    let mut element = crate::element::ElementData {
+        kind: crate::element::ElementKind::ObjectBonus,
+        active: true,
+        blipped: true,
+        ..Default::default()
+    };
+    element.set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+    element.set_position_map(MapPoint::new(x, 0.0));
+    Entity::Bonus(crate::element::ElementBonus {
+        element,
+        object: Default::default(),
+    })
+}
+
+fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
+    let mut element = crate::element::ElementData {
+        kind,
+        active: true,
+        blipped: true,
+        ..Default::default()
+    };
+    element.set_position(crate::coordinates::WorldPoint3D::new(10.0, 0.0, 0.0));
+    element.set_position_map(MapPoint::new(10.0, 0.0));
+    match kind {
+        crate::element::ElementKind::ObjectScroll => {
+            Entity::Scroll(crate::element::ElementScroll {
+                element,
+                ..Default::default()
+            })
+        }
+        crate::element::ElementKind::ObjectProjectile => {
+            Entity::Projectile(crate::element::ElementProjectile {
+                element,
+                object: crate::element::ObjectData {
+                    object_type: crate::element::ObjectType::Wasp,
+                    ..Default::default()
+                },
+                projectile: Default::default(),
+            })
+        }
+        crate::element::ElementKind::ObjectNet => Entity::Net(crate::element::ElementNet {
+            element,
+            object: Default::default(),
+            projectile: Default::default(),
+            net: Default::default(),
+        }),
+        _ => panic!("unsupported non-bonus discovery fixture {kind:?}"),
+    }
+}
+
+fn run_owner_envelopes(engine: &mut EngineInner, assets: &LevelAssets) {
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+    crate::sim_rng::with_seed(0xB0A0_0013, |sim| {
+        engine.tick_actor_owner_envelopes(sim, assets, &positions);
+    });
+}
+
+#[test]
+fn bonus_refresh_discovered_is_live_bonus_owned_freeze_safe_and_rng_free() {
+    use crate::sim_rng::with_draw_trace;
+
+    let mut engine = EngineInner::new();
+    engine.ai.standard_view_polygon_radius = 100;
+    let bonus_before = engine.add_entity(make_discovery_bonus(10.0));
+    let hole = engine.add_entity(make_discovery_bonus(5_000.0));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let bonus_after = engine.add_entity(make_discovery_bonus(10.0));
+    let scroll = engine.add_entity(make_blipped_non_bonus(
+        crate::element::ElementKind::ObjectScroll,
+    ));
+    let projectile = engine.add_entity(make_blipped_non_bonus(
+        crate::element::ElementKind::ObjectProjectile,
+    ));
+    let net = engine.add_entity(make_blipped_non_bonus(
+        crate::element::ElementKind::ObjectNet,
+    ));
+    engine.remove_entity(hole);
+    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("discovery PC exists") else {
+        panic!("discovery PC changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
+    pc.element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    pc.element.set_position_map(MapPoint::new(0.0, 0.0));
+    engine.set_actors_frozen(true);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let (_, trace) = with_draw_trace(|| run_owner_envelopes(&mut engine, &assets));
+
+    assert!(
+        trace.is_empty(),
+        "bonus discovery must not consume simulation RNG"
+    );
+    assert!(
+        !engine
+            .get_entity(bonus_before)
+            .unwrap()
+            .element_data()
+            .blipped
+    );
+    assert!(
+        !engine
+            .get_entity(bonus_after)
+            .unwrap()
+            .element_data()
+            .blipped
+    );
+    for id in [scroll, projectile, net] {
+        assert!(
+            engine.get_entity(id).unwrap().element_data().blipped,
+            "only Entity::Bonus owns RefreshDiscovered; {id:?} was revealed"
+        );
+    }
+}
+
+#[test]
+fn bonus_refresh_discovered_uses_live_pc_eligibility_and_original_shoulders_factor() {
+    fn discovered(
+        posture: crate::element::Posture,
+        x: f32,
+        active: bool,
+        life: i16,
+        unconscious: bool,
+    ) -> bool {
+        let mut engine = EngineInner::new();
+        engine.ai.standard_view_polygon_radius = 100;
+        let pc_id = engine.add_entity(make_test_pc(posture));
+        let bonus_id = engine.add_entity(make_discovery_bonus(x));
+        let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+            unreachable!()
+        };
+        pc.element.active = active;
+        pc.pc.life_points = life;
+        pc.human.unconscious = unconscious;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(0.0, 0.0));
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let eye_z = engine
+            .get_entity(pc_id)
+            .unwrap()
+            .compute_eyes_point(None)
+            .unwrap()
+            .z;
+        engine
+            .get_entity_mut(bonus_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, eye_z));
+        engine.refresh_bonus_discovered_for(&assets, bonus_id);
+        !engine.get_entity(bonus_id).unwrap().element_data().blipped
+    }
+
+    assert!(!discovered(
+        crate::element::Posture::Upright,
+        105.0,
+        true,
+        100,
+        false
+    ));
+    assert!(discovered(
+        crate::element::Posture::OnShoulders,
+        105.0,
+        true,
+        100,
+        false
+    ));
+    assert!(!discovered(
+        crate::element::Posture::Upright,
+        10.0,
+        false,
+        100,
+        false
+    ));
+    assert!(!discovered(
+        crate::element::Posture::Upright,
+        10.0,
+        true,
+        0,
+        false
+    ));
+    assert!(!discovered(
+        crate::element::Posture::Upright,
+        10.0,
+        true,
+        100,
+        true
+    ));
+}
+
+#[test]
+fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slots() {
+    fn observed(pc_first: bool) -> (bool, bool) {
+        let mut engine = EngineInner::new();
+        engine.ai.standard_view_polygon_radius = 100;
+        let (pc_id, bonus_id) = if pc_first {
+            let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+            let bonus = engine.add_entity(make_discovery_bonus(10.0));
+            (pc, bonus)
+        } else {
+            let bonus = engine.add_entity(make_discovery_bonus(10.0));
+            let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+            (pc, bonus)
+        };
+        let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+            unreachable!()
+        };
+        pc.element.active = false;
+        pc.pc.life_points = 100;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(5_000.0, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(5_000.0, 0.0));
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (id, entity) in engine.world.entities.occupied() {
+            positions[id] = Some(entity.element_data().position_map());
+        }
+        let mut spawned = None;
+        crate::sim_rng::with_seed(0xB0A0_0CB, |sim| {
+            engine.tick_actor_owner_envelopes_with_test_owner_hook(
+                sim,
+                &assets,
+                &positions,
+                |engine, owner| {
+                    if owner != pc_id {
+                        return;
+                    }
+                    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+                        unreachable!()
+                    };
+                    pc.element.active = true;
+                    pc.element.posture = crate::element::Posture::OnShoulders;
+                    pc.element
+                        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+                    pc.element.set_position_map(MapPoint::new(0.0, 0.0));
+                    spawned = Some(engine.add_entity(make_discovery_bonus(10.0)));
+                },
+            );
+        });
+        (
+            !engine.get_entity(bonus_id).unwrap().element_data().blipped,
+            !engine
+                .get_entity(spawned.expect("PC callback spawned a later bonus"))
+                .unwrap()
+                .element_data()
+                .blipped,
+        )
+    }
+
+    assert_eq!(observed(true), (true, true));
+    assert_eq!(observed(false), (false, true));
+}

@@ -381,27 +381,16 @@ impl EngineInner {
     }
 
     /// P2a — non-NPC blip work: drive the Listen ability's one-shot reveal,
-    /// object-owned discovery, and FX-target Heard() callbacks. Ordinary NPC
+    /// and FX-target Heard() callbacks. Ordinary NPC
     /// `SeesBlip` runs inside that NPC's creation-ordered RefreshDetection.
     pub(super) fn tick_enemy_ai_blip_detection(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        world: &AiWorldView,
+        _world: &AiWorldView,
     ) {
-        use crate::element::Posture;
-
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
-        // Standard view radius — set at level load from the day/night
-        // settings.  Falls back to the default only when the level
-        // didn't populate one.
-        let svr = if self.ai.standard_view_polygon_radius > 0 {
-            self.ai.standard_view_polygon_radius as f32
-        } else {
-            ai_vision::DEFAULT_VIEW_RADIUS as f32
-        };
-
         // ── Listen ability frame tick. ──────────────────────
         // Each frame a PC is in `ListenPhase::CountingDown`:
         //
@@ -469,7 +458,6 @@ impl EngineInner {
             );
         }
 
-        let sight_obstacles = self.sight_obstacles(assets);
         let mut to_reveal: Vec<EntityId> = Vec::new();
         // FX targets within listening range; `Heard(pc)` gets
         // invoked on each below.  Pair: (target_id, listening_pc_id)
@@ -519,31 +507,17 @@ impl EngineInner {
             if !elem.blipped {
                 continue;
             }
-            let is_object = entity.is_object();
-
             // Listen path only fires on the frame a listening PC's
             // countdown hit 0 — `firing_listeners` is non-empty
             // only for that single frame.
             let listen_gate = !firing_listeners.is_empty();
 
-            // Path C (object-side RefreshDiscovered) fires *every*
-            // frame for blipped bonuses / scrolls; there is no
-            // 16-frame gate here.
-            let object_gate = is_object;
-
-            // Skip if no detection path can fire this frame.
-            if !listen_gate && !object_gate {
+            if !listen_gate {
                 continue;
             }
 
             let blip_pos = elem.position_map();
             let blip_layer = elem.layer();
-            let (blip_eye_xy, blip_eye_z) = if entity.is_human() {
-                human_eye_point_for_visibility(entity)
-            } else {
-                (blip_pos, elem.position().z)
-            };
-
             let mut revealed = false;
 
             // ── Path B: ListenTo ─────────────────────────────
@@ -559,59 +533,6 @@ impl EngineInner {
                     let dz = elem.position().z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        revealed = true;
-                        break;
-                    }
-                }
-            }
-
-            // ── Path C: object RefreshDiscovered ───────────────
-            // For every alive/conscious/active PC, compute the 3D
-            // Y-stretched squared distance from the PC's eye point
-            // to the bonus and reveal when it drops below
-            // `super_detection × svr²` AND the opaque-LOS test
-            // passes.  The detection constants are different from
-            // the NPC SeesBlip path above — 1.0 (base) or 1.3 (on
-            // shoulders), multiplied against `svr²` *before*
-            // squaring, so the linear threshold is ≈ svr or
-            // 1.14 × svr rather than the 1.5× / 1.95× of NPC
-            // SeesBlip.
-            //
-            // Runs unconditionally (no DETECTION_FREQUENCY_BLIP
-            // gate) — it is called from every Hourglass tick.
-            // `pc_snapshots` already filters out dead PCs (at
-            // snapshot-build time), so we only need to skip
-            // unconscious PCs here — `able_to_fight = !unconscious`
-            // covers that check.
-            if !revealed && object_gate {
-                const ON_SHOULDERS_DET: f32 = 1.3;
-                const DEFAULT_DET: f32 = 1.0;
-                for pc in &world.pcs {
-                    if !pc.able_to_fight {
-                        // Skip unconscious PCs.
-                        continue;
-                    }
-                    if pc.layer != blip_layer {
-                        continue;
-                    }
-                    let dx = blip_eye_xy.x - pc.eye_position.x;
-                    let dy = (blip_eye_xy.y - pc.eye_position.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = blip_eye_z - pc.eye_z;
-                    let dist_3d_sq = dx * dx + dy * dy + dz * dz;
-                    let super_det = if pc.posture == Posture::OnShoulders {
-                        ON_SHOULDERS_DET
-                    } else {
-                        DEFAULT_DET
-                    };
-                    if dist_3d_sq < super_det * svr * svr
-                        && crate::sight_obstacle::is_reachable_3d(
-                            sight_obstacles,
-                            [pc.eye_position.x, pc.eye_position.y, pc.eye_z],
-                            [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
-                            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-                        )
-                    {
                         revealed = true;
                         break;
                     }
@@ -677,6 +598,66 @@ impl EngineInner {
                     tracing::warn!("ActivatedByListenable (target {target_handle}): {error}");
                 }
             }
+        }
+    }
+
+    /// Strict live `RHElementBonus::RefreshDiscovered` for one bonus-owned
+    /// virtual Hourglass slot.
+    pub(crate) fn refresh_bonus_discovered_for(
+        &mut self,
+        assets: &LevelAssets,
+        bonus_id: EntityId,
+    ) {
+        let bonus =
+            self.world.entities.get(bonus_id).unwrap_or_else(|| {
+                panic!("bonus {bonus_id:?} disappeared before RefreshDiscovered")
+            });
+        let Entity::Bonus(bonus) = bonus else {
+            panic!("RefreshDiscovered owner {bonus_id:?} is not Entity::Bonus")
+        };
+        if !bonus.element.blipped || !bonus.element.active {
+            return;
+        }
+        let bonus_position = bonus.element.position();
+        let radius = self.ai.standard_view_polygon_radius as f32;
+        let square_standard_view_radius = radius * radius;
+        let pc_ids = self.world.pc_ids.clone();
+        let sight_obstacles = self.sight_obstacles(assets);
+        let discovered = pc_ids.into_iter().any(|pc_id| {
+            let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
+                panic!("bonus {bonus_id:?} RefreshDiscovered found stale PC registry id {pc_id:?}")
+            });
+            let Entity::Pc(pc) = entity else {
+                panic!("bonus {bonus_id:?} RefreshDiscovered found non-PC registry id {pc_id:?}")
+            };
+            if pc.pc.life_points <= 0 || pc.human.unconscious || !pc.element.active {
+                return false;
+            }
+            let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
+                panic!("bonus {bonus_id:?} could not compute eyes for required PC {pc_id:?}")
+            });
+            let dx = eyes.x - bonus_position.x;
+            let dy = (eyes.y - bonus_position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = eyes.z - bonus_position.z;
+            let threshold = if pc.element.posture == crate::element::Posture::OnShoulders {
+                1.3
+            } else {
+                1.0
+            } * square_standard_view_radius;
+            dx * dx + dy * dy + dz * dz < threshold
+                && crate::sight_obstacle::is_reachable_3d(
+                    sight_obstacles,
+                    [bonus_position.x, bonus_position.y, bonus_position.z],
+                    [eyes.x, eyes.y, eyes.z],
+                    crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                )
+        });
+        if discovered {
+            self.world
+                .entities
+                .get_mut(bonus_id)
+                .expect("discovered bonus disappeared before clearing its blip")
+                .reveal_blip();
         }
     }
 
