@@ -468,12 +468,6 @@ impl EngineInner {
         // through silently and leave actors in unreachable positions.
         self.validate_actor_placement();
 
-        // Walk every scroll entity and run its `Initialize` method:
-        // script Init (pending the scroll script subsystem port) +
-        // `ForceRandomSpriteFrame` so each scroll starts on a random
-        // frame of its waving animation.
-        self.initialize_all_scrolls(sim);
-
         // Pathfinder obstacle states now that the graph is loaded.
         if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
             self.world
@@ -481,12 +475,25 @@ impl EngineInner {
                 .initialize_from_graph(assets.pathfinder_graph.as_ref());
         }
 
+        // Original RHEngine::Initialize runs IEngineScript::Initialize(0)
+        // before RHArtificialIntelligence::InitAI. This ordering is required
+        // now that InitOneAI's typed SetState calls synchronously dispatch
+        // FilterAIEvent through the bound actor VMs.
+        if self.scripts.mission.is_some() {
+            self.initialize_mission_script_with(sim, assets, 0, &assets.hiking_paths);
+        }
+
+        // The original initializes scrolls immediately after the engine
+        // script and before AI. ForceRandomSpriteFrame is the remaining
+        // entity-side half of that step.
+        self.initialize_all_scrolls(sim);
+
         // Notify UI to update stature display
         self.orders
             .messenger
             .send(Message::new(MessageType::Simple(SimpleMessage::Stature)));
 
-        // Initialize AI for all NPCs and global AI state.  Runs here —
+        // Initialize AI for all NPCs and global AI state. Runs here —
         // not pre-bitmap — because `init_one_ai`'s `TestIfPathIsFine`
         // reads `fast_grid.map_bbox` + motion lines, and the
         // pathfinder's `move_box_half_diagonals` table must already be

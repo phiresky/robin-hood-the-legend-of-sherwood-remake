@@ -2306,6 +2306,13 @@ impl EngineInner {
                 &all_soldier_entity_ids,
                 &soldier_subordinate_ids,
             );
+
+            // Original InitOneAI invokes virtual SetState inline, after all
+            // actor scripts have been initialized. Close the same owner's
+            // callback/effect boundary before the next NPC initializes so a
+            // state callback cannot leak to the first Hourglass tick or
+            // observe later owners' initialized state.
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
         }
 
         // Lift each ambush point's 2D position into 3D (eye height
@@ -5793,24 +5800,36 @@ impl EngineInner {
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
         let blink_all = {
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
-                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
-                });
-                let b = ai.outbox.actor.blink_all_enemies;
-                ai.outbox.actor.blink_all_enemies = false;
-                b
-            } else {
-                false
-            }
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let ai = entity
+                .ai_controller_mut()
+                .unwrap_or_else(|| panic!("pending-drain NPC {} lost its AI", npc_id.index()));
+            std::mem::take(&mut ai.outbox.actor.blink_all_enemies)
         };
-        if blink_all && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+        if blink_all {
+            // BlinkEnemy is defined on RHElementActorNPC, not the soldier
+            // subclass. ScriptGoOn therefore reaches this path for both
+            // soldiers and civilians.
+            let npc = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
             let idx = crate::element::DetectableType::Enemy as usize;
-            if let Some(list) = s.npc.detectable_lists.get_mut(idx) {
-                for det in list.iter_mut() {
-                    det.seen_now = false;
-                    det.seen_last_frame = false;
-                }
+            let list = npc.detectable_lists.get_mut(idx).unwrap_or_else(|| {
+                panic!(
+                    "pending-drain owner {} has no enemy detectable list",
+                    npc_id.index()
+                )
+            });
+            for det in list.iter_mut() {
+                det.seen_now = false;
+                det.seen_last_frame = false;
             }
         }
         // Process pending `EnemyInHouseAlert` request.

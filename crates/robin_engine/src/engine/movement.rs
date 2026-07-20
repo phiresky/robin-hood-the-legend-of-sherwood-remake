@@ -3819,13 +3819,10 @@ impl EngineInner {
                     Some(a) => a,
                     None => continue,
                 };
-                if !actor.action_state.is_moving()
-                    && actor.action_state != crate::element::ActionState::MovingSword
-                    && actor.action_state != crate::element::ActionState::MovingFastSword
-                    && actor.action_state != crate::element::ActionState::MovingShield
-                {
-                    continue;
-                }
+                let has_moving_state = actor.action_state.is_moving()
+                    || actor.action_state == crate::element::ActionState::MovingSword
+                    || actor.action_state == crate::element::ActionState::MovingFastSword
+                    || actor.action_state == crate::element::ActionState::MovingShield;
                 // Read goal from the current **movement** element's
                 // front order on the Move / PassDoor / Seek element.
                 //
@@ -3845,6 +3842,9 @@ impl EngineInner {
                     .sequence_manager
                     .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement());
                 let Some((seq_id, elem_idx)) = move_elem else {
+                    if !has_moving_state {
+                        continue;
+                    }
                     // No active Move element (element terminated or
                     // was never active) — drop out of the moving
                     // state back to Waiting.
@@ -3870,6 +3870,19 @@ impl EngineInner {
                     }
                     continue;
                 };
+                if !has_moving_state
+                    && self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(actor_id)
+                        != Some((seq_id, elem_idx))
+                {
+                    // A parallel movement element can remain in progress
+                    // while a higher-priority non-movement element owns the
+                    // actor. Only bootstrap a non-moving actor when this Move
+                    // is its selected current element.
+                    continue;
+                }
                 let Some(order) = self
                     .orders
                     .sequence_manager

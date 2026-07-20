@@ -1750,13 +1750,6 @@ fn sprite_anim_for_order(
     }
 }
 
-fn is_sword_movement_nonanimation(order: OrderType) -> bool {
-    matches!(
-        order,
-        OrderType::WalkingWithSword | OrderType::RunningWithSword
-    )
-}
-
 fn is_wall_anim(order: OrderType) -> bool {
     matches!(
         order,
@@ -3125,8 +3118,7 @@ impl EngineInner {
             if matches!(
                 cur_command,
                 Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor
-            ) && is_sword_movement_nonanimation(anim_type)
-            {
+            ) {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
 
@@ -3445,17 +3437,14 @@ impl EngineInner {
                     if matches!(
                         cur_command,
                         Some(Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor)
-                    ) && is_sword_movement_nonanimation(anim_type)
-                    {
+                    ) {
                         // Movement elements are owned by
-                        // tick_entity_movement.  WALKING_WITH_SWORD /
-                        // RUNNING_WITH_SWORD are driven through the
-                        // motion path (via face-opponent), not through
-                        // the generic action-animation path.  If an
-                        // in-progress movement element is still
-                        // visible here while the actor state has
-                        // already left Moving, do not try to play its
-                        // logical movement token as a sprite row.
+                        // tick_entity_movement from their first order,
+                        // including startup transitions. The original
+                        // RHElementActor::Execute routes these orders to
+                        // PerformMotion; sending one through this generic
+                        // PerformAction path would stamp its order ID without
+                        // seeding the destination-backed motion state.
                         break 'actor;
                     }
                     tracing::trace!(

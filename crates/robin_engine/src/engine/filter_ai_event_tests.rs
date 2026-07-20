@@ -2022,75 +2022,73 @@ fn generic_animation_skip_does_not_skip_action_change() {
 fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
     use crate::order::OrderType;
 
-    let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
-    let stale = engine.add_entity(make_scripted_soldier(""));
-    engine.remove_entity(stale);
-    {
-        let entity = engine
-            .world
-            .entities
-            .get_mut(actor)
-            .expect("token-skip actor exists");
-        entity
-            .human_data_mut()
-            .expect("token-skip actor is human")
-            .opponents
-            .push(stale);
-        entity
-            .actor_data_mut()
-            .expect("token-skip actor is typed")
-            .active_door_pass = Some(crate::element::ActiveDoorPass {
-            door_index: crate::gate::DoorIndex(u32::MAX),
-            direct: true,
-            steps: std::collections::VecDeque::new(),
-            triggers_fired: 0,
-            current_action: OrderType::Invalid,
-            current_reverse: false,
-            saved_action_state: None,
-        });
-    }
-    let order = crate::order::Order::new(
-        OrderType::WalkingWithSword,
-        0.0,
-        0.0,
-        engine.orders.allocate_order_id(),
-    )
-    .with_antagonist(stale);
-    let mut element =
-        crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(actor));
-    element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(sequence, 0);
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
-
-    let (injuries, outcomes, executed) = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        actor,
-    );
-
-    assert!(injuries.is_empty());
-    assert!(outcomes.seq_advance.is_empty());
-    assert!(executed.is_none());
-    assert_eq!(
+    for movement_order in [OrderType::WalkingUpright, OrderType::WalkingWithSword] {
+        let mut engine = EngineInner::new();
+        let actor = engine.add_entity(make_scripted_soldier(""));
+        let stale = engine.add_entity(make_scripted_soldier(""));
+        engine.remove_entity(stale);
+        {
+            let entity = engine
+                .world
+                .entities
+                .get_mut(actor)
+                .expect("token-skip actor exists");
+            entity
+                .human_data_mut()
+                .expect("token-skip actor is human")
+                .opponents
+                .push(stale);
+            entity
+                .actor_data_mut()
+                .expect("token-skip actor is typed")
+                .active_door_pass = Some(crate::element::ActiveDoorPass {
+                door_index: crate::gate::DoorIndex(u32::MAX),
+                direct: true,
+                steps: std::collections::VecDeque::new(),
+                triggers_fired: 0,
+                current_action: OrderType::Invalid,
+                current_reverse: false,
+                saved_action_state: None,
+            });
+        }
+        let order =
+            crate::order::Order::new(movement_order, 0.0, 0.0, engine.orders.allocate_order_id())
+                .with_antagonist(stale);
+        let mut element =
+            crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(actor));
+        element.orders.push_back(order);
+        let sequence = engine.orders.sequence_manager.launch_element(element);
         engine
-            .world
-            .entities
-            .get(actor)
-            .expect("token-skip actor remains installed")
-            .element_data()
-            .sprite
-            .last_action,
-        OrderType::NonanimationEnd,
-        "the movement-owned token must skip generic Execute without dereferencing stale inputs"
-    );
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        let _ = engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions();
+
+        let (injuries, outcomes, executed) = engine.tick_actor_animation_for(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            actor,
+        );
+
+        assert!(injuries.is_empty(), "{movement_order:?}");
+        assert!(outcomes.seq_advance.is_empty(), "{movement_order:?}");
+        assert!(executed.is_none(), "{movement_order:?}");
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(actor)
+                .expect("token-skip actor remains installed")
+                .element_data()
+                .sprite
+                .last_action,
+            OrderType::NonanimationEnd,
+            "the movement-owned {movement_order:?} token must skip generic Execute without dereferencing stale inputs"
+        );
+    }
 }
 
 #[test]
@@ -4767,6 +4765,91 @@ fn owner_state_change_fifo_preserves_every_transition() {
         .unwrap();
     assert_eq!(ai.current_state, crate::ai::AiState::Default);
     assert_eq!(ai.current_substate, crate::ai::Substate::DefaultOnPost);
+}
+
+#[test]
+fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
+    let mut engine = EngineInner::new();
+    let civilian = engine.add_entity(make_scripted_civilian("InitStateRecorder"));
+    engine
+        .world
+        .entities
+        .get_mut(civilian)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .initial_action = crate::order::OrderType::WaitingUpright as u32;
+    engine
+        .world
+        .entities
+        .get_mut(civilian)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .custom_values[9] = 4;
+
+    let mut assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class(
+            "InitStateRecorder",
+            false,
+            None,
+        )]),
+    );
+    engine.initialize(&mut assets);
+
+    let ai = engine
+        .world
+        .entities
+        .get(civilian)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert!(
+        ai.outbox.reentrant.owner_work.is_empty(),
+        "InitOneAI state work must settle before the first Hourglass tick"
+    );
+    assert_eq!(
+        npc_custom_values(&engine, civilian)[4],
+        101,
+        "the bound actor VM must receive Default's AI_STATE_CHANGE callback during InitOneAI"
+    );
+}
+
+#[test]
+fn direct_ai_drain_consumes_civilian_blink_enemy_request() {
+    let mut engine = EngineInner::new();
+    let civilian = engine.add_entity(make_scripted_civilian(""));
+    engine
+        .world
+        .entities
+        .get_mut(civilian)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .blink_all_enemies = true;
+
+    engine.drain_direct_ai_owner_boundary(
+        &crate::sim_rng::test_context(),
+        civilian,
+        &LevelAssets::new(),
+    );
+
+    assert!(
+        !engine
+            .world
+            .entities
+            .get(civilian)
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .outbox
+            .actor
+            .blink_all_enemies,
+        "RHElementActorNPC::BlinkEnemy(NULL) must settle for civilians as well as soldiers"
+    );
 }
 
 fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {

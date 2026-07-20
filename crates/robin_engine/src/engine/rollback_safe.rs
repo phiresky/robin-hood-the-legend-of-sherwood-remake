@@ -225,9 +225,9 @@ impl Engine {
     /// split `Engine::new` + `apply_level_bitmaps_loaded` pair used to
     /// do — `initialize_from_campaign` (entity spawn, mission script),
     /// `set_level_size`, the motion stage (pathfinder
-    /// graph + grid sector registration), `initialize` (AI init, which
-    /// now sees a real `map_bbox` + half-diagonals table), mission
-    /// script `StartUp::Initialize`, and — for Sherwood —
+    /// graph + grid sector registration), `initialize` (mission-script init
+    /// followed by AI init, both of which now see a real `map_bbox` +
+    /// half-diagonals table), and — for Sherwood —
     /// `apply_production_sector_data`.
     ///
     /// Returns `Err` only when mission data fails to ingest.
@@ -300,10 +300,10 @@ impl Engine {
             return Err((error, campaign));
         }
         inner.populate_sector_gates_from_doors();
-        // AI init runs HERE — after pathfinder + grid are fully
-        // populated, so `TestIfPathIsFine` / `is_position_authorized`
-        // see real `map_bbox` + motion lines and patrol paths validate
-        // correctly.
+        // Mission-script init and then AI init run HERE — after pathfinder +
+        // grid are fully populated. This preserves RHEngine::Initialize's
+        // script-before-AI order while still letting TestIfPathIsFine /
+        // is_position_authorized see the real map and motion lines.
         inner.initialize(assets);
         assets.level_grid = inner.world.fast_grid.level.clone();
         assets.entities.mobile_element_count = inner.world.mobile_elements.len();
@@ -312,12 +312,6 @@ impl Engine {
             .mission
             .as_ref()
             .map(|script| script.script_name.clone());
-
-        // Mission script StartUp::Initialize — `hiking_paths` was
-        // just populated by the level loader.
-        inner.with_simulation_context(|inner, sim| {
-            inner.initialize_mission_script_with(sim, assets, 0, &assets.hiking_paths)
-        });
 
         // Sherwood-only: spawn production bonuses at the registered
         // points.

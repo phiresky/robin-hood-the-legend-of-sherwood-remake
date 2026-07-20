@@ -1,6 +1,106 @@
 use super::*;
 
 #[test]
+fn current_movement_bootstraps_from_waiting_with_destination_state() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite::MotionOrderContext;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(100.0, 100.0);
+    let destination = MapPoint::new(140.0, 100.0);
+    let mut mover = make_test_pc(Posture::Upright);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    let mover_id = engine.add_entity(mover);
+
+    let action = OrderType::WalkingUpright;
+    let script = SpriteScript {
+        action_id: action as u16,
+        action_done: 0,
+        average_speed: 20.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 20,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![20],
+        offsets: vec![SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[action as usize] = 0;
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface.set_anti_collision_on(false);
+    engine
+        .get_entity_mut(mover_id)
+        .expect("movement fixture actor exists")
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let order_id = engine.orders.allocate_order_id();
+    let order = Order::new(action, destination.x, destination.y, order_id);
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(mover_id), action);
+    movement.orders.push_back(order);
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_movement = ActiveMovement::new(sequence_id, 0);
+
+    assert_eq!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
+        ActionState::Waiting
+    );
+    engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+    let entity = engine.get_entity(mover_id).unwrap();
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
+        ActionState::Moving,
+        "the first PerformMotion tick must enter the walking state"
+    );
+    assert_eq!(entity.element_data().position_map(), start);
+    assert_eq!(
+        entity
+            .element_data()
+            .sprite
+            .motion_order_state_mismatch(MotionOrderContext {
+                order_id,
+                destination,
+                reverse: false,
+                tolerance: 0.0,
+                directional_tolerance: false,
+                compute_direction: false,
+                next_destination_same_action: None,
+            }),
+        None,
+        "the first movement tick must seed the order's destination instead of generic action state"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {
