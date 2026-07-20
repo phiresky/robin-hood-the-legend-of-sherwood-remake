@@ -33,8 +33,8 @@ pub struct GraphicConfig {
     /// RetroArch `.slangp` preset when `scale_mode == RetroArch`.
     #[serde(default = "default_shader_preset")]
     pub shader_preset: String,
-    /// Apply the generated fog sprite variant to every Day-based world
-    /// sprite that the original game leaves unfogged. Animation assets that
+    /// Apply the generated fog/night sprite variant to every Day-based world
+    /// sprite that the original game leaves untinted. Animation assets that
     /// already contain ambiance-specific pixels are left untouched.
     #[serde(default)]
     pub apply_fog_to_all_sprites: bool,

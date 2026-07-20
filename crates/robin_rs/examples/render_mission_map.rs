@@ -53,7 +53,7 @@ struct Args {
     #[arg(long)]
     headless: bool,
 
-    /// Fog-tint all Day-based world sprites on fog maps.
+    /// Fog/night-tint all Day-based world sprites on fog or night maps.
     #[arg(long, conflicts_with = "no_fog_tint_all_sprites")]
     fog_tint_all_sprites: bool,
 

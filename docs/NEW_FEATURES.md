@@ -4,13 +4,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
-- **Fog-tint all sprites option.** Options → Graphics now includes a
-  `Fog-Tint All Sprites` toggle. On fog missions it applies the generated Fog
-  sprite variant to Day-based world sprites, including bonuses, scrolls,
-  animals, and mobile child sprites that the original leaves in the Day
-  palette. Animation-backed FX and targets already load ambiance-specific
-  pixels and are excluded to prevent double fogging. New profiles enable it by
-  default; the toggle can restore original behavior.
+- **Fog/night-tint all sprites option.** Options → Graphics now includes a
+  `Fog/Night All Sprites` toggle. On fog and night missions it applies the
+  generated ambiance sprite variant to Day-based world sprites, including
+  bonuses, scrolls, animals, and mobile child sprites that the original leaves
+  in the Day palette. Animation-backed FX and targets already load
+  ambiance-specific pixels and are excluded to prevent double tinting. New
+  profiles enable it by default; the toggle can restore original behavior.
   `render_mission_map` exposes explicit `--fog-tint-all-sprites` and
   `--no-fog-tint-all-sprites` overrides for reproducible A/B captures.
 

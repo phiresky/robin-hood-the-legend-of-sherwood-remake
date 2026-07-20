@@ -143,7 +143,7 @@ pub async fn show_graphics(
         },
         super::layout::MenuButton {
             // Rust extension; the original string table has no label for it.
-            label: "Fog-Tint All Sprites".to_string(),
+            label: "Fog/Night All Sprites".to_string(),
             enabled: true,
             x: 30,
             y: 0,

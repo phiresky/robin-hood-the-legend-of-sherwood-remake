@@ -751,7 +751,7 @@ mod mission_level_builder_tests {
 }
 
 #[cfg(test)]
-mod all_sprite_fog_variant_tests {
+mod all_sprite_ambiance_variant_tests {
     use super::EngineInner;
     use crate::element::{
         ElementBonus, ElementData, ElementFx, ElementKind, ElementTarget, Entity, FxData,
@@ -798,7 +798,7 @@ mod all_sprite_fog_variant_tests {
     }
 
     #[test]
-    fn all_sprite_fog_tints_only_day_based_sprites() {
+    fn all_sprite_ambiance_tints_only_day_based_sprites() {
         let mut engine = EngineInner::new();
         engine.world.weather.ambiance = Ambiance::Fog;
 
@@ -824,8 +824,24 @@ mod all_sprite_fog_variant_tests {
         );
         engine.world.weather.ambiance = Ambiance::Night;
         assert_eq!(
-            engine.resolve_render_variant(&bonus(), true),
+            engine.resolve_render_variant(&bonus(), false),
             SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&bonus(), true),
+            SpriteVariant::Night
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&fx(None), true),
+            SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&target(), true),
+            SpriteVariant::Day
+        );
+        assert_eq!(
+            engine.resolve_render_variant(&fx(Some(0)), true),
+            SpriteVariant::Night
         );
     }
 }
@@ -1579,7 +1595,7 @@ impl EngineInner {
     /// PCs/NPCs always pick up the default variant; objects/projectiles only
     /// do so when their object type has an ambiance variant. Other Day-based
     /// sprites normally retain that palette. With `apply_fog_to_all_sprites`,
-    /// those sprites also receive the generated Fog variant.
+    /// those sprites also receive the generated Fog or Night variant.
     pub fn resolve_render_variant(
         &self,
         entity: &crate::element::Entity,
@@ -1589,8 +1605,8 @@ impl EngineInner {
         use crate::sprite_variant::SpriteVariant;
 
         // Ordinary FX and targets are loaded from Data/Animations/<Ambiance>,
-        // so their pixels already contain the mission fog. Applying the Fog
-        // shader variant again would double-tint patches and decorations.
+        // so their pixels already contain the mission ambiance. Applying the
+        // generated variant again would double-tint patches and decorations.
         // Mobile child FX are deliberately loaded from the Day directory and
         // therefore still need the generated variant.
         let has_ambiance_baked_pixels = match entity {
@@ -1598,10 +1614,10 @@ impl EngineInner {
             Entity::Target(_) => true,
             _ => false,
         };
-        let force_fog_variant = apply_fog_to_all_sprites
-            && self.world.weather.ambiance == Ambiance::Fog
+        let force_ambiance_variant = apply_fog_to_all_sprites
+            && matches!(self.world.weather.ambiance, Ambiance::Fog | Ambiance::Night)
             && !has_ambiance_baked_pixels;
-        let apply_ambiance = force_fog_variant
+        let apply_ambiance = force_ambiance_variant
             || match entity {
                 // PCs/NPCs always pick up the default variant.
                 Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => true,
