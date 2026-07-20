@@ -1211,40 +1211,6 @@ fn sector_to_vector_iso(sector: u16, _aspect_ratio: f32) -> (f32, f32) {
     (x, y)
 }
 
-/// Point-in-quadrilateral test using cross products.
-///
-/// Tests whether point `(px, py)` is inside the quadrilateral defined by
-/// vertices `p0..p3` (assumed to be in consistent winding order).
-/// Uses the sign-of-cross-product method.
-fn point_in_quad(
-    px: f32,
-    py: f32,
-    p0: (f32, f32),
-    p1: (f32, f32),
-    p2: (f32, f32),
-    p3: (f32, f32),
-) -> bool {
-    // Cross product of edge vector with point-to-vertex vector.
-    fn cross(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-        ax * by - ay * bx
-    }
-    let vertices = [p0, p1, p2, p3];
-    let mut positive = 0;
-    let mut negative = 0;
-    for i in 0..4 {
-        let (x1, y1) = vertices[i];
-        let (x2, y2) = vertices[(i + 1) % 4];
-        let c = cross(x2 - x1, y2 - y1, px - x1, py - y1);
-        if c > 0.0 {
-            positive += 1;
-        } else if c < 0.0 {
-            negative += 1;
-        }
-    }
-    // All cross products same sign → inside.
-    positive == 0 || negative == 0
-}
-
 /// Get an entity's camp (faction). PCs are always Royalists.
 fn entity_camp<I: Into<EntityId>>(
     entities: &crate::entities::Entities,
@@ -1722,7 +1688,7 @@ fn can_enter_swordfight_with(
 // ─── Victim filtering ───────────────────────────────────────────────
 
 /// Check if `target` is a valid sword strike victim for `attacker`.
-fn is_possible_sword_strike_victim(
+pub(crate) fn is_possible_sword_strike_victim(
     entities: &crate::entities::Entities,
     attacker: impl Into<EntityId>,
     target_entity: &Entity,
@@ -2291,6 +2257,10 @@ fn select_hit_fall_animation(
 
 // Submodules (extracted from the original melee.rs mega-file).
 mod damage;
+#[cfg(test)]
+pub(crate) use damage::{
+    clear_test_sword_damage_observations, take_test_sword_damage_observations,
+};
 mod dispatch;
 pub(super) use dispatch::ShieldCommandContext;
 mod effects;
