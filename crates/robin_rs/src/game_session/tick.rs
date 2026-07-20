@@ -492,10 +492,9 @@ pub(super) fn modal_state_pending(host: &Host) -> bool {
         || host.effects.has_signal(HostSignal::MissionStatePopup)
 }
 
-/// Silently drop every queued modal on `host`.  Used by the HTTP
-/// `/step-forward` and `/step-back` handlers so a scripted driver
-/// never deadlocks on the blocking dialog/debriefing/popup UI — the
-/// user explicitly asked for stepping to skip dialogs.  Returns the
+/// Silently drop every queued modal on `host`. Used by non-interactive
+/// graphical drivers such as HTTP stepping and mission-map rendering so they
+/// never deadlock on the blocking dialog/debriefing/popup UI. Returns the
 /// number of modals that were dropped so the step reply can surface
 /// it (mostly for debuggability: "why did my scripted driver miss the
 /// briefing?" — because it was dismissed, here's the count).
@@ -507,7 +506,7 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
         + host.effects.has_signal(HostSignal::MissionStatePopup) as usize;
     if n > 0 {
         tracing::debug!(
-            "HTTP step: dismissing {} pending modal(s) \
+            "non-interactive driver: dismissing {} pending modal(s) \
              (dialogues={}, popups={}, debriefings={}, sherwood_report={}, mission_state={})",
             n,
             host.effects.dialogue_count(),

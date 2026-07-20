@@ -1201,7 +1201,12 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         },
         ..Default::default()
     };
-    engine.process_anim_completion_outcomes(sim, outcomes, &LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .resize_with(1, crate::profiles::SoldierProfile::default);
+    engine.process_anim_completion_outcomes(sim, outcomes, &assets);
 
     let target_entity = engine.get_entity(target).expect("target present");
     assert_eq!(target_entity.element_data().posture, Posture::Lying);

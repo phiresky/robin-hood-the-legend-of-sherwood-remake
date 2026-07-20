@@ -686,16 +686,35 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     );
 }
 
-fn pending_specific_blinks(engine: &EngineInner, npc_id: EntityId) -> Vec<EntityId> {
+fn install_seen_enemy(engine: &mut EngineInner, npc_id: EntityId, target: EntityId) {
+    use crate::element::{Detectable, DetectableType};
+
     engine
+        .get_entity_mut(npc_id)
+        .and_then(|entity| entity.npc_data_mut())
+        .expect("NPC has data")
+        .detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+        element: Some(target),
+        detectable_type: DetectableType::Enemy,
+        seen_now: true,
+        seen_last_frame: true,
+        ..Detectable::default()
+    }];
+}
+
+fn enemy_blink_state(engine: &EngineInner, npc_id: EntityId) -> (bool, bool) {
+    use crate::element::DetectableType;
+
+    let detectable = &engine
         .get_entity(npc_id)
-        .and_then(|entity| entity.ai_controller())
-        .map(|ai| ai.outbox.actor.blink_enemy_specific.clone())
-        .expect("NPC has AI controller")
+        .and_then(|entity| entity.npc_data())
+        .expect("NPC has data")
+        .detectable_lists[DetectableType::Enemy as usize][0];
+    (detectable.seen_now, detectable.seen_last_frame)
 }
 
 #[test]
-fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
+fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::combat::ConcussionOutcome;
@@ -705,6 +724,8 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
     let waker = engine.add_entity(make_test_pc(Posture::Upright));
     let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    install_seen_enemy(&mut engine, same_camp_npc, waker);
+    install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
     engine
         .orders
@@ -712,13 +733,10 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
+    assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
     assert_eq!(
-        pending_specific_blinks(&engine, same_camp_npc),
-        Vec::<EntityId>::new()
-    );
-    assert_eq!(
-        pending_specific_blinks(&engine, opposite_camp_npc),
-        vec![waker]
+        enemy_blink_state(&engine, opposite_camp_npc),
+        (false, false)
     );
 }
 
@@ -735,6 +753,8 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
     let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    install_seen_enemy(&mut engine, same_camp_npc, waker);
+    install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
     engine
         .orders
@@ -742,19 +762,8 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
-    assert_eq!(
-        pending_specific_blinks(&engine, waker),
-        Vec::<EntityId>::new()
-    );
-    assert_eq!(
-        pending_specific_blinks(&engine, same_camp_npc),
-        Vec::<EntityId>::new()
-    );
-    assert_eq!(
-        pending_specific_blinks(&engine, opposite_camp_npc),
-        Vec::<EntityId>::new(),
-        "NPC wake blink must not fan out globally before the waker's creation slot"
-    );
+    assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
+    assert_eq!(enemy_blink_state(&engine, opposite_camp_npc), (true, true));
     assert!(
         engine
             .get_entity(waker)
@@ -778,6 +787,7 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     let mut engine = EngineInner::new();
     let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
     engine
         .orders
@@ -785,8 +795,6 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(sim, &LevelAssets::new());
 
-    assert_eq!(
-        pending_specific_blinks(&engine, opposite_camp_npc),
-        Vec::<EntityId>::new()
-    );
+    engine.apply_wake_redetection_blinks(waker);
+    assert_eq!(enemy_blink_state(&engine, opposite_camp_npc), (true, true));
 }

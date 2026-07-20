@@ -1975,7 +1975,8 @@ impl EnemyAi {
         _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
         // ForecastDestinationForIA
-        if let Some(forecast) = tick.primary_target_forecast {
+        if let Some(prepared) = &tick.primary_target_forecast {
+            let forecast = prepared.resolve(sim);
             self.base.seek_position = forecast.position;
             self.pc_gone_away_in_this_direction = forecast.direction;
         } else {
@@ -3099,7 +3100,7 @@ impl EnemyAi {
         {
             self.seek_flags = SeekFlags::empty();
             if self.get_rank() == ProfileRank::Soldier
-                && self.alert_officer(self.seek_center, 0, ctx, tick)
+                && self.alert_officer(sim, self.seek_center, 0, ctx, tick)
             {
                 return;
             }
@@ -4370,7 +4371,10 @@ mod tests {
             is_tower_guard: false,
             company_number: 0,
             in_building: false,
-            forecast_destination: Some(Position::default()),
+            forecast_destination: Some(crate::ai::PreparedForecastDestination::fixed(
+                Position::default(),
+                0,
+            )),
             detectable_bodies: Vec::new(),
             seek_position: Position::default(),
             current_task_priority: 0,

@@ -461,8 +461,8 @@ mod tests {
     use robin_engine::profiles::ProfileManager;
 
     use super::{
-        current_mission_id, preflight_or_use_decoded_load, requested_replay_data,
-        required_mission_id, try_parse_cli_from, validate_save_mission,
+        current_mission_id, preflight_or_use_decoded_load, recommended_export_team,
+        requested_replay_data, required_mission_id, try_parse_cli_from, validate_save_mission,
         validated_save_reload_target,
     };
     use robin_engine::campaign::Campaign;
@@ -506,6 +506,70 @@ mod tests {
 
         assert_eq!(args.mission.as_deref(), Some("Dem_Lei_MP"));
         assert_eq!(args.proto.as_deref().unwrap_or("Dem_Lei_MP"), "Dem_Lei_MP");
+    }
+
+    #[test]
+    fn mission_map_uses_walkthrough_team_for_campaign_missions() {
+        let profiles = ProfileManager::new();
+        assert_eq!(
+            recommended_export_team(&profiles, "H01_Lin_VL").unwrap(),
+            "R"
+        );
+        assert_eq!(
+            recommended_export_team(&profiles, "S02_Lei_MP").unwrap(),
+            "RSBC"
+        );
+        assert_eq!(
+            recommended_export_team(&profiles, "H09_Not_VL").unwrap(),
+            "MJTB"
+        );
+    }
+
+    #[test]
+    fn optional_mission_team_only_uses_recruited_heroes() {
+        use robin_engine::profiles::MissionProfile;
+
+        let mut profiles = ProfileManager::new();
+        profiles.missions = vec![
+            MissionProfile {
+                id: 1,
+                mission_filename: "S01_Not_VL".into(),
+                ..Default::default()
+            },
+            MissionProfile {
+                id: 2,
+                mission_filename: "S02_Lei_MP".into(),
+                missions_required_to_be_done: vec![1],
+                ..Default::default()
+            },
+            MissionProfile {
+                id: 3,
+                mission_filename: "Emb_Test".into(),
+                missions_required_to_be_done: vec![2],
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            recommended_export_team(&profiles, "Emb_Test").unwrap(),
+            "RWSBC"
+        );
+    }
+
+    #[test]
+    fn optional_mission_team_rejects_missing_profiles() {
+        use robin_engine::profiles::MissionProfile;
+
+        let mut profiles = ProfileManager::new();
+        assert!(recommended_export_team(&profiles, "Emb_Missing").is_err());
+
+        profiles.missions.push(MissionProfile {
+            mission_filename: "Emb_Test".into(),
+            missions_required_to_be_done: vec![99],
+            ..Default::default()
+        });
+        let error = recommended_export_team(&profiles, "Emb_Test").unwrap_err();
+        assert!(error.contains("prerequisite mission profile id 99"));
     }
 
     #[test]
@@ -1987,20 +2051,19 @@ fn force_mission_launch(
     let profiles_mut = std::sync::Arc::make_mut(profiles);
     campaign.reset(profiles_mut, application_context.sim_config().difficulty);
     if args.mission_start_map_output.is_some() {
-        // A forced mission otherwise inherits Campaign::reset's Robin-only
-        // gang. That is not a valid start state for missions whose first
-        // CheckVictoryCondition expects the selectable beam-me team (the
-        // Leicester demo, for example, immediately reports defeat without
-        // RJMTF). Demo builds provide their exact original launcher team;
-        // retail exports make every standard PC available so each mission's
-        // authored beam-me slots can select the character types they need.
+        // Use the walkthrough's practical campaign teams where it gives one.
+        // For optional missions, derive the recruited heroes from prerequisite
+        // history and fill the remaining slots with useful Merry Men. This
+        // avoids injecting heroes who cannot exist yet while still producing
+        // representative maps beyond the Robin-only opening mission.
         // TODO(export-team): accept a campaign save/team preset when callers
-        // need a particular player-selected retail lineup.
+        // need an exact player-selected lineup.
         let export_pcs = detect_demo_mode_with_context(application_context)
             .filter(|(demo_mission, _, _, _)| demo_mission.eq_ignore_ascii_case(mission_name))
-            .map_or("RJTSWMABC", |(_, _, pcs, _)| pcs);
+            .map(|(_, _, pcs, _)| Ok(pcs.to_owned()))
+            .unwrap_or_else(|| recommended_export_team(profiles_mut, mission_name))?;
         campaign.create_gang_from_pcs(
-            export_pcs,
+            &export_pcs,
             profiles_mut,
             application_context.sim_config().difficulty,
         );
@@ -2014,6 +2077,94 @@ fn force_mission_launch(
     let location = campaign.missions[idx].profile(profiles_mut).location;
 
     Ok(Some((idx, location)))
+}
+
+/// Pick a plausible team for a context-free mission-map export.
+///
+/// Codes follow `Campaign::create_gang_from_pcs`. The fixed entries are the
+/// recommendations in Steven W. Carter's retail walkthrough. Optional
+/// ambush/tactical missions have no per-map recommendations, so their roster
+/// is inferred from completed prerequisite missions instead.
+fn recommended_export_team(
+    profiles: &robin_engine::profiles::ProfileManager,
+    mission_filename: &str,
+) -> Result<String, String> {
+    let fixed = match mission_filename.to_ascii_lowercase().as_str() {
+        "h01_lin_vl" | "s01_not_vl" => Some("R"),
+        "s02_lei_mp" | "h02_not_ec" | "h03_der_mk" | "s03_fob_mp" | "h04_lei_vl" => Some("RSBC"),
+        "h05_lin_ec" => Some("RSWBC"),
+        "s04_der_ec" => Some("RJSB"),
+        "h07_not_mk" => Some("R"),
+        "str02_der_mp" => Some("RJWTB"),
+        "s05_yrk_ec" => Some("RJTB"),
+        "h09_not_vl" => Some("MJTB"),
+        "h10_yor_vl" | "str03_yor_mk" => Some("RJTMB"),
+        "h12_not_mp" => Some("RJTMW"),
+        _ => None,
+    };
+    if let Some(team) = fixed {
+        return Ok(team.to_owned());
+    }
+
+    let target = profiles
+        .missions
+        .iter()
+        .find(|profile| {
+            profile
+                .mission_filename
+                .eq_ignore_ascii_case(mission_filename)
+        })
+        .ok_or_else(|| {
+            format!("mission-map team: no mission profile found for {mission_filename:?}")
+        })?;
+
+    let mut completed = std::collections::HashSet::new();
+    let mut pending = target.missions_required_to_be_done.clone();
+    while let Some(id) = pending.pop() {
+        if !completed.insert(id) {
+            continue;
+        }
+        let profile = profiles
+            .missions
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or_else(|| {
+                format!(
+                    "mission-map team: prerequisite mission profile id {id} referenced by {:?} was not found",
+                    target.mission_filename
+                )
+            })?;
+        pending.extend(profile.missions_required_to_be_done.iter().copied());
+    }
+
+    let recruited = |rescue_filename: &str| {
+        profiles.missions.iter().any(|profile| {
+            profile
+                .mission_filename
+                .eq_ignore_ascii_case(rescue_filename)
+                && completed.contains(&profile.id)
+        })
+    };
+
+    // Prefer the guide's generally strongest/useful lineup. MerryManB is the
+    // healer and MerryManC the strong body-carrier used in early missions.
+    let mut team = String::from("R");
+    for (rescue, code) in [
+        ("S03_FoB_MP", 'J'),
+        ("S04_Der_EC", 'T'),
+        ("S05_Yrk_EC", 'M'),
+        ("S02_Lei_MP", 'W'),
+        ("S01_Not_VL", 'S'),
+    ] {
+        if recruited(rescue) && team.len() < 4 {
+            team.push(code);
+        }
+    }
+    team.push('B');
+    if team.len() < 5 {
+        team.push('C');
+    }
+    Ok(team)
 }
 
 /// Run the game loop: main menu -> mission selection -> game -> repeat.

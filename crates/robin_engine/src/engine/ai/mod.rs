@@ -25,6 +25,13 @@ use crate::element::{
 };
 use crate::engine::SimScratch;
 use crate::entities::{Entities, EntitySlots};
+use serde::{Deserialize, Serialize};
+
+/// Immutable, RNG-free inputs prepared once before the live actor-owner walk.
+/// Volatile entity/AI views are deliberately absent and rebuilt at each NPC
+/// slot after earlier owners have closed their recursive work.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(super) struct PreparedNpcOwnerPass;
 
 /// Exact `ubFramePhase` computed by `RHElementActorNPC::Hourglass`.
 /// `register_number` is the original creation/register ordering value.
@@ -1073,6 +1080,43 @@ impl EngineInner {
         id
     }
 
+    /// Position visible at one Original legacy owner boundary. Rust movement
+    /// is globally batched, so later slots are projected back to the preserved
+    /// pre-movement oracle. Callback-spawned slots are absent from that oracle
+    /// and correctly retain their current (never-moved) position.
+    pub(super) fn position_at_owner_boundary(
+        &self,
+        target: EntityId,
+        owner: EntityId,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        owner_actor_complete: bool,
+    ) -> MapPoint {
+        let current = self
+            .world
+            .entities
+            .get(target)
+            .unwrap_or_else(|| {
+                panic!(
+                    "owner {} requires position for missing entity {}",
+                    owner.index(),
+                    target.index()
+                )
+            })
+            .element_data()
+            .position_map();
+        let target_has_not_moved = target.index() > owner.index()
+            || (!owner_actor_complete && target.index() == owner.index());
+        if target_has_not_moved {
+            positions_before_movement
+                .get(target)
+                .copied()
+                .flatten()
+                .unwrap_or(current)
+        } else {
+            current
+        }
+    }
+
     fn build_ai_sight_obstacles(
         &self,
         assets: &LevelAssets,
@@ -1096,9 +1140,38 @@ impl EngineInner {
         scratch
     }
 
-    fn build_owner_context_scratch_without_forecast(&self, assets: &LevelAssets) -> SimScratch {
+    pub(crate) fn build_owner_context_scratch_without_forecast(
+        &self,
+        assets: &LevelAssets,
+    ) -> SimScratch {
         SimScratch {
             ai_entity_views: std::sync::Arc::new(build_entity_views_without_forecast(self)),
+            ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
+        }
+    }
+
+    pub(crate) fn build_owner_context_scratch_at_slot_without_forecast(
+        &self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        owner_actor_complete: bool,
+    ) -> SimScratch {
+        let mut views = build_entity_views_without_forecast(self);
+        for (target, _) in self.world.entities.occupied() {
+            let position = self.position_at_owner_boundary(
+                target,
+                owner,
+                positions_before_movement,
+                owner_actor_complete,
+            );
+            if let Some(view) = views.get_mut(&target.index()) {
+                view.position.x = position.x;
+                view.position.y = position.y;
+            }
+        }
+        SimScratch {
+            ai_entity_views: std::sync::Arc::new(views),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         }
     }
@@ -1246,7 +1319,7 @@ impl EngineInner {
 
     fn build_npc_tick_data_for_target_mode(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         scratch: &SimScratch,
         assets: &LevelAssets,
@@ -1291,7 +1364,7 @@ impl EngineInner {
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
         tick.camp_soldiers =
-            self.build_camp_soldier_tick_infos(sim, npc_id, my_camp, scratch, build_forecasts);
+            self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
         if build_forecasts
             && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
@@ -1300,8 +1373,7 @@ impl EngineInner {
             && let Some(input) = extract_forecast_input(missed_entity)
         {
             let doors = self.script_domains.interactables.doors.as_slice();
-            tick.missed_pc_forecast = Some(crate::ai::forecast_destination_for_ia(
-                sim,
+            tick.missed_pc_forecast = Some(crate::ai::prepare_forecast_destination_for_ia(
                 &input,
                 doors,
                 &self.world.fast_grid.level.sectors,
@@ -1371,8 +1443,7 @@ impl EngineInner {
             && let Some(input) = extract_forecast_input(target_entity)
         {
             let doors = self.script_domains.interactables.doors.as_slice();
-            tick.primary_target_forecast = Some(crate::ai::forecast_destination_for_ia(
-                sim,
+            tick.primary_target_forecast = Some(crate::ai::prepare_forecast_destination_for_ia(
                 &input,
                 doors,
                 &self.world.fast_grid.level.sectors,
@@ -1560,7 +1631,6 @@ impl EngineInner {
 
     fn build_camp_soldier_tick_infos(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
         scratch: &SimScratch,
@@ -1628,16 +1698,12 @@ impl EngineInner {
                         .z,
                     door_pass,
                 };
-                Some(
-                    crate::ai::forecast_destination_for_ia(
-                        sim,
-                        &input,
-                        doors,
-                        &self.world.fast_grid.level.sectors,
-                        &self.world.fast_grid.level.sector_number_map,
-                    )
-                    .position,
-                )
+                Some(crate::ai::prepare_forecast_destination_for_ia(
+                    &input,
+                    doors,
+                    &self.world.fast_grid.level.sectors,
+                    &self.world.fast_grid.level.sector_number_map,
+                ))
             } else {
                 None
             };
@@ -3406,6 +3472,73 @@ impl EngineInner {
         }
     }
 
+    /// Refresh the produced-noise state at one PC's live human-Hourglass
+    /// boundary. Original `RefreshProducedNoise` follows the base Actor slice,
+    /// so only NPC slots after this PC may observe the new volume this frame.
+    pub(super) fn refresh_pc_produced_noise_for(&mut self, pc_id: EntityId) {
+        let (order_type, material, in_building, active, previous, noise) = {
+            let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
+                panic!(
+                    "PC produced-noise owner {} disappeared from its legacy slot",
+                    pc_id.index()
+                )
+            });
+            let Entity::Pc(pc) = entity else {
+                panic!("produced-noise owner {} is not a PC actor", pc_id.index());
+            };
+            let order_type = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(pc_id)
+                .map(|(_, _, order)| order.order_type)
+                .unwrap_or(crate::order::OrderType::Invalid);
+            let position = pc.element.position_map();
+            let noise = crate::ai::Noise {
+                origin: crate::ai::Position {
+                    x: position.x,
+                    y: position.y,
+                    sector: pc.element.sector(),
+                    level: pc.element.layer(),
+                },
+                noise_type: if pc.human.opponents.is_empty() {
+                    crate::ai::NoiseType::TapTapTap
+                } else {
+                    crate::ai::NoiseType::ZingZing
+                },
+                volume: 0,
+                elevation: pc.element.sprite.position_iface.get_elevation() as u16,
+                element_id: u16::try_from(pc_id.index()).unwrap_or_else(|_| {
+                    panic!(
+                        "PC produced-noise owner {} exceeds noise element-id range",
+                        pc_id.index()
+                    )
+                }),
+            };
+            (
+                order_type,
+                pc.element.sprite.position_iface.get_material(),
+                self.entity_building_sector(pc.element.sector()).is_some(),
+                pc.element.active,
+                pc.actor.last_noise_volume,
+                noise,
+            )
+        };
+        let volume = Self::pc_noise_volume(order_type, material, in_building, active, previous);
+        let Entity::Pc(pc) = self.world.entities.get_mut(pc_id).unwrap_or_else(|| {
+            panic!(
+                "PC produced-noise owner {} disappeared before write-back",
+                pc_id.index()
+            )
+        }) else {
+            panic!(
+                "produced-noise owner {} changed kind before write-back",
+                pc_id.index()
+            );
+        };
+        pc.actor.last_noise_volume = volume;
+        pc.actor.produced_noise = Some(crate::ai::Noise { volume, ..noise });
+    }
+
     /// Test whether the entity is inside a building: the
     /// building-sector flag OR the door-transit branch — true during
     /// the few frames an actor is on a door whose inside-sector is a
@@ -3501,7 +3634,7 @@ impl EngineInner {
             });
             ai.outbox.detection.stimuli = prefix_through_wake;
         }
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
@@ -3518,60 +3651,6 @@ impl EngineInner {
         suffix.append(&mut ai.outbox.detection.stimuli);
         ai.outbox.detection.stimuli = suffix;
         true
-    }
-
-    /// Apply only this observer's targeted `BlinkEnemy(waker)` requests at
-    /// its pre-detection creation boundary.
-    ///
-    /// A wake in an earlier slot queues the request in time for this pass; a
-    /// wake in a later slot leaves it queued until this observer's next-frame
-    /// pass. Do not fold this into `drain_pending_for_npc`, which runs after
-    /// all detection and would clear an earlier observer retroactively.
-    pub(super) fn tick_pending_specific_enemy_blinks_for_npc(&mut self, npc_id: EntityId) {
-        let targets = {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
-            };
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "NPC {} is missing its required AI controller while applying wake blinks",
-                    npc_id.index()
-                )
-            });
-            std::mem::take(&mut ai.outbox.actor.blink_enemy_specific)
-        };
-        if targets.is_empty() {
-            return;
-        }
-
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared while applying targeted wake blinks",
-                npc_id.index()
-            )
-        });
-        let npc = entity.npc_data_mut().unwrap_or_else(|| {
-            panic!(
-                "entity {} lost NPC data while applying targeted wake blinks",
-                npc_id.index()
-            )
-        });
-        let enemy_idx = DetectableType::Enemy as usize;
-        let detectables = npc.detectable_lists.get_mut(enemy_idx).unwrap_or_else(|| {
-            panic!(
-                "NPC {} has no Enemy detectable bucket while applying wake blinks",
-                npc_id.index()
-            )
-        });
-        for detectable in detectables {
-            if detectable
-                .element
-                .is_some_and(|target| targets.contains(&target))
-            {
-                detectable.seen_now = false;
-                detectable.seen_last_frame = false;
-            }
-        }
     }
 
     /// Iterates every NPC except the body itself and registers the
@@ -3682,21 +3761,79 @@ impl EngineInner {
         }
     }
 
-    /// Apply one NPC's pending resurrection fan-out and eye-status change at
-    /// that NPC's creation-order Hourglass boundary.
-    ///
-    /// These outbox fields stand in for synchronous calls made while the
-    /// original NPC's base-human work handles `EVENT_FITAGAIN`. They must be
-    /// visible before this NPC refreshes its view and detection, but not
-    /// globally applied before earlier-created NPCs have detected.
-    pub(super) fn tick_ai_pending_resurrection_and_eyes_for_npc(&mut self, npc_id: EntityId) {
-        if self.actors_frozen() {
-            return;
+    /// Original `RestoreDetectableObjects`, executed inline by the waking
+    /// soldier before resurrection fan-out and any SetState callback.
+    pub(super) fn restore_detectable_objects_for_npc(
+        &mut self,
+        npc_id: EntityId,
+        knocked_out_in_money_fight: bool,
+    ) {
+        use crate::element::DetectableType;
+        use crate::element_kinds::ObjectType;
+
+        let mut to_add = Vec::new();
+        for (entity_id, entity) in self.world.entities.objects() {
+            if !entity.is_active() {
+                continue;
+            }
+            let object = entity.object_data().unwrap_or_else(|| {
+                panic!(
+                    "object slot {} lost object data during recovery for NPC {}",
+                    entity_id.index(),
+                    npc_id.index()
+                )
+            });
+            if matches!(object.object_type, ObjectType::Ale)
+                || matches!(object.object_type, ObjectType::Coin) && !knocked_out_in_money_fight
+            {
+                to_add.push(EntityId::from(entity_id));
+            }
         }
 
-        let Some(entity) = self.world.entities.get_mut(npc_id) else {
-            return;
-        };
+        let npc = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::npc_data_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "recovery owner {} vanished before RestoreDetectableObjects",
+                    npc_id.index()
+                )
+            });
+        let objects = npc
+            .detectable_lists
+            .get_mut(DetectableType::Object as usize)
+            .unwrap_or_else(|| {
+                panic!(
+                    "recovery owner {} has no DETECTABLE_OBJECT list",
+                    npc_id.index()
+                )
+            });
+        for element in to_add {
+            if !objects
+                .iter()
+                .any(|detectable| detectable.element == Some(element))
+            {
+                objects.push(crate::element::Detectable {
+                    element: Some(element),
+                    detectable_type: DetectableType::Object,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    /// Apply the resurrection fan-out and eye-status writes produced by
+    /// `EVENT_FITAGAIN`. The caller invokes this immediately after the
+    /// synchronous Think drain, before returning to Human/Actor Hourglass.
+    pub(super) fn tick_ai_pending_resurrection_and_eyes_for_npc(&mut self, npc_id: EntityId) {
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "NPC {} disappeared while applying synchronous recovery state",
+                npc_id.index()
+            )
+        });
         let ai = entity.ai_controller_mut().unwrap_or_else(|| {
             panic!(
                 "NPC {} is missing its required AI controller while applying recovery state",
@@ -4707,6 +4844,13 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        // This detection-only test seam predates the production owner walk.
+        // Preserve its contract that all PCs have refreshed their noise before
+        // the first NPC is evaluated.
+        let pc_ids = self.world.pc_ids.clone();
+        for pc_id in pc_ids {
+            self.refresh_pc_produced_noise_for(pc_id);
+        }
         self.tick_enemy_ai_inner(sim, assets, None);
     }
 
@@ -4717,6 +4861,7 @@ impl EngineInner {
     /// own view immediately before its creation-ordered `RefreshDetection`.
     /// The direct `tick_enemy_ai` entry point remains detection-only for
     /// focused tests that construct already-refreshed vision state.
+    #[cfg(test)]
     pub(super) fn tick_enemy_ai_with_creation_ordered_prelude(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -4726,6 +4871,70 @@ impl EngineInner {
         self.tick_enemy_ai_inner(sim, assets, Some(positions_before_movement));
     }
 
+    /// Prepare the shared, RNG-free portion of the fused owner pass.
+    pub(super) fn prepare_npc_owner_pass(
+        &mut self,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
+    ) -> PreparedNpcOwnerPass {
+        self.ai.global.same_frame_target_claims.clear();
+        PreparedNpcOwnerPass
+    }
+
+    /// Run one NPC's complete post-human envelope using live inputs sampled at
+    /// this legacy slot. No later owner's view or forecast is constructed.
+    pub(super) fn tick_npc_owner_pass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        _prepared: PreparedNpcOwnerPass,
+        npc_id: EntityId,
+    ) {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "NPC owner {} disappeared before its fused legacy-slot envelope",
+                npc_id.index()
+            )
+        });
+        assert!(
+            entity.npc_data().is_some(),
+            "fused NPC owner {} has no NPC data",
+            npc_id.index()
+        );
+        // FrozenAll is volatile script state. Sample it at the consuming NPC
+        // slot rather than caching it before earlier owners run callbacks.
+        if self.actors_frozen() {
+            self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
+            return;
+        }
+
+        let world =
+            self.tick_enemy_ai_build_world_view(assets, Some((npc_id, positions_before_movement)));
+        self.tick_enemy_ai_refresh_detection(
+            sim,
+            assets,
+            &world,
+            Some(positions_before_movement),
+            Some(npc_id),
+            false,
+        );
+    }
+
+    pub(super) fn finish_npc_owner_pass(&mut self) {
+        self.ai.global.same_frame_target_claims.clear();
+    }
+
+    pub(super) fn tick_non_npc_blip_detection(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
+        let world = self.tick_enemy_ai_build_world_view(assets, None);
+        self.tick_enemy_ai_blip_detection(sim, assets, &world);
+    }
+
+    #[cfg(test)]
     fn tick_enemy_ai_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -4749,7 +4958,7 @@ impl EngineInner {
         // ── 1. Build one immutable per-tick AI world view. ────────
         // Snapshot construction does not dispatch behavior. The phase calls
         // below remain in the original soldier/NPC Hourglass order.
-        let world = self.tick_enemy_ai_build_world_view(sim, assets);
+        let world = self.tick_enemy_ai_build_world_view(assets, None);
 
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
@@ -4762,7 +4971,14 @@ impl EngineInner {
         // Enemy detection, volatile target rebuild, non-Enemy detectable
         // buckets, and the resulting FIFO Think dispatches then all finish for
         // that NPC before the next creation slot starts.
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world, positions_before_movement);
+        self.tick_enemy_ai_refresh_detection(
+            sim,
+            assets,
+            &world,
+            positions_before_movement,
+            None,
+            positions_before_movement.is_some(),
+        );
 
         // Focused detection tests retain the legacy fallback drains for
         // stimuli injected outside the production owner coordinator. Every
@@ -4789,6 +5005,7 @@ impl EngineInner {
     /// [`Self::dispatch_think_with_drain`] — matching `think()`
     /// semantics where handler side effects (`launch_sequence`,
     /// `set_attentive_mode`, `face`, …) are immediate.
+    #[cfg(test)]
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn drain_pending_for_npc(
         &mut self,
@@ -4809,6 +5026,7 @@ impl EngineInner {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
         self.drain_ai_owner_work_for_mode(sim, assets, npc_id, owner_local_no_forecast);
+        self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
@@ -5673,67 +5891,6 @@ impl EngineInner {
                         detectable_type: *det_type,
                         ..Default::default()
                     });
-                }
-            }
-        }
-
-        // Process pending `RestoreDetectableObjects` request — walks
-        // every active engine element, filters to `Ale` (always) and
-        // `Coin` (gated by `!knocked_out_in_money_fight`), and
-        // appends each survivor to the NPC's `DETECTABLE_OBJECT` list
-        // when not already present.  Fired from the enemy
-        // `EVENT_FITAGAIN` / `SleepingUnconscious` handler.
-        let restore_request = {
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                let ai = s.npc.ai_brain.base_mut().unwrap_or_else(|| {
-                    panic!("pending-drain soldier {} lost its AI", npc_id.index())
-                });
-                if ai.outbox.actor.restore_detectable_objects {
-                    ai.outbox.actor.restore_detectable_objects = false;
-                    Some(ai.knocked_out_in_money_fight)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-        if let Some(knocked_out_in_money_fight) = restore_request {
-            use crate::element::{DetectableType, EntityId};
-            use crate::element_kinds::ObjectType;
-            let det_idx = DetectableType::Object as usize;
-            let mut to_add: Vec<EntityId> = Vec::new();
-            for (entity_id, entity) in self.world.entities.objects() {
-                if !entity.is_active() {
-                    continue;
-                }
-                let Some(obj) = entity.object_data() else {
-                    continue;
-                };
-                let restore_this = match obj.object_type {
-                    ObjectType::Ale => true,
-                    ObjectType::Coin => !knocked_out_in_money_fight,
-                    _ => false,
-                };
-                if restore_this {
-                    to_add.push(entity_id.into());
-                }
-            }
-            if !to_add.is_empty()
-                && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && det_idx < s.npc.detectable_lists.len()
-            {
-                for elem_id in to_add {
-                    let already = s.npc.detectable_lists[det_idx]
-                        .iter()
-                        .any(|d| d.element == Some(elem_id));
-                    if !already {
-                        s.npc.detectable_lists[det_idx].push(crate::element::Detectable {
-                            element: Some(elem_id),
-                            detectable_type: DetectableType::Object,
-                            ..Default::default()
-                        });
-                    }
                 }
             }
         }
@@ -7084,75 +7241,53 @@ impl EngineInner {
 
     // ─── Patrol coordination ───────────────────────────────────
 
-    /// Per-frame patrol coordination tick.
-    ///
-    /// The chief-side patrol management of the base AI class:
-    /// 1. **`instruct_patrol_direction_to_patrol_members` drain** —
-    ///    applies any `CMD_PATROL_DIRECTION` broadcast queued by the
-    ///    chief's macro VM to each minion synchronously.
-    /// 2. **`initialize_patrol`** — build active patrol from
-    ///    theoretical members (check state, sort by distance,
-    ///    pair-swap) on the `needs_patrol_reinit` one-shot flag.
-    /// 3. **`refresh_patrol`** — every frame record chief history,
-    ///    every 8th frame compute formation positions and dispatch
-    ///    `CALL_PATROL_COORDINATE` to each minion.
-    ///
-    /// `transform_patrol_ids_to_real_patrol` is no longer part of
-    /// this tick — it lives in `EngineInner::init_one_ai`, invoked
-    /// once at AI bootstrap.
-    pub(super) fn tick_patrol_coordination(
+    /// Close `CMD_PATROL_DIRECTION` at the macro owner's synchronous engine
+    /// boundary. Original iterates the live patrol immediately and each
+    /// waiting member may `FaceTo` before the macro advances.
+    pub(super) fn drain_patrol_direction_broadcast_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        owner: EntityId,
         assets: &LevelAssets,
     ) {
-        use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
-
-        if self.actors_frozen() {
-            return;
-        }
-        let scratch = self.build_sim_scratch(sim, assets);
-
-        let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-
-        // ── Phase 0: Drain pending CMD_PATROL_DIRECTION broadcasts ──
-        // `instruct_patrol_direction_to_patrol_members` —
-        // `CMD_PATROL_DIRECTION` calls this synchronously inside the
-        // macro VM, but the Rust macro VM runs on the chief's
-        // `AiController` without engine access — it queues the
-        // directive and we drain it here before any other patrol
-        // work, so the per-minion
-        // `set_instructed_patrol_direction(direction, &ctx)` call sees
-        // the same `current_substate` (and therefore the same
-        // `face_to`-on-WAITING side effect).
-        let mut pending_direction_broadcasts: Vec<(EntityId, u16)> = Vec::new(); // (minion, direction)
-        for &npc_id in &npc_ids {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
+        let (direction, members) = {
+            let Some(entity) = self.world.entities.get_mut(owner) else {
+                return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
-                continue;
+                return;
             };
             let Some(direction) = ai.outbox.patrol.direction_broadcast.take() else {
-                continue;
+                return;
             };
-            for &member_id in &ai.patrol {
-                if member_id != npc_id {
-                    pending_direction_broadcasts.push((member_id, direction));
-                }
-            }
-        }
-        for (minion_id, direction) in pending_direction_broadcasts {
-            let Some(entity) = self.world.entities.get_mut(minion_id) else {
-                continue;
-            };
-            if !entity.is_active() || entity.is_dead() {
-                continue;
-            }
-            let ctx = build_ai_context_from_entity(
+            (direction, ai.patrol.clone())
+        };
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        for member in members {
+            let in_uninterruptible_command = self.is_very_very_busy(member);
+            let building_sector = self
+                .world
+                .entities
+                .get(member)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol direction owner {} references missing member {}",
+                        owner.index(),
+                        member.index()
+                    )
+                });
+            let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
+                panic!(
+                    "patrol direction owner {} lost member {}",
+                    owner.index(),
+                    member.index()
+                )
+            });
+            let mut ctx = build_ai_context_from_entity(
                 entity,
-                frame,
-                None,
+                self.control.frame_counter,
+                building_sector,
                 self.world.weather.is_forest_level,
                 self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
@@ -7163,10 +7298,56 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
-            if let Some(ai) = entity.ai_controller_mut() {
-                ai.set_instructed_patrol_direction(direction, &ctx);
-            }
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            entity
+                .ai_controller_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol direction member {} lost AI for owner {}",
+                        member.index(),
+                        owner.index()
+                    )
+                })
+                .set_instructed_patrol_direction(direction, &ctx);
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
         }
+    }
+
+    /// Per-frame patrol coordination tick.
+    ///
+    /// The chief-side patrol management of the base AI class:
+    /// 1. **`initialize_patrol`** — build active patrol from
+    ///    theoretical members (check state, sort by distance,
+    ///    pair-swap) on the `needs_patrol_reinit` one-shot flag.
+    /// 2. **`refresh_patrol`** — every frame record chief history,
+    ///    every 8th frame compute formation positions and dispatch
+    ///    `CALL_PATROL_COORDINATE` to each minion.
+    ///
+    /// `transform_patrol_ids_to_real_patrol` is no longer part of
+    /// this tick — it lives in `EngineInner::init_one_ai`, invoked
+    /// once at AI bootstrap.
+    pub(super) fn tick_patrol_coordination_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+    ) {
+        use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
+
+        if self.actors_frozen() {
+            return;
+        }
+        let scratch = self.build_owner_context_scratch_at_slot_without_forecast(
+            assets,
+            owner,
+            positions_before_movement,
+            false,
+        );
+
+        let frame = self.control.frame_counter;
+        let all_npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids = [owner];
 
         // ── Phase 2: Snapshot NPC states ──
         // Needed for patrol initialization and missed-member checks.
@@ -7186,19 +7367,24 @@ impl EngineInner {
         }
         let mut snaps: std::collections::HashMap<EntityId, NpcSnap> =
             std::collections::HashMap::new();
-        for &npc_id in &npc_ids {
+        for &npc_id in &all_npc_ids {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 continue;
             };
-            let pos = entity.element_data().position_map();
+            let pos =
+                self.position_at_owner_boundary(npc_id, owner, positions_before_movement, false);
             let dir = entity.element_data().direction();
             let sector = entity.element_data().sector();
             let layer = entity.element_data().layer();
-            let ai_state = entity
-                .npc_data()
-                .map(|n| n.ai_state())
-                .unwrap_or(AiState::Sleeping);
-            let view_radius = entity.npc_data().map(|n| n.view_radius).unwrap_or(400);
+            let npc = entity.npc_data().unwrap_or_else(|| {
+                panic!(
+                    "patrol owner {} found NPC slot {} without NPC data",
+                    owner.index(),
+                    npc_id.index()
+                )
+            });
+            let ai_state = npc.ai_state();
+            let view_radius = npc.view_radius;
             let move_box = *entity.position_iface().get_move_box();
             let is_civilian = entity.is_civilian();
             let is_able_to_fight = match entity {
@@ -7260,17 +7446,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
-            if !entity.is_active() || entity.is_dead() {
-                continue;
-            }
-            let Some(ai) = entity.ai_controller_mut() else {
-                continue;
-            };
-
-            // Skip non-chiefs
-            if ai.theoretical_patrol.is_empty() {
-                continue;
-            }
+            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                panic!(
+                    "patrol owner {} has no required AI controller",
+                    npc_id.index()
+                )
+            });
 
             // ── Initialize patrol on the one-shot reinit trigger ──
             // `initialize_patrol()` is called explicitly from
@@ -7290,9 +7471,14 @@ impl EngineInner {
                 ai.patrol.clear();
                 ai.missed_patrol_members.clear();
                 let theoretical = ai.theoretical_patrol.clone();
-                let chief_snap = snaps.get(&npc_id).copied();
-                let chief_pos = chief_snap.map(|s| s.position).unwrap_or_default();
-                let chief_view_radius = chief_snap.map(|s| s.view_radius as f32).unwrap_or(0.0);
+                let chief_snap = snaps.get(&npc_id).copied().unwrap_or_else(|| {
+                    panic!(
+                        "patrol owner {} is missing its owner-boundary position snapshot",
+                        npc_id.index()
+                    )
+                });
+                let chief_pos = chief_snap.position;
+                let chief_view_radius = chief_snap.view_radius as f32;
                 let chief_view_radius_sq = chief_view_radius * chief_view_radius;
                 let obstacles_owned = scratch.ai_sight_obstacles.clone();
                 let obstacles = obstacles_owned.list();
@@ -7522,8 +7708,9 @@ impl EngineInner {
             EntityId,
             (crate::ai::Position, crate::ai::AiState),
         > = std::collections::HashMap::new();
-        for &npc_id in &npc_ids {
-            let Some(entity) = self.world.entities.get(npc_id) else {
+        for cmd in &patrol_cmds {
+            let minion_id = cmd.minion;
+            let Some(entity) = self.world.entities.get(minion_id) else {
                 continue;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -7532,7 +7719,7 @@ impl EngineInner {
             if let Some(chief_id) = ai.patrol_chief
                 && let Some(cs) = snaps.get(&chief_id)
             {
-                patrol_tick_map.insert(npc_id, (cs.position, cs.ai_state));
+                patrol_tick_map.insert(minion_id, (cs.position, cs.ai_state));
             }
         }
 
@@ -7559,10 +7746,6 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
 
-                // Instruct facing direction (in-scope mut borrow).
-                if let Some(ai) = entity.ai_controller_mut() {
-                    ai.set_instructed_patrol_direction(cmd.direction, &ctx);
-                }
                 ctx
             };
 
@@ -7579,7 +7762,52 @@ impl EngineInner {
 
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
-            self.dispatch_filtered_stimulus(sim, assets, minion_id, &stimulus, &ctx, &tick_data);
+            self.dispatch_think_with_drain(sim, minion_id, &stimulus, &ctx, &tick_data, assets);
+
+            // Original applies the instructed direction only after the
+            // member's synchronous CALL_PATROL_COORDINATE Think returns.
+            let in_uninterruptible_command = self.is_very_very_busy(minion_id);
+            let building_sector = self
+                .world
+                .entities
+                .get(minion_id)
+                .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
+            let entity = self.world.entities.get_mut(minion_id).unwrap_or_else(|| {
+                panic!(
+                    "patrol chief {} lost member {} after coordinate Think",
+                    owner.index(),
+                    minion_id.index()
+                )
+            });
+            let mut live_ctx = build_ai_context_from_entity(
+                entity,
+                patrol_frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            live_ctx.in_uninterruptible_command = in_uninterruptible_command;
+            entity
+                .ai_controller_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol member {} lost AI after coordinate Think from chief {}",
+                        minion_id.index(),
+                        owner.index()
+                    )
+                })
+                .set_instructed_patrol_direction(cmd.direction, &live_ctx);
+            // GetInstructedPatrolDirection may synchronously FaceTo when the
+            // member is still waiting. Close that sequence/callback work
+            // before the chief advances to the next patrol member.
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, minion_id, assets);
         }
     }
 
@@ -8270,14 +8498,44 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
     ) -> bool {
+        self.dispatch_think_with_drain_mode(sim, npc_id, stimulus, ctx, tick_data, assets, false)
+    }
+
+    pub(super) fn dispatch_think_with_drain_without_forecast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        tick_data: &crate::ai::AiPerTickData,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.dispatch_think_with_drain_mode(sim, npc_id, stimulus, ctx, tick_data, assets, true)
+    }
+
+    fn dispatch_think_with_drain_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        tick_data: &crate::ai::AiPerTickData,
+        assets: &LevelAssets,
+        owner_local_no_forecast: bool,
+    ) -> bool {
         let had_ai_at_entry = self
             .world
             .entities
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled =
-            self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data);
+        let handled = if owner_local_no_forecast {
+            self.dispatch_filtered_stimulus_without_forecast(
+                sim, assets, npc_id, stimulus, ctx, tick_data,
+            )
+        } else {
+            self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data)
+        };
         // A missing entity or NPC shell without AI is a legitimate unhandled
         // no-op. An existing AI may also return false after running a handler,
         // so only the entry-state no-AI case can skip the synchronous drain.
@@ -8328,7 +8586,7 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             // Drain the per-NPC pending-flags pass (launches sequences,
             // commands, turn orders, attentive-mode transitions, etc.).
-            self.drain_pending_for_npc(sim, npc_id, assets);
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             // `drain_pending_for_npc` launches the first order barrier in its
             // original position. Close the boundary again because later
             // effect application and civilian handlers share the same base
@@ -8366,7 +8624,11 @@ impl EngineInner {
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
-                self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+                if owner_local_no_forecast {
+                    self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
+                } else {
+                    self.drain_self_stimuli_for_npc(sim, npc_id, assets);
+                }
             }
 
             let still_pending = {
@@ -8437,7 +8699,7 @@ impl EngineInner {
                 target
             );
 
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let building_sector = self
                 .world
                 .entities
@@ -8469,7 +8731,9 @@ impl EngineInner {
             let mut stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
-            self.dispatch_think_with_drain(sim, target_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain_without_forecast(
+                sim, target_id, &stimulus, &ctx, &tick_data, assets,
+            );
         }
     }
 
@@ -8497,7 +8761,7 @@ impl EngineInner {
                 "officer report source must be the reporting Charly"
             );
 
-            let scratch = self.build_sim_scratch(sim, assets);
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let officer_id = EntityId::Soldier(SoldierId(officer));
             let officer_building_sector = self
                 .world
@@ -8529,7 +8793,7 @@ impl EngineInner {
                 crate::ai::StimulusType::CallMrOfficerIAmBack,
                 charly,
             );
-            let accepted = self.dispatch_think_with_drain(
+            let accepted = self.dispatch_think_with_drain_without_forecast(
                 sim,
                 officer_id,
                 &officer_stimulus,
@@ -8694,8 +8958,7 @@ impl EngineInner {
             if owner_local_no_forecast {
                 match self.world.entities.get(npc_id) {
                     Some(Entity::Soldier(_)) => {
-                        let tick_data = self
-                            .build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+                        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
                         self.dispatch_filtered_stimulus_without_forecast(
                             sim, assets, npc_id, &stimulus, &ctx, &tick_data,
                         );
@@ -8980,10 +9243,7 @@ impl EngineInner {
         // before the next animation tick resets `action_state`.
         let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
 
-        // Scratch construction forecasts every active actor and can consume
-        // authoritative BuildingExitGate RNG. Keep it after every no-call
-        // gate so an off-phase/dead owner remains RNG-silent.
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
 
         let building_sector = self
@@ -9050,7 +9310,7 @@ impl EngineInner {
             }
             _ => unreachable!("post-detection owner must remain an NPC"),
         }
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
 
     /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
@@ -9073,7 +9333,7 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self.entity_building_sector(entity.element_data().sector());
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
@@ -9138,7 +9398,7 @@ impl EngineInner {
             "soldier {} has no enemy AI for ambush refresh",
             npc_id.index()
         );
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
@@ -9200,7 +9460,7 @@ impl EngineInner {
             .enemy_ai_mut()
             .unwrap_or_else(|| panic!("soldier {} lost enemy AI", npc_id.index()))
             .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
 
     // ── Macro timer hourglass ────────────────────────────────────
@@ -9244,9 +9504,7 @@ impl EngineInner {
             return;
         }
 
-        // Forecast scratch can draw BuildingExitGate RNG. A not-yet-due timer
-        // is a pure no-op in the Original, so only build after the due gate.
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         // Build the AI context before we take the mut AI borrow.
         let building_sector = self
@@ -9288,7 +9546,7 @@ impl EngineInner {
         if execute {
             base.execute_next_macro_command(sim, &ctx);
         }
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
 
     // ── Locked-frame timer bumps ─────────────────────────────────
@@ -9456,7 +9714,7 @@ impl EngineInner {
         // `force_return_to_duty == return_to_duty`.  Dispatch via
         // the AI subclass to mirror the virtual call.  Build the
         // ctx + tick data the way `tick_periodic_ai` does.
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -9508,6 +9766,6 @@ impl EngineInner {
             }
             _ => unreachable!("post-detection owner must remain an NPC"),
         }
-        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
 }

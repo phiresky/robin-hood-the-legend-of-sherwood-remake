@@ -737,6 +737,10 @@ pub struct ActorData {
     /// `refresh_produced_noise`, where walks/runs on light-shadow keep
     /// the previous frame's volume.
     pub last_noise_volume: u16,
+    /// Complete produced-noise record from this PC's most recently visited
+    /// Human Hourglass slot. NPCs earlier in creation order observe this
+    /// prior record; later NPCs observe the freshly replaced record.
+    pub produced_noise: Option<crate::ai::Noise>,
 }
 
 impl Default for ActorData {
@@ -777,6 +781,7 @@ impl Default for ActorData {
             active_rider_charge: None,
             shield_obstacle: None,
             last_noise_volume: 0,
+            produced_noise: None,
         }
     }
 }

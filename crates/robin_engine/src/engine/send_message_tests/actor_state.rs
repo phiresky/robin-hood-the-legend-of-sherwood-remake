@@ -124,7 +124,8 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
 #[test]
 fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callback() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let life = engine
         .call_script_vm(
@@ -172,7 +173,8 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
 #[test]
 fn persistent_setters_use_original_narrowing_and_virtual_kill_path() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     for amount in [-1, 65_535, 40_000] {
         assert_eq!(
@@ -276,7 +278,7 @@ fn scripted_invulnerable_life_setter_forces_literal_one_hundred() {
 #[test]
 fn scripted_pc_concussion_and_ko_unselect_immediately() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let make_pc = || {
         let mut entity = Entity::Pc(crate::element::ActorPc {
             element: ElementData {
@@ -315,6 +317,7 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
     };
     let persistent_pc = engine.add_entity(make_pc());
     let posture_pc = engine.add_entity(make_pc());
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let persistent_handle = ScriptHandleCodec::actor_handle(persistent_pc);
     let posture_handle = ScriptHandleCodec::actor_handle(posture_pc);
     engine.players.seats[0].selection = vec![persistent_pc, posture_pc];
@@ -343,7 +346,8 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
 #[test]
 fn posture_wait_uses_real_instruction_path_before_callback_resumes() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let posture = engine
         .call_script_vm(

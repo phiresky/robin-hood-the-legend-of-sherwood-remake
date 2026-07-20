@@ -116,6 +116,54 @@ pub(super) fn capture_actor_animation_boundary<T>(
     (result, phases)
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ActorOwnerEnvelopePhase {
+    SoldierPrelude(EntityId),
+    Patrol(EntityId),
+    HumanPrelude(EntityId),
+    BaseActor(EntityId),
+    HumanNoise(EntityId),
+    HumanTiredness(EntityId),
+    PcTail(EntityId),
+    NpcTail(EntityId),
+}
+
+#[cfg(test)]
+thread_local! {
+    static ACTOR_OWNER_ENVELOPE_TRACE: std::cell::RefCell<Option<Vec<ActorOwnerEnvelopePhase>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(phase);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn capture_actor_owner_envelope<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<ActorOwnerEnvelopePhase>) {
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
+        assert!(
+            trace.borrow_mut().replace(Vec::new()).is_none(),
+            "actor-owner envelope capture is not re-entrant"
+        );
+    });
+    let result = f();
+    let phases = ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("actor-owner envelope capture must remain active")
+    });
+    (result, phases)
+}
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -523,13 +571,14 @@ impl EngineInner {
         let was_swordfighting = self.hourglass_phase_entities(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let positions_before_movement = self.hourglass_phase_entity_systems(sim, assets);
+        let (positions_before_movement, processed_projectiles) =
+            self.hourglass_phase_entity_systems(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
         self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
-        self.hourglass_phase_gameplay_systems(sim, display, assets);
+        self.hourglass_phase_gameplay_systems(sim, display, assets, &processed_projectiles);
 
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(sim, display, assets);
@@ -1379,12 +1428,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_apple_smell();
-        self.tick_soldier_track_primary_target();
-        if !self.actors_frozen() {
-            let scratch = self.build_sim_scratch(sim, assets);
-            self.tick_attacking_reactiontime_enemy_near(sim, assets, &scratch);
-        }
+        // Work runs at each soldier's live owner slot below.
 
         // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
         // history observes the actor before RHElementActorHuman::Hourglass
@@ -1393,14 +1437,15 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_patrol_coordination(sim, assets);
+        // Work runs before the Human/Actor slices of each NPC owner below.
 
         // ── Element hourglass (per-element update) ───────────────
         #[cfg(test)]
         observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_concussion_healing(assets);
+        // Human concussion healing runs synchronously in each owner's
+        // pre-Actor hook below.
         let mut to_remove = Vec::new();
         for (id, entity) in self.world.entities.occupied_mut() {
             if !entity.hourglass() {
@@ -1580,7 +1625,10 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
+    ) -> (
+        EntitySlots<Option<crate::coordinates::MapPoint>>,
+        Vec<EntityId>,
+    ) {
         // Preserve the position each element exposed before the globally
         // batched movement pass. The original does not have this batch:
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
@@ -1755,11 +1803,8 @@ impl EngineInner {
         // object animation completes before any actor ActionChange callback,
         // and a callback-spawned nonactor cannot advance until next tick.
         self.tick_nonactor_entity_animations(sim, assets);
-        self.tick_actor_animation_action_change_slots(sim, assets);
-        // RHElementActorHuman::Hourglass performs its staggered tiredness
-        // recovery after the base actor/order work and before returning to
-        // RHElementActorNPC::Hourglass.
-        self.tick_tiredness(assets);
+        let processed_projectiles =
+            self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
 
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
@@ -1792,7 +1837,7 @@ impl EngineInner {
         // Keep those responsibilities batched until each consumer has the
         // mixed pre/post inputs required at an individual creation slot.
 
-        positions_before_movement
+        (positions_before_movement, processed_projectiles)
     }
 
     /// Run the bounded base-actor Hourglass slice in live legacy creation
@@ -1804,12 +1849,20 @@ impl EngineInner {
     /// mutable element-array walk. Generic animation eligibility does not gate
     /// `ActionChange`; inactive, frozen, moving, active-shot, and active-melee
     /// actors still reach the callback boundary.
+    #[cfg(test)]
     pub(super) fn tick_actor_animation_action_change_slots(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        self.tick_actor_animation_action_change_slots_with_hooks(sim, assets, |_, _| {}, |_, _| {});
+        self.tick_actor_animation_action_change_slots_with_hooks(
+            sim,
+            assets,
+            |_, _| {},
+            |_, _| {},
+            |_, _| {},
+            |_, _| {},
+        );
     }
 
     #[cfg(test)]
@@ -1823,6 +1876,8 @@ impl EngineInner {
             sim,
             assets,
             |_, _| {},
+            |_, _| {},
+            |_, _| {},
             after_slot,
         );
     }
@@ -1831,13 +1886,15 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        mut non_actor_slot: impl FnMut(&mut Self, EntityId),
+        mut before_actor: impl FnMut(&mut Self, EntityId),
         mut after_execute_callbacks: impl FnMut(&mut Self, EntityId),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
-                let is_actor = self
+                let entity = self
                     .world
                     .entities
                     .get(entity_id)
@@ -1845,10 +1902,10 @@ impl EngineInner {
                         panic!(
                             "actor animation coordinator lost entity {entity_id:?} resolved from legacy slot {slot}"
                         )
-                    })
-                    .actor_data()
-                    .is_some();
-                if is_actor {
+                    });
+                let actor_enters_hourglass = entity.actor_data().is_some()
+                    && !matches!(entity, Entity::Pc(pc) if pc.pc.fried_psykokwack);
+                if actor_enters_hourglass {
                     // Detach work that predates this actor slot. Lazy Wait
                     // initialization and completion callbacks below may drain
                     // only work they synchronously create; they must not steal
@@ -1857,6 +1914,10 @@ impl EngineInner {
                         .orders
                         .sequence_manager
                         .take_pending_synchronous_actions();
+
+                    before_actor(self, entity_id);
+                    #[cfg(test)]
+                    observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
                     let actor_is_active = self
                         .world
@@ -1972,16 +2033,144 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .restore_pending_synchronous_actions(preexisting_sequence_work);
+                } else {
+                    non_actor_slot(self, entity_id);
                 }
             }
             slot += 1;
         }
 
-        // TODO(original-parity): movement, melee, bow, abilities, NPC
-        // detection/tails, AI state callbacks, and speech still have separate
-        // order owners, preventing a full Actor Hourglass coordinator. Exact
-        // NPC derived-Hourglass nesting around this base-actor slice is also
-        // still absent.
+        // Movement, active melee, bow, abilities, and riders remain separate
+        // owners. The production caller installs the human/PC/NPC tail hook
+        // to close the supported actor envelope before this loop advances.
+    }
+
+    /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
+    /// live legacy-slot walk. The underlying actor coordinator owns the
+    /// `while slot < entities.len()` loop, including holes and callback-spawned
+    /// later slots; this hook closes the derived tail before it increments the
+    /// slot.
+    pub(super) fn tick_actor_owner_envelopes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+    ) -> Vec<EntityId> {
+        let prepared = self.prepare_npc_owner_pass(sim, assets);
+        let mut processed_projectiles = Vec::new();
+        self.tick_actor_animation_action_change_slots_with_hooks(
+            sim,
+            assets,
+            |engine, owner| {
+                let Some(Entity::Projectile(projectile)) = engine.get_entity(owner) else {
+                    return;
+                };
+                if matches!(
+                    projectile.object.object_type,
+                    crate::element::ObjectType::Purse
+                        | crate::element::ObjectType::Coin
+                        | crate::element::ObjectType::WaspNest
+                        | crate::element::ObjectType::BonusWaspNest
+                        | crate::element::ObjectType::Wasp
+                ) {
+                    return;
+                }
+                engine.tick_existing_projectile(sim, assets, owner);
+                processed_projectiles.push(owner);
+            },
+            |engine, owner| {
+                if matches!(owner, EntityId::Soldier(_)) {
+                    #[cfg(test)]
+                    observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
+                    engine.tick_apple_smell_for(owner);
+                    engine.tick_soldier_track_primary_target_for(owner);
+                    let scratch = engine.build_owner_context_scratch_without_forecast(assets);
+                    engine.tick_attacking_reactiontime_enemy_near_for(sim, assets, &scratch, owner);
+                }
+                if matches!(owner, EntityId::Soldier(_) | EntityId::Civilian(_))
+                    && !engine.actors_frozen()
+                {
+                    #[cfg(test)]
+                    observe_actor_owner_envelope(ActorOwnerEnvelopePhase::Patrol(owner));
+                    engine.tick_patrol_coordination_for_npc(
+                        sim,
+                        assets,
+                        owner,
+                        positions_before_movement,
+                    );
+                }
+                if engine
+                    .world
+                    .entities
+                    .get(owner)
+                    .is_some_and(|entity| entity.human_data().is_some())
+                {
+                    #[cfg(test)]
+                    observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanPrelude(owner));
+                    engine.tick_concussion_healing_for(sim, owner, assets);
+                    engine.process_shoot_list_for(owner);
+                }
+            },
+            |_, _| {},
+            |engine, owner| {
+                let is_human = engine
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "actor owner {} disappeared before its derived Hourglass tail",
+                            owner.index()
+                        )
+                    })
+                    .human_data()
+                    .is_some();
+                if !is_human {
+                    return;
+                }
+                match owner {
+                    EntityId::Pc(_) => {
+                        engine.refresh_pc_produced_noise_for(owner);
+                        #[cfg(test)]
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
+                        engine.tick_tiredness_for(owner, assets);
+                        #[cfg(test)]
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
+                            owner,
+                        ));
+                        engine.tick_pc_auto_heal_for(sim, owner);
+                        #[cfg(test)]
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
+                    }
+                    EntityId::Soldier(_) | EntityId::Civilian(_) => {
+                        engine.tick_tiredness_for(owner, assets);
+                        #[cfg(test)]
+                        {
+                            // NPC humans have no produced-noise refresh, so
+                            // their Human tail begins at tiredness.
+                            observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
+                                owner,
+                            ));
+                        }
+                        engine.tick_npc_owner_pass(
+                            sim,
+                            assets,
+                            positions_before_movement,
+                            prepared,
+                            owner,
+                        );
+                        #[cfg(test)]
+                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
+                    }
+                    _ => panic!(
+                        "human actor owner {} has unsupported entity kind",
+                        owner.index()
+                    ),
+                }
+            },
+        );
+        self.finish_npc_owner_pass();
+        processed_projectiles
     }
 
     /// Apply the two sequence-command motion modifiers owned by
@@ -2105,8 +2294,14 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        _positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
+        // Listen and object/FX blip discovery are not owned by an NPC
+        // Hourglass. Keep this mutating work out of the prepare-once owner
+        // inputs; those must stay immutable and RNG-free.
+        if !self.actors_frozen() {
+            self.tick_non_npc_blip_detection(sim, assets);
+        }
         // ── Creation-ordered pre-detection boundary ──────────────
         // These observations remain coarse labels for the original nested
         // order. The coordinator below interleaves the actual operations per
@@ -2126,7 +2321,9 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.tick_enemy_ai_with_creation_ordered_prelude(sim, assets, positions_before_movement);
+        // Production work already ran inside the live actor-owner walk in the
+        // preceding EntitySystems phase. Keep these coarse observations for
+        // the PA-016 tick-spine contract only.
 
         // The phase observations below retain the coarse PA-016 ordering
         // contract. Production work no longer runs here: PA-013 executes the
@@ -2231,6 +2428,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
+        processed_projectiles: &[EntityId],
     ) {
         // The original loop is literally:
         //
@@ -2267,9 +2465,6 @@ impl EngineInner {
                     let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
                     self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
                     self.tick_ability_for(sim, display, assets, entity_id);
-                    if matches!(entity_id, EntityId::Pc(_)) {
-                        self.tick_pc_auto_heal_for(sim, entity_id);
-                    }
                 }
                 EntityId::Projectile(_) => {
                     let object_type = match self.get_entity(entity_id) {
@@ -2285,7 +2480,10 @@ impl EngineInner {
                         | crate::element::ObjectType::Wasp => {
                             self.tick_wasp_nest_or_wasp(sim, assets, entity_id)
                         }
-                        _ => self.tick_existing_projectile(sim, assets, entity_id),
+                        _ if !processed_projectiles.contains(&entity_id) => {
+                            self.tick_existing_projectile(sim, assets, entity_id)
+                        }
+                        _ => {}
                     }
                 }
                 EntityId::Net(_) => self.tick_net(sim, assets, entity_id),

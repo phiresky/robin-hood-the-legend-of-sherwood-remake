@@ -53,9 +53,10 @@ use crate::{element::Command, sequence::SequenceElementData};
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-/// Fallback concussion healing speed when a soldier's profile lookup
-/// fails. Matches the legacy soldier
-/// wake-up default in the NPC concussion-healing path.
+/// Legacy constructor default retained for tests that explicitly exercise
+/// SoldierData initialization. Runtime concussion healing requires the real
+/// profile and never substitutes this value.
+#[cfg(test)]
 const SOLDIER_CONCUSSION_HEALING_SPEED: u16 = 300;
 
 /// Per-entity concussion healing speed.
@@ -72,21 +73,19 @@ pub fn concussion_healing_speed_for_entity(
             .get_character(pc.pc.profile_index)
             .map(|p| p.wake_up)
             .unwrap_or_else(|| {
-                tracing::warn!(
-                    profile_index = ?pc.pc.profile_index,
-                    "PC character profile missing wake_up; falling back to civilian default"
-                );
-                combat::CIVILIAN_CONCUSSION_HEALING_SPEED
+                panic!(
+                    "PC concussion healing requires missing character profile {:?}",
+                    pc.pc.profile_index
+                )
             }),
         Entity::Soldier(s) => profile_manager
             .get_soldier(s.soldier.soldier_profile_index)
             .map(|p| p.wake_up)
             .unwrap_or_else(|| {
-                tracing::warn!(
-                    profile_index = ?s.soldier.soldier_profile_index,
-                    "Soldier profile missing wake_up; falling back to default"
-                );
-                SOLDIER_CONCUSSION_HEALING_SPEED
+                panic!(
+                    "soldier concussion healing requires missing soldier profile {:?}",
+                    s.soldier.soldier_profile_index
+                )
             }),
         _ => combat::CIVILIAN_CONCUSSION_HEALING_SPEED,
     }
@@ -820,11 +819,11 @@ impl EngineInner {
                         .is_some_and(crate::element::Entity::is_pc);
                     if is_pc {
                         // PCs have no NPC Hourglass slot or AI Think call.
-                        self.queue_wake_redetection_blinks(entity_id);
+                        self.apply_wake_redetection_blinks(entity_id);
                     } else {
                         // NPC soldiers/civilians dispatch FITAGAIN at their
-                        // owner prelude. Soldier blink follows recovery there,
-                        // so later wakers cannot reset earlier observers.
+                        // owner prelude. The inline BlinkEnemy fan-out follows
+                        // that synchronous Think there.
                         self.dispatch_ai_stimulus(
                             entity_id,
                             crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
@@ -836,15 +835,17 @@ impl EngineInner {
         }
     }
 
-    /// legacy implementation `SetConcussionOfTheBrain` calls `BlinkEnemy(this)` for
-    /// every opposite-camp NPC after a PC wakes, or after a soldier
-    /// wakes while NPC-vs-NPC soldier hostility is enabled.
-    pub(crate) fn queue_wake_redetection_blinks<I: Into<EntityId>>(&mut self, waker_id: I) {
+    /// Apply Original `SetConcussionOfTheBrain`'s inline `BlinkEnemy(this)`
+    /// fan-out to every opposing NPC. This runs at the waker's slot, after a
+    /// synchronous NPC `EVENT_FITAGAIN`, and is not deferred to each observer.
+    pub(crate) fn apply_wake_redetection_blinks<I: Into<EntityId>>(&mut self, waker_id: I) {
         let waker_id = waker_id.into();
-        let waker = match self.get_entity(waker_id) {
-            Some(e) => e,
-            None => return,
-        };
+        let waker = self.get_entity(waker_id).unwrap_or_else(|| {
+            panic!(
+                "wake BlinkEnemy fan-out requires missing waker {}",
+                waker_id.index()
+            )
+        });
         let waker_is_pc = waker.is_pc();
         let waker_is_soldier = matches!(waker, Entity::Soldier(_));
         if !(waker_is_pc || (waker_is_soldier && self.ai.global.npcs_can_be_enemies())) {
@@ -869,14 +870,27 @@ impl EngineInner {
                     waker_id.index()
                 )
             });
-            let ai = npc.ai_brain.base_mut().unwrap_or_else(|| {
+            npc.ai_brain.base_mut().unwrap_or_else(|| {
                 panic!(
-                    "NPC {} is missing its required AI controller while queueing wake blink for {}",
+                    "NPC {} is missing its required AI controller while applying wake blink for {}",
                     npc_id.index(),
                     waker_id.index()
                 )
             });
-            ai.outbox.actor.blink_enemy_specific.push(waker_id);
+            let enemy_idx = crate::element::DetectableType::Enemy as usize;
+            let detectables = npc.detectable_lists.get_mut(enemy_idx).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has no Enemy detectable bucket while applying wake blink for {}",
+                    npc_id.index(),
+                    waker_id.index()
+                )
+            });
+            for detectable in detectables {
+                if detectable.element == Some(waker_id) {
+                    detectable.seen_now = false;
+                    detectable.seen_last_frame = false;
+                }
+            }
         }
     }
 

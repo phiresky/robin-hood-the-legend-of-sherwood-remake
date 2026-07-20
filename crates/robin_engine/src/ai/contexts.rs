@@ -389,14 +389,14 @@ pub struct AiPerTickData {
     /// Pre-computed destination forecast for the primary target.
     /// Populated by the engine from the target entity's live state
     /// (door-pass, lift, building traversal). See [`forecast_destination_for_ia`].
-    pub primary_target_forecast: Option<ForecastedDestination>,
+    pub primary_target_forecast: Option<PreparedForecastDestination>,
     /// True when the primary target is a player character.
     /// Used by lost-sight logic in `reconsider_swordfight` to decide
     /// whether to chase (PC) or pull a battle overview (NPC).
     pub primary_target_is_pc: bool,
     /// Pre-computed destination forecast for the missed PC (if any).
     /// Used by `get_battle_overview` to re-predict position before seeking.
-    pub missed_pc_forecast: Option<ForecastedDestination>,
+    pub missed_pc_forecast: Option<PreparedForecastDestination>,
     /// True when `missed_pc` refers to a player character.
     pub missed_pc_is_pc: bool,
     /// Number of enemies this soldier personally detected (not shared by

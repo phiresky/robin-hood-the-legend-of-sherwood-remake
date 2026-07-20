@@ -2369,11 +2369,19 @@ impl EngineInner {
     /// Per-frame decrement of the apple-smell counter on all soldiers.
     /// The associated titbit is auto-removed by
     /// `sync_apple_smell_titbits` once the counter reaches 0.
-    pub(super) fn tick_apple_smell(&mut self) {
-        for (_, s) in self.world.entities.soldiers_mut() {
-            if s.soldier.apple_smell > 0 {
-                s.soldier.apple_smell -= 1;
-            }
+    pub(super) fn tick_apple_smell_for(&mut self, soldier_id: EntityId) {
+        let Entity::Soldier(soldier) =
+            self.world.entities.get_mut(soldier_id).unwrap_or_else(|| {
+                panic!(
+                    "apple-smell owner {} disappeared from its legacy slot",
+                    soldier_id.index()
+                )
+            })
+        else {
+            panic!("apple-smell owner {} is not a soldier", soldier_id.index());
+        };
+        if soldier.soldier.apple_smell > 0 {
+            soldier.soldier.apple_smell -= 1;
         }
     }
 
@@ -2384,46 +2392,43 @@ impl EngineInner {
     /// `AttackingBowShooting`, re-orient the body to face the
     /// `primary_target`'s ground position every tick so a bowman keeps
     /// tracking a moving PC between Think stimuli.
-    pub(super) fn tick_soldier_track_primary_target(&mut self) {
+    pub(super) fn tick_soldier_track_primary_target_for(&mut self, npc_id: EntityId) {
         use crate::ai::Substate;
-        let soldier_ids: Vec<_> = self.world.entities.soldier_ids().collect();
-        for npc_id in soldier_ids {
-            let target_handle = {
-                let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                let Some(ai) = s.npc.ai_brain.base() else {
-                    continue;
-                };
-                let tracks = matches!(
-                    ai.current_substate,
-                    Substate::AttackingReactiontimeTurning
-                        | Substate::AttackingReactiontime
-                        | Substate::AttackingBowLoading
-                        | Substate::AttackingBowAiming
-                        | Substate::AttackingBowShooting
-                );
-                if !tracks || ai.primary_target == 0 {
-                    continue;
-                }
-                ai.primary_target
+        let target_handle = {
+            let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
+                panic!("tracking soldier {} disappeared", npc_id.index());
             };
-            let my_pos = match self.get_entity(npc_id) {
-                Some(e) => e.ground_position(),
-                None => continue,
+            let Some(ai) = s.npc.ai_brain.base() else {
+                return;
             };
-            let target_pos = match self.get_entity(
-                self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
-            ) {
-                Some(e) => e.ground_position(),
-                None => continue,
-            };
-            let dx = target_pos.x - my_pos.x;
-            let dy = target_pos.y - my_pos.y;
-            let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                s.element.set_direction_instantly(sector);
+            let tracks = matches!(
+                ai.current_substate,
+                Substate::AttackingReactiontimeTurning
+                    | Substate::AttackingReactiontime
+                    | Substate::AttackingBowLoading
+                    | Substate::AttackingBowAiming
+                    | Substate::AttackingBowShooting
+            );
+            if !tracks || ai.primary_target == 0 {
+                return;
             }
+            ai.primary_target
+        };
+        let my_pos = match self.get_entity(npc_id) {
+            Some(e) => e.ground_position(),
+            None => panic!("tracking soldier {} disappeared", npc_id.index()),
+        };
+        let target_pos = match self.get_entity(
+            self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
+        ) {
+            Some(e) => e.ground_position(),
+            None => return,
+        };
+        let dx = target_pos.x - my_pos.x;
+        let dy = target_pos.y - my_pos.y;
+        let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+            s.element.set_direction_instantly(sector);
         }
     }
 

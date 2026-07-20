@@ -64,7 +64,7 @@ pub struct AiOutbox {
     pub reentrant: AiReentrantOutbox,
     /// Entity/sequence mutations applied in Original call order after Think.
     pub actor: AiActorOutbox,
-    /// Resurrection and eye repair drained by the dedicated recovery sweep.
+    /// Non-FIT_AGAIN eye repair drained by the dedicated recovery sweep.
     pub recovery: AiRecoveryOutbox,
     /// Music urgency drained by the overall villain-alert sweep.
     pub music: AiMusicOutbox,
@@ -102,6 +102,10 @@ pub struct AiReentrantOutbox {
 pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
     Speech(AiSpeechAttempt),
+    RestoreDetectableObjects { knocked_out_in_money_fight: bool },
+    InformResurrection,
+    LaunchTimer { frames: u32, current_frame: u32 },
+    SetEyeStatus(crate::element::EyeStatus),
 }
 
 #[derive(
@@ -225,7 +229,6 @@ pub struct AiActorOutbox {
     pub delete_detectables: Vec<crate::element::DetectableType>,
     pub delete_detectable_entity: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
-    pub blink_enemy_specific: Vec<crate::element::EntityId>,
     pub enter_swordfight: Option<EnterSwordfightRequest>,
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<HumanHandle>,
@@ -239,7 +242,6 @@ pub struct AiActorOutbox {
     pub unfocus: bool,
     pub focus_point: Option<Position>,
     pub slowly_open_eyes: bool,
-    pub restore_detectable_objects: bool,
     pub forget_nearby_coins: Option<Position>,
     pub set_direction_instantly: Option<i16>,
     pub set_attentive_mode: Option<AttentiveModeEffect>,
@@ -290,12 +292,9 @@ pub(crate) struct AiActorCoreEffects {
 impl AiActorOutbox {
     /// Whether an owner-local synchronous drain has more actor work to apply.
     /// Speech intentionally lives outside this outbox. State-script
-    /// notifications live in the sibling `AiReentrantOutbox` queue and the
-    /// owner fixed-point predicates check them separately; only their exact
-    /// intra-`SetState` placement remains PA-013 debt. `blink_enemy_specific`
-    /// is also intentionally excluded: it belongs to the observer's next
-    /// pre-detection creation slot and is consumed only by
-    /// `tick_pending_specific_enemy_blinks_for_npc`.
+    /// notifications and ordered engine calls live in the sibling
+    /// `AiReentrantOutbox` queue and the owner fixed-point predicates check
+    /// them separately.
     pub(crate) fn has_boundary_work(&self) -> bool {
         !self.orders.is_empty()
             || self.quit_swordfight
@@ -323,7 +322,6 @@ impl AiActorOutbox {
             || self.unfocus
             || self.focus_point.is_some()
             || self.slowly_open_eyes
-            || self.restore_detectable_objects
             || self.forget_nearby_coins.is_some()
             || self.set_direction_instantly.is_some()
             || self.set_attentive_mode.is_some()

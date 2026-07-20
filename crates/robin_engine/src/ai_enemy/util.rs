@@ -221,7 +221,7 @@ pub struct CampSoldierInfo {
     /// Present only when the caller explicitly evaluated
     /// `ForecastDestinationForIA`; owner-local brackets may omit it to avoid
     /// drawing unrelated building-exit RNG.
-    pub forecast_destination: Option<Position>,
+    pub forecast_destination: Option<crate::ai::PreparedForecastDestination>,
     /// Body handles still on this soldier's detectable-body list —
     /// i.e. corpses they have *not yet* reacted to.  An officer
     /// who has *already* processed a body has dropped it from this

@@ -230,9 +230,10 @@ impl MissionBootstrap {
         );
     }
 
-    /// Capture the pristine restart state for a tactical mission, or raise the
-    /// initial Sherwood campaign map. This must be the last setup stage before
-    /// replay/runtime construction.
+    /// Capture the pristine restart state for a tactical mission. Fresh
+    /// Sherwood sessions leave the campaign map closed, matching the original
+    /// `RHGame` constructor; the player opens it from the HQ widget. This must
+    /// be the last setup stage before replay/runtime construction.
     pub(super) fn setup_restart_or_sherwood(
         &mut self,
         callbacks: &mut RustCallbacks,
@@ -253,8 +254,6 @@ impl MissionBootstrap {
                     None,
                 );
             }
-        } else if !args.sherwood {
-            self.game.show_campaign_map();
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,

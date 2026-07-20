@@ -285,105 +285,98 @@ impl EngineInner {
     /// `RHElementActorSoldier::Hourglass` calls this before the NPC detection
     /// pass. The gate is evaluated once, then the current `mlistThem` is
     /// walked in order and each eligible nearby enemy is sent through Think.
-    pub(crate) fn tick_attacking_reactiontime_enemy_near(
+    pub(crate) fn tick_attacking_reactiontime_enemy_near_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         scratch: &SimScratch,
+        npc_id: EntityId,
     ) {
         let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
+            panic!("EnemyNear owner {} disappeared", npc_id.index());
+        };
+        if !soldier.element.active {
+            return;
+        }
+        let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
+            return;
+        };
+        if !attacking_reactiontime_enemy_near_enabled(
+            enemy_ai.combat_trainer,
+            enemy_ai.base.current_substate,
+            frame,
+            enemy_ai.base.frame_when_enemy_detected,
+        ) {
+            return;
+        }
 
-        for npc_id in npc_ids {
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
-                continue;
-            };
-            if !soldier.element.active {
-                continue;
+        let origin = soldier.element.position_map();
+        let targets = enemy_ai.list_them.clone();
+        let nearby_targets = enemies_near_from_them_list(origin, &targets, |target_handle| {
+            let target_view = scratch.ai_entity_views.get(&target_handle);
+            if target_view.is_none() {
+                tracing::warn!(
+                    npc = npc_id.index(),
+                    target = target_handle,
+                    "EnemyNear: list_them target has no live AI entity view"
+                );
             }
-            let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
+            target_view.map(|view| (view.position, view.posture))
+        });
+
+        for target_handle in nearby_targets {
+            let Some(target_id) = self.entity_id_for_index(target_handle) else {
+                tracing::warn!(
+                    npc = npc_id.index(),
+                    target = target_handle,
+                    "EnemyNear: list_them target has no live entity"
+                );
                 continue;
             };
-            if !attacking_reactiontime_enemy_near_enabled(
-                enemy_ai.combat_trainer,
-                enemy_ai.base.current_substate,
-                frame,
-                enemy_ai.base.frame_when_enemy_detected,
+            if !matches!(
+                target_id,
+                EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_)
             ) {
+                tracing::warn!(
+                    npc = npc_id.index(),
+                    target = ?target_id,
+                    "EnemyNear: list_them target is not human"
+                );
                 continue;
             }
 
-            let origin = soldier.element.position_map();
-            let targets = enemy_ai.list_them.clone();
-            let nearby_targets = enemies_near_from_them_list(origin, &targets, |target_handle| {
-                let target_view = scratch.ai_entity_views.get(&target_handle);
-                if target_view.is_none() {
-                    tracing::warn!(
-                        npc = npc_id.index(),
-                        target = target_handle,
-                        "EnemyNear: list_them target has no live AI entity view"
-                    );
-                }
-                target_view.map(|view| (view.position, view.posture))
-            });
-
-            for target_handle in nearby_targets {
-                let Some(target_id) = self.entity_id_for_index(target_handle) else {
-                    tracing::warn!(
-                        npc = npc_id.index(),
-                        target = target_handle,
-                        "EnemyNear: list_them target has no live entity"
-                    );
-                    continue;
-                };
-                if !matches!(
-                    target_id,
-                    EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_)
-                ) {
-                    tracing::warn!(
-                        npc = npc_id.index(),
-                        target = ?target_id,
-                        "EnemyNear: list_them target is not human"
-                    );
-                    continue;
-                }
-
-                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-                let building_sector =
-                    self.world.entities.get(npc_id).and_then(|entity| {
-                        self.entity_building_sector(entity.element_data().sector())
-                    });
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    break;
-                };
-                let mut ctx = build_ai_context_from_entity(
-                    entity,
-                    frame,
-                    building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                );
-                ctx.in_uninterruptible_command = in_uninterruptible_command;
-                let tick_data = self.build_npc_tick_data_for_target(
-                    sim,
-                    npc_id,
-                    scratch,
-                    assets,
-                    Some(target_id),
-                );
-                let stimulus = crate::ai::Stimulus::with_human(
-                    crate::ai::StimulusType::EventEnemyNear,
-                    target_handle,
-                );
-                self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
-            }
+            let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+            let building_sector = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
+            let Some(entity) = self.world.entities.get(npc_id) else {
+                break;
+            };
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            let tick_data =
+                self.build_npc_tick_data_for_target(sim, npc_id, scratch, assets, Some(target_id));
+            let stimulus = crate::ai::Stimulus::with_human(
+                crate::ai::StimulusType::EventEnemyNear,
+                target_handle,
+            );
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -1003,8 +996,9 @@ impl EngineInner {
                     // (volume + 100, volume*ASPECT_RATIO + 100) in raw
                     // map coords. Outside this box original RefreshDetection
                     // does not call UpdateHearing, so the latch is untouched.
-                    let dx = pc.position.x - position.x;
-                    let dy_raw = pc.position.y - position.y;
+                    let noise = pc.produced_noise;
+                    let dx = noise.origin.x - position.x;
+                    let dy_raw = noise.origin.y - position.y;
                     let half_x = pc_volume as f32 + 100.0;
                     let half_y = pc_volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
                     if dx.abs() > half_x || dy_raw.abs() > half_y {
@@ -1014,10 +1008,10 @@ impl EngineInner {
                         // origin is `(x, y + elevation, elevation)` and it has
                         // no logical-layer rejection, so nearby cross-layer
                         // sounds remain audible when their actual geometry is.
-                        let source_elevation = pc.ground_elevation as f32;
-                        let dy_stretched = (position.y - pc.position.y - source_elevation)
+                        let source_elevation = noise.elevation as f32;
+                        let dy_stretched = (position.y - noise.origin.y - source_elevation)
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
-                        let dx_3d = position.x - pc.position.x;
+                        let dx_3d = position.x - noise.origin.x;
                         let dz = elevation - source_elevation;
                         let modified_volume = pc_volume as f32 * HEARING_FACTOR;
                         let max_norm = dx_3d.abs().max(dy_stretched.abs()).max(dz.abs());
@@ -1048,24 +1042,12 @@ impl EngineInner {
                             });
 
                         let stimulus = if subjective > 0.0 && !det_heard && !det_seen {
-                            let noise_type = if pc.is_swordfighting {
-                                crate::ai::NoiseType::ZingZing
-                            } else {
-                                crate::ai::NoiseType::TapTapTap
-                            };
                             let noise = crate::ai::Noise {
-                                origin: crate::ai::Position {
-                                    x: pc.position.x,
-                                    y: pc.position.y,
-                                    sector: crate::position_interface::SectorHandle::new(
-                                        pc.sector_num,
-                                    ),
-                                    level: pc.layer,
-                                },
-                                noise_type,
+                                origin: noise.origin,
+                                noise_type: noise.noise_type,
                                 volume: subjective as u16,
-                                elevation: pc.ground_elevation,
-                                element_id: pc.id.index() as u16,
+                                elevation: noise.elevation,
+                                element_id: noise.element_id,
                             };
                             Some(crate::ai::Stimulus::with_noise(
                                 crate::ai::StimulusType::EventHear,
@@ -1145,6 +1127,8 @@ impl EngineInner {
         assets: &LevelAssets,
         world: &AiWorldView,
         positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        owner: Option<EntityId>,
+        dispatch_legacy_test_wakes: bool,
     ) {
         let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai.global.golden_eye_mode;
@@ -1152,7 +1136,10 @@ impl EngineInner {
         // detection-speed parameters when scaling a PC's visual
         // detection speed in the per-target visibility pass below.
         let is_forest_level = self.world.weather.is_forest_level;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = match owner {
+            Some(npc_id) => vec![npc_id],
+            None => self.world.entities.npc_ids().collect(),
+        };
 
         for npc_id in npc_ids {
             // Original `RHElementActorNPC::Hourglass` performs these owner
@@ -1162,12 +1149,16 @@ impl EngineInner {
             // broadcasts and Think/script effects from earlier slots may
             // affect later observers, never observers whose slots already ran.
             if let Some(positions_before_movement) = positions_before_movement {
-                let woke_up = self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets);
-                self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
-                if woke_up {
-                    self.queue_wake_redetection_blinks(npc_id);
+                // The production owner envelope dispatches concussion wakes in
+                // the Human pre-Actor hook. Keep the historical test-only
+                // coordinator behavior for tests that call this lower-level
+                // seam directly.
+                if dispatch_legacy_test_wakes
+                    && self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets)
+                {
+                    self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
+                    self.apply_wake_redetection_blinks(npc_id);
                 }
-                self.tick_pending_specific_enemy_blinks_for_npc(npc_id);
                 self.tick_inform_my_friends_for_npc(npc_id);
                 self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
             }
@@ -1227,7 +1218,12 @@ impl EngineInner {
             // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
             // MISSED_FRIEND → BEGGAR FIFO.
             let enemy_block = think_input;
-            let enemy_detection_tick_data = if let Some((stimuli, tick_data)) = enemy_block {
+            let enemy_detection_tick_data = if let Some((stimuli, mut tick_data)) = enemy_block {
+                self.prepare_detection_forecasts_for_owner(
+                    npc_id,
+                    positions_before_movement,
+                    &mut tick_data,
+                );
                 let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
                         "detected NPC {} disappeared before its same-phase stimulus queue",
@@ -1257,8 +1253,11 @@ impl EngineInner {
             // construction also updates produced-noise state. No Think has
             // run for this NPC yet, so all its buckets observe the same
             // pre-Think state.
-            let (human_targets, object_targets) =
-                self.tick_enemy_ai_build_human_object_targets_for_npc(npc_id);
+            let (human_targets, object_targets) = self
+                .tick_enemy_ai_build_human_object_targets_for_npc(
+                    npc_id,
+                    positions_before_movement,
+                );
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,
                 assets,
@@ -1285,6 +1284,7 @@ impl EngineInner {
                     npc_id,
                     assets,
                     enemy_detection_tick_data,
+                    positions_before_movement,
                 );
             }
 
@@ -1298,6 +1298,132 @@ impl EngineInner {
         }
     }
 
+    /// Prepare destination forecast alternatives without drawing RNG. The AI
+    /// handler that actually consumes a primary/missed/officer forecast owns
+    /// any building-exit selection draw.
+    fn prepare_detection_forecasts_for_owner(
+        &self,
+        npc_id: EntityId,
+        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        tick_data: &mut AiPerTickData,
+    ) {
+        let forecast = |target_id: EntityId| {
+            let target = self.world.entities.get(target_id).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} requires a destination forecast for missing actor {}",
+                    npc_id.index(),
+                    target_id.index()
+                )
+            });
+            let mut input = extract_forecast_input(target).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} requires a destination forecast for non-actor {}",
+                    npc_id.index(),
+                    target_id.index()
+                )
+            });
+            if let Some(positions) = positions_before_movement {
+                let position = self.position_at_owner_boundary(target_id, npc_id, positions, true);
+                input.position_map_x = position.x;
+                input.position_map_y = position.y;
+            }
+            crate::ai::prepare_forecast_destination_for_ia(
+                &input,
+                self.script_domains.interactables.doors.as_slice(),
+                &self.world.fast_grid.level.sectors,
+                &self.world.fast_grid.level.sector_number_map,
+            )
+        };
+
+        let (primary, missed) = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::enemy_ai)
+            .map(|ai| (ai.base.primary_target, ai.missed_pc))
+            .unwrap_or((0, 0));
+        if tick_data.primary_target_is_pc && primary != 0 {
+            let target_id = self.entity_id_for_index(primary).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has missing primary-target actor {}",
+                    npc_id.index(),
+                    primary
+                )
+            });
+            tick_data.primary_target_forecast = Some(forecast(target_id));
+        }
+        if tick_data.missed_pc_is_pc && missed != 0 {
+            let target_id = self.entity_id_for_index(missed).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has missing missed-PC actor {}",
+                    npc_id.index(),
+                    missed
+                )
+            });
+            tick_data.missed_pc_forecast = Some(forecast(target_id));
+        }
+        for soldier in &mut tick_data.camp_soldiers {
+            // Only officers are ever selected as forecasted destinations by
+            // AlertOfficer/reporting paths. Ordinary camp soldiers remain
+            // live metadata inputs but must not consume building-exit RNG
+            // merely because this owner entered Think.
+            if soldier.rank != crate::profiles::ProfileRank::Officer {
+                continue;
+            }
+            let target_id = self.entity_id_for_index(soldier.handle).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has missing camp-soldier actor {}",
+                    npc_id.index(),
+                    soldier.handle
+                )
+            });
+            soldier.forecast_destination = Some(forecast(target_id));
+        }
+    }
+
+    pub(super) fn apply_owner_relative_tick_positions(
+        &self,
+        npc_id: EntityId,
+        target_id: Option<EntityId>,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        tick_data: &mut AiPerTickData,
+    ) {
+        if let Some(target_id) = target_id {
+            let position =
+                self.position_at_owner_boundary(target_id, npc_id, positions_before_movement, true);
+            if let Some(target) = &mut tick_data.primary_target_position {
+                target.x = position.x;
+                target.y = position.y;
+            }
+        }
+        for fighter in &mut tick_data.nearby_fighters {
+            if let Some(id) = self.entity_id_for_index(fighter.handle) {
+                let position =
+                    self.position_at_owner_boundary(id, npc_id, positions_before_movement, true);
+                fighter.position.x = position.x;
+                fighter.position.y = position.y;
+            }
+        }
+        for soldier in &mut tick_data.camp_soldiers {
+            let id = self.entity_id_for_index(soldier.handle).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has missing camp soldier {} at its owner boundary",
+                    npc_id.index(),
+                    soldier.handle
+                )
+            });
+            let position =
+                self.position_at_owner_boundary(id, npc_id, positions_before_movement, true);
+            soldier.position.x = position.x;
+            soldier.position.y = position.y;
+        }
+        self.prepare_detection_forecasts_for_owner(
+            npc_id,
+            Some(positions_before_movement),
+            tick_data,
+        );
+    }
+
     /// Test seam for creation-slot parity: capture the ordinary tick-start AI
     /// view, mutate live entity/sequence state, then run only RefreshDetection.
     #[cfg(test)]
@@ -1307,9 +1433,9 @@ impl EngineInner {
         assets: &LevelAssets,
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
-        let world = self.tick_enemy_ai_build_world_view(sim, assets);
+        let world = self.tick_enemy_ai_build_world_view(assets, None);
         mutate_live_state(self);
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None);
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, false);
     }
 
     #[cfg(test)]
@@ -1345,7 +1471,6 @@ impl EngineInner {
         let soldier_snapshots = world.soldiers.as_slice();
         let ko_money_fight_soldiers = world.ko_money_fight_soldiers.as_slice();
         let primary_target_multiplicity = &world.primary_target_multiplicity;
-        let pc_forecasts = &world.pc_forecasts;
         let npc_jump_lines = &world.npc_jump_lines;
 
         // -- Read NPC state in a scoped borrow --
@@ -1945,15 +2070,16 @@ impl EngineInner {
                 // ── Populate combat context from engine ──────
                 let mut tick_data = AiPerTickData {
                     profile_manager: Some(assets.profile_manager.clone()),
-                    // Pre-computed forecast for the primary target.
-                    primary_target_forecast: pc_forecasts
-                        .get(&enemy_ai.base.primary_target)
-                        .copied(),
-                    // pc_forecasts is keyed by PC entity ids only.
-                    primary_target_is_pc: pc_forecasts.contains_key(&enemy_ai.base.primary_target),
-                    // Pre-computed forecast for the missed PC.
-                    missed_pc_forecast: pc_forecasts.get(&enemy_ai.missed_pc).copied(),
-                    missed_pc_is_pc: pc_forecasts.contains_key(&enemy_ai.missed_pc),
+                    // Prepared without RNG only after this scan produces an
+                    // Enemy stimulus block.
+                    primary_target_forecast: None,
+                    primary_target_is_pc: pc_snapshots
+                        .iter()
+                        .any(|pc| pc.id.index() == enemy_ai.base.primary_target),
+                    missed_pc_forecast: None,
+                    missed_pc_is_pc: pc_snapshots
+                        .iter()
+                        .any(|pc| pc.id.index() == enemy_ai.missed_pc),
                     // Table swordfight jump-line for primary target.
                     primary_target_jump_line: npc_jump_lines.get(&npc_id).copied().flatten(),
                     primary_target_position,
@@ -2361,7 +2487,7 @@ impl EngineInner {
                             is_tower_guard: ss.is_tower_guard,
                             company_number: ss.company_number,
                             in_building: ss.in_building,
-                            forecast_destination: Some(ss.forecast_destination),
+                            forecast_destination: ss.forecast_destination.clone(),
                             detectable_bodies: ss.detectable_bodies.clone(),
                             seek_position: ss.ai_seek_position,
                             current_task_priority: ss.current_task_priority,
@@ -2860,18 +2986,16 @@ impl EngineInner {
                 Entity::Pc(pc) => {
                     let entity_id: EntityId = id.into();
                     let dead = pc.pc.life_points <= 0;
-                    let snapshot = (!dead).then(|| {
-                        world
-                            .pcs
-                            .iter()
-                            .find(|snapshot| snapshot.id == entity_id)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "living PC {} is absent from the Enemy optical snapshot",
-                                    entity_id.index()
-                                )
-                            })
-                    });
+                    let snapshot = world
+                        .pcs
+                        .iter()
+                        .find(|snapshot| snapshot.id == entity_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "PC {} is absent from the owner-relative Enemy optical snapshot",
+                                entity_id.index()
+                            )
+                        });
                     let posture = pc.element.posture;
                     let ground_z = pc.element.position().z;
                     let order_type = self
@@ -2882,7 +3006,7 @@ impl EngineInner {
                         .unwrap_or(crate::order::OrderType::Invalid);
                     Some(EnemyOpticalTarget {
                         id: entity_id,
-                        position: pc.element.position_map(),
+                        position: snapshot.position,
                         layer: pc.element.layer(),
                         posture,
                         action_state: pc.actor.action_state,
@@ -2903,21 +3027,37 @@ impl EngineInner {
                         dead,
                         hollow_man: pc.human.hollow_man,
                         guarded: pc.pc.guard.is_some(),
-                        detection_speed_in_forest: snapshot
-                            .map_or(100, |snapshot| snapshot.detection_speed_in_forest),
-                        detection_speed_in_city: snapshot
-                            .map_or(100, |snapshot| snapshot.detection_speed_in_city),
+                        detection_speed_in_forest: snapshot.detection_speed_in_forest,
+                        detection_speed_in_city: snapshot.detection_speed_in_city,
                         order_type,
                         blipped: pc.element.blipped,
                     })
                 }
                 Entity::Soldier(soldier) => {
+                    let entity_id: EntityId = id.into();
                     let posture = soldier.element.posture;
                     let is_rider = soldier.soldier.rider;
                     let dead = soldier.npc.life_points <= 0;
+                    let position = world
+                        .soldiers
+                        .iter()
+                        .find(|snapshot| snapshot.id == entity_id)
+                        .map(|snapshot| snapshot.position)
+                        .unwrap_or_else(|| {
+                            assert!(
+                                dead || !soldier.element.active || soldier.human.unconscious,
+                                "active conscious soldier {} is absent from the owner-relative Enemy optical snapshot",
+                                entity_id.index()
+                            );
+                            // Inactive, unconscious, and dead soldiers do not
+                            // participate in the globally batched movement
+                            // slice, so their live position is also their
+                            // owner-boundary position.
+                            soldier.element.position_map()
+                        });
                     Some(EnemyOpticalTarget {
-                        id: id.into(),
-                        position: soldier.element.position_map(),
+                        id: entity_id,
+                        position,
                         layer: soldier.element.layer(),
                         posture,
                         action_state: soldier.actor.action_state,

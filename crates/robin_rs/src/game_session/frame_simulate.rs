@@ -579,22 +579,34 @@ impl InteractiveFrameSimulation {
         } else {
             ScriptedModalMode::Interactive
         };
-        modal_rendered_this_frame = drive_scripted_modal_lanes(
-            host,
-            game,
-            manager,
-            profiles,
-            window,
-            audio,
-            resources,
-            ui,
-            presentation,
-            runtime,
-            &mut frame,
-            modal_mode,
-            modal_rendered_this_frame,
-        )
-        .await;
+        if auto_dismiss_modals {
+            let dismissed = dismiss_pending_modals(host);
+            let active_dismissed = usize::from(ui.active_modal.take().is_some());
+            if dismissed + active_dismissed > 0 {
+                tracing::debug!(
+                    dismissed = dismissed + active_dismissed,
+                    "mission map render: auto-dismissed pending modal(s)"
+                );
+            }
+            modal_rendered_this_frame = false;
+        } else {
+            modal_rendered_this_frame = drive_scripted_modal_lanes(
+                host,
+                game,
+                manager,
+                profiles,
+                window,
+                audio,
+                resources,
+                ui,
+                presentation,
+                runtime,
+                &mut frame,
+                ScriptedModalMode::Interactive,
+                modal_rendered_this_frame,
+            )
+            .await;
+        }
 
         drain_pending_console_display(host, &mut ui.console_overlay);
 
