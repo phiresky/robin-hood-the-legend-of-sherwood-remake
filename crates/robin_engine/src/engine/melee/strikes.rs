@@ -102,6 +102,25 @@ fn finish_falling_pushed_if_in_flight(entity: &mut Entity) -> bool {
     true
 }
 
+fn is_expected_non_attack_swordfight_substate(substate: crate::ai::Substate) -> bool {
+    matches!(
+        substate,
+        // ScriptUnlockAI in the original calls Think(EVENT_RETURN_TO_DUTY)
+        // even when the NPC is still a swordfight member. ReturnToDuty then
+        // legitimately selects DefaultGotoPost without first calling
+        // EndSwordfight, so this can persist while the scripted combat pair
+        // remains linked.
+        crate::ai::Substate::DefaultGotoPost
+            | crate::ai::Substate::AttackingSwordfightParade
+            | crate::ai::Substate::AttackingRunningToEnemy
+            | crate::ai::Substate::AttackingWalkingToEnemy
+            | crate::ai::Substate::AttackingChargingEnemy
+            | crate::ai::Substate::AttackingSwordfightStepBack
+            | crate::ai::Substate::AttackingApproachingNewEnemy
+            | crate::ai::Substate::AttackingMovingAroundOldEnemy
+    )
+}
+
 impl EngineInner {
     // ─── Per-frame melee tick ───────────────────────────────────────
 
@@ -2144,31 +2163,13 @@ impl EngineInner {
         for (npc_id, soldier) in self.world.entities.soldiers() {
             // Must be in swordfight substate and alive.
             //
-            // This is a stuck-state detector: if a soldier has
-            // opponents but isn't in `AttackingSwordfight`, something
-            // upstream has set the substate and forgotten to transition
-            // back.  Transient substates like `AttackingRunningToEnemy`
-            // can legitimately appear for a few ticks while the NPC
-            // closes distance — those clear on `EventReachPoint`, so a
-            // short burst is normal.  `AttackingSwordfightParade` is
-            // also a valid in-combat substate: the soldier has
-            // launched ParrySword and waits for a timer before
-            // StopParrySword returns him to `AttackingSwordfight`.
-            // Only warn for substates outside those expected combat
-            // transition states.
+            // Diagnose unexpected combat-state drift while accepting the
+            // original transition states enumerated by
+            // `is_expected_non_attack_swordfight_substate`.
             if soldier.npc.ai_substate() != crate::ai::Substate::AttackingSwordfight {
                 let substate = soldier.npc.ai_substate();
                 if !soldier.human.opponents.is_empty()
-                    && !matches!(
-                        substate,
-                        crate::ai::Substate::AttackingSwordfightParade
-                            | crate::ai::Substate::AttackingRunningToEnemy
-                            | crate::ai::Substate::AttackingWalkingToEnemy
-                            | crate::ai::Substate::AttackingChargingEnemy
-                            | crate::ai::Substate::AttackingSwordfightStepBack
-                            | crate::ai::Substate::AttackingApproachingNewEnemy
-                            | crate::ai::Substate::AttackingMovingAroundOldEnemy
-                    )
+                    && !is_expected_non_attack_swordfight_substate(substate)
                 {
                     tracing::warn!(
                         npc = npc_id.index(),
@@ -2916,6 +2917,16 @@ mod tests {
         ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
+
+    #[test]
+    fn default_goto_post_is_valid_while_script_unlock_leaves_opponents_linked() {
+        assert!(is_expected_non_attack_swordfight_substate(
+            crate::ai::Substate::DefaultGotoPost
+        ));
+        assert!(!is_expected_non_attack_swordfight_substate(
+            crate::ai::Substate::DefaultOnPost
+        ));
+    }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
         let mut element = ElementData {
