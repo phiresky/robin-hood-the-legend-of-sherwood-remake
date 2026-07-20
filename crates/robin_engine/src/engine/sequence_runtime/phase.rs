@@ -2183,6 +2183,31 @@ impl EngineInner {
                             }
                         }
 
+                        // Internal carrier for a pre-built animation order.
+                        // `launch_single_order_sequence_stamped` normally
+                        // promotes these synchronously, but a postponed
+                        // carrier returns here as Todo when its blocker
+                        // completes.  The order is already attached; keep the
+                        // element alive so the actor animation driver can
+                        // consume it instead of dropping the visible action.
+                        Command::Generic => {
+                            if elem.orders.is_empty() {
+                                // The carrier's animation may have completed
+                                // while this element was postponed behind a
+                                // higher-priority command.  There is no
+                                // command-specific Translate body left to
+                                // run, so completion is the correct resumed
+                                // state.
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
+                            } else {
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
+                            }
+                        }
+
                         _ => {
                             // Dispatch for remaining owner-instructed
                             // commands will be added per-command;

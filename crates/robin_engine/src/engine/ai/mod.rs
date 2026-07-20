@@ -782,8 +782,9 @@ pub(super) fn build_friend_swap_candidates(
             0 => continue,
             h => h,
         };
-        let friend_target_id =
-            crate::element::EntityId::Pc(crate::entity_id::PcId(friend_target_handle));
+        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle) else {
+            continue;
+        };
         let friend_target = entities.get(friend_target_id);
         let Some(friend_target_entity) = friend_target else {
             continue;
@@ -1053,6 +1054,25 @@ fn build_entity_views_inner(
 }
 
 impl EngineInner {
+    /// Resolve an AI `HumanHandle` back through the original sparse element
+    /// table without inventing an entity kind.  AI still stores these handles
+    /// as raw slots, so a target can be a PC, soldier, or civilian.
+    pub(super) fn expect_human_id_for_ai_handle(
+        &self,
+        handle: crate::ai::HumanHandle,
+        context: &str,
+    ) -> EntityId {
+        let id = self.expect_entity_id_for_index(handle, context);
+        assert!(
+            self.world
+                .entities
+                .get(id)
+                .is_some_and(crate::element::Entity::is_human),
+            "{context}: entity in raw slot {handle} is not human"
+        );
+        id
+    }
+
     fn build_ai_sight_obstacles(
         &self,
         assets: &LevelAssets,
@@ -3851,6 +3871,10 @@ impl EngineInner {
         };
         // shared borrow dropped ──
 
+        let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
+        let ai_primary_target_id = ai_primary_target_focus
+            .map(|handle| self.expect_human_id_for_ai_handle(handle, "AI primary-target focus"));
+
         // ── Phase 2: mutable — apply refresh_view + focus sync ──
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
@@ -3863,12 +3887,11 @@ impl EngineInner {
         // edge and won't re-assert focus.  `focus(NULL)` on self
         // is a separate concern from `primary_target` lifecycle
         // (e.g. rider charge passing).
-        let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
         if ai_primary_target_focus != ai_last_synced_focus
             && let Some(npc) = entity.npc_data_mut()
         {
-            if let Some(target_handle) = ai_primary_target_focus {
-                ai_vision::focus_entity(npc, EntityId::Pc(crate::entity_id::PcId(target_handle)));
+            if let Some(target_id) = ai_primary_target_id {
+                ai_vision::focus_entity(npc, target_id);
             } else {
                 ai_vision::unfocus(npc);
             }
@@ -4895,7 +4918,7 @@ impl EngineInner {
         // torn down before the engine-side ENTER_SWORDFIGHT sequence
         // runs.
         if let Some(target_handle) = effects.stop_target {
-            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
+            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI stop_target");
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
 
@@ -4920,7 +4943,8 @@ impl EngineInner {
                     self.launch_element(elem);
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
-                    let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
+                    let target_id = self
+                        .expect_human_id_for_ai_handle(target_handle, "AI enter_swordfight target");
                     let aggressor_jl = effects
                         .enter_swordfight_jump_line
                         .and_then(crate::jump_line::JumpLineIndex::new);
@@ -4938,7 +4962,8 @@ impl EngineInner {
 
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = effects.set_principal {
-            let opponent_id = EntityId::Pc(crate::entity_id::PcId(opponent_handle));
+            let opponent_id =
+                self.expect_human_id_for_ai_handle(opponent_handle, "AI principal opponent");
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
@@ -4978,7 +5003,7 @@ impl EngineInner {
 
         // Process pending bow shot.
         if let Some(target_handle) = effects.shoot_target {
-            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
+            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI bow target");
             self.shoot_bow_at(assets, npc_id, target_id);
         }
 
@@ -4994,16 +5019,14 @@ impl EngineInner {
         // itself is deferred.
         let mut focus_channel_fired = false;
         if let Some(target_handle) = effects.focus {
+            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI focus target");
             let npc = self
                 .world
                 .entities
                 .get_mut(npc_id)
                 .and_then(Entity::npc_data_mut)
                 .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
-            crate::ai_vision::focus_entity(
-                npc,
-                EntityId::Pc(crate::entity_id::PcId(target_handle)),
-            );
+            crate::ai_vision::focus_entity(npc, target_id);
             focus_channel_fired = true;
         }
 
@@ -5456,7 +5479,7 @@ impl EngineInner {
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
         for (target_handle, cmd) in effects.launch_on_target {
-            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
+            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI command target");
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
             self.launch_element(elem);
         }

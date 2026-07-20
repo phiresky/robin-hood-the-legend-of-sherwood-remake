@@ -66,6 +66,66 @@ pub(super) fn bind_test_bow_release_action(engine: &mut EngineInner, id: EntityI
 }
 
 #[test]
+fn postponed_generic_order_carrier_resumes_in_progress() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut element = SequenceElement::new_generic(1, Command::Generic, Some(soldier));
+    element.posture_after_transition = Posture::Upright;
+    element.orders.push_back(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+
+    let mut display = HostDisplayState::default();
+    let assets = LevelAssets::default();
+    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("generic carrier remains live while its order plays");
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert_eq!(element.orders.len(), 1);
+}
+
+#[test]
+fn exhausted_generic_order_carrier_terminates_on_resume() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut element = SequenceElement::new_generic(1, Command::Generic, Some(soldier));
+    element.posture_after_transition = Posture::Upright;
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("terminated carrier remains until cleanup")
+            .state,
+        SequenceState::Terminated
+    );
+}
+
+#[test]
 fn parry_sword_queues_transition_and_hold_orders() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

@@ -4902,6 +4902,18 @@ fn owner_local_callbacks_expose_only_prior_creation_slots() {
 }
 
 #[test]
+fn ai_human_handle_resolution_preserves_soldier_kind() {
+    let mut engine = EngineInner::new();
+    let target = engine.add_entity(make_scripted_soldier("SoldierTarget"));
+
+    assert_eq!(
+        engine.expect_human_id_for_ai_handle(target.index(), "test target"),
+        target,
+        "legacy AI handles must resolve through the occupied entity slot instead of being reconstructed as PCs"
+    );
+}
+
+#[test]
 fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
     let mut engine = EngineInner::new();
     let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));
