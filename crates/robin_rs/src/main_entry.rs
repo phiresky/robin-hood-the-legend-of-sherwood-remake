@@ -523,6 +523,10 @@ mod tests {
             recommended_export_team(&profiles, "H09_Not_VL").unwrap(),
             "MJTB"
         );
+        assert_eq!(
+            recommended_export_team(&profiles, "SherwoodOutro").unwrap(),
+            "RJTSWM"
+        );
     }
 
     #[test]
@@ -2090,6 +2094,10 @@ fn recommended_export_team(
     mission_filename: &str,
 ) -> Result<String, String> {
     let fixed = match mission_filename.to_ascii_lowercase().as_str() {
+        // The original final-outro launcher selects every VIP in the gang.
+        // The mission prerequisite graph only describes reachability, not all
+        // rescued heroes, so deriving this roster would omit required PCs.
+        "sherwoodoutro" => Some("RJTSWM"),
         "h01_lin_vl" | "s01_not_vl" => Some("R"),
         "s02_lei_mp" | "h02_not_ec" | "h03_der_mk" | "s03_fob_mp" | "h04_lei_vl" => Some("RSBC"),
         "h05_lin_ec" => Some("RSWBC"),
