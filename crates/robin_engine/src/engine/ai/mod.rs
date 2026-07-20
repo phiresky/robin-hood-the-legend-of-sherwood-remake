@@ -7602,8 +7602,20 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
     ) -> bool {
+        let had_ai_at_entry = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .is_some();
         let handled =
             self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data);
+        // A missing entity or NPC shell without AI is a legitimate unhandled
+        // no-op. An existing AI may also return false after running a handler,
+        // so only the entry-state no-AI case can skip the synchronous drain.
+        if !handled && !had_ai_at_entry {
+            return false;
+        }
 
         // EventViewStandardProcedure explicitly marks an accepted VIEW after
         // all StartThink and handler guards. Mirror that one-shot onto the
@@ -7615,7 +7627,13 @@ impl EngineInner {
             .entities
             .get_mut(npc_id)
             .and_then(Entity::ai_controller_mut)
-            .is_some_and(|ai| std::mem::take(&mut ai.outbox.detection.mark_alerted));
+            .unwrap_or_else(|| {
+                panic!(
+                    "handled Think recipient {} lost its entity or AI controller before drain",
+                    npc_id.index()
+                )
+            });
+        let mark_alerted = std::mem::take(&mut mark_alerted.outbox.detection.mark_alerted);
         if mark_alerted {
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                 panic!(
@@ -7663,14 +7681,18 @@ impl EngineInner {
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.
             let has_self_stimuli = {
-                let Some(ai) = self
-                    .world
-                    .entities
-                    .get(npc_id)
-                    .and_then(Entity::ai_controller)
-                else {
-                    break;
-                };
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "handled Think recipient {} disappeared before self-stimulus recheck",
+                        npc_id.index()
+                    )
+                });
+                let ai = entity.ai_controller().unwrap_or_else(|| {
+                    panic!(
+                        "handled Think recipient {} lost its AI controller before self-stimulus recheck",
+                        npc_id.index()
+                    )
+                });
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
@@ -7678,14 +7700,18 @@ impl EngineInner {
             }
 
             let still_pending = {
-                let Some(ai) = self
-                    .world
-                    .entities
-                    .get(npc_id)
-                    .and_then(Entity::ai_controller)
-                else {
-                    break;
-                };
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "handled Think recipient {} disappeared before fixed-point recheck",
+                        npc_id.index()
+                    )
+                });
+                let ai = entity.ai_controller().unwrap_or_else(|| {
+                    panic!(
+                        "handled Think recipient {} lost its AI controller before fixed-point recheck",
+                        npc_id.index()
+                    )
+                });
                 ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if !still_pending {

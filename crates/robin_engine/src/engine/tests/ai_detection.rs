@@ -83,6 +83,32 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 }
 
 #[test]
+fn think_with_drain_preserves_missing_ai_as_an_unhandled_noop() {
+    use crate::ai::{AiContext, AiPerTickData, Stimulus, StimulusType};
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    let handled = engine.dispatch_think_with_drain(
+        sim,
+        npc_id,
+        &Stimulus::new(StimulusType::EventDone),
+        &AiContext::default(),
+        &AiPerTickData::stub(),
+        &LevelAssets::new(),
+    );
+
+    assert!(!handled);
+    assert!(
+        engine
+            .get_entity(npc_id)
+            .is_some_and(|entity| entity.ai_controller().is_none()),
+        "the unhandled no-op must not fabricate or mutate an AI controller"
+    );
+}
+
+#[test]
 fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
     use super::ai::{NpcPostDetectionTailPhase as Tail, capture_npc_post_detection_tail_phases};
 
