@@ -16,6 +16,10 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
+- Ordinary actor movement and evidenced rider movement arms run inside the
+  live legacy-slot Actor owner coordinator. `movement.rs` prepares only
+  immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
+  completion, and callback work closes per owner before ActionChange/tails.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -103,6 +107,12 @@ are:
 
 Where evidence is incomplete, leave a precise parity TODO that names the
 missing source or unresolved coordinate/ordering boundary.
+
+`tick_zone_occupants` remains a documented Rust reconciliation boundary after
+the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
+establish it as actor-owned work; moving it per owner requires separate source
+evidence. Unsupported action arms and active strike/bow/ability ownership also
+remain PA-013 debt.
 
 ## Validation ladder
 

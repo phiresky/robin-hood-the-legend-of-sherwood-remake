@@ -123,6 +123,7 @@ pub(super) enum ActorOwnerEnvelopePhase {
     Patrol(EntityId),
     HumanPrelude(EntityId),
     BaseActor(EntityId),
+    MovementExecute(EntityId),
     HumanNoise(EntityId),
     HumanTiredness(EntityId),
     PcTail(EntityId),
@@ -1640,8 +1641,7 @@ impl EngineInner {
         }
 
         // ── Per-frame movement tick ─────────────────────────────
-        // Advance all entities that have active paths.
-        let (arrived_entities, galopp_entities) = self.tick_entity_movement(sim, assets);
+        // Actor movement runs later, inside the live legacy-slot owner walk.
 
         // RHElementMobile masters precede their RHElementFXMasked children in
         // the original creation-ordered Hourglass loop. Advance the shipped
@@ -1687,33 +1687,8 @@ impl EngineInner {
         // `quit_swordfight_with_far_opponents` is called ONLY during
         // walking-with-sword movement, NOT for stationary entities.
         // Only check entities actively moving in sword state.
-        {
-            let ids_to_check: Vec<EntityId> = self
-                .world
-                .entities
-                .humans()
-                .filter_map(|(entity_id, e)| {
-                    let entity_id: EntityId = entity_id.into();
-                    let h = e.human_data()?;
-                    if h.opponents.is_empty() {
-                        return None;
-                    }
-                    let a = e.actor_data()?;
-                    // Only check during active sword movement.
-                    if !matches!(
-                        a.action_state,
-                        crate::element::ActionState::MovingSword
-                            | crate::element::ActionState::MovingFastSword
-                    ) {
-                        return None;
-                    }
-                    Some(entity_id)
-                })
-                .collect();
-            for eid in ids_to_check {
-                self.quit_swordfight_with_far_opponents(sim, assets, eid);
-            }
-        }
+        // Owned by the selected sword-movement Execute arm in
+        // `tick_entity_movement_owner`.
 
         // ── PC sword-walk pinch abort ───────────────────────────
         // During `WalkingWithSword` / `RunningWithSword`, after the
@@ -1725,65 +1700,26 @@ impl EngineInner {
         // `element_impossible` itself silently no-ops when the
         // element is `NonInterruptable`, which is the desired
         // behaviour.
-        {
-            let pinch_aborts: Vec<(crate::sequence::SequenceId, usize)> = self
-                .world
-                .entities
-                .pcs()
-                .filter_map(|(eid, e)| {
-                    let eid: EntityId = eid.into();
-                    let a = &e.actor;
-                    if !matches!(
-                        a.action_state,
-                        crate::element::ActionState::MovingSword
-                            | crate::element::ActionState::MovingFastSword
-                    ) {
-                        return None;
-                    }
-                    let seq_id = a.active_movement.sequence_id?;
-                    let elem_idx = a.active_movement.element_index;
-                    if !e.element.sprite.position_iface.is_moving_map() {
-                        return None;
-                    }
-                    if !crate::engine::melee::enemies_are_blocking_my_movement(
-                        &self.world.entities,
-                        eid,
-                    ) {
-                        return None;
-                    }
-                    Some((seq_id, elem_idx))
-                })
-                .collect();
-            for (seq_id, elem_idx) in pinch_aborts {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-            }
-        }
+        // Owned by the selected PC sword-movement Execute arm too.
 
         // ── Dispatch EventReachPoint to NPCs that just finished walking ──
         // Fires `Think(EVENT_REACHPOINT)` when a MOVE sequence
         // element terminates.
-        if !arrived_entities.is_empty() {
-            self.dispatch_reach_point_events(sim, assets, &arrived_entities);
-        }
 
         // ── Dispatch EventGaloppLoopEnd to riders with RIDER_CHARGE flag ──
         // When a rider's running animation reaches half/end frame
         // with RIDER_CHARGE, fire `Think(EVENT_GALOPP_LOOP_END)` so
         // the AI can check whether to begin the actual charge pass.
-        if !galopp_entities.is_empty() {
-            self.dispatch_galopp_loop_events(sim, assets, &galopp_entities);
-        }
 
         // ── Per-frame zone occupant update ─────────────────────
-        // After movement, check actors against script zone polygons.
+        // Separate Rust reconciliation boundary: the cited Original actor
+        // Execute arms do not establish zone occupancy as owner-local work.
         // Fires EnterZone/ExitZone on zone scripts when occupancy changes.
         self.tick_zone_occupants(sim, assets);
 
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
-        // Moving actors are animated inside tick_entity_movement(sim, ).
+        // Moving actors are animated inside their live owner Execute arm.
         // Advance line-jump sequences: interpolate 3D position for
         // actors currently mid-jump.  Runs before the animation tick
         // so the sprite drawn this frame reflects the new position.
@@ -1888,7 +1824,7 @@ impl EngineInner {
         assets: &LevelAssets,
         mut non_actor_slot: impl FnMut(&mut Self, EntityId),
         mut before_actor: impl FnMut(&mut Self, EntityId),
-        mut after_execute_callbacks: impl FnMut(&mut Self, EntityId),
+        mut execute_owner_arm: impl FnMut(&mut Self, EntityId),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
         let mut slot = 0;
@@ -1943,12 +1879,38 @@ impl EngineInner {
                         entity_id,
                     ));
 
+                    let movement_execute_selected = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(seq_id, elem_idx)| {
+                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                        })
+                        .is_some_and(|element| {
+                            element.data.is_movement()
+                                && element.current_order().is_some()
+                                && !matches!(
+                                    element.command,
+                                    crate::element::Command::WaitTimer
+                                        | crate::element::Command::WaitFreeLift
+                                )
+                        });
+                    #[cfg(test)]
+                    observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
+                        entity_id,
+                    ));
+                    execute_owner_arm(self, entity_id);
+
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
                         entity_id,
                     ));
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                        self.tick_actor_animation_for(sim, assets, entity_id);
+                        if movement_execute_selected {
+                            (Vec::new(), Default::default(), None)
+                        } else {
+                            self.tick_actor_animation_for(sim, assets, entity_id)
+                        };
                     for injured_id in combat_injury_terminated.iter().copied() {
                         self.dispatch_combat_injury_think_for_actor_hourglass(
                             sim, injured_id, assets,
@@ -1983,8 +1945,6 @@ impl EngineInner {
                                 )
                             });
                     }
-
-                    after_execute_callbacks(self, entity_id);
 
                     // Original Actor::Hourglass modifies the just-produced
                     // Execute result for WAIT_TIMER / WAIT_FREE_LIFT before
@@ -2057,6 +2017,7 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) -> Vec<EntityId> {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
+        let prepared_movement = self.prepare_movement_frame();
         let mut processed_projectiles = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
@@ -2111,7 +2072,9 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |_, _| {},
+            |engine, owner| {
+                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement)
+            },
             |engine, owner| {
                 let is_human = engine
                     .world
