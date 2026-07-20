@@ -839,7 +839,13 @@ fn clear_all_pending_clears_every_outbox_barrier() {
     ai.outbox
         .reentrant
         .state_change_notifications
-        .push((AiState::Seeking, AiStateChangeSource::SelfActor));
+        .push(AiStateChangeNotification {
+            outgoing_state: AiState::Default,
+            outgoing_substate: Substate::DefaultOnPost,
+            incoming_state: AiState::Seeking,
+            incoming_substate: Substate::SeekingHeardsteps,
+            source: AiStateChangeSource::SelfActor,
+        });
     ai.outbox.reentrant.waypoint_script_reach_point =
         Some((PathId::new(2).expect("non-sentinel path"), 3));
 

@@ -52,8 +52,8 @@ mod effects;
 pub(crate) use effects::{AiActorCoreEffects, AiActorPreemptionEffects};
 pub use effects::{
     AiActorOutbox, AiDetectionOutbox, AiMusicOutbox, AiOutbox, AiPatrolOutbox, AiRecoveryOutbox,
-    AiReentrantOutbox, AiSpeechOutbox, ArcheryReservationRelease, AttentiveModeEffect,
-    GuardedPcEffect, InitStateSideEffects, ReservedShootingPoint,
+    AiReentrantOutbox, AiSpeechOutbox, AiStateChangeNotification, ArcheryReservationRelease,
+    AttentiveModeEffect, GuardedPcEffect, InitStateSideEffects, ReservedShootingPoint,
 };
 
 mod controller;

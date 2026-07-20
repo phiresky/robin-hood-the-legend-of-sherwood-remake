@@ -4446,6 +4446,10 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        // Direct engine-owned AI calls also enter this drain. Close the
+        // SetState callback boundary before consuming halt/effect/order work.
+        self.drain_ai_state_change_notifications_for(sim, assets, npc_id);
+
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.
@@ -7664,7 +7668,9 @@ impl EngineInner {
             // `drain_pending_for_npc` launches the first order barrier in its
             // original position. Close the boundary again because later
             // effect application and civilian handlers share the same base
-            // order outbox and must not leak into a global batch.
+            // order outbox. Owner-local SetState notifications are also part
+            // of this fixed point, so late script-seek callbacks cannot leak
+            // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(npc_id);
 
             // EventViewStandardProcedure calls HeyFolksLookThere directly in
@@ -7712,7 +7718,9 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
+                ai.outbox.actor.has_boundary_work()
+                    || !ai.outbox.reentrant.self_stimuli.is_empty()
+                    || !ai.outbox.reentrant.state_change_notifications.is_empty()
             };
             if !still_pending {
                 break;
@@ -8169,7 +8177,9 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("direct-drain NPC {} has no AI controller", npc_id.index())
                     });
-                ai.outbox.actor.has_boundary_work() || !ai.outbox.reentrant.self_stimuli.is_empty()
+                ai.outbox.actor.has_boundary_work()
+                    || !ai.outbox.reentrant.self_stimuli.is_empty()
+                    || !ai.outbox.reentrant.state_change_notifications.is_empty()
             };
             if !still_pending {
                 break;

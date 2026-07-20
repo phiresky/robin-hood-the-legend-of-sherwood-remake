@@ -87,8 +87,25 @@ pub struct AiDetectionOutbox {
 pub struct AiReentrantOutbox {
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<StimulusType>,
-    pub state_change_notifications: Vec<(AiState, AiStateChangeSource)>,
+    pub state_change_notifications: Vec<AiStateChangeNotification>,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
+}
+
+/// One owner-local `SetState` script notification.
+///
+/// The AI method has to finish its pure-Rust tail before releasing its entity
+/// borrow, so the engine records both sides of the transition. The callback
+/// barrier temporarily restores `outgoing_*`, invokes `FilterAIEvent`, then
+/// re-resolves the typed AI owner and commits `incoming_*`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct AiStateChangeNotification {
+    pub outgoing_state: AiState,
+    pub outgoing_substate: Substate,
+    pub incoming_state: AiState,
+    pub incoming_substate: Substate,
+    pub source: AiStateChangeSource,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -256,9 +273,11 @@ pub(crate) struct AiActorCoreEffects {
 
 impl AiActorOutbox {
     /// Whether an owner-local synchronous drain has more actor work to apply.
-    /// Speech/state-script channels intentionally live outside this outbox and
-    /// remain explicit PA-013 audit debt. `blink_enemy_specific` is also
-    /// intentionally excluded: it belongs to the observer's next
+    /// Speech intentionally lives outside this outbox. State-script
+    /// notifications live in the sibling `AiReentrantOutbox` queue and the
+    /// owner fixed-point predicates check them separately; only their exact
+    /// intra-`SetState` placement remains PA-013 debt. `blink_enemy_specific`
+    /// is also intentionally excluded: it belongs to the observer's next
     /// pre-detection creation slot and is consumed only by
     /// `tick_pending_specific_enemy_blinks_for_npc`.
     pub(crate) fn has_boundary_work(&self) -> bool {

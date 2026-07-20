@@ -1788,6 +1788,9 @@ impl EngineInner {
                                 &ctx,
                             );
                         }
+                        // This branch returns immediately after GoTo; close the
+                        // owner-local callback boundary before the caller resumes.
+                        self.drain_ai_state_change_notifications_for(sim, assets, victim_id);
                         tracing::debug!(
                             ?victim_id,
                             ?attacker_id,
@@ -1837,6 +1840,11 @@ impl EngineInner {
                         crate::ai::AiState::Attacking,
                         crate::ai::Substate::AttackingSwordfightParade,
                     );
+                }
+                self.drain_ai_state_change_notifications_for(sim, assets, victim_id);
+                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
+                {
                     ai.base
                         .launch_timer(strike_frames, self.control.frame_counter);
                 }
@@ -1865,6 +1873,7 @@ impl EngineInner {
                     ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
                     ai.begin_special_strike();
                 }
+                self.drain_ai_state_change_notifications_for(sim, assets, victim_id);
 
                 // Launch counter-strike sequence
                 let counter_cmd = counter_strike.to_command();

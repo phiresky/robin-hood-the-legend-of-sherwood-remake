@@ -21,8 +21,8 @@
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorData, ActorPc, ActorSoldier, AiBrain, ElementData, ElementKind, Entity, EntityId,
-    HumanData, NpcData, PcData, Posture, SoldierData,
+    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementData,
+    ElementKind, Entity, EntityId, HumanData, NpcData, PcData, Posture, SoldierData,
 };
 use crate::engine::EngineInner;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -455,10 +455,22 @@ fn q_aff1_native_get_return(dst: u16) -> Quad {
     }
 }
 
+fn q_iadd(dst: u16, a: u16, b: u16) -> Quad {
+    let mut ops = [0u8; 8];
+    ops[0..2].copy_from_slice(&dst.to_le_bytes());
+    ops[2..4].copy_from_slice(&a.to_le_bytes());
+    ops[4..6].copy_from_slice(&b.to_le_bytes());
+    Quad {
+        operation: Opcode::Aff2IAdd as u8,
+        operands: ops,
+    }
+}
+
 const TMP1: u16 = 0xC004;
 const TMP2: u16 = 0xC008;
 const TMP3: u16 = 0xC00C;
 const TMP4: u16 = 0xC010;
+const TMP5: u16 = 0xC014;
 
 /// Build an SCB with two classes:
 ///  - `OuterCaller::FilterAIEvent(prototype, source, event)` invokes
@@ -2566,4 +2578,666 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
     );
 
     engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), actor);
+}
+
+// ───────── Owner-local SetState notifications ─────────
+
+fn make_scripted_civilian(script_class: &str) -> Entity {
+    Entity::Civilian(ActorCivilian {
+        element: ElementData {
+            kind: ElementKind::ActorCivilian,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        },
+        actor: ActorData {
+            script_class: script_class.into(),
+            ..ActorData::default()
+        },
+        human: HumanData::default(),
+        npc: NpcData {
+            life_points: 50,
+            ai_brain: AiBrain::Friendly(Box::default()),
+            ..NpcData::default()
+        },
+        civilian: CivilianData::default(),
+    })
+}
+
+fn q_set_custom(actor: u16, index: u16, value: u16) -> [Quad; 4] {
+    [
+        q_native_param(actor),
+        q_native_param(index),
+        q_native_param(value),
+        q_native_call(crate::natives::NativeFn::SetCustomNPCValue as u32),
+    ]
+}
+
+/// A real SCB FilterAIEvent body which records source/code, observes
+/// GetAIState/GetAIAlertStatus through natives, preserves FIFO codes in custom
+/// slots 4+, optionally mutates its own AI state, and can mutate a later owner.
+fn state_change_filter_class(
+    class_name: &str,
+    mutate_state: bool,
+    mutate_other: Option<i32>,
+) -> ClassEntry {
+    let mut quads = vec![
+        q_begin_function(0, 6),
+        q_aff1_get_param(TMP0, 0),
+        q_aff1_get_param(TMP1, 4),
+        q_native_call(crate::natives::NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(TMP2),
+        q_aff0_iconstant(TMP3, 0),
+    ];
+    quads.extend(q_set_custom(TMP2, TMP3, TMP0));
+    quads.push(q_aff0_iconstant(TMP3, 1));
+    quads.extend(q_set_custom(TMP2, TMP3, TMP1));
+
+    quads.extend([
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::GetAIState as u32),
+        q_aff1_native_get_return(TMP4),
+        q_aff0_iconstant(TMP3, 2),
+    ]);
+    quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+    quads.extend([
+        q_native_param(TMP2),
+        q_native_call(crate::natives::NativeFn::GetAIAlertStatus as u32),
+        q_aff1_native_get_return(TMP4),
+        q_aff0_iconstant(TMP3, 3),
+    ]);
+    quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+
+    // Slot 9 is a caller-seeded next-index cursor (initially 4). Record each
+    // event code at that index, then increment the cursor.
+    quads.extend([
+        q_aff0_iconstant(TMP3, 9),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP4),
+    ]);
+    quads.extend(q_set_custom(TMP2, TMP4, TMP1));
+    quads.extend([q_aff0_iconstant(TMP5, 1), q_iadd(TMP4, TMP4, TMP5)]);
+    quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+
+    // Record a cross-owner marker before any optional mutation. The observer
+    // copies slot 8 to slot 7, making creation-order visibility explicit.
+    quads.extend([
+        q_aff0_iconstant(TMP3, 8),
+        q_native_param(TMP2),
+        q_native_param(TMP3),
+        q_native_call(crate::natives::NativeFn::GetCustomNPCValue as u32),
+        q_aff1_native_get_return(TMP4),
+        q_aff0_iconstant(TMP3, 7),
+    ]);
+    quads.extend(q_set_custom(TMP2, TMP3, TMP4));
+
+    if mutate_state {
+        quads.extend([
+            q_aff0_iconstant(TMP3, crate::ai::AiState::Fleeing as i32),
+            q_native_param(TMP2),
+            q_native_param(TMP3),
+            q_native_call(crate::natives::NativeFn::SetAIState as u32),
+        ]);
+    }
+    if let Some(other) = mutate_other {
+        quads.extend([
+            q_aff0_iconstant(TMP3, other),
+            q_aff0_iconstant(TMP4, 8),
+            q_aff0_iconstant(TMP5, 77),
+        ]);
+        quads.extend(q_set_custom(TMP3, TMP4, TMP5));
+    }
+
+    // State-change notification return values are ignored; zero is the
+    // strongest regression sentinel because StartThink would reject it.
+    quads.extend([
+        q_aff0_iconstant(TMP0, 0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ]);
+    ClassEntry {
+        source_file: "state_change_test.scs".into(),
+        class_name: class_name.into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![Function {
+            name: "FilterAIEvent".into(),
+            address: 0,
+            num_parameters: 3,
+            size_of_return_value: 4,
+            size_of_parameters: 12,
+            size_of_volatile: 0,
+            size_of_temporary: 24,
+        }],
+        quads,
+    }
+}
+
+fn state_change_scb(classes: Vec<ClassEntry>) -> ScbFile {
+    let mut all = vec![ClassEntry {
+        source_file: "state_change_test.scs".into(),
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![],
+        quads: vec![],
+    }];
+    all.extend(classes);
+    ScbFile {
+        version: crate::scb::SCB_VERSION,
+        classes: all,
+    }
+}
+
+fn install_state_change_script(engine: &mut EngineInner, scb: ScbFile) -> LevelAssets {
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.scripts.mission = Some(MissionScript::from_scb(scb).expect("state-change SCB builds"));
+    let assets = LevelAssets::new();
+    engine.attach_script_bindings(&assets);
+    assets
+}
+
+fn bind_state_change_actor(engine: &mut EngineInner, actor: EntityId, class_name: &str) -> i32 {
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
+    let sim = crate::sim_rng::test_context();
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
+        &mut engine.world.entities,
+        &mut engine.ai.global,
+        &mut engine.world.fast_grid,
+    );
+    assert!(
+        engine
+            .scripts
+            .mission
+            .as_mut()
+            .expect("state-change script installed")
+            .bind_actor(
+                handle,
+                class_name,
+                &mut engine.script_domains,
+                &capabilities,
+            )
+    );
+    engine
+        .world
+        .entities
+        .get_mut(actor)
+        .expect("bound state-change actor exists")
+        .npc_data_mut()
+        .expect("bound state-change actor is an NPC")
+        .custom_values[9] = 4;
+    handle
+}
+
+fn npc_custom_values(engine: &EngineInner, actor: EntityId) -> [i32; 10] {
+    engine
+        .world
+        .entities
+        .get(actor)
+        .expect("state-change actor exists")
+        .npc_data()
+        .expect("state-change actor is an NPC")
+        .custom_values
+}
+
+#[test]
+fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero() {
+    let mut engine = EngineInner::new();
+    let enemy = engine.add_entity(make_scripted_soldier("StateMutator"));
+    let enemy_handle = crate::natives::ScriptHandleCodec::actor_handle(enemy);
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class("StateMutator", true, None)]),
+    );
+    bind_state_change_actor(&mut engine, enemy, "StateMutator");
+
+    engine
+        .world
+        .entities
+        .get_mut(enemy)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .set_state(
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingHeardsteps,
+        );
+    engine.drain_ai_state_change_notifications_for(&crate::sim_rng::test_context(), &assets, enemy);
+
+    let values = npc_custom_values(&engine, enemy);
+    assert_eq!(values[0], enemy_handle, "Seeking source is ThisActor");
+    assert_eq!(values[1], 103);
+    assert_eq!(values[2], crate::ai::AiState::Default.to_script_code());
+    assert_eq!(values[4], 103, "the first FIFO slot records Seeking");
+    assert_eq!(values[9], 5, "exactly one callback ran");
+    let ai = engine
+        .world
+        .entities
+        .get(enemy)
+        .unwrap()
+        .enemy_ai()
+        .unwrap();
+    assert_eq!(ai.base.current_state, crate::ai::AiState::Seeking);
+    assert_eq!(
+        ai.base.current_substate,
+        crate::ai::Substate::SeekingHeardsteps
+    );
+    assert!(
+        ai.base.outbox.actor.begin_panic.is_some(),
+        "callback SetAIState mutation remains queued while outer incoming state wins"
+    );
+    assert!(
+        ai.base
+            .outbox
+            .reentrant
+            .state_change_notifications
+            .is_empty()
+    );
+}
+
+#[test]
+fn enemy_state_change_sources_and_same_substate_gate_match_original() {
+    let mut engine = EngineInner::new();
+    let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));
+    let target = engine.add_entity(make_pc(true));
+    let target_raw = target.index();
+    let target_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut engine, enemy, "StateRecorder");
+    let sim = crate::sim_rng::test_context();
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(enemy)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.base.primary_target = target_raw;
+        ai.set_state(
+            crate::ai::AiState::Attacking,
+            crate::ai::Substate::AttackingSwordfight,
+        );
+    }
+    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    assert_eq!(npc_custom_values(&engine, enemy)[0], target_handle);
+
+    engine
+        .world
+        .entities
+        .get_mut(enemy)
+        .unwrap()
+        .enemy_ai_mut()
+        .unwrap()
+        .set_state(
+            crate::ai::AiState::Attacking,
+            crate::ai::Substate::AttackingSwordfight,
+        );
+    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    assert_eq!(
+        npc_custom_values(&engine, enemy)[9],
+        5,
+        "same substate is silent"
+    );
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(enemy)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.base.primary_target = 0;
+        ai.set_state(
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+        );
+    }
+    engine.drain_ai_state_change_notifications_for(&sim, &assets, enemy);
+    let values = npc_custom_values(&engine, enemy);
+    assert_eq!(values[0], 0, "NULL primary target stays NULL");
+    assert_eq!(values[1], 106);
+    assert_eq!(values[9], 6);
+}
+
+#[test]
+fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state() {
+    let mut engine = EngineInner::new();
+    let friendly = engine.add_entity(make_scripted_civilian("FriendlyRecorder"));
+    let target = engine.add_entity(make_pc(true));
+    let target_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class(
+            "FriendlyRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut engine, friendly, "FriendlyRecorder");
+    let sim = crate::sim_rng::test_context();
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(friendly)
+            .unwrap()
+            .friendly_ai_mut()
+            .unwrap();
+        ai.base.primary_target = target.index();
+        ai.set_state(
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+        );
+    }
+    engine.drain_ai_state_change_notifications_for(&sim, &assets, friendly);
+    let first = npc_custom_values(&engine, friendly);
+    assert_eq!(first[0], target_handle);
+    assert_eq!(first[1], 106);
+    assert_eq!(first[2], crate::ai::AiState::Default.to_script_code());
+    assert_eq!(first[3], crate::ai::AlertLevel::Yellow as i32);
+
+    engine
+        .world
+        .entities
+        .get_mut(friendly)
+        .unwrap()
+        .friendly_ai_mut()
+        .unwrap()
+        .set_state(
+            crate::ai::AiState::Fleeing,
+            crate::ai::Substate::FleeingPanic,
+        );
+    engine.drain_ai_state_change_notifications_for(&sim, &assets, friendly);
+    let repeated = npc_custom_values(&engine, friendly);
+    assert_eq!(&repeated[4..6], &[106, 106]);
+    assert_eq!(repeated[9], 6, "Friendly notifies repeated transitions");
+}
+
+#[test]
+fn owner_state_change_fifo_preserves_every_transition() {
+    let mut engine = EngineInner::new();
+    let friendly = engine.add_entity(make_scripted_civilian("FriendlyRecorder"));
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class(
+            "FriendlyRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut engine, friendly, "FriendlyRecorder");
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(friendly)
+            .unwrap()
+            .friendly_ai_mut()
+            .unwrap();
+        ai.set_state(
+            crate::ai::AiState::Wondering,
+            crate::ai::Substate::WonderingWatching,
+        );
+        ai.set_state(
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingJustWatching,
+        );
+        ai.set_state(
+            crate::ai::AiState::Default,
+            crate::ai::Substate::DefaultOnPost,
+        );
+    }
+    engine.drain_ai_state_change_notifications_for(
+        &crate::sim_rng::test_context(),
+        &assets,
+        friendly,
+    );
+    let values = npc_custom_values(&engine, friendly);
+    assert_eq!(&values[4..7], &[102, 103, 101]);
+    assert_eq!(values[9], 7);
+    let ai = engine
+        .world
+        .entities
+        .get(friendly)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert_eq!(ai.current_state, crate::ai::AiState::Default);
+    assert_eq!(ai.current_substate, crate::ai::Substate::DefaultOnPost);
+}
+
+fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
+    let mut engine = EngineInner::new();
+    let mutator = engine.add_entity(make_scripted_soldier("CrossMutator"));
+    let observer = engine.add_entity(make_scripted_soldier("CrossObserver"));
+    let observer_handle = crate::natives::ScriptHandleCodec::actor_handle(observer);
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![
+            state_change_filter_class("CrossMutator", false, Some(observer_handle)),
+            state_change_filter_class("CrossObserver", false, None),
+        ]),
+    );
+    bind_state_change_actor(&mut engine, mutator, "CrossMutator");
+    bind_state_change_actor(&mut engine, observer, "CrossObserver");
+    for actor in [mutator, observer] {
+        engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .set_state(
+                crate::ai::AiState::Seeking,
+                crate::ai::Substate::SeekingJustWatching,
+            );
+    }
+    let sim = crate::sim_rng::test_context();
+    let order = if mutator_first {
+        [mutator, observer]
+    } else {
+        [observer, mutator]
+    };
+    for actor in order {
+        engine.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    }
+    npc_custom_values(&engine, observer)[7]
+}
+
+#[test]
+fn owner_local_callbacks_expose_only_prior_creation_slots() {
+    assert_eq!(run_cross_owner_state_change_order(true), 77);
+    assert_eq!(
+        run_cross_owner_state_change_order(false),
+        0,
+        "a later owner callback cannot retroactively change an earlier callback snapshot"
+    );
+}
+
+#[test]
+fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
+    let mut engine = EngineInner::new();
+    let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));
+    let assets = install_state_change_script(
+        &mut engine,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut engine, enemy, "StateRecorder");
+    let sim = crate::sim_rng::test_context();
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(enemy)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.base.set_ai_state(crate::ai::AiState::Attacking);
+        ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
+        ai.set_state(
+            crate::ai::AiState::Attacking,
+            crate::ai::Substate::AttackingSwordfightParade,
+        );
+    }
+    engine.drain_pending_for_npc(&sim, enemy, &assets);
+    let parade = npc_custom_values(&engine, enemy);
+    assert_eq!(parade[1], 104);
+    assert_eq!(parade[2], crate::ai::AiState::Attacking.to_script_code());
+    assert_eq!(parade[9], 5);
+
+    {
+        let ai = engine
+            .world
+            .entities
+            .get_mut(enemy)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
+        ai.begin_special_strike();
+    }
+    engine.drain_pending_for_npc(&sim, enemy, &assets);
+    let ai = engine
+        .world
+        .entities
+        .get(enemy)
+        .unwrap()
+        .enemy_ai()
+        .unwrap();
+    assert!(ai.pending_special_strike);
+    assert!(
+        ai.base
+            .outbox
+            .reentrant
+            .state_change_notifications
+            .is_empty()
+    );
+    assert_eq!(
+        npc_custom_values(&engine, enemy)[9],
+        5,
+        "same-substate special strike must not emit an Enemy callback"
+    );
+}
+
+#[test]
+fn unavailable_state_change_callbacks_are_consumed() {
+    fn queue_seeking(engine: &mut EngineInner, actor: EntityId) {
+        engine
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .set_state(
+                crate::ai::AiState::Seeking,
+                crate::ai::Substate::SeekingJustWatching,
+            );
+    }
+    fn assert_consumed(engine: &EngineInner, actor: EntityId) {
+        let ai = engine
+            .world
+            .entities
+            .get(actor)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert!(ai.outbox.reentrant.state_change_notifications.is_empty());
+        assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
+    }
+
+    let assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+
+    let mut no_mission = EngineInner::new();
+    let actor = no_mission.add_entity(make_scripted_soldier("StateRecorder"));
+    queue_seeking(&mut no_mission, actor);
+    no_mission.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    assert_consumed(&no_mission, actor);
+
+    let mut unbound = EngineInner::new();
+    let actor = unbound.add_entity(make_scripted_soldier("StateRecorder"));
+    let assets = install_state_change_script(
+        &mut unbound,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    queue_seeking(&mut unbound, actor);
+    unbound.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    assert_consumed(&unbound, actor);
+
+    let mut no_override = EngineInner::new();
+    let actor = no_override.add_entity(make_scripted_soldier("NoOverride"));
+    let assets = install_state_change_script(&mut no_override, build_scb());
+    bind_state_change_actor(&mut no_override, actor, "NoOverride");
+    queue_seeking(&mut no_override, actor);
+    no_override.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    assert_consumed(&no_override, actor);
+
+    let mut unscripted = EngineInner::new();
+    let actor = unscripted.add_entity(make_scripted_soldier(""));
+    let assets = install_state_change_script(
+        &mut unscripted,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut unscripted, actor, "StateRecorder");
+    queue_seeking(&mut unscripted, actor);
+    unscripted.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    assert_consumed(&unscripted, actor);
+    assert_eq!(
+        npc_custom_values(&unscripted, actor)[9],
+        4,
+        "bound VM does not bypass the owner's is_scripted gate"
+    );
+
+    let mut disabled = EngineInner::new();
+    let actor = disabled.add_entity(make_scripted_soldier("StateRecorder"));
+    let assets = install_state_change_script(
+        &mut disabled,
+        state_change_scb(vec![state_change_filter_class(
+            "StateRecorder",
+            false,
+            None,
+        )]),
+    );
+    bind_state_change_actor(&mut disabled, actor, "StateRecorder");
+    queue_seeking(&mut disabled, actor);
+    let mut config = crate::engine::SimConfig::default();
+    config.script_enabled = false;
+    let disabled_sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
+    disabled.drain_ai_state_change_notifications_for(&disabled_sim, &assets, actor);
+    assert_consumed(&disabled, actor);
+    assert_eq!(
+        npc_custom_values(&disabled, actor)[9],
+        4,
+        "disabled VM did not run"
+    );
 }

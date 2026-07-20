@@ -2,7 +2,6 @@
 
 use super::scroll_reveal::ScrollStatus;
 use super::*;
-use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
@@ -2347,110 +2346,223 @@ impl EngineInner {
         // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
         let doors = self.script_domains.interactables.doors.as_slice();
-        let ai_global = &mut self.ai.global;
-        let Some(entity) = self.world.entities.get_mut(entity_id) else {
-            return false;
+        let handled = {
+            let ai_global = &mut self.ai.global;
+            let Some(entity) = self.world.entities.get_mut(entity_id) else {
+                return false;
+            };
+            if let Some(enemy_ai) = entity.enemy_ai_mut() {
+                enemy_ai.think(
+                    sim,
+                    stimulus,
+                    ai_global,
+                    ctx,
+                    tick_data,
+                    Some(&self.world.fast_grid),
+                )
+            } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
+                friendly_ai.think(
+                    sim,
+                    stimulus,
+                    ai_global,
+                    ctx,
+                    tick_data,
+                    Some(&self.world.fast_grid),
+                    Some(doors),
+                )
+            } else {
+                return false;
+            }
         };
-        if let Some(enemy_ai) = entity.enemy_ai_mut() {
-            enemy_ai.think(
-                sim,
-                stimulus,
-                ai_global,
-                ctx,
-                tick_data,
-                Some(&self.world.fast_grid),
-            )
-        } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
-            friendly_ai.think(
-                sim,
-                stimulus,
-                ai_global,
-                ctx,
-                tick_data,
-                Some(&self.world.fast_grid),
-                Some(doors),
-            )
-        } else {
-            false
-        }
+
+        // `SetState` calls FilterAIEvent before any of the caller's deferred
+        // effects. The entity borrow above is the first point at which the
+        // engine can safely re-enter the actor VM.
+        self.drain_ai_state_change_notifications_for(sim, assets, entity_id);
+        handled
     }
 
-    /// Dispatch `FilterAIEvent` state-change notifications for NPCs
-    /// whose AI state changed this frame.
+    /// Drain one AI owner's queued `SetState` callbacks in FIFO order.
     ///
-    /// Called after the AI tick. `SetState()` calls
-    /// `FilterAIEvent(source, AI_STATE_CHANGE_TO_*)` for notification
-    /// (return value ignored).
-    ///
-    /// Each `set_state` queues a tuple onto
-    /// `AiBase::pending_state_change_notifications` synchronously.
-    /// We drain those queues in slot order here so multiple
-    /// transitions inside a single `think()` (e.g.
-    /// `Default → Wondering → Attacking`) each fire their own
-    /// notification — synchronous per-substate behaviour.
-    pub(crate) fn dispatch_ai_state_change_notifications(
+    /// Every queue entry is consumed even when scripts are disabled, no
+    /// mission is installed, the actor VM is unbound, or its class inherits
+    /// the default `FilterAIEvent`. Callback return values are informational
+    /// and deliberately ignored. A callback may append more transitions to
+    /// this same owner; those are observed without taking the whole queue.
+    /// The temporary outgoing restore covers only base state/substate: an
+    /// Enemy SetState tail already applied before this callback remains visible.
+    /// Friendly alert is intentionally pre-callback, matching Original.
+    pub(crate) fn drain_ai_state_change_notifications_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        owner: crate::element::EntityId,
     ) {
-        if self.scripts.mission.is_none() {
-            return;
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum OwnerAiKind {
+            Enemy,
+            Friendly,
         }
 
-        // Collect state changes: (npc_handle, source_handle, state_change_code).
-        let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (id, entity) in self.world.entities.npcs_mut() {
-            let Some(actor) = entity.actor_data() else {
-                continue;
-            };
-            let is_scripted = !actor.script_class.is_empty();
-            let Some(ai) = entity.ai_controller_mut() else {
-                continue;
-            };
-            // Always drain — even unscripted actors should not
-            // accumulate stale entries for the next tick.
-            let drained = std::mem::take(&mut ai.outbox.reentrant.state_change_notifications);
-            if !is_scripted {
-                continue;
-            }
-            let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
-            for (state, source_kind) in drained {
-                let code = state.state_change_event_code();
-                let source = match source_kind {
-                    AiStateChangeSource::SelfActor => handle,
-                    AiStateChangeSource::Null => 0,
-                    AiStateChangeSource::Human(h) => {
-                        crate::natives::ScriptHandleCodec::actor_handle(
-                            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
-                        )
+        const MAX_NOTIFICATIONS: usize = 64;
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
+
+        for callback_index in 0..MAX_NOTIFICATIONS {
+            let (notification, owner_kind, is_scripted) = {
+                let Some(entity) = self.world.entities.get_mut(owner) else {
+                    if callback_index == 0 {
+                        return;
+                    }
+                    panic!(
+                        "AI SetState notification owner {} disappeared before callback {}",
+                        owner.index(),
+                        callback_index
+                    );
+                };
+                let owner_kind = match entity {
+                    Entity::Soldier(s)
+                        if matches!(&s.npc.ai_brain, crate::element::AiBrain::Enemy(_)) =>
+                    {
+                        OwnerAiKind::Enemy
+                    }
+                    Entity::Soldier(_) => panic!(
+                        "AI SetState notification owner {} has a non-Enemy brain",
+                        owner.index()
+                    ),
+                    Entity::Civilian(c)
+                        if matches!(&c.npc.ai_brain, crate::element::AiBrain::Friendly(_)) =>
+                    {
+                        OwnerAiKind::Friendly
+                    }
+                    Entity::Civilian(_) => panic!(
+                        "AI SetState notification owner {} has a non-Friendly brain",
+                        owner.index()
+                    ),
+                    _ => {
+                        if callback_index == 0 {
+                            return;
+                        }
+                        panic!(
+                            "AI SetState notification owner {} drifted to non-NPC type before callback {}",
+                            owner.index(),
+                            callback_index
+                        );
                     }
                 };
-                notifications.push((handle, source, code));
-            }
-        }
+                let Some(ai) = entity.ai_controller_mut() else {
+                    if callback_index == 0 {
+                        return;
+                    }
+                    panic!(
+                        "AI SetState notification owner {} lost its {:?} AI before callback {}",
+                        owner.index(),
+                        owner_kind,
+                        callback_index
+                    );
+                };
+                if ai.outbox.reentrant.state_change_notifications.is_empty() {
+                    return;
+                }
+                let notification = ai.outbox.reentrant.state_change_notifications.remove(0);
+                ai.set_ai_state(notification.outgoing_state);
+                ai.current_substate = notification.outgoing_substate;
+                let is_scripted = entity
+                    .actor_data()
+                    .is_some_and(|actor| !actor.script_class.is_empty());
+                (notification, owner_kind, is_scripted)
+            };
 
-        if notifications.is_empty() {
-            return;
-        }
-
-        for (handle, source, code) in &notifications {
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Actor(*handle),
-                "FilterAIEvent",
-                &[*source, *code],
-                crate::natives::ScriptCallFrame::actor(*handle),
-            ) {
+            let source = match notification.source {
+                crate::ai::AiStateChangeSource::SelfActor => handle,
+                crate::ai::AiStateChangeSource::Null => 0,
+                crate::ai::AiStateChangeSource::Human(raw_index) => {
+                    crate::natives::ScriptHandleCodec::actor_handle_from_index(raw_index as usize)
+                }
+            };
+            let code = notification.incoming_state.state_change_event_code();
+            let should_call = is_scripted
+                && sim.config().script_enabled
+                && self
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .is_some_and(|script| script.actor_has_function(handle, "FilterAIEvent"));
+            if should_call
+                && let Err(error) = self.call_script_vm(
+                    sim,
+                    assets,
+                    ScriptVmKey::Actor(handle),
+                    "FilterAIEvent",
+                    &[source, code],
+                    crate::natives::ScriptCallFrame::actor(handle),
+                )
+            {
                 tracing::warn!(
-                    actor_handle = *handle,
-                    source_handle = *source,
-                    event_code = *code,
+                    actor_handle = handle,
+                    source_handle = source,
+                    event_code = code,
                     %error,
-                    "FilterAIEvent callback failed"
+                    "AI SetState FilterAIEvent callback failed"
                 );
             }
+
+            // Do not retain any entity/AI borrow across the VM call. The
+            // callback may mutate the AI; original SetState's later raw field
+            // assignment wins over those changes.
+            let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
+                panic!(
+                    "AI SetState notification owner {} disappeared during callback {} ({:?} -> {:?})",
+                    owner.index(),
+                    callback_index,
+                    notification.outgoing_state,
+                    notification.incoming_state
+                )
+            });
+            let ai = match owner_kind {
+                OwnerAiKind::Enemy => {
+                    &mut entity
+                        .enemy_ai_mut()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "AI SetState notification owner {} lost EnemyAi during callback {} ({:?} -> {:?})",
+                                owner.index(),
+                                callback_index,
+                                notification.outgoing_state,
+                                notification.incoming_state
+                            )
+                        })
+                        .base
+                }
+                OwnerAiKind::Friendly => {
+                    &mut entity
+                        .friendly_ai_mut()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "AI SetState notification owner {} lost FriendlyAi during callback {} ({:?} -> {:?})",
+                                owner.index(),
+                                callback_index,
+                                notification.outgoing_state,
+                                notification.incoming_state
+                            )
+                        })
+                        .base
+                }
+            };
+            ai.set_ai_state(notification.incoming_state);
+            ai.current_substate = notification.incoming_substate;
         }
+
+        let still_pending = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .is_some_and(|ai| !ai.outbox.reentrant.state_change_notifications.is_empty());
+        assert!(
+            !still_pending,
+            "AI SetState notification owner {} exceeded the recursive FIFO bound of {MAX_NOTIFICATIONS}",
+            owner.index()
+        );
     }
 
     // ─── Campaign integration ────────────────────────────────────

@@ -2876,6 +2876,7 @@ impl EngineInner {
             {
                 ai.begin_special_strike();
             }
+            self.drain_ai_state_change_notifications_for(sim, assets, attack.soldier_id);
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.
