@@ -2179,7 +2179,9 @@ impl Entity {
             Self::Target(_) => (ElementKind::Target, OriginalHourglassClass::Target),
             Self::Bonus(bonus) => match bonus.object.object_type {
                 ObjectType::Ale => (ElementKind::ObjectOther, OriginalHourglassClass::Ale),
-                ObjectType::Cape => (ElementKind::ObjectOther, OriginalHourglassClass::Cape),
+                // RHElementCape.cpp constructs RHElementObject with
+                // OBJECT_BONUS even though Cape has its own virtual class.
+                ObjectType::Cape => (ElementKind::ObjectBonus, OriginalHourglassClass::Cape),
                 ObjectType::BonusAmulet
                 | ObjectType::BonusAle
                 | ObjectType::BonusApple
@@ -4092,7 +4094,7 @@ mod tests {
             ),
             (
                 Entity::Bonus(ElementBonus {
-                    element: element_data(ElementKind::ObjectOther),
+                    element: element_data(ElementKind::ObjectBonus),
                     object: object_data(ObjectType::Cape),
                 }),
                 Class::Cape,

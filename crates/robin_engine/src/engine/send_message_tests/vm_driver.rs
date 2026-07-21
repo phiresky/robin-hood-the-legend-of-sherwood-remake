@@ -59,10 +59,7 @@ fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
 fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Entity {
     Entity::Bonus(crate::element::ElementBonus {
         element: ElementData {
-            kind: if matches!(
-                object_type,
-                crate::element::ObjectType::Ale | crate::element::ObjectType::Cape
-            ) {
+            kind: if object_type == crate::element::ObjectType::Ale {
                 ElementKind::ObjectOther
             } else {
                 ElementKind::ObjectBonus
