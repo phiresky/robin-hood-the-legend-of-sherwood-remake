@@ -17,6 +17,42 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
 #[cfg(test)]
+thread_local! {
+    static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn observe_projectile_derived_tail(
+    id: EntityId,
+    object_type: crate::element::ObjectType,
+) {
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((id, object_type));
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn capture_projectile_derived_tails<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, crate::element::ObjectType)>) {
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        assert!(trace.borrow().is_none(), "tail capture is not re-entrant");
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let tails = PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("tail capture must remain active")
+    });
+    (result, tails)
+}
+
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NpcHourglassPhase {
     SoldierPrelude,
@@ -2254,23 +2290,37 @@ impl EngineInner {
             }
             _ => {}
         }
-        if !matches!(entity, Entity::Projectile(_) | Entity::Net(_)) {
+        let dispatch = match entity {
+            Entity::Projectile(projectile) => Some((
+                true,
+                projectile.object.object_type,
+                projectile.element.active,
+            )),
+            Entity::Net(net) => Some((false, net.object.object_type, net.element.active)),
+            _ => None,
+        };
+        let Some((is_projectile, object_type, base_active)) = dispatch else {
             return;
-        }
-        if !entity.is_active() {
-            self.remove_entity(id);
-            return;
-        }
-        match entity {
-            Entity::Projectile(projectile) => match projectile.object.object_type {
-                crate::element::ObjectType::Arrow => self.tick_existing_projectile(sim, assets, id),
+        };
+        let retain = if is_projectile {
+            match object_type {
+                crate::element::ObjectType::Arrow => {
+                    if base_active {
+                        self.tick_existing_projectile(sim, assets, id);
+                    }
+                    base_active
+                }
                 crate::element::ObjectType::Apple | crate::element::ObjectType::Stone => {
-                    self.tick_existing_projectile(sim, assets, id);
+                    if base_active {
+                        self.tick_existing_projectile(sim, assets, id);
+                    }
                     let frozen = self.actors_frozen();
                     if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
                         && !projectile.projectile.flying
                         && !frozen
                     {
+                        #[cfg(test)]
+                        observe_projectile_derived_tail(id, object_type);
                         let motion = projectile.element.sprite.perform_virgin_increment(
                             sim,
                             crate::sprite::FrameProgression::Default,
@@ -2278,26 +2328,37 @@ impl EngineInner {
                         projectile.element.active =
                             motion != crate::sprite::MotionState::Terminated;
                     }
+                    // Apple/Stone return the Projectile base result even
+                    // though their grounded sprite tail may have changed
+                    // active state afterward.
+                    base_active
                 }
                 crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
                     self.tick_purse_or_coin(sim, assets, id)
                 }
                 crate::element::ObjectType::WaspNest
                 | crate::element::ObjectType::BonusWaspNest
-                | crate::element::ObjectType::Wasp => self.tick_wasp_nest_or_wasp(sim, assets, id),
+                | crate::element::ObjectType::Wasp => {
+                    self.tick_wasp_nest_or_wasp(sim, assets, id);
+                    base_active
+                }
                 unsupported => panic!(
                     "projectile entity {id:?} has unsupported ObjectType::{unsupported:?}; TODO(PA-013): map its Original concrete class"
                 ),
-            },
-            Entity::Net(net) => match net.object.object_type {
+            }
+        } else {
+            match object_type {
                 crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet => {
-                    self.tick_net(sim, assets, id)
+                    self.tick_net(sim, assets, id);
+                    true
                 }
                 unsupported => panic!(
                     "net entity {id:?} has unsupported ObjectType::{unsupported:?}; expected Net or BonusNet"
                 ),
-            },
-            _ => {}
+            }
+        };
+        if !retain && self.get_entity(id).is_some() {
+            self.remove_entity(id);
         }
     }
 

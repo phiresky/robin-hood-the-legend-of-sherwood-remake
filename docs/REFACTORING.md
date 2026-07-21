@@ -26,8 +26,9 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   subtype base/derived work closes once at its owner slot, including appended
   same-frame children and primer/live-slot double advancement. Bow dispatch is
   a true single-owner operation keyed by the entry sequence/element/order; it
-  does not park other actors' active shots. Projectile validation and inactive
-  removal likewise occur only at the fused live slot, not the legacy pre-pass.
+  does not park other actors' active shots. Projectile validation and each
+  subtype's virtual return/removal decision likewise occur only at the fused
+  live slot, after any required derived tail, not in the legacy pre-pass.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split

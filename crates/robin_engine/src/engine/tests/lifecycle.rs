@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::tick::capture_projectile_derived_tails;
 
 #[test]
 fn scrolling_table_generation() {
@@ -571,6 +572,120 @@ fn inactive_unsupported_net_mapping_panics_before_owner_slot_removal() {
         &LevelAssets::new(),
         &mut DevState::default(),
     );
+}
+
+#[test]
+fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementNet, ElementProjectile, ObjectData, ObjectType,
+    };
+
+    fn projectile(object_type: ObjectType, flying: bool) -> Entity {
+        Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                active: false,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: crate::element::ProjectileData {
+                flying,
+                ..Default::default()
+            },
+        })
+    }
+
+    let mut engine = EngineInner::new();
+    let apple = engine.add_entity(projectile(ObjectType::Apple, false));
+    let stone = engine.add_entity(projectile(ObjectType::Stone, false));
+    let grounded_purse = engine.add_entity(projectile(ObjectType::Purse, false));
+    let flying_purse = engine.add_entity(projectile(ObjectType::Purse, true));
+    let grounded_coin = engine.add_entity(projectile(ObjectType::Coin, false));
+    let flying_coin = engine.add_entity(projectile(ObjectType::Coin, true));
+    let grounded_net = engine.add_entity(Entity::Net(ElementNet {
+        element: ElementData {
+            kind: ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Net,
+            animation: Animation::NetUnfolding,
+            ..Default::default()
+        },
+        projectile: crate::element::ProjectileData {
+            flying: false,
+            ..Default::default()
+        },
+        net: Default::default(),
+    }));
+    let flying_net = engine.add_entity(Entity::Net(ElementNet {
+        element: ElementData {
+            kind: ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Net,
+            animation: Animation::ObjectFlying,
+            ..Default::default()
+        },
+        projectile: crate::element::ProjectileData {
+            flying: true,
+            ..Default::default()
+        },
+        net: crate::element::NetData {
+            time_till_unfolding: 1,
+            ..Default::default()
+        },
+    }));
+    let assets = LevelAssets::new();
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let (_, tails) = capture_projectile_derived_tails(|| {
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+        })
+    });
+
+    assert!(engine.get_entity(apple).is_none());
+    assert!(engine.get_entity(stone).is_none());
+    assert!(engine.get_entity(flying_purse).is_none());
+    assert!(engine.get_entity(grounded_purse).is_some());
+    assert!(engine.get_entity(grounded_coin).is_some());
+    assert!(engine.get_entity(flying_coin).is_some());
+    assert!(engine.get_entity(grounded_net).is_some());
+    assert!(engine.get_entity(flying_net).is_some());
+    assert_eq!(
+        tails,
+        vec![
+            (apple, ObjectType::Apple),
+            (stone, ObjectType::Stone),
+            (grounded_purse, ObjectType::Purse),
+            (flying_purse, ObjectType::Purse),
+            (grounded_coin, ObjectType::Coin),
+            (flying_coin, ObjectType::Coin),
+        ],
+        "each inactive derived sprite tail must run before its virtual bool controls removal"
+    );
+    for id in [grounded_purse, grounded_coin] {
+        let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(projectile.object.animation, Animation::ObjectBursting);
+    }
+    let Entity::Net(net) = engine.get_entity(grounded_net).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(net.object.animation, Animation::ObjectLying);
+    let Entity::Net(net) = engine.get_entity(flying_net).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(net.net.time_till_unfolding, 0);
+    assert_eq!(net.object.animation, Animation::NetUnfolding);
 }
 
 #[test]

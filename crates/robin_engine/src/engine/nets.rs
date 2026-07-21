@@ -477,15 +477,16 @@ impl EngineInner {
             let Some(Entity::Net(net)) = self.world.entities.get_mut(net_id) else {
                 return;
             };
-            if !net.element.active {
-                return;
-            }
-
             let mut apply = false;
             let mut just_landed = false;
             let mut skip_sprite_this_tick = false;
             if net.projectile.flying {
-                advance_net_trajectory(net);
+                // The derived Net chain ignores Projectile::Hourglass' false
+                // result and always continues/returns true. An inactive net
+                // therefore skips only the base movement body.
+                if net.element.active {
+                    advance_net_trajectory(net);
+                }
 
                 // `time_till_unfolding` countdown — when it hits 0,
                 // switch animation to NetUnfolding (or _Crumpled if the

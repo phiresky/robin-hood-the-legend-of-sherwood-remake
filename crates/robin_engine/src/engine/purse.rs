@@ -82,10 +82,14 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
         id: EntityId,
-    ) {
-        let was_flying = match self.get_entity(id) {
-            Some(Entity::Projectile(projectile)) => projectile.projectile.flying,
-            _ => return,
+    ) -> bool {
+        let (was_flying, object_type, base_result) = match self.get_entity(id) {
+            Some(Entity::Projectile(projectile)) => (
+                projectile.projectile.flying,
+                projectile.object.object_type,
+                projectile.element.active,
+            ),
+            _ => return false,
         };
         // ── Phase 1: trajectory advancement + impact detection ──────
         //
@@ -101,16 +105,13 @@ impl EngineInner {
         }
         let impact = {
             let Some(Entity::Projectile(proj)) = self.world.entities.get_mut(id) else {
-                return;
+                return false;
             };
-            if !proj.element.active {
-                return;
-            }
             let object_type = proj.object.object_type;
-            if !matches!(object_type, ObjectType::Purse | ObjectType::Coin) {
-                return;
-            }
-            if !proj.projectile.flying {
+            if !matches!(object_type, ObjectType::Purse | ObjectType::Coin)
+                || !proj.element.active
+                || !proj.projectile.flying
+            {
                 None
             } else {
                 // Advance trajectory by one frame via the shared helper that
@@ -201,6 +202,8 @@ impl EngineInner {
         if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
             && !frozen
         {
+            #[cfg(test)]
+            super::tick::observe_projectile_derived_tail(id, object_type);
             let progression = if was_flying {
                 crate::sprite::FrameProgression::SkipShadow
             } else {
@@ -211,6 +214,19 @@ impl EngineInner {
                 .element
                 .sprite
                 .perform_virgin_increment(sim, progression);
+        }
+
+        match object_type {
+            // RHElementCoin ignores its Projectile base result, and both
+            // branches return true.
+            ObjectType::Coin => true,
+            // Grounded RHElementPurse skips Projectile::Hourglass entirely;
+            // its bursting tail returns true even when already inactive.
+            ObjectType::Purse if !was_flying => true,
+            // The flying Purse branch returns the saved base result, but only
+            // after its skip-shadow sprite tail.
+            ObjectType::Purse => base_result,
+            _ => unreachable!("validated purse/coin dispatcher changed type"),
         }
     }
 
