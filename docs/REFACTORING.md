@@ -16,6 +16,10 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
+- Ordinary actor movement and evidenced rider movement arms run inside the
+  live legacy-slot Actor owner coordinator. `movement.rs` prepares only
+  immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
+  completion, and callback work closes per owner before ActionChange/tails.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -73,11 +77,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Preserve the landed phase trace and creation-order regressions. Move one evidenced entity family at a time; do not perform another broad tick rewrite. |
-
-Bonus `RefreshDiscovered` is now closed in the bonus's live creation slot,
-including FrozenAll behavior. PC Listen/object reveal and Target Heard remain
-open for the later active-ability owner slice; PA-013 is therefore incomplete.
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active combat/abilities, unsupported rider arms, and other entity owners remain. |
 | 2 | Close remaining snapshot inputs | Audit every `apply_commands` and `perform_hourglass` read. Simulation-relevant host/display controls must be snapshotted or command-derived. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
@@ -107,6 +107,12 @@ are:
 
 Where evidence is incomplete, leave a precise parity TODO that names the
 missing source or unresolved coordinate/ordering boundary.
+
+`tick_zone_occupants` remains a documented Rust reconciliation boundary after
+the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
+establish it as actor-owned work; moving it per owner requires separate source
+evidence. Unsupported action arms and active strike/bow/ability ownership also
+remain PA-013 debt.
 
 ## Validation ladder
 

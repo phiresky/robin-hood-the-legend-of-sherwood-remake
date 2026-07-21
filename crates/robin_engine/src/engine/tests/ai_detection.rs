@@ -102,6 +102,7 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
         vec![
             Phase::HumanPrelude(pc),
             Phase::BaseActor(pc),
+            Phase::MovementExecute(pc),
             Phase::HumanNoise(pc),
             Phase::HumanTiredness(pc),
             Phase::PcTail(pc),
@@ -109,6 +110,7 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
             Phase::Patrol(npc),
             Phase::HumanPrelude(npc),
             Phase::BaseActor(npc),
+            Phase::MovementExecute(npc),
             Phase::HumanTiredness(npc),
             Phase::NpcTail(npc),
         ],
@@ -262,6 +264,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
             | Phase::Patrol(owner)
             | Phase::HumanPrelude(owner)
             | Phase::BaseActor(owner)
+            | Phase::MovementExecute(owner)
             | Phase::HumanNoise(owner)
             | Phase::HumanTiredness(owner)
             | Phase::PcTail(owner)

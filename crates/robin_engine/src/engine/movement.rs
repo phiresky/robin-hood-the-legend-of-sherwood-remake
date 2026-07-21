@@ -9,8 +9,8 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
-/// Per-entity lift translation snapshot consumed by `tick_entity_movement`'s
-/// per-frame anim derivation.  Covers the lift cases of
+/// Per-owner lift translation snapshot consumed by movement Execute's live
+/// animation derivation. Covers the lift cases of
 /// `DetermineMovementAnimation`.
 #[derive(Debug, Clone, Copy)]
 enum LiftAnimContext {
@@ -29,6 +29,23 @@ enum LiftAnimContext {
         ladder_dx: f32,
         ladder_dy: f32,
     },
+}
+
+/// Immutable, RNG-free geometry shared by movement owners for one frame.
+/// Mutable actor/order/seek inputs are deliberately absent and are sampled
+/// inside each owner's live legacy slot.
+pub(super) struct PreparedMovementFrame {
+    mobile_lines_by_layer: std::collections::BTreeMap<u16, Vec<crate::fast_find_grid::GridLine>>,
+    mobile_points_by_layer: std::collections::BTreeMap<u16, Vec<crate::repulsive::RepulsivePoint>>,
+    mobile_polygons_by_layer:
+        std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MovementOwnerSelection {
+    pub seq_id: crate::sequence::SequenceId,
+    pub elem_idx: usize,
+    pub order_id: std::num::NonZeroU32,
 }
 
 fn order_uses_distance_motion(order: OrderType) -> bool {
@@ -816,6 +833,35 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    pub(super) fn prepare_movement_frame(&self) -> PreparedMovementFrame {
+        let mut prepared = PreparedMovementFrame {
+            mobile_lines_by_layer: std::collections::BTreeMap::new(),
+            mobile_points_by_layer: std::collections::BTreeMap::new(),
+            mobile_polygons_by_layer: std::collections::BTreeMap::new(),
+        };
+        for mobile in &self.world.mobile_elements {
+            if !mobile.active {
+                continue;
+            }
+            prepared
+                .mobile_lines_by_layer
+                .entry(mobile.layer)
+                .or_default()
+                .extend(mobile.repulsive_lines());
+            prepared
+                .mobile_points_by_layer
+                .entry(mobile.layer)
+                .or_default()
+                .extend(mobile.repulsive_points());
+            prepared
+                .mobile_polygons_by_layer
+                .entry(mobile.layer)
+                .or_default()
+                .push(mobile.motion_polygon.clone());
+        }
+        prepared
+    }
+
     /// Execute the Original's `RHNONANIMATION_RIDER_CHARGING` arm inside its
     /// rider's creation-ordered movement slot. Returns true only when the live
     /// selected movement order was exactly `RiderCharging` and consumed the
@@ -3511,38 +3557,63 @@ impl EngineInner {
         self.launch_ai_move(entity_id, &intent);
     }
 
-    /// Advance all entities that have active paths (per-frame movement).
+    /// Execute the selected movement arm for one live actor owner.
     ///
-    /// For each entity with a non-empty `path_waypoints`, advances its
-    /// position toward the current waypoint using [`movement::tick_movement`].
-    /// When an entity arrives at its destination, either advances to the
-    /// next [`ActiveDoorPass`] step or notifies the sequence manager that
-    /// the movement element is terminated.
-    ///
-    /// Returns `(reached_entities, galopp_loop_entities)`.
-    /// - `reached_entities`: entities that finished their path (need EventReachPoint).
-    /// - `galopp_loop_entities`: rider entities that reached intermediate waypoints
-    ///   with RIDER_CHARGE flag (need EventGaloppLoopEnd).
-    pub(super) fn tick_entity_movement(
+    /// Mutable inputs are sampled at this owner's legacy slot. Movement and
+    /// its Execute-arm callbacks, completion, and condolence continuation are
+    /// applied synchronously before this function returns; no owner result
+    /// vectors escape to a later global dispatch pass.
+    pub(super) fn tick_entity_movement_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
-    ) -> (Vec<EntityId>, Vec<EntityId>) {
+        owner: EntityId,
+        prepared: &PreparedMovementFrame,
+        selected: Option<MovementOwnerSelection>,
+    ) {
+        let Some(selected) = selected else { return };
+        let selected_is_live = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .filter(|element| element.owner == Some(owner) && element.data.is_movement())
+            .and_then(|element| element.current_order())
+            .is_some_and(|order| order.order_id == selected.order_id);
+        if !selected_is_live {
+            return;
+        }
+        if self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| entity.actor_data())
+            .is_some_and(|actor| actor.execution_frozen)
+        {
+            return;
+        }
+        let selected_command = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(seq_id, elem_idx)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .map(|element| element.command)
+            });
+        if matches!(
+            selected_command,
+            Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
+        ) {
+            return;
+        }
         if self.actors_frozen() {
             // ExecuteRiderCharge is reached even under the Original's
             // FrozenAll switch. PerformMotion reports InProgress on the
             // frozen sprite frame, but initialization and polygon damage
             // still run in creation order.
-            let actor_ids: Vec<EntityId> = self
-                .world
-                .entities
-                .actors()
-                .map(|(id, _)| id.into())
-                .collect();
-            for actor_id in actor_ids {
-                self.tick_rider_charge_owner(sim, assets, actor_id, true);
-            }
-            return (Vec::new(), Vec::new());
+            self.tick_rider_charge_owner(sim, assets, owner, true);
+            return;
         }
 
         // Pre-pass: collect principal opponent positions for
@@ -3553,7 +3624,12 @@ impl EngineInner {
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
         let mut combat_face_targets = EntitySlots::filled(self.world.entities.len(), None);
-        for (actor_id, entity) in self.world.entities.actors() {
+        for (actor_id, entity) in self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+        {
             let actor = entity
                 .actor_data()
                 .expect("entities.actors() yielded non-actor entity");
@@ -3698,17 +3774,16 @@ impl EngineInner {
         let mut point_seek_post_sectors = EntitySlots::filled(self.world.entities.len(), None);
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (actor_id, entity) in self.world.entities.actors() {
+        for (actor_id, entity) in self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+        {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
-            let Some((seq_id, elem_idx)) = self
-                .orders
-                .sequence_manager
-                .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement())
-            else {
-                continue;
-            };
+            let (seq_id, elem_idx) = (selected.seq_id, selected.elem_idx);
             if let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                 speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
@@ -3791,7 +3866,12 @@ impl EngineInner {
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides = EntitySlots::filled(self.world.entities.len(), None);
-        for (soldier_id, soldier) in self.world.entities.soldiers_mut() {
+        for (soldier_id, soldier) in self
+            .world
+            .entities
+            .soldiers_mut()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+        {
             let is_drunk = soldier
                 .npc
                 .ai_brain
@@ -3809,10 +3889,12 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some((_, _, order)) = self
+            let Some(order) = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(soldier_id)
+                .get_element(selected.seq_id, selected.elem_idx)
+                .and_then(|element| element.current_order())
+                .filter(|order| order.order_id == selected.order_id)
             else {
                 continue;
             };
@@ -3873,7 +3955,12 @@ impl EngineInner {
         // mutably without touching `self.world.fast_grid` or the door table.
         let mut lift_translations = EntitySlots::filled(self.world.entities.len(), None);
         let mut door_pass_wall_directions = EntitySlots::filled(self.world.entities.len(), None);
-        for (actor_id, entity) in self.world.entities.actors() {
+        for (actor_id, entity) in self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+        {
             let posture = entity.element_data().posture;
             let door_pass_action = entity
                 .actor_data()
@@ -4008,38 +4095,9 @@ impl EngineInner {
             &self.orders.sequence_manager,
             &assets.profile_manager,
         );
-        let mut mobile_lines_by_layer: std::collections::BTreeMap<
-            u16,
-            Vec<crate::fast_find_grid::GridLine>,
-        > = std::collections::BTreeMap::new();
-        let mut mobile_points_by_layer: std::collections::BTreeMap<
-            u16,
-            Vec<crate::repulsive::RepulsivePoint>,
-        > = std::collections::BTreeMap::new();
-        let mut mobile_polygons_by_layer: std::collections::BTreeMap<
-            u16,
-            Vec<Vec<crate::coordinates::MapPoint>>,
-        > = std::collections::BTreeMap::new();
-        for mobile in &self.world.mobile_elements {
-            if mobile.active {
-                mobile_lines_by_layer
-                    .entry(mobile.layer)
-                    .or_default()
-                    .extend(mobile.repulsive_lines());
-                mobile_points_by_layer
-                    .entry(mobile.layer)
-                    .or_default()
-                    .extend(mobile.repulsive_points());
-                mobile_polygons_by_layer
-                    .entry(mobile.layer)
-                    .or_default()
-                    .push(mobile.motion_polygon.clone());
-            }
-        }
 
         // Collect movement results that need sequence manager notification.
         // We can't call sequence_manager while iterating entities mutably.
-        let mut arrived: Vec<(EntityId, ActiveMovement)> = Vec::new();
         // Door-pass triggers to execute after the movement loop (need &mut self).
         let mut door_triggers: Vec<(EntityId, crate::gate::DoorIndex, bool, u8)> = Vec::new();
         // Door-pass Transition orders to push onto the actor's current
@@ -4116,6 +4174,7 @@ impl EngineInner {
         // the matching Execute arm, so posture alone is not a substitute for
         // this per-frame execution record.
         let mut executed_pc_movement_actions: Vec<(EntityId, OrderType)> = Vec::new();
+        let mut executed_sword_movement = false;
 
         // Iterate a stable creation-order ID list instead of holding one
         // mutable iterator borrow across the whole pass. This lets each actor
@@ -4123,7 +4182,13 @@ impl EngineInner {
         // before its own movement. Mutations by an earlier-created actor are
         // therefore visible, while a later-created target still exposes its
         // pre-movement state, matching RHEngine's virtual Hourglass loop.
-        let movement_actor_ids: Vec<_> = self.world.entities.actors().map(|(id, _)| id).collect();
+        let movement_actor_ids: Vec<_> = self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+            .map(|(id, _)| id)
+            .collect();
         for actor_id in movement_actor_ids {
             let entity_id = actor_id.into();
             if self.tick_rider_charge_owner(sim, assets, entity_id, false) {
@@ -4212,7 +4277,15 @@ impl EngineInner {
                 let move_elem = self
                     .orders
                     .sequence_manager
-                    .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement());
+                    .get_element(selected.seq_id, selected.elem_idx)
+                    .filter(|element| {
+                        element.owner == Some(entity_id)
+                            && element.data.is_movement()
+                            && element
+                                .current_order()
+                                .is_some_and(|order| order.order_id == selected.order_id)
+                    })
+                    .map(|_| (selected.seq_id, selected.elem_idx));
                 let Some((seq_id, elem_idx)) = move_elem else {
                     if !has_moving_state {
                         continue;
@@ -4766,6 +4839,7 @@ impl EngineInner {
                 motion_method,
                 dest_already_at_pos,
             );
+            executed_sword_movement = is_sword_motion;
             if is_pc {
                 executed_pc_movement_actions.push((entity_id, order_action));
             }
@@ -4953,7 +5027,6 @@ impl EngineInner {
                                 if let Some((door_index, direct)) = completed {
                                     completed_door_passes.push((eid, door_index, direct));
                                 }
-                                arrived.push((eid, actor.active_movement));
                                 actor.clear_path();
                                 actor.action_state =
                                     if is_swordfighting || actor.action_state.is_sword() {
@@ -5222,15 +5295,18 @@ impl EngineInner {
                             mover_snapshot,
                             anti_snapshots.as_slice(),
                             &self.ai.global.repulsive_points,
-                            mobile_points_by_layer
+                            prepared
+                                .mobile_points_by_layer
                                 .get(&mover_snapshot.layer)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]),
-                            mobile_lines_by_layer
+                            prepared
+                                .mobile_lines_by_layer
                                 .get(&mover_snapshot.layer)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]),
-                            mobile_polygons_by_layer
+                            prepared
+                                .mobile_polygons_by_layer
                                 .get(&mover_snapshot.layer)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]),
@@ -5485,7 +5561,6 @@ impl EngineInner {
                             // leave an end-transition order as the
                             // new current, which the animation driver
                             // will play next tick.
-                            arrived.push((eid, actor.active_movement));
                             actor.clear_path();
                             // Flip action_state to Waiting so any
                             // pending end-transition order on the
@@ -5550,15 +5625,18 @@ impl EngineInner {
                         mover_snap,
                         anti_snapshots.as_slice(),
                         &self.ai.global.repulsive_points,
-                        mobile_points_by_layer
+                        prepared
+                            .mobile_points_by_layer
                             .get(&mover_snap.layer)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]),
-                        mobile_lines_by_layer
+                        prepared
+                            .mobile_lines_by_layer
                             .get(&mover_snap.layer)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]),
-                        mobile_polygons_by_layer
+                        prepared
+                            .mobile_polygons_by_layer
                             .get(&mover_snap.layer)
                             .map(Vec::as_slice)
                             .unwrap_or(&[]),
@@ -5804,6 +5882,31 @@ impl EngineInner {
             self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
         }
 
+        // These calls are inside the Human/PC sword movement Execute arms,
+        // after PerformMotion and before base Actor completion/DoNextOrder.
+        if executed_sword_movement {
+            self.quit_swordfight_with_far_opponents(sim, assets, owner);
+            if matches!(owner, EntityId::Pc(_)) {
+                let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
+                    entity.actor_data()?;
+                    if !entity.position_iface().is_moving_map()
+                        || !crate::engine::melee::enemies_are_blocking_my_movement(
+                            &self.world.entities,
+                            owner,
+                        )
+                    {
+                        return None;
+                    }
+                    Some((selected.seq_id, selected.elem_idx))
+                });
+                if let Some((seq_id, elem_idx)) = pinch_abort {
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
+                }
+            }
+        }
+
         // Execute pending door-pass triggers (PassingDoor steps).
         // These need &mut self for layer/sector changes and building callbacks.
         for (entity_id, door_index, direct, trigger_num) in door_triggers {
@@ -5856,6 +5959,19 @@ impl EngineInner {
             self.start_post_seek_sequence(entity_id, Some((seq_id, elem_idx)));
         }
 
+        // These are derived Execute-arm tails in Original, so they close
+        // after PerformMotion but before base Actor completion/DoNextOrder.
+        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
+        if !galopp_events.is_empty() {
+            self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
+        }
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "movement owner {owner:?} failed to drain synchronous Execute-arm callback work: {error:?}"
+                )
+            });
+
         // Drain collected waypoint pops against each actor's Move
         // element.  One pop per waypoint-arrival (both intermediate
         // and final).  When the final pop empties the order queue,
@@ -5893,26 +6009,63 @@ impl EngineInner {
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
         }
-
-        // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
-        // WALKING_CARRYING_ON_SHOULDERS action arm, after PerformMotion.  Run
-        // the equivalent check from the captured action dispatches rather
-        // than from the carrier's persistent posture.
-        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
-
-        // Collect entity IDs for EventReachPoint dispatch.  Two paths
-        // fire the same event: the condolation drain (triggered by
-        // `element_terminated` above) and
-        // `dispatch_reach_point_events` called from the caller after
-        // this function returns.  Keep the explicit return so callers
-        // that don't yet rely on the condolation-side dispatch (and
-        // for now to preserve existing event-timing) still receive
-        // the arrival list.
-        let mut reach_point_entities: Vec<EntityId> = Vec::new();
-        for (entity_id, _am) in &arrived {
-            reach_point_entities.push(*entity_id);
+        let selected_terminal = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .is_some_and(|element| {
+                matches!(
+                    element.state,
+                    crate::sequence::SequenceState::Terminated
+                        | crate::sequence::SequenceState::Impossible
+                        | crate::sequence::SequenceState::Interrupted
+                )
+            });
+        if selected_terminal {
+            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
-        (reach_point_entities, galopp_events)
+
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
+                )
+            });
+    }
+
+    /// Test-only compatibility wrapper. Production movement is owned by the
+    /// live legacy-slot Actor coordinator and never batches callback results.
+    #[cfg(test)]
+    pub(super) fn tick_entity_movement(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+    ) {
+        let prepared = self.prepare_movement_frame();
+        let owners: Vec<EntityId> = self
+            .world
+            .entities
+            .actors()
+            .map(|(id, _)| id.into())
+            .collect();
+        for owner in owners {
+            let selected = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .and_then(|(seq_id, elem_idx, order)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .filter(|element| element.data.is_movement())
+                        .map(|_| MovementOwnerSelection {
+                            seq_id,
+                            elem_idx,
+                            order_id: order.order_id,
+                        })
+                });
+            self.tick_entity_movement_owner(sim, assets, owner, &prepared, selected);
+        }
     }
 
     /// Advance through door-pass steps after a walk step completes.
