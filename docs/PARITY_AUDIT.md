@@ -183,10 +183,11 @@ after its sprite tail; and grounded Apple/Stone run their landed sprite tail
 before the saved base result is applied. Their old Rust burst-countdown
 despawn is retired from Projectile base processing, so an active grounded
 Apple/Stone cannot disappear before that derived tail. Ale's object/Bonus lane
-is unchanged. Apple/Stone impact now performs the full Original-style
-`SetAnimation(ObjectBursting)` operation: the converted directional row is
-selected and its frame state reset before the derived tail runs. The obsolete
-serialized Rust `burst_countdown` field has been removed.
+is unchanged. Apple/Stone impact now matches Original
+`ForceAnimation(ObjectBursting)`: it forces/resets the converted base row
+(direction 0), even when the projectile's flight direction is nonzero. Rust
+also synchronizes `object.animation` with that forced sprite state. The
+obsolete serialized Rust `burst_countdown` field has been removed.
 
 `RHElementNet::Hourglass` retains its exact switch gaps: a nonzero unfolding
 countdown performs no sprite call (including the decrement-to-zero tick), both

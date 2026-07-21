@@ -105,9 +105,9 @@ fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) 
         "projectile {:?} is missing required animation {animation:?}",
         proj.object.object_type
     );
-    let direction =
-        u16::try_from(proj.element.direction()).expect("projectile direction must be non-negative");
-    proj.element.sprite.force_animation(animation, direction);
+    // Original Apple/Stone HitObstacle/HitHuman/HitTarget use the
+    // directionless ForceAnimation overload, whose default direction is 0.
+    proj.element.sprite.force_animation(animation, 0);
     proj.element.sprite.reset_sprite_frame(false);
 }
 

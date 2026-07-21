@@ -776,10 +776,12 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             unreachable!()
         };
         assert_eq!(projectile.object.animation, Animation::ObjectBursting);
-        assert_eq!(
-            projectile.element.sprite.current_row,
-            16 + projectile.element.direction() as u16
+        assert_ne!(
+            projectile.element.direction(),
+            0,
+            "regression requires a nonzero impact direction"
         );
+        assert_eq!(projectile.element.sprite.current_row, 16);
 
         for _ in 0..8 {
             if !engine.get_entity(projectile_id).unwrap().is_active() {
