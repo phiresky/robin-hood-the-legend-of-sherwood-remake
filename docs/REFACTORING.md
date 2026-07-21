@@ -1,6 +1,6 @@
 # Gameplay runtime refactoring roadmap
 
-Updated 2026-07-19. This document describes the current architecture and the
+Updated 2026-07-21. This document describes the current architecture and the
 remaining behavior-sensitive work. Completed migration plans are summarized in
 [`plans/`](plans/); their old future-tense PR sequences have been removed.
 
@@ -77,12 +77,16 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active combat/abilities, unsupported rider arms, and other entity owners remain. |
-| 2 | Close remaining snapshot inputs | Audit every `apply_commands` and `perform_hourglass` read. Simulation-relevant host/display controls must be snapshotted or command-derived. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active melee/bow/abilities, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
+| 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
-| 5 | Complete true-headless multiplayer admission | **Complete.** `TimelineRuntime` owns the snapshot → ready → begin → wall-clock release state machine, while the shared mission-network drain serves both drivers. Headless bootstrap publishes the real host snapshot and advances without renderer/UI/audio stand-ins. |
-| 6 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
+| 5 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
+
+True-headless multiplayer admission is complete. `TimelineRuntime` owns the
+snapshot → ready → begin → wall-clock release state machine, the shared
+mission-network drain serves both drivers, and headless bootstrap publishes
+the real host snapshot without renderer/UI/audio stand-ins.
 
 The detailed gameplay ledger and Original evidence live in
 [`PARITY_AUDIT.md`](PARITY_AUDIT.md). RNG call-order ownership lives in

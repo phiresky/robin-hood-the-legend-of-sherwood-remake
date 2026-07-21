@@ -83,5 +83,5 @@ and multiplayer-start policy differences.
 No new mission mega-struct or large `run_mission` rewrite is planned. Focused
 helpers may be split when their domain changes. The current known local seam is
 making `MissionWorld` fields private after the remaining frame operations move
-onto their focused owners. True-headless multiplayer start-barrier support
-also remains an explicit parity TODO.
+onto their focused owners. True-headless multiplayer start-barrier support is
+complete through the shared timeline admission state machine.
