@@ -62,7 +62,7 @@ pub(super) fn set_flags_of_near_coins_on_ground(
 /// Reads: NPC's `has_given_money_to_beggar`, `got_the_beggar_trick`,
 /// `money`, `direction`, `position_map`, `sector`, `ai_state`, and the
 /// human kind. Returns `false` (no donation) in every failure arm.
-pub(crate) fn can_give_money_to_beggar(
+pub(super) fn can_give_money_to_beggar(
     engine: &EngineInner,
     npc_id: EntityId,
     beggar_id: EntityId,

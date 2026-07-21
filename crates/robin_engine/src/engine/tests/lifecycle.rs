@@ -1655,6 +1655,192 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 }
 
 #[test]
+fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authorization_effects() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let hotspot = crate::coordinates::SpriteLocalPoint::new(7.0, 9.0);
+    let script = SpriteScript {
+        action_id: OrderType::Strangling as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::Strangling as usize] = 0;
+    let attacker_sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .sprite = attacker_sprite;
+    {
+        let element = engine.get_entity_mut(attacker).unwrap().element_data_mut();
+        element.sprite.current_row = 0;
+        element.set_position_map(crate::coordinates::MapPoint::new(100.0, 120.0));
+        element.set_layer(3);
+        element.set_sector(crate::position_interface::SectorHandle::new(2));
+    }
+    {
+        let element = engine.get_entity_mut(victim).unwrap().element_data_mut();
+        element.set_layer(8);
+        element.set_sector(crate::position_interface::SectorHandle::new(5));
+        element.set_direction_instantly(6);
+    }
+    let expected_action_point = {
+        let attacker = engine.get_entity(attacker).unwrap();
+        let sprite_pos = attacker.cxx_position_sprite();
+        crate::coordinates::MapPoint::new(sprite_pos.x + hotspot.x, sprite_pos.y + hotspot.y)
+    };
+    let victim_frame_before = engine
+        .get_entity(victim)
+        .unwrap()
+        .element_data()
+        .sprite
+        .current_frame;
+    let sequence_count_before = engine.orders.sequence_manager.sequences_iter().count();
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::StrangleCmd,
+            Some(attacker),
+        ));
+    assert_eq!(
+        crate::abilities::begin_strangle(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            attacker,
+            victim,
+            seq,
+            0,
+            &mut engine.orders.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    let attacker_topology = {
+        let element = engine.get_entity(attacker).unwrap().element_data();
+        (
+            element.layer(),
+            element.sector(),
+            element.obstacle_index(),
+            element.direction(),
+        )
+    };
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut display = HostDisplayState::default();
+
+    for _ in 0..10 {
+        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+        if !engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+        {
+            break;
+        }
+    }
+
+    assert!(
+        !engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Impossible
+    );
+    let victim_entity = engine.get_entity(victim).unwrap();
+    assert_eq!(
+        victim_entity.element_data().position_map(),
+        expected_action_point
+    );
+    assert_eq!(victim_entity.element_data().layer(), 3);
+    assert_eq!(
+        (
+            victim_entity.element_data().layer(),
+            victim_entity.element_data().sector(),
+            victim_entity.element_data().obstacle_index(),
+            victim_entity.element_data().direction(),
+        ),
+        attacker_topology,
+        "failed authorization retains the topology copied before the search"
+    );
+    assert!(!victim_entity.actor_data().unwrap().execution_frozen);
+    assert_ne!(
+        victim_entity.element_data().sprite.last_action,
+        OrderType::BeingStrangled
+    );
+    assert_eq!(
+        victim_entity.element_data().sprite.current_frame,
+        victim_frame_before,
+        "failed setup must not virgin-increment the victim"
+    );
+    assert_eq!(
+        engine.orders.sequence_manager.sequences_iter().count(),
+        sequence_count_before + 1,
+        "failed setup must not launch speech or damage owner work"
+    );
+    assert!(
+        victim_entity
+            .ai_controller()
+            .expect("soldier fixture requires an AI controller")
+            .outbox
+            .reentrant
+            .owner_work
+            .is_empty(),
+        "failed authorization must not enqueue emergency speech owner work"
+    );
+
+    let snapshot = (
+        victim_entity.element_data().position_map(),
+        victim_entity.element_data().sprite.current_frame,
+        engine.orders.sequence_manager.sequences_iter().count(),
+    );
+    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    let victim_entity = engine.get_entity(victim).unwrap();
+    assert_eq!(
+        (
+            victim_entity.element_data().position_map(),
+            victim_entity.element_data().sprite.current_frame,
+            engine.orders.sequence_manager.sequences_iter().count(),
+        ),
+        snapshot,
+        "a later owner tick must not repeat failed setup effects"
+    );
+}
+
+#[test]
 fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
