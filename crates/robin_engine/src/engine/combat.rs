@@ -3834,11 +3834,17 @@ impl EngineInner {
                             crate::ai::StimulusType::EventGotHit,
                             actor_id.index(),
                         );
-                        self.dispatch_ai_stimulus(target_id, stimulus);
+                        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                            sim, target_id, assets, stimulus,
+                        );
+                        #[cfg(test)]
+                        crate::engine::soldier_helpers::observe_strangle_condolation_step(
+                            "TerminalEventGotHit",
+                        );
                         tracing::debug!(
                             attacker = ?actor_id,
                             target = ?target_id,
-                            "Strangle: target not stranglable, dispatched EVENT_GOTHIT"
+                            "Strangle: target not stranglable, completed EVENT_GOTHIT Think"
                         );
                         continue;
                     }

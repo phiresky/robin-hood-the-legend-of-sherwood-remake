@@ -1942,9 +1942,8 @@ pub(crate) fn ability_order_type(kind: AbilityKind) -> OrderType {
 
 /// Advance the active ability for one actor.
 ///
-/// This is the unit used by the engine's creation-ordered element pass. The
-/// all-actor wrapper remains for focused subsystem tests and non-hourglass
-/// callers.
+/// This is the per-owner unit used by the engine's creation-ordered element
+/// pass.
 pub fn tick_ability(
     sim: &crate::sim_rng::SimulationContext,
 

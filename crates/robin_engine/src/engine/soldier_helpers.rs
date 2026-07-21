@@ -42,7 +42,7 @@ pub(super) fn capture_strangle_condolation_order<T>(
 }
 
 #[cfg(test)]
-fn observe_strangle_condolation_step(step: &'static str) {
+pub(super) fn observe_strangle_condolation_step(step: &'static str) {
     STRANGLE_CONDOLATION_TRACE.with(|trace| {
         if let Some(trace) = trace.borrow_mut().as_mut() {
             trace.push(step);

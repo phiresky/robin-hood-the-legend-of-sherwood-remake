@@ -1653,7 +1653,14 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         });
     assert_eq!(
         condolation_order,
-        ["Wait", "Unlock", "EventGotHit", "LookForward"]
+        [
+            "TerminalEventGotHit",
+            "Wait",
+            "Unlock",
+            "EventGotHit",
+            "LookForward",
+        ],
+        "both original EventGotHit handler boundaries must complete synchronously in order"
     );
     assert!(
         !engine
@@ -1704,11 +1711,8 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
-        vec![
-            crate::ai::StimulusType::EventTimer,
-            crate::ai::StimulusType::EventGotHit,
-        ],
-        "the synchronous condolation Think must preserve every older FIFO entry in order"
+        vec![crate::ai::StimulusType::EventTimer],
+        "both synchronous EventGotHit Thinks must preserve the genuinely pre-existing FIFO"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
