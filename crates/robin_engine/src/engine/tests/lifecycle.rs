@@ -1524,8 +1524,19 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
     bind(&mut engine, attacker, OrderType::Strangling);
     bind(&mut engine, victim, OrderType::BeingStrangled);
     for id in [attacker, victim] {
@@ -1679,6 +1690,19 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         victim_entity.npc_data().unwrap().eye_status,
         crate::element::EyeStatus::LookForward
     );
+    assert_eq!(
+        victim_entity
+            .ai_controller()
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![crate::ai::StimulusType::EventGotHit],
+        "the synchronous condolation Think must preserve the older terminal retaliation FIFO entry"
+    );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
     assert_eq!(
@@ -1697,8 +1721,19 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let hotspot = crate::coordinates::SpriteLocalPoint::new(7.0, 9.0);
@@ -1889,6 +1924,16 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
             .owner_work
             .is_empty(),
         "failed authorization must not enqueue emergency speech owner work"
+    );
+    let victim_ai = victim_entity.ai_controller().unwrap();
+    assert!(
+        victim_ai.outbox.detection.stimuli.is_empty(),
+        "synchronous EventGotHit Think must finish before tick_ability_for returns"
+    );
+    assert_eq!(
+        victim_ai.primary_target,
+        attacker.index(),
+        "the victim's EventGotHit handler must observe the attacker at the owner boundary"
     );
 
     let snapshot = (

@@ -380,10 +380,12 @@ same frame; the ability stays selected between spawn/debit `Done` and
 
 Strangle coverage is deliberately boundary-specific: Done setup and its
 same-invocation victim increment, authorized-placement failure, and terminal
-non-stranglable cleanup are covered. Pre-Done turning still differs from the
-Original: Rust snaps both directions and drains a moving victim's EventStop
-after dispatch, while the Original uses attacker-then-victim `TurnFast` and
-delivers Stop before taking the initialization freeze lock.
+non-stranglable cleanup are covered, including synchronous owner-boundary
+`Wait -> unlock -> EventGotHit Think -> LookForward` handling. Pre-Done turning
+still differs from the Original: Rust snaps both directions and drains a
+moving victim's EventStop after dispatch, while the Original uses
+attacker-then-victim `TurnFast` and delivers Stop before taking the
+initialization freeze lock.
 
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier

@@ -308,7 +308,7 @@ impl EngineInner {
             .into();
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
-            self.send_condolation_card(dispatch.card, assets);
+            self.send_condolation_card(sim, dispatch.card, assets);
             self.drain_self_stimuli_for_npc(sim, owner, assets);
             self.orders
                 .sequence_manager
@@ -381,7 +381,7 @@ impl EngineInner {
         dispatch: crate::sequence::PendingCondolationDispatch,
     ) {
         let card_owner = dispatch.card.owner;
-        self.send_condolation_card(dispatch.card, assets);
+        self.send_condolation_card(sim, dispatch.card, assets);
         self.drain_self_stimuli_for_npc(sim, card_owner, assets);
 
         // A SetState reached re-entrantly from SendCondolationCard belongs
@@ -423,7 +423,12 @@ impl EngineInner {
     /// substates like `DefaultOnPostLookingSidewards`, whose only exit
     /// is an `EventDone` stimulus after the `LookLeft` / `LookRight`
     /// sequence completes.
-    fn send_condolation_card(&mut self, card: PendingCondolation, assets: &LevelAssets) {
+    fn send_condolation_card(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        card: PendingCondolation,
+        assets: &LevelAssets,
+    ) {
         use crate::sequence::SequenceState;
         let PendingCondolation {
             owner,
@@ -458,7 +463,7 @@ impl EngineInner {
         // NPC-only — the PC has no `ai_controller` for
         // `fire_self_stimulus` to land on).
         if self.world.entities.get(owner).is_some_and(|e| e.is_pc()) {
-            self.send_condolation_card_pc(owner, command, seq_id, elem_idx, assets);
+            self.send_condolation_card_pc(sim, owner, command, seq_id, elem_idx, assets);
         }
 
         // Soldier override: ReceiveWaspSting termination clears the
@@ -678,11 +683,12 @@ impl EngineInner {
     ///   `begin_carry` at TakeCorpse init.
     fn send_condolation_card_pc(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
         command: Command,
         seq_id: SequenceId,
         elem_idx: u16,
-        _assets: &LevelAssets,
+        assets: &LevelAssets,
     ) {
         match command {
             Command::StrangleCmd => {
@@ -751,7 +757,9 @@ impl EngineInner {
                     crate::ai::StimulusType::EventGotHit,
                     owner.index(),
                 );
-                self.dispatch_ai_stimulus(victim_id, stim);
+                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                    sim, victim_id, assets, stim,
+                );
                 #[cfg(test)]
                 observe_strangle_condolation_step("EventGotHit");
 
