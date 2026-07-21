@@ -253,11 +253,14 @@ after the animation skip gates select an eligible arm, so skipped actors do not
 dereference stale opponent, antagonist, or door references. At that point
 movement, melee, bow, abilities, and NPC detection/tails retained separate
 subsystem owners; later owner-envelope and movement slices closed the ordinary
-movement and supported NPC-derived boundaries. AI state callbacks and speech now close one ordered owner-local FIFO at
-every audited return boundary, but that barrier is not a claim of arbitrary
-inline observation between pure-Rust statements. These remaining boundaries
-prevent a full Actor Hourglass coordinator, and exact NPC derived-class nesting
-around the base actor remains absent.
+movement and supported NPC-derived boundaries. AI state callbacks and speech
+now close one ordered owner-local FIFO at every audited return boundary, but
+that barrier is not a claim of arbitrary inline observation between pure-Rust
+statements. At the end of this slice, the then-remaining boundaries still
+prevented a full Actor Hourglass coordinator and exact NPC derived-class
+nesting around the base actor. Later owner-envelope work closed the supported
+NPC nesting; active melee/bow/ability ownership and unsupported action arms
+remain open under PA-013.
 
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier
