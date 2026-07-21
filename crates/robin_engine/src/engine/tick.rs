@@ -254,7 +254,7 @@ mod mobile_owner_boundary_tests {
             |engine, _| {
                 observations.push(engine.first_live_mobile_polygon_point(0).x);
             },
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
             |_, _| {},
         );
         observations
@@ -305,7 +305,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
@@ -344,7 +344,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
@@ -2500,7 +2500,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
             |_, _| {},
         );
     }
@@ -2517,7 +2517,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _, _| {},
+            |_, _, _, _, _| {},
             after_slot,
         );
     }
@@ -2533,6 +2533,7 @@ impl EngineInner {
             EntityId,
             Option<super::movement::MovementOwnerSelection>,
             Option<MeleeOwnerSelection>,
+            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
         ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
@@ -2636,11 +2637,23 @@ impl EngineInner {
                                 order_id,
                             })
                         });
+                    // Bow belongs to the same entry-latched Execute choice as
+                    // movement and melee. If its terminal callback exposes a
+                    // successor order, that successor must wait until the
+                    // actor's next Hourglass rather than entering generic
+                    // Execute later in this same slot.
+                    let bow_selection = self.selected_bow_order(entity_id);
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                         entity_id,
                     ));
-                    execute_owner_arm(self, entity_id, movement_selection, melee_selection);
+                    execute_owner_arm(
+                        self,
+                        entity_id,
+                        movement_selection,
+                        melee_selection,
+                        bow_selection,
+                    );
 
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
@@ -2674,7 +2687,10 @@ impl EngineInner {
                         })
                         .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                        if movement_selection.is_some() || melee_selection.is_some() {
+                        if movement_selection.is_some()
+                            || melee_selection.is_some()
+                            || bow_selection.is_some()
+                        {
                             (Vec::new(), Default::default(), None)
                         } else if frozen_wait_execute.is_some() {
                             (Vec::new(), Default::default(), frozen_wait_execute)
@@ -2870,16 +2886,12 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |engine, owner, movement, melee| {
-                // Snapshot the exact selected bow arm at base-Actor entry,
-                // before movement or any synchronous owner work can replace
-                // the current order.
-                let selected_bow = engine.selected_bow_order(owner);
+            |engine, owner, movement, melee, bow| {
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
                 }
-                if let Some((_, _, order_id)) = selected_bow {
+                if let Some((_, _, order_id)) = bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
             },

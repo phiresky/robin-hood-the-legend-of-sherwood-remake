@@ -849,6 +849,105 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
 }
 
 #[test]
+fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let sim_context = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
+    let bow_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    let bow_order_id = bow_order.order_id;
+    element.orders.push_back(bow_order);
+    element
+        .orders
+        .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_shot = ActiveShot {
+        sequence_id: Some(sequence),
+        element_index: 0,
+        target: Some(owner),
+        order_id: Some(bow_order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let initial_action = engine
+        .get_entity(owner)
+        .unwrap()
+        .element_data()
+        .sprite
+        .last_action;
+
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &sim_context,
+        &assets,
+        |_, _| {},
+        |_, _| {},
+        |engine, selected_owner, _, _, bow| {
+            assert_eq!(selected_owner, owner);
+            assert_eq!(bow, Some((sequence, 0, bow_order_id)));
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence, 0)
+                .unwrap()
+                .pop_current_order();
+            engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap()
+                .active_shot = ActiveShot::default();
+        },
+        |_, _| {},
+    );
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_action,
+        initial_action,
+        "the successor exposed by terminal bow work must not enter generic Execute in the same owner slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .unwrap()
+            .2
+            .order_type,
+        OrderType::WaitingUpright
+    );
+
+    let (_, _, next_execute) = engine.tick_actor_animation_for(&sim_context, &assets, owner);
+    assert_eq!(
+        next_execute.unwrap().order_type,
+        OrderType::WaitingUpright,
+        "the exposed generic successor must become eligible at the next Execute boundary"
+    );
+}
+
+#[test]
 fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

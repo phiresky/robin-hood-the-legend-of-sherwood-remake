@@ -2758,7 +2758,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
         &assets,
         |_, _| {},
         |_, _| {},
-        |engine, callback_owner, _, _| {
+        |engine, callback_owner, _, _, _| {
             if callback_owner != actor || replacement_sequence.is_some() {
                 return;
             }

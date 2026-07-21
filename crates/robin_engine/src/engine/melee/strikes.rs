@@ -222,16 +222,11 @@ impl EngineInner {
 
     // ─── Per-frame melee tick ───────────────────────────────────────
 
-    /// Per-frame melee combat tick.
+    /// Per-frame melee maintenance outside the actor-owned Execute arms.
     ///
-    /// Processes two categories of melee combat:
-    /// 1. **Sequence-driven strikes**: actors with `ActiveMelee` set by
-    ///    `dispatch_sword_strike` — count down timers, apply damage at
-    ///    the hit frame, clean up on completion.
-    /// 2. **Enemy AI strikes**: soldiers in `AttackingSwordfight` substate
-    ///    whose cooldown has expired — check distance, apply damage directly.
-    ///
-    /// Also ticks concussion healing for all humans.
+    /// Active sequence strikes run in [`Self::tick_selected_melee_owner`] at
+    /// the attacker's legacy creation slot. This pass retains the periodic
+    /// combat diagnostics and the remaining global melee bookkeeping.
     pub(crate) fn tick_melee_combat(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
