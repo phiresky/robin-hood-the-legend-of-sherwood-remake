@@ -28,7 +28,9 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   a true single-owner operation keyed by the entry sequence/element/order; it
   does not park other actors' active shots. Projectile validation and each
   subtype's virtual return/removal decision likewise occur only at the fused
-  live slot, after any required derived tail, not in the legacy pre-pass.
+  live slot, after any required derived tail, not in the legacy pre-pass. The
+  former Apple/Stone base-path burst countdown no longer duplicates their
+  derived sprite lifetime.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split

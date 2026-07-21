@@ -689,6 +689,54 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 }
 
 #[test]
+fn active_grounded_apple_and_stone_ignore_legacy_countdown_until_derived_tail() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+    };
+
+    let mut engine = EngineInner::new();
+    let mut ids = Vec::new();
+    for object_type in [ObjectType::Apple, ObjectType::Stone] {
+        ids.push((
+            engine.add_entity(Entity::Projectile(ElementProjectile {
+                element: ElementData {
+                    kind: ElementKind::ObjectProjectile,
+                    active: true,
+                    ..Default::default()
+                },
+                object: ObjectData {
+                    object_type,
+                    animation: Animation::ObjectBursting,
+                    ..Default::default()
+                },
+                projectile: crate::element::ProjectileData {
+                    flying: false,
+                    burst_countdown: 1,
+                    ..Default::default()
+                },
+            })),
+            object_type,
+        ));
+    }
+    let assets = LevelAssets::new();
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let (_, tails) = capture_projectile_derived_tails(|| {
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+        })
+    });
+
+    assert_eq!(tails, ids);
+    for (id, _) in ids {
+        let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(projectile.projectile.burst_countdown, 1);
+        assert!(projectile.element.active);
+    }
+}
+
+#[test]
 fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     use crate::element::{Command, Posture};
     use crate::movement::ActiveShot;

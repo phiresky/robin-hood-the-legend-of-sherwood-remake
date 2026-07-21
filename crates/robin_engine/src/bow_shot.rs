@@ -95,30 +95,6 @@ pub const HIT_DISTANCE: f32 = 15.0;
 /// Experience points awarded for a bow kill.
 pub const BOW_KILL_EXPERIENCE_POINTS: u32 = 20;
 
-/// Fallback for the post-impact `OBJECT_BURSTING` countdown when the
-/// projectile's sprite has no script loaded (e.g. headless tests with
-/// `Sprite::default()`).  See `burst_ticks_for_proj` for the live path.
-/// 8 ticks is the typical length of the burst strip across apple/stone
-/// sprites.
-pub const BURST_ANIMATION_FRAMES: u16 = 8;
-
-/// How many ticks the projectile's `OBJECT_BURSTING` animation will
-/// take to play out — the total tick count is the sum of every
-/// burst-row frame's delay.  Falls back to the
-/// [`BURST_ANIMATION_FRAMES`] constant when the sprite has no script
-/// (headless tests).
-fn burst_ticks_for_proj(proj: &ElementProjectile) -> u16 {
-    let dynamic = proj
-        .element
-        .sprite
-        .total_ticks_for_anim(Animation::ObjectBursting);
-    if dynamic == 0 {
-        BURST_ANIMATION_FRAMES
-    } else {
-        dynamic
-    }
-}
-
 /// Z offset added to the bow point for long (high) shots.
 const BOW_Z_OFFSET_LONG: f32 = 50.0;
 
@@ -3213,28 +3189,11 @@ fn tick_arrows_matching(
             ObjectType::Apple | ObjectType::Stone
         );
 
-        // ── Post-impact burst decay (apple/stone only) ─────────────
-        // Once a burster stops flying, advance the `ObjectBursting`
-        // sprite and deactivate when its animation finishes.  Modeled
-        // with a frame counter set on impact; when it hits zero, we
-        // despawn.
+        // Grounded Apple/Stone work belongs to the derived virtual owner
+        // path. Projectile::Hourglass returns without advancing or removing
+        // them; the caller must run the landed sprite tail before applying
+        // that saved base result.
         if !proj.projectile.flying {
-            if proj.projectile.burst_countdown > 0 {
-                proj.projectile.burst_countdown -= 1;
-                if proj.projectile.burst_countdown == 0 {
-                    results.push(ArrowTickResult {
-                        arrow: arrow_id,
-                        hit_target: None,
-                        shield_hit: None,
-                        fx_target_hit: None,
-                        despawn: true,
-                        damage: 0,
-                        impact_fx: None,
-                        impact_pos: proj.element.position_map(),
-                        human_hit_old_position: None,
-                    });
-                }
-            }
             continue;
         }
 
@@ -3342,7 +3301,6 @@ fn tick_arrows_matching(
                 proj.projectile.flying = false;
                 let despawn = if is_burster {
                     proj.object.animation = Animation::ObjectBursting;
-                    proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
                     false
                 } else {
                     true
@@ -3745,7 +3703,6 @@ fn tick_arrows_matching(
             proj.projectile.flying = false;
             let despawn = if is_burster {
                 proj.object.animation = Animation::ObjectBursting;
-                proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
                 false
             } else {
                 true
@@ -3766,7 +3723,6 @@ fn tick_arrows_matching(
             proj.projectile.flying = false;
             let despawn = if is_burster {
                 proj.object.animation = Animation::ObjectBursting;
-                proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
                 false
             } else {
                 true
@@ -5804,9 +5760,9 @@ mod tests {
     }
 
     /// Apple impact on an FX target sets the burst animation + decay
-    /// counter and despawns after `BURST_ANIMATION_FRAMES` ticks.
+    /// row and leaves grounded animation/removal to the derived owner path.
     #[test]
-    fn tick_arrows_apple_bursts_and_despawns_after_frames() {
+    fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
@@ -5869,28 +5825,18 @@ mod tests {
             Entity::Projectile(p) => {
                 assert!(!p.projectile.flying);
                 assert_eq!(p.object.animation, Animation::ObjectBursting);
-                assert_eq!(p.projectile.burst_countdown, BURST_ANIMATION_FRAMES);
             }
             _ => panic!("expected apple projectile"),
         }
 
-        // Subsequent ticks: decrement burst_countdown; despawn on the
-        // tick it reaches 0.
-        let mut ticks_until_despawn = 0;
-        for _ in 0..20 {
-            ticks_until_despawn += 1;
-            let results = tick_arrows(
-                sim,
-                &mut entities,
-                crate::sight_obstacle::ObstacleList::empty(),
-            );
-            if results.iter().any(|r| r.despawn) {
-                break;
-            }
-        }
-        assert_eq!(
-            ticks_until_despawn, BURST_ANIMATION_FRAMES as usize,
-            "burst should last exactly BURST_ANIMATION_FRAMES ticks"
+        let grounded_base_results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+        assert!(
+            grounded_base_results.is_empty(),
+            "Projectile::Hourglass must not duplicate the derived landed animation/removal"
         );
     }
 

@@ -180,7 +180,10 @@ result are applied only when the fused mutable-size walk reaches that creation
 slot. This is not blanket inactive removal: Net and Coin always retain;
 grounded Purse skips its base and retains; flying Purse returns its base bool
 after its sprite tail; and grounded Apple/Stone run their landed sprite tail
-before the saved base false removes them. Ale's object/Bonus lane is unchanged.
+before the saved base result is applied. Their old Rust burst-countdown
+despawn is retired from Projectile base processing, so an active grounded
+Apple/Stone cannot disappear before that derived tail. Ale's object/Bonus lane
+is unchanged.
 
 `RHElementNet::Hourglass` retains its exact switch gaps: a nonzero unfolding
 countdown performs no sprite call (including the decrement-to-zero tick), both

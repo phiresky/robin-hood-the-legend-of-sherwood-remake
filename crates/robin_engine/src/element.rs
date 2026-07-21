@@ -1883,10 +1883,10 @@ pub struct ProjectileData {
     /// each `ObjectType::Wasp` child, default for everything else.
     /// See [`WaspData`].
     pub wasp: WaspData,
-    /// Frames remaining in the post-impact `ObjectBursting` animation
-    /// for apples and stones.  Set on impact, decremented each tick;
-    /// the projectile despawns when it reaches 0.  Arrows never burst;
-    /// for them this stays 0 and they despawn immediately on impact.
+    /// Retired pre-fusion Apple/Stone burst countdown. The virtual derived
+    /// owner path now advances the real sprite and owns deactivation; this
+    /// value is intentionally ignored and retained only as inert state until
+    /// the projectile data layout is cleaned up.
     pub burst_countdown: u16,
 }
 
