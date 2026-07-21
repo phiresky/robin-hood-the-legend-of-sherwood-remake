@@ -2930,6 +2930,9 @@ impl EngineInner {
                     elem_idx,
                 } => {
                     self.do_next_order(seq_id, elem_idx);
+                    if kind == crate::movement::AbilityKind::Strangle {
+                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                    }
                     let next = self
                         .orders
                         .sequence_manager
@@ -2988,6 +2991,9 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_impossible(seq_id, elem_idx);
+                    if kind == crate::movement::AbilityKind::Strangle {
+                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                    }
                 }
                 AbilityTickResult::CarryDone {
                     carrier_id,
@@ -3937,6 +3943,7 @@ impl EngineInner {
                         self.orders
                             .sequence_manager
                             .element_impossible(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
                         continue;
                     }
                     let authorized_position = victim_box.center();

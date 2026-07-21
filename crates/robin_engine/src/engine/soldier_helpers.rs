@@ -20,6 +20,34 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static OWNER_BOUNDARY_RESUME_TRACE: std::cell::RefCell<Option<Vec<EntityId>>> =
         const { std::cell::RefCell::new(None) };
+    static STRANGLE_CONDOLATION_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn capture_strangle_condolation_order<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<&'static str>) {
+    STRANGLE_CONDOLATION_TRACE.with(|trace| {
+        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
+    });
+    let result = f();
+    let observed = STRANGLE_CONDOLATION_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("strangle condolation trace remains installed")
+    });
+    (result, observed)
+}
+
+#[cfg(test)]
+fn observe_strangle_condolation_step(step: &'static str) {
+    STRANGLE_CONDOLATION_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(step);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -653,56 +681,94 @@ impl EngineInner {
         owner: EntityId,
         command: Command,
         seq_id: SequenceId,
-        _elem_idx: u16,
+        elem_idx: u16,
         _assets: &LevelAssets,
     ) {
         match command {
             Command::StrangleCmd => {
                 // Look up the antagonist NPC stored on the strangle
-                // element's `Interaction` data.  Accept any non-PC
-                // living human.
-                let Some(elem) = self
+                // element's required `Interaction` data.
+                let elem = self
                     .orders
                     .sequence_manager
-                    .get_element(seq_id, _elem_idx as usize)
-                else {
-                    return;
+                    .get_element(seq_id, elem_idx as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "strangle condolation owner {owner:?} requires missing element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(
+                    elem.command,
+                    Command::StrangleCmd,
+                    "strangle condolation owner {owner:?} reached wrong command on {seq_id:?}/{elem_idx}"
+                );
+                let victim_id = match &elem.data {
+                    crate::sequence::SequenceElementData::Interaction {
+                        antagonist: Some(antagonist),
+                    } => *antagonist,
+                    crate::sequence::SequenceElementData::Interaction { antagonist: None } => {
+                        panic!(
+                            "strangle condolation owner {owner:?} requires an antagonist on {seq_id:?}/{elem_idx}"
+                        )
+                    }
+                    data => panic!(
+                        "strangle condolation owner {owner:?} requires Interaction data on {seq_id:?}/{elem_idx}, got {data:?}"
+                    ),
                 };
-                let Some(victim_id) = (match &elem.data {
-                    crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
-                    _ => None,
-                }) else {
-                    return;
-                };
+                let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
+                    panic!(
+                        "strangle condolation owner {owner:?} requires missing victim {victim_id:?}"
+                    )
+                });
+                victim.npc_data().unwrap_or_else(|| {
+                    panic!(
+                        "strangle condolation victim {victim_id:?} requires NPC data for owner {owner:?}"
+                    )
+                });
+                victim.ai_controller().unwrap_or_else(|| {
+                    panic!(
+                        "strangle condolation victim {victim_id:?} requires AI state for owner {owner:?}"
+                    )
+                });
 
                 // Low-priority Wait element to re-park the victim's AI
                 // in the default loop.
                 self.actor_wait(victim_id);
+                #[cfg(test)]
+                observe_strangle_condolation_step("Wait");
 
                 // Release the AILOCK_FREEZE acquired in `begin_strangle`.
-                if let Some(victim) = self.world.entities.get_mut(victim_id) {
-                    if let Some(ai) = victim.ai_controller_mut() {
-                        ai.non_script_unlock(crate::ai::AiLockFlags::FREEZE);
-                    }
-                    // Alert the victim's generic NPC AI that the PC was the
-                    // aggressor. Friendly AI currently ignores EventGotHit,
-                    // while the canonical enqueue still preserves the event
-                    // for its normal filtered dispatch boundary.
-                    let _ = victim;
-                }
+                self.world
+                    .entities
+                    .get_mut(victim_id)
+                    .expect("validated strangle condolation victim disappeared before unlock")
+                    .ai_controller_mut()
+                    .expect("validated strangle condolation victim lost AI before unlock")
+                    .non_script_unlock(crate::ai::AiLockFlags::FREEZE);
+                #[cfg(test)]
+                observe_strangle_condolation_step("Unlock");
                 let stim = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventGotHit,
                     owner.index(),
                 );
                 self.dispatch_ai_stimulus(victim_id, stim);
+                #[cfg(test)]
+                observe_strangle_condolation_step("EventGotHit");
 
                 // Reset the victim's gaze (cosmetic; dead-on-corpse on
                 // the kill path, observable on abort).
-                if let Some(victim) = self.world.entities.get_mut(victim_id)
-                    && let Some(npc) = victim.npc_data_mut()
-                {
-                    crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::LookForward);
-                }
+                let npc = self
+                    .world
+                    .entities
+                    .get_mut(victim_id)
+                    .expect("validated strangle condolation victim disappeared before gaze reset")
+                    .npc_data_mut()
+                    .expect(
+                        "validated strangle condolation victim lost NPC data before gaze reset",
+                    );
+                crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::LookForward);
+                #[cfg(test)]
+                observe_strangle_condolation_step("LookForward");
 
                 tracing::debug!(
                     pc = owner.index(),

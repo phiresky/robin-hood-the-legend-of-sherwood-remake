@@ -794,11 +794,10 @@ fn resolve_action_left_click(
                 .and_then(|e| e.actor_data())
                 .map(|a| a.listen_phase)
                 .unwrap_or(ListenPhase::Inactive);
-            // Deliberate behaviour change: this code emits a toggle —
-            // a click while listening emits `LeaveListen`, matching
-            // player expectation from the HUD state, instead of
-            // re-emitting `EnterListen` and relying on the ability to
-            // short-circuit when already active.
+            // A click while EnterListen owns its non-interruptable chain emits
+            // LeaveListen. Sequence arbitration postpones it until EnterListen
+            // finishes; after the actor returns to Waiting, the restamped
+            // LeaveListen fails MUST_BE_LISTENING and becomes Impossible.
             let cmd = match listen_phase {
                 ListenPhase::Inactive => Command::EnterListen,
                 ListenPhase::EnterTransition | ListenPhase::CountingDown => Command::LeaveListen,

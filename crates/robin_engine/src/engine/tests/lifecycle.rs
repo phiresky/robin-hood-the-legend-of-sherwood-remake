@@ -1547,13 +1547,20 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     });
     assets.profile_manager = std::sync::Arc::new(profiles);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .eye_status = crate::element::EyeStatus::LookToTheLeft;
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .launch_element(SequenceElement::new_interaction(
             1,
             Command::StrangleCmd,
             Some(attacker),
+            Some(victim),
         ));
     assert_eq!(
         crate::abilities::begin_strangle(
@@ -1613,19 +1620,26 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "victim virgin increment must occur during initial attacker Done setup"
     );
 
-    for _ in 0..10 {
-        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-        if !engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
-        {
-            break;
-        }
-    }
+    let (_, condolation_order) =
+        crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
+            for _ in 0..10 {
+                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+                if !engine
+                    .get_entity(attacker)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .active_ability
+                    .is_active()
+                {
+                    break;
+                }
+            }
+        });
+    assert_eq!(
+        condolation_order,
+        ["Wait", "Unlock", "EventGotHit", "LookForward"]
+    );
     assert!(
         !engine
             .get_entity(attacker)
@@ -1644,6 +1658,26 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             .unwrap()
             .state,
         crate::sequence::SequenceState::InProgress
+    );
+    let victim_waits: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .map(move |element| (sequence.id, element))
+        })
+        .filter(|(_, element)| element.owner == Some(victim) && element.command == Command::Wait)
+        .collect();
+    assert_eq!(victim_waits.len(), 1);
+    assert!(victim_waits[0].0 > seq);
+    let victim_entity = engine.get_entity(victim).unwrap();
+    assert!(!victim_entity.ai_controller().unwrap().ai_is_locked());
+    assert_eq!(
+        victim_entity.npc_data().unwrap().eye_status,
+        crate::element::EyeStatus::LookForward
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
@@ -1665,6 +1699,8 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let hotspot = crate::coordinates::SpriteLocalPoint::new(7.0, 9.0);
     let script = SpriteScript {
         action_id: OrderType::Strangling as u16,
@@ -1697,10 +1733,12 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         element.set_sector(crate::position_interface::SectorHandle::new(2));
     }
     {
-        let element = engine.get_entity_mut(victim).unwrap().element_data_mut();
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let element = victim_entity.element_data_mut();
         element.set_layer(8);
         element.set_sector(crate::position_interface::SectorHandle::new(5));
         element.set_direction_instantly(6);
+        victim_entity.npc_data_mut().unwrap().eye_status = crate::element::EyeStatus::LookToTheLeft;
     }
     let expected_action_point = {
         let attacker = engine.get_entity(attacker).unwrap();
@@ -1717,10 +1755,11 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .launch_element(SequenceElement::new_interaction(
             1,
             Command::StrangleCmd,
             Some(attacker),
+            Some(victim),
         ));
     assert_eq!(
         crate::abilities::begin_strangle(
@@ -1744,23 +1783,28 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         )
     };
     engine.orders.sequence_manager.element_in_progress(seq, 0);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
     let mut display = HostDisplayState::default();
 
-    for _ in 0..10 {
-        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-        if !engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
-        {
-            break;
-        }
-    }
+    let (_, condolation_order) =
+        crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
+            for _ in 0..10 {
+                engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+                if !engine
+                    .get_entity(attacker)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .active_ability
+                    .is_active()
+                {
+                    break;
+                }
+            }
+        });
+    assert_eq!(
+        condolation_order,
+        ["Wait", "Unlock", "EventGotHit", "LookForward"]
+    );
 
     assert!(
         !engine
@@ -1808,8 +1852,33 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
     assert_eq!(
         engine.orders.sequence_manager.sequences_iter().count(),
-        sequence_count_before + 1,
-        "failed setup must not launch speech or damage owner work"
+        sequence_count_before + 2,
+        "failed setup synchronously appends only its required victim Wait"
+    );
+    let victim_waits: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .map(move |element| (sequence.id, element))
+        })
+        .filter(|(_, element)| element.owner == Some(victim) && element.command == Command::Wait)
+        .collect();
+    assert_eq!(victim_waits.len(), 1);
+    assert!(
+        victim_waits[0].0 > seq,
+        "condolation Wait must be appended synchronously after its Interaction owner"
+    );
+    assert_eq!(
+        victim_entity.npc_data().unwrap().eye_status,
+        crate::element::EyeStatus::LookForward
+    );
+    assert!(
+        !victim_entity.ai_controller().unwrap().ai_is_locked(),
+        "owner-boundary condolation must unlock the failed victim before returning"
     );
     assert!(
         victim_entity
@@ -1838,6 +1907,23 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         snapshot,
         "a later owner tick must not repeat failed setup effects"
     );
+}
+
+#[test]
+#[should_panic(expected = "requires Interaction data")]
+fn strangle_condolation_rejects_non_interaction_owner_data() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::StrangleCmd, Some(owner)));
+    engine.orders.sequence_manager.element_impossible(seq, 0);
+    engine.dispatch_condolations_for_owner_boundary(&sim, owner, &LevelAssets::new());
 }
 
 #[test]

@@ -1218,10 +1218,19 @@ pub fn begin_strangle(
     // Invalid-target rejection happens in
     // `EngineInner::check_sequence_element_validity`, which runs before
     // dispatch.  This helper just rejects any non-living-human-NPC.
-    let target_pos = match entities.get(target_id) {
-        Some(e) if e.is_human() && !e.is_dead() && !e.is_pc() => e.element_data().position_map(),
-        _ => return BeginResult::Impossible,
-    };
+    let target = entities
+        .get(target_id)
+        .unwrap_or_else(|| panic!("validated strangle target {target_id:?} vanished before begin"));
+    if !target.is_human() || target.is_dead() || target.is_pc() {
+        return BeginResult::Impossible;
+    }
+    target.actor_data().unwrap_or_else(|| {
+        panic!("validated strangle target {target_id:?} is an NPC human without actor state")
+    });
+    target.ai_controller().unwrap_or_else(|| {
+        panic!("validated strangle target {target_id:?} is an NPC human without AI state")
+    });
+    let target_pos = target.element_data().position_map();
 
     let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
@@ -1256,8 +1265,10 @@ pub fn begin_strangle(
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-    // Face the victim — set the direction for both the strangler and
-    // the victim; the victim's direction is matched when the kill fires.
+    // TODO(PA-013): Original sets direction goals and calls attacker then
+    // victim TurnFast before starting Strangling. This port still snaps both
+    // directions here. Moving-victim EventStop is likewise drained after
+    // dispatch instead of synchronously before the initial FREEZE lock.
     let actor_pos = actor_entity.element_data().position_map();
     let dx = target_pos.x - actor_pos.x;
     let dy = target_pos.y - actor_pos.y;
@@ -1278,27 +1289,33 @@ pub fn begin_strangle(
     // dispatch).  Push the stimulus BEFORE setting the FREEZE lock —
     // ordering matters: the stimulus is a sequence transition (earlier)
     // and the lock is part of the strangle init (later).
-    if let Some(victim) = entities.get_mut(target_id) {
-        victim.element_data_mut().set_direction_instantly(facing);
-        let is_moving = victim
-            .actor_data()
-            .map(|a| a.action_state.is_moving())
-            .unwrap_or(false);
-        if let Some(ai) = victim.ai_controller_mut() {
-            if is_moving {
-                ai.outbox.reentrant.cross_npc_actions.push(
-                    crate::ai::CrossNpcAction::SendStimulus {
-                        target: target_id.index(),
-                        stimulus_type: crate::ai::StimulusType::EventStop,
-                        info: crate::ai::StimulusInfo::None,
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                    },
-                );
-            }
-            ai.non_script_lock(crate::ai::AiLockFlags::FREEZE);
-        }
+    let victim = entities
+        .get_mut(target_id)
+        .unwrap_or_else(|| panic!("validated strangle target {target_id:?} vanished during begin"));
+    victim.element_data_mut().set_direction_instantly(facing);
+    let is_moving = victim
+        .actor_data()
+        .unwrap_or_else(|| {
+            panic!("validated strangle target {target_id:?} lost required actor state")
+        })
+        .action_state
+        .is_moving();
+    let ai = victim.ai_controller_mut().unwrap_or_else(|| {
+        panic!("validated strangle target {target_id:?} lost required AI state")
+    });
+    if is_moving {
+        ai.outbox
+            .reentrant
+            .cross_npc_actions
+            .push(crate::ai::CrossNpcAction::SendStimulus {
+                target: target_id.index(),
+                stimulus_type: crate::ai::StimulusType::EventStop,
+                info: crate::ai::StimulusInfo::None,
+                fallback_to_sender: None,
+                to_whole_patrol: false,
+            });
     }
+    ai.non_script_lock(crate::ai::AiLockFlags::FREEZE);
 
     BeginResult::Started
 }
@@ -1406,10 +1423,6 @@ pub fn begin_listen(
 
     BeginResult::Started
 }
-
-// ═══════════════════════════════════════════════════════════════════
-//  Begin — Leave Listen (cancel mid-countdown)
-// ═══════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════
 //  Begin — Throw net (Stuteley)

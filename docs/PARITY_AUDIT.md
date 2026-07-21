@@ -378,6 +378,13 @@ exactly one additional advancement at its appended live creation slot in the
 same frame; the ability stays selected between spawn/debit `Done` and
 `Terminated`.
 
+Strangle coverage is deliberately boundary-specific: Done setup and its
+same-invocation victim increment, authorized-placement failure, and terminal
+non-stranglable cleanup are covered. Pre-Done turning still differs from the
+Original: Rust snaps both directions and drains a moving victim's EventStop
+after dispatch, while the Original uses attacker-then-victim `TurnFast` and
+delivers Stop before taking the initialization freeze lock.
+
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier
 Enemy-optical paths. Inactive NPCs with a door pointer or BUILDING sector
