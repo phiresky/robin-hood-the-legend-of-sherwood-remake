@@ -4141,7 +4141,7 @@ impl EngineInner {
         let mut completed_door_passes: Vec<(EntityId, crate::gate::DoorIndex, bool)> = Vec::new();
         // Rider entities whose running animation hit the charge
         // decision frames while carrying RIDER_CHARGE.
-        let mut galopp_events: Vec<EntityId> = Vec::new();
+        let mut galopp_event = false;
         // Movement elements whose sprite motion returned the blocked-
         // abort signal and must be marked Impossible after the entity
         // borrow ends.
@@ -4905,7 +4905,11 @@ impl EngineInner {
                 let frame_count = sprite.num_frames_for_anim(OrderType::RunningUpright);
                 let cur = sprite.current_frame;
                 if frame_count >= 2 && (cur == frame_count / 2 - 1 || cur == frame_count - 1) {
-                    galopp_events.push(entity_id);
+                    assert_eq!(
+                        entity_id, owner,
+                        "owner-local rider Execute collected a gallop callback for another actor"
+                    );
+                    galopp_event = true;
                 }
             }
             // Turn-slowdown: when the sprite is still rotating toward
@@ -5993,8 +5997,8 @@ impl EngineInner {
         // These are derived Execute-arm tails in Original, so they close
         // after PerformMotion but before base Actor completion/DoNextOrder.
         self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
-        if !galopp_events.is_empty() {
-            self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
+        if galopp_event {
+            self.dispatch_galopp_loop_event(sim, assets, owner);
         }
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
             .unwrap_or_else(|error| {

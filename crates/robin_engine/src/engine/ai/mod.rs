@@ -3263,45 +3263,46 @@ impl EngineInner {
     /// the `RIDER_CHARGE` move flag, `think(EVENT_GALOPP_LOOP_END)`
     /// fires so the AI can call `maybe_make_rider_attack()` to check
     /// if it's close enough to begin the actual charge pass.
-    pub(super) fn dispatch_galopp_loop_events(
+    pub(super) fn dispatch_galopp_loop_event(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        entities: &[EntityId],
+        entity_id: EntityId,
     ) {
         let scratch = self.build_sim_scratch(sim, assets);
         let current_frame = self.control.frame_counter;
+        let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
+            panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
+        });
+        let soldier = entity.soldier_data().unwrap_or_else(|| {
+            panic!("GALOPP Execute callback owner {entity_id:?} is not a soldier")
+        });
+        assert!(
+            soldier.rider,
+            "GALOPP Execute callback owner {entity_id:?} is not a rider"
+        );
+        let ctx = build_ai_context_from_entity(
+            entity,
+            current_frame,
+            None,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
 
-        for &entity_id in entities {
-            let ctx = {
-                let Some(entity) = self.world.entities.get(entity_id) else {
-                    continue;
-                };
-                build_ai_context_from_entity(
-                    entity,
-                    current_frame,
-                    None,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                )
-            };
-
-            let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventGaloppLoopEnd);
-            // EventGaloppLoopEnd fires on enemy riders mid-charge
-            // towards their primary target — the AI inspects the
-            // target position to decide whether to begin the attack
-            // pass.  Populate primary-target metadata via the builder.
-            let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
-
-            self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
-        }
+        let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventGaloppLoopEnd);
+        // EventGaloppLoopEnd fires on enemy riders mid-charge towards their
+        // primary target. Think and every order/script callback it creates
+        // close here, before Actor::Hourglass can complete this movement or
+        // the mutable legacy walk can advance to the next owner.
+        let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
+        self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
     }
 
     /// Map a PC's currently-executing animation (`OrderType`) to the

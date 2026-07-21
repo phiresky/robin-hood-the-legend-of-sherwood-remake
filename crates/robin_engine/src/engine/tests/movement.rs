@@ -51,6 +51,23 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
 }
 
 #[test]
+#[should_panic(expected = "GALOPP Execute callback owner Soldier(SoldierId(0)) is not a rider")]
+fn galopp_execute_callback_rejects_non_rider_owner() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+}
+
+#[test]
+#[should_panic(expected = "disappeared before its synchronous GALOPP Execute callback")]
+fn galopp_execute_callback_rejects_missing_selected_owner() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    engine.remove_entity(owner);
+    engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+}
+
+#[test]
 fn production_owner_uses_exact_selected_element_not_background_movement() {
     use crate::element::Command;
     use crate::order::{Order, OrderType};
