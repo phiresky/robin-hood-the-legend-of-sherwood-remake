@@ -3659,6 +3659,49 @@ impl ActorSoldier {
 }
 
 impl ElementBonus {
+    /// Original concrete class represented by this Rust `Entity::Bonus`.
+    ///
+    /// Rust deliberately shares one storage variant for several Original
+    /// object subclasses, so virtual dispatch must use the authored object
+    /// type rather than assuming every value is `RHElementBonus`.
+    pub fn original_concrete_class(&self) -> OriginalBonusConcreteClass {
+        match self.object.object_type {
+            ObjectType::Ale => OriginalBonusConcreteClass::Ale,
+            ObjectType::Cape => OriginalBonusConcreteClass::Cape,
+            ObjectType::BonusAmulet
+            | ObjectType::BonusAle
+            | ObjectType::BonusApple
+            | ObjectType::BonusArrow
+            | ObjectType::BonusBlazon
+            | ObjectType::BonusLambLeg
+            | ObjectType::BonusNet
+            | ObjectType::BonusPlants
+            | ObjectType::BonusPurse
+            | ObjectType::BonusRansom
+            | ObjectType::BonusStone
+            | ObjectType::BonusWaspNest
+            | ObjectType::BonusAmpulla
+            | ObjectType::BonusCoronationSpoon
+            | ObjectType::BonusRichardsCrown
+            | ObjectType::BonusRoyalSeal
+            | ObjectType::BonusRoyalSceptre
+            | ObjectType::BonusDomesdayBook
+            | ObjectType::BonusSwordOfTheState => OriginalBonusConcreteClass::Bonus,
+            ObjectType::None
+            | ObjectType::VirtualJumper
+            | ObjectType::VirtualListen
+            | ObjectType::Apple
+            | ObjectType::Arrow
+            | ObjectType::Stone
+            | ObjectType::Purse
+            | ObjectType::Coin
+            | ObjectType::Net
+            | ObjectType::Wasp
+            | ObjectType::WaspNest
+            | ObjectType::Scroll => OriginalBonusConcreteClass::Unsupported,
+        }
+    }
+
     pub fn is_relic(&self) -> bool {
         matches!(
             self.object.object_type,
@@ -3676,6 +3719,16 @@ impl ElementBonus {
     pub fn is_takable(&self) -> bool {
         !self.object.taken && self.element.active
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginalBonusConcreteClass {
+    Bonus,
+    Ale,
+    Cape,
+    /// TODO(original-parity): add a mapping only when an Original constructor
+    /// proves that the object type can inhabit Rust's `Entity::Bonus`.
+    Unsupported,
 }
 
 // ─── BonusItemType / ObjectType → Action bridges ──────────────────
@@ -3815,6 +3868,56 @@ impl ElementNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entity_bonus_object_type_mapping_is_exhaustive_and_original_evidenced() {
+        use OriginalBonusConcreteClass as Class;
+        let cases = [
+            (ObjectType::None, Class::Unsupported),
+            (ObjectType::VirtualJumper, Class::Unsupported),
+            (ObjectType::VirtualListen, Class::Unsupported),
+            (ObjectType::Ale, Class::Ale),
+            (ObjectType::Apple, Class::Unsupported),
+            (ObjectType::Arrow, Class::Unsupported),
+            (ObjectType::Stone, Class::Unsupported),
+            (ObjectType::Purse, Class::Unsupported),
+            (ObjectType::Coin, Class::Unsupported),
+            (ObjectType::Net, Class::Unsupported),
+            (ObjectType::Wasp, Class::Unsupported),
+            (ObjectType::WaspNest, Class::Unsupported),
+            (ObjectType::Scroll, Class::Unsupported),
+            (ObjectType::Cape, Class::Cape),
+            (ObjectType::BonusAmulet, Class::Bonus),
+            (ObjectType::BonusAle, Class::Bonus),
+            (ObjectType::BonusApple, Class::Bonus),
+            (ObjectType::BonusArrow, Class::Bonus),
+            (ObjectType::BonusBlazon, Class::Bonus),
+            (ObjectType::BonusLambLeg, Class::Bonus),
+            (ObjectType::BonusNet, Class::Bonus),
+            (ObjectType::BonusPlants, Class::Bonus),
+            (ObjectType::BonusPurse, Class::Bonus),
+            (ObjectType::BonusRansom, Class::Bonus),
+            (ObjectType::BonusStone, Class::Bonus),
+            (ObjectType::BonusWaspNest, Class::Bonus),
+            (ObjectType::BonusAmpulla, Class::Bonus),
+            (ObjectType::BonusCoronationSpoon, Class::Bonus),
+            (ObjectType::BonusRichardsCrown, Class::Bonus),
+            (ObjectType::BonusRoyalSeal, Class::Bonus),
+            (ObjectType::BonusRoyalSceptre, Class::Bonus),
+            (ObjectType::BonusDomesdayBook, Class::Bonus),
+            (ObjectType::BonusSwordOfTheState, Class::Bonus),
+        ];
+        for (object_type, expected) in cases {
+            let bonus = ElementBonus {
+                object: ObjectData {
+                    object_type,
+                    ..Default::default()
+                },
+                element: ElementData::default(),
+            };
+            assert_eq!(bonus.original_concrete_class(), expected, "{object_type:?}");
+        }
+    }
 
     #[test]
     fn element_kind_type_checks() {

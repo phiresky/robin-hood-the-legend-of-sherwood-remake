@@ -178,7 +178,7 @@ mod tests {
         let assets = crate::engine::types::LevelAssets::new();
 
         engine.set_actors_frozen(true);
-        engine.tick_nonactor_entity_animations(&crate::sim_rng::test_context(), &assets);
+        engine.tick_static_entity_hourglass_for(&crate::sim_rng::test_context(), &assets, fx);
         assert_eq!(
             engine
                 .world
@@ -192,7 +192,7 @@ mod tests {
         );
 
         engine.set_actors_frozen(false);
-        engine.tick_nonactor_entity_animations(&crate::sim_rng::test_context(), &assets);
+        engine.tick_static_entity_hourglass_for(&crate::sim_rng::test_context(), &assets, fx);
         assert_eq!(
             engine
                 .world
@@ -214,9 +214,10 @@ mod tests {
             crate::patch::PatchIndex::new(0).expect("zero is a valid patch index"),
         )));
 
-        engine.tick_nonactor_entity_animations(
+        engine.tick_static_entity_hourglass_for(
             &crate::sim_rng::test_context(),
             &crate::engine::types::LevelAssets::new(),
+            fx,
         );
 
         assert_eq!(
@@ -2849,36 +2850,20 @@ impl EngineInner {
     pub(super) fn tick_nonactor_entity_animations(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::types::LevelAssets,
+        _assets: &crate::engine::types::LevelAssets,
     ) {
         if self.actors_frozen() {
             return;
         }
-
-        // Snapshot patch (applied, in_transition) states before entity
-        // iteration. We need this to decide Reversed vs Default progression
-        // for patch FX entities, but cannot borrow the canonical patch domain
-        // during the mutable entity loop.
-        let patch_states: Option<Vec<(bool, bool)>> = self.scripts.mission.as_ref().map(|_| {
-            self.script_domains
-                .interactables
-                .patches
-                .iter()
-                .map(|p| (p.applied, p.in_transition))
-                .collect()
-        });
-        let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
 
         for (_entity_id, entity) in self.world.entities.occupied_mut() {
             if !entity.is_active() || entity.actor_data().is_some() {
                 continue;
             }
 
-            // FX entities: frame advance. Mobile children freeze with their
-            // stopped master (RHElementFXMasked::Hourglass checks
-            // IsStopped before advancing). Patch FX entities need
-            // special handling: reversed playback during unapply
-            // transitions, and final patch effects on completion.
+            // Mobile-child FX remains in the mobile lane. Static FX, Target,
+            // Scroll, and the proven Entity::Bonus subclasses run at their
+            // live legacy slots in the owner coordinator.
             if entity.is_fx() {
                 if let Entity::Fx(fx) = entity
                     && let Some(mobile_index) = fx.fx.mobile_index
@@ -2898,47 +2883,13 @@ impl EngineInner {
                     }
                     continue;
                 }
-                let patch_idx = match entity {
-                    Entity::Fx(fx) => fx.fx.patch_index,
-                    _ => None,
-                };
+                continue;
+            }
 
-                if let Some(pidx) = patch_idx {
-                    let (applied, in_transition) = match patch_states.as_ref() {
-                        Some(states) => states.get(usize::from(pidx)).copied().unwrap_or_else(|| {
-                            panic!(
-                                "patch FX references missing patch {pidx} while advancing nonactor animation"
-                            )
-                        }),
-                        // `--no-script` intentionally omits the VM while
-                        // retaining authored non-script entities/domains. The
-                        // legacy batch treated patch FX as ordinary forward
-                        // animation and could not finalize script patch state.
-                        None => (false, false),
-                    };
-                    let progression = if applied && in_transition {
-                        FrameProgression::Reversed
-                    } else {
-                        FrameProgression::Default
-                    };
-                    let motion = entity
-                        .element_data_mut()
-                        .sprite
-                        .perform_virgin_increment(sim, progression);
-                    if matches!(motion, MotionState::Terminated) && in_transition {
-                        completed_patch_transitions.push(pidx);
-                    }
-                } else {
-                    let progression = if let Entity::Target(t) = entity {
-                        FrameProgression::from_ordinal(t.target.progression)
-                    } else {
-                        FrameProgression::Default
-                    };
-                    entity
-                        .element_data_mut()
-                        .sprite
-                        .perform_virgin_increment(sim, progression);
-                }
+            if matches!(
+                entity,
+                Entity::Target(_) | Entity::Bonus(_) | Entity::Scroll(_)
+            ) {
                 continue;
             }
 
@@ -2959,46 +2910,50 @@ impl EngineInner {
                 continue;
             }
 
-            // Bonus, Scroll, Mobile, Net, and remaining projectiles all use
-            // the plain cyclical frame advance.
+            // Net and remaining projectiles retain their existing lanes.
             entity
                 .element_data_mut()
                 .sprite
                 .increment_frame(sim, FrameProgression::Cyclically);
         }
+    }
 
-        for patch_idx in completed_patch_transitions {
-            let effects = {
-                let patch = self
-                    .script_domains
-                    .interactables
-                    .patches
-                    .get_mut(usize::from(patch_idx))
-                    .unwrap_or_else(|| {
-                        panic!("completed patch animation references missing patch {patch_idx}")
-                    });
-                patch.in_transition = false;
-                patch.apply_final(false)
-            };
+    pub(super) fn finish_patch_transition_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::types::LevelAssets,
+        patch_idx: crate::patch::PatchIndex,
+    ) {
+        let effects = {
+            let patch = self
+                .script_domains
+                .interactables
+                .patches
+                .get_mut(usize::from(patch_idx))
+                .unwrap_or_else(|| {
+                    panic!("completed patch animation references missing patch {patch_idx}")
+                });
+            patch.in_transition = false;
+            patch.apply_final(false)
+        };
 
-            for door in self.script_domains.interactables.doors.iter_mut() {
-                if door.patch_index == Some(patch_idx) {
-                    door.gate_state.finish_transition();
-                    tracing::debug!(
-                        %patch_idx,
-                        new_state = ?door.gate_state,
-                        "gate_state advanced on patch transition complete"
-                    );
-                }
+        for door in self.script_domains.interactables.doors.iter_mut() {
+            if door.patch_index == Some(patch_idx) {
+                door.gate_state.finish_transition();
+                tracing::debug!(
+                    %patch_idx,
+                    new_state = ?door.gate_state,
+                    "gate_state advanced on patch transition complete"
+                );
             }
-
-            tracing::debug!(
-                %patch_idx,
-                num_effects = effects.len(),
-                "Patch transition animation completed → ApplyFinal"
-            );
-            self.process_patch_effects(sim, assets, patch_idx, effects);
         }
+
+        tracing::debug!(
+            %patch_idx,
+            num_effects = effects.len(),
+            "Patch transition animation completed → ApplyFinal"
+        );
+        self.process_patch_effects(sim, assets, patch_idx, effects);
     }
 
     /// Run the existing generic actor animation/`Execute` dispatch for one

@@ -16,8 +16,11 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
-- Ordinary actor movement and evidenced rider movement arms run inside the
-  live legacy-slot Actor owner coordinator. `movement.rs` prepares only
+- Ordinary actor movement, evidenced rider movement arms, and supported static
+  virtual Hourglasses run inside the live legacy-slot owner coordinator.
+  Static FX/Target/Scroll and proven Bonus/Ale/Cape classes are no longer
+  globally animated; projectile/net and mobile-child scheduling remain open.
+  `movement.rs` prepares only
   immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
   completion, and callback work closes per owner before ActionChange/tails.
 - Mission ingestion is split into ordered entity, environment, PC and finish
@@ -77,7 +80,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active combat/abilities, unsupported rider arms, and other entity owners remain. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and static FX/Target/Scroll/Bonus-class Hourglasses are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active combat/abilities, mobile/projectile/net scheduling, unsupported rider arms, and other entity owners remain. |
 | 2 | Close remaining snapshot inputs | Audit every `apply_commands` and `perform_hourglass` read. Simulation-relevant host/display controls must be snapshotted or command-derived. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
