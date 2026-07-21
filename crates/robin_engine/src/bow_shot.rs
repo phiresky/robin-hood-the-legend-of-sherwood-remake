@@ -95,6 +95,22 @@ pub const HIT_DISTANCE: f32 = 15.0;
 /// Experience points awarded for a bow kill.
 pub const BOW_KILL_EXPERIENCE_POINTS: u32 = 20;
 
+fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) {
+    proj.object.animation = animation;
+    if proj.element.sprite.current_conversion().is_empty() {
+        return;
+    }
+    assert!(
+        proj.element.sprite.has_animation(animation),
+        "projectile {:?} is missing required animation {animation:?}",
+        proj.object.object_type
+    );
+    let direction =
+        u16::try_from(proj.element.direction()).expect("projectile direction must be non-negative");
+    proj.element.sprite.force_animation(animation, direction);
+    proj.element.sprite.reset_sprite_frame(false);
+}
+
 /// Z offset added to the bow point for long (high) shots.
 const BOW_Z_OFFSET_LONG: f32 = 50.0;
 
@@ -3300,7 +3316,7 @@ fn tick_arrows_matching(
                 let impact_pos = proj.element.position_map();
                 proj.projectile.flying = false;
                 let despawn = if is_burster {
-                    proj.object.animation = Animation::ObjectBursting;
+                    set_projectile_animation(proj, Animation::ObjectBursting);
                     false
                 } else {
                     true
@@ -3702,7 +3718,7 @@ fn tick_arrows_matching(
             let impact_pos = victim_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
-                proj.object.animation = Animation::ObjectBursting;
+                set_projectile_animation(proj, Animation::ObjectBursting);
                 false
             } else {
                 true
@@ -3722,7 +3738,7 @@ fn tick_arrows_matching(
             let impact_pos = fx_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
-                proj.object.animation = Animation::ObjectBursting;
+                set_projectile_animation(proj, Animation::ObjectBursting);
                 false
             } else {
                 true

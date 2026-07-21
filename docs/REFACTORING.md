@@ -30,7 +30,8 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   subtype's virtual return/removal decision likewise occur only at the fused
   live slot, after any required derived tail, not in the legacy pre-pass. The
   former Apple/Stone base-path burst countdown no longer duplicates their
-  derived sprite lifetime.
+  derived sprite lifetime; impact selects/resets the converted bursting row,
+  and the obsolete countdown state has been removed.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split

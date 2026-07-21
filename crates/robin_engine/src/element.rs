@@ -1883,11 +1883,6 @@ pub struct ProjectileData {
     /// each `ObjectType::Wasp` child, default for everything else.
     /// See [`WaspData`].
     pub wasp: WaspData,
-    /// Retired pre-fusion Apple/Stone burst countdown. The virtual derived
-    /// owner path now advances the real sprite and owns deactivation; this
-    /// value is intentionally ignored and retained only as inert state until
-    /// the projectile data layout is cleaned up.
-    pub burst_countdown: u16,
 }
 
 impl Default for ProjectileData {
@@ -1910,7 +1905,6 @@ impl Default for ProjectileData {
             falling_direction: 0,
             purse: PurseData::default(),
             wasp: WaspData::default(),
-            burst_countdown: 0,
         }
     }
 }

@@ -689,50 +689,111 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 }
 
 #[test]
-fn active_grounded_apple_and_stone_ignore_legacy_countdown_until_derived_tail() {
+fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
     use crate::element::{
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+        TrajectoryPoint,
     };
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
-    let mut engine = EngineInner::new();
-    let mut ids = Vec::new();
     for object_type in [ObjectType::Apple, ObjectType::Stone] {
-        ids.push((
-            engine.add_entity(Entity::Projectile(ElementProjectile {
-                element: ElementData {
-                    kind: ElementKind::ObjectProjectile,
-                    active: true,
-                    ..Default::default()
-                },
-                object: ObjectData {
-                    object_type,
-                    animation: Animation::ObjectBursting,
-                    ..Default::default()
-                },
-                projectile: crate::element::ProjectileData {
-                    flying: false,
-                    burst_countdown: 1,
-                    ..Default::default()
-                },
-            })),
-            object_type,
-        ));
-    }
-    let assets = LevelAssets::new();
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    let (_, tails) = capture_projectile_derived_tails(|| {
-        engine.with_simulation_context(|engine, sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
-        })
-    });
+        let mut engine = EngineInner::new();
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 0;
+        conversion[Animation::ObjectBursting as usize] = 16;
+        let row = |animation: Animation, frames: Vec<u32>, delays: Vec<u16>| SpriteScript {
+            action_id: animation as u16,
+            action_done: frames.len().saturating_sub(1) as u16,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            distances: vec![0; frames.len()],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; frames.len()],
+            sound_ids: vec![0; frames.len()],
+            frame_ids: frames,
+            delays,
+        };
+        element.sprite.conversion = std::sync::Arc::new(conversion);
+        let mut scripts = Vec::with_capacity(32);
+        for _ in 0..16 {
+            scripts.push(row(Animation::ObjectFlying, vec![10, 11], vec![10, 10]));
+        }
+        for _ in 0..16 {
+            scripts.push(row(
+                Animation::ObjectBursting,
+                vec![20, 21, 22],
+                vec![0, 0, 0],
+            ));
+        }
+        element.sprite.scripts = std::sync::Arc::new(scripts);
+        element.sprite.force_animation(Animation::ObjectFlying, 0);
+        element.sprite.force_sprite(0, 1);
+        let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: crate::element::ProjectileData {
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: crate::coordinates::WorldPoint3D::new(10.0, 0.0, 0.0),
+                    time: 1,
+                }],
+                ..Default::default()
+            },
+        }));
+        let assets = LevelAssets::new();
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        let tick = |engine: &mut EngineInner| {
+            capture_projectile_derived_tails(|| {
+                engine.with_simulation_context(|engine, sim| {
+                    engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+                })
+            })
+            .1
+        };
 
-    assert_eq!(tails, ids);
-    for (id, _) in ids {
-        let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+        let mut impact_tails = Vec::new();
+        for _ in 0..3 {
+            impact_tails = tick(&mut engine);
+            if matches!(
+                engine.get_entity(projectile_id),
+                Some(Entity::Projectile(projectile))
+                    if projectile.object.animation == Animation::ObjectBursting
+            ) {
+                break;
+            }
+        }
+        assert_eq!(impact_tails, vec![(projectile_id, object_type)]);
+        let Entity::Projectile(projectile) = engine.get_entity(projectile_id).unwrap() else {
             unreachable!()
         };
-        assert_eq!(projectile.projectile.burst_countdown, 1);
-        assert!(projectile.element.active);
+        assert_eq!(projectile.object.animation, Animation::ObjectBursting);
+        assert_eq!(
+            projectile.element.sprite.current_row,
+            16 + projectile.element.direction() as u16
+        );
+
+        for _ in 0..8 {
+            if !engine.get_entity(projectile_id).unwrap().is_active() {
+                break;
+            }
+            assert_eq!(tick(&mut engine), vec![(projectile_id, object_type)]);
+        }
+        assert!(!engine.get_entity(projectile_id).unwrap().is_active());
+        assert_eq!(
+            tick(&mut engine),
+            vec![(projectile_id, object_type)],
+            "inactive virtual call must still run the derived landed tail"
+        );
+        assert!(engine.get_entity(projectile_id).is_none());
     }
 }
 
