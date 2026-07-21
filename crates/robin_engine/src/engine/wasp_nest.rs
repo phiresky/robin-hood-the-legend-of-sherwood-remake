@@ -88,10 +88,6 @@ impl EngineInner {
         assets: &LevelAssets,
         id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-
         let object_type = match self.get_entity(id) {
             Some(Entity::Projectile(projectile)) if projectile.element.active => {
                 projectile.object.object_type

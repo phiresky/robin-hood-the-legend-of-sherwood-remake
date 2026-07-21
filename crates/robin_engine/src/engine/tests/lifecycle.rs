@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::tick::capture_projectile_derived_tails;
 
 #[test]
 fn scrolling_table_generation() {
@@ -455,7 +456,6 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         profile_manager: std::sync::Arc::new(profiles),
         ..LevelAssets::new()
     };
-    let mut display = HostDisplayState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     bind_test_bow_release_action(&mut engine, shooter_id);
     let shoot_direction = crate::position_interface::vector_to_sector_0_to_15_iso(1000.0, 0.0);
@@ -493,9 +493,10 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         );
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
         capture_ordered_gameplay_entities(|| {
-            engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[])
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
         })
     });
 
@@ -523,6 +524,327 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     assert!(
         spawned_arrow.projectile.launch_segment_start.is_none(),
         "the spawned arrow's explicit primer must be consumed before its second, registered Hourglass"
+    );
+}
+
+#[test]
+#[should_panic(expected = "unsupported ObjectType::None")]
+fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ObjectProjectile,
+            active: false,
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::None,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+    }));
+    engine.perform_hourglass(
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+        &mut DevState::default(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "net entity Net(NetId(0)) has unsupported ObjectType::None")]
+fn inactive_unsupported_net_mapping_panics_before_owner_slot_removal() {
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Net(crate::element::ElementNet {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::None,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+        net: Default::default(),
+    }));
+    engine.perform_hourglass(
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+        &mut DevState::default(),
+    );
+}
+
+#[test]
+fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementNet, ElementProjectile, ObjectData, ObjectType,
+    };
+
+    fn projectile(object_type: ObjectType, flying: bool) -> Entity {
+        Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                active: false,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: crate::element::ProjectileData {
+                flying,
+                ..Default::default()
+            },
+        })
+    }
+
+    let mut engine = EngineInner::new();
+    let apple = engine.add_entity(projectile(ObjectType::Apple, false));
+    let stone = engine.add_entity(projectile(ObjectType::Stone, false));
+    let grounded_purse = engine.add_entity(projectile(ObjectType::Purse, false));
+    let flying_purse = engine.add_entity(projectile(ObjectType::Purse, true));
+    let grounded_coin = engine.add_entity(projectile(ObjectType::Coin, false));
+    let flying_coin = engine.add_entity(projectile(ObjectType::Coin, true));
+    let grounded_net = engine.add_entity(Entity::Net(ElementNet {
+        element: ElementData {
+            kind: ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Net,
+            animation: Animation::NetUnfolding,
+            ..Default::default()
+        },
+        projectile: crate::element::ProjectileData {
+            flying: false,
+            ..Default::default()
+        },
+        net: Default::default(),
+    }));
+    let flying_net = engine.add_entity(Entity::Net(ElementNet {
+        element: ElementData {
+            kind: ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Net,
+            animation: Animation::ObjectFlying,
+            ..Default::default()
+        },
+        projectile: crate::element::ProjectileData {
+            flying: true,
+            ..Default::default()
+        },
+        net: crate::element::NetData {
+            time_till_unfolding: 1,
+            ..Default::default()
+        },
+    }));
+    let assets = LevelAssets::new();
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let (_, tails) = capture_projectile_derived_tails(|| {
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+        })
+    });
+
+    assert!(engine.get_entity(apple).is_none());
+    assert!(engine.get_entity(stone).is_none());
+    assert!(engine.get_entity(flying_purse).is_none());
+    assert!(engine.get_entity(grounded_purse).is_some());
+    assert!(engine.get_entity(grounded_coin).is_some());
+    assert!(engine.get_entity(flying_coin).is_some());
+    assert!(engine.get_entity(grounded_net).is_some());
+    assert!(engine.get_entity(flying_net).is_some());
+    assert_eq!(
+        tails,
+        vec![
+            (apple, ObjectType::Apple),
+            (stone, ObjectType::Stone),
+            (grounded_purse, ObjectType::Purse),
+            (flying_purse, ObjectType::Purse),
+            (grounded_coin, ObjectType::Coin),
+            (flying_coin, ObjectType::Coin),
+        ],
+        "each inactive derived sprite tail must run before its virtual bool controls removal"
+    );
+    for id in [grounded_purse, grounded_coin] {
+        let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(projectile.object.animation, Animation::ObjectBursting);
+    }
+    let Entity::Net(net) = engine.get_entity(grounded_net).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(net.object.animation, Animation::ObjectLying);
+    let Entity::Net(net) = engine.get_entity(flying_net).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(net.net.time_till_unfolding, 0);
+    assert_eq!(net.object.animation, Animation::NetUnfolding);
+}
+
+#[test]
+fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+        TrajectoryPoint,
+    };
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    for object_type in [ObjectType::Apple, ObjectType::Stone] {
+        let mut engine = EngineInner::new();
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 0;
+        conversion[Animation::ObjectBursting as usize] = 16;
+        let row = |animation: Animation, frames: Vec<u32>, delays: Vec<u16>| SpriteScript {
+            action_id: animation as u16,
+            action_done: frames.len().saturating_sub(1) as u16,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            distances: vec![0; frames.len()],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; frames.len()],
+            sound_ids: vec![0; frames.len()],
+            frame_ids: frames,
+            delays,
+        };
+        element.sprite.conversion = std::sync::Arc::new(conversion);
+        let mut scripts = Vec::with_capacity(32);
+        for _ in 0..16 {
+            scripts.push(row(Animation::ObjectFlying, vec![10, 11], vec![10, 10]));
+        }
+        for _ in 0..16 {
+            scripts.push(row(
+                Animation::ObjectBursting,
+                vec![20, 21, 22],
+                vec![0, 0, 0],
+            ));
+        }
+        element.sprite.scripts = std::sync::Arc::new(scripts);
+        element.sprite.force_animation(Animation::ObjectFlying, 0);
+        element.sprite.force_sprite(0, 1);
+        let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: crate::element::ProjectileData {
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: crate::coordinates::WorldPoint3D::new(10.0, 0.0, 0.0),
+                    time: 1,
+                }],
+                ..Default::default()
+            },
+        }));
+        let assets = LevelAssets::new();
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        let tick = |engine: &mut EngineInner| {
+            capture_projectile_derived_tails(|| {
+                engine.with_simulation_context(|engine, sim| {
+                    engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+                })
+            })
+            .1
+        };
+
+        let mut impact_tails = Vec::new();
+        for _ in 0..3 {
+            impact_tails = tick(&mut engine);
+            if matches!(
+                engine.get_entity(projectile_id),
+                Some(Entity::Projectile(projectile))
+                    if projectile.object.animation == Animation::ObjectBursting
+            ) {
+                break;
+            }
+        }
+        assert_eq!(impact_tails, vec![(projectile_id, object_type)]);
+        let Entity::Projectile(projectile) = engine.get_entity(projectile_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(projectile.object.animation, Animation::ObjectBursting);
+        assert_ne!(
+            projectile.element.direction(),
+            0,
+            "regression requires a nonzero impact direction"
+        );
+        assert_eq!(projectile.element.sprite.current_row, 16);
+        assert_eq!(
+            projectile.element.sprite.current_frame, 1,
+            "the zero-delay first burst frame must advance in the impact derived tail"
+        );
+
+        for _ in 0..8 {
+            if !engine.get_entity(projectile_id).unwrap().is_active() {
+                break;
+            }
+            assert_eq!(tick(&mut engine), vec![(projectile_id, object_type)]);
+        }
+        assert!(!engine.get_entity(projectile_id).unwrap().is_active());
+        assert_eq!(
+            tick(&mut engine),
+            vec![(projectile_id, object_type)],
+            "inactive virtual call must still run the derived landed tail"
+        );
+        assert!(engine.get_entity(projectile_id).is_none());
+    }
+}
+
+#[test]
+fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut selected = SequenceElement::new(1, Command::Wait, Some(owner));
+    let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
+    let order_id = order.order_id;
+    selected.orders.push_back(order);
+    let selected_seq = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(selected_seq, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_shot = ActiveShot {
+        sequence_id: Some(selected_seq),
+        element_index: 0,
+        target: Some(owner),
+        order_id: Some(order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+
+    assert!(engine.selected_bow_order(owner).is_none());
+    let (_, _, executed) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    assert!(
+        executed.is_some(),
+        "latent active_shot must not suppress the exact selected nonbow Execute arm"
     );
 }
 
@@ -761,7 +1083,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine
@@ -924,7 +1246,7 @@ fn chained_nonstraight_strike_lives(
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine

@@ -2842,72 +2842,6 @@ pub(super) struct ActorExecuteResult {
 }
 
 impl EngineInner {
-    /// Advance non-actor sprite animation exactly once per engine tick.
-    ///
-    /// Actor animation is owned by the live legacy-slot coordinator so its
-    /// synchronous completion effects can run before the same actor's
-    /// `ActionChange` and before any later actor reaches its slot.
-    pub(super) fn tick_nonactor_entity_animations(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _assets: &crate::engine::types::LevelAssets,
-    ) {
-        if self.actors_frozen() {
-            return;
-        }
-
-        for (_entity_id, entity) in self.world.entities.occupied_mut() {
-            if !entity.is_active() || entity.actor_data().is_some() {
-                continue;
-            }
-
-            // Mobile-child FX remains in the mobile lane. Static FX, Target,
-            // Scroll, and the proven Entity::Bonus subclasses run at their
-            // live legacy slots in the owner coordinator.
-            if entity.is_fx() {
-                if let Entity::Fx(fx) = entity
-                    && fx.fx.mobile_index.is_some()
-                {
-                    // Mobile children own their creation-order slots in the
-                    // live entity walk. Their first slot also hosts the
-                    // otherwise non-entity mobile master's Hourglass.
-                    continue;
-                }
-                continue;
-            }
-
-            if matches!(
-                entity,
-                Entity::Target(_) | Entity::Bonus(_) | Entity::Scroll(_)
-            ) {
-                continue;
-            }
-
-            // Flying purse/coin projectiles skip their shadow frame; landed
-            // ones hold the final bursting frame.
-            if let Entity::Projectile(p) = entity
-                && matches!(
-                    p.object.object_type,
-                    crate::element::ObjectType::Purse | crate::element::ObjectType::Coin
-                )
-            {
-                let progression = if p.projectile.flying {
-                    FrameProgression::SkipShadow
-                } else {
-                    FrameProgression::FreezeWhenTerminated
-                };
-                p.element.sprite.perform_virgin_increment(sim, progression);
-                continue;
-            }
-
-            // Net and remaining projectiles retain their existing lanes.
-            entity
-                .element_data_mut()
-                .sprite
-                .increment_frame(sim, FrameProgression::Cyclically);
-        }
-    }
-
     pub(super) fn finish_patch_transition_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3005,7 +2939,6 @@ impl EngineInner {
                         | crate::element::ActionState::MovingShield
                 )
                 || actor.active_melee.is_active()
-                || actor.active_shot.is_active()
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
@@ -3028,6 +2961,13 @@ impl EngineInner {
                     )
                 })
                 .command;
+            let exact_selected_bow = actor.active_shot.is_active()
+                && actor.active_shot.sequence_id == Some(seq_id)
+                && actor.active_shot.element_index == elem_idx
+                && crate::bow_shot::is_active_bow_order(order.order_type);
+            if exact_selected_bow {
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
+            }
             let anim_type = order.order_type;
             if actor.execution_frozen
                 && !matches!(cur_command, Command::WaitTimer | Command::WaitFreeLift)
@@ -3279,10 +3219,6 @@ impl EngineInner {
                 if actor.active_melee.is_active() {
                     break 'actor;
                 }
-                if actor.active_shot.is_active() {
-                    break 'actor;
-                }
-
                 let direction = entity.element_data().direction() as u16;
 
                 // Read the actor's current in-progress sequence element
@@ -3309,6 +3245,14 @@ impl EngineInner {
                     } else {
                         (None, crate::order::OrderType::Invalid, None, None)
                     };
+                if let Some((seq_id, elem_idx)) = order_seq_elem
+                    && actor.active_shot.is_active()
+                    && actor.active_shot.sequence_id == Some(seq_id)
+                    && actor.active_shot.element_index == elem_idx
+                    && crate::bow_shot::is_active_bow_order(anim_type)
+                {
+                    break 'actor;
+                }
                 let antagonist = validated_antagonist.or(order_antagonist);
 
                 // Is the current element a one-shot action (not the

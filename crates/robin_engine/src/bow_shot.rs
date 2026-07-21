@@ -95,28 +95,19 @@ pub const HIT_DISTANCE: f32 = 15.0;
 /// Experience points awarded for a bow kill.
 pub const BOW_KILL_EXPERIENCE_POINTS: u32 = 20;
 
-/// Fallback for the post-impact `OBJECT_BURSTING` countdown when the
-/// projectile's sprite has no script loaded (e.g. headless tests with
-/// `Sprite::default()`).  See `burst_ticks_for_proj` for the live path.
-/// 8 ticks is the typical length of the burst strip across apple/stone
-/// sprites.
-pub const BURST_ANIMATION_FRAMES: u16 = 8;
-
-/// How many ticks the projectile's `OBJECT_BURSTING` animation will
-/// take to play out — the total tick count is the sum of every
-/// burst-row frame's delay.  Falls back to the
-/// [`BURST_ANIMATION_FRAMES`] constant when the sprite has no script
-/// (headless tests).
-fn burst_ticks_for_proj(proj: &ElementProjectile) -> u16 {
-    let dynamic = proj
-        .element
-        .sprite
-        .total_ticks_for_anim(Animation::ObjectBursting);
-    if dynamic == 0 {
-        BURST_ANIMATION_FRAMES
-    } else {
-        dynamic
+fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) {
+    proj.object.animation = animation;
+    if proj.element.sprite.current_conversion().is_empty() {
+        return;
     }
+    assert!(
+        proj.element.sprite.has_animation(animation),
+        "projectile {:?} is missing required animation {animation:?}",
+        proj.object.object_type
+    );
+    // Original Apple/Stone HitObstacle/HitHuman/HitTarget use the
+    // directionless ForceAnimation overload, whose default direction is 0.
+    proj.element.sprite.force_animation(animation, 0);
 }
 
 /// Z offset added to the bow point for long (high) shots.
@@ -406,7 +397,7 @@ fn is_bow_transition_order(ot: OrderType) -> bool {
     )
 }
 
-fn is_active_bow_order(ot: OrderType) -> bool {
+pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
     is_shoot_order(ot) || is_bow_transition_order(ot)
 }
 
@@ -1707,6 +1698,24 @@ pub struct BowTickEvents {
     pub completed: Vec<(SequenceId, usize)>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static CROSS_ACTOR_SHOT_REPLACEMENT: std::cell::Cell<Option<(EntityId, ActiveShot)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn apply_cross_actor_shot_replacement(entities: &mut Entities) {
+    let Some((actor_id, replacement)) = CROSS_ACTOR_SHOT_REPLACEMENT.take() else {
+        return;
+    };
+    entities
+        .get_mut(actor_id)
+        .and_then(Entity::actor_data_mut)
+        .expect("cross-actor replacement target must remain an actor")
+        .active_shot = replacement;
+}
+
 /// Advance the shoot animation for every actor with an [`ActiveShot`].
 ///
 /// Returns a list of results for actors whose shoot animation reached
@@ -1716,9 +1725,34 @@ pub struct BowTickEvents {
 /// AimingWithBow action state.
 pub fn tick_bow_shots(
     sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
+) -> BowTickEvents {
+    tick_bow_shots_matching(sim, entities, sequence_manager, None, None)
+}
+
+pub fn tick_bow_shot_for_owner(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    owner: EntityId,
+    expected_order_id: std::num::NonZeroU32,
+) -> BowTickEvents {
+    tick_bow_shots_matching(
+        sim,
+        entities,
+        sequence_manager,
+        Some(owner),
+        Some(expected_order_id),
+    )
+}
+
+fn tick_bow_shots_matching(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    only_owner: Option<EntityId>,
+    expected_order_id: Option<std::num::NonZeroU32>,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
@@ -1727,8 +1761,14 @@ pub fn tick_bow_shots(
         target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
     }
 
+    #[cfg(test)]
+    apply_cross_actor_shot_replacement(entities);
+
     for (actor_id, entity) in entities.actors_mut() {
         let shooter_id: EntityId = actor_id.into();
+        if only_owner.is_some_and(|owner| owner != shooter_id) {
+            continue;
+        }
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -1764,6 +1804,9 @@ pub fn tick_bow_shots(
             Some(o) => (o.order_type, Some(o.order_id)),
             None => continue,
         };
+        if expected_order_id.is_some() && expected_order_id != current_order_id {
+            continue;
+        }
         if !is_active_bow_order(current_order_type) {
             let bow_order_pending = sequence_manager
                 .get_element(shot_seq_id, shot_elem_idx)
@@ -3161,28 +3204,11 @@ fn tick_arrows_matching(
             ObjectType::Apple | ObjectType::Stone
         );
 
-        // ── Post-impact burst decay (apple/stone only) ─────────────
-        // Once a burster stops flying, advance the `ObjectBursting`
-        // sprite and deactivate when its animation finishes.  Modeled
-        // with a frame counter set on impact; when it hits zero, we
-        // despawn.
+        // Grounded Apple/Stone work belongs to the derived virtual owner
+        // path. Projectile::Hourglass returns without advancing or removing
+        // them; the caller must run the landed sprite tail before applying
+        // that saved base result.
         if !proj.projectile.flying {
-            if proj.projectile.burst_countdown > 0 {
-                proj.projectile.burst_countdown -= 1;
-                if proj.projectile.burst_countdown == 0 {
-                    results.push(ArrowTickResult {
-                        arrow: arrow_id,
-                        hit_target: None,
-                        shield_hit: None,
-                        fx_target_hit: None,
-                        despawn: true,
-                        damage: 0,
-                        impact_fx: None,
-                        impact_pos: proj.element.position_map(),
-                        human_hit_old_position: None,
-                    });
-                }
-            }
             continue;
         }
 
@@ -3289,8 +3315,7 @@ fn tick_arrows_matching(
                 let impact_pos = proj.element.position_map();
                 proj.projectile.flying = false;
                 let despawn = if is_burster {
-                    proj.object.animation = Animation::ObjectBursting;
-                    proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
+                    set_projectile_animation(proj, Animation::ObjectBursting);
                     false
                 } else {
                     true
@@ -3692,8 +3717,7 @@ fn tick_arrows_matching(
             let impact_pos = victim_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
-                proj.object.animation = Animation::ObjectBursting;
-                proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
+                set_projectile_animation(proj, Animation::ObjectBursting);
                 false
             } else {
                 true
@@ -3713,8 +3737,7 @@ fn tick_arrows_matching(
             let impact_pos = fx_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
-                proj.object.animation = Animation::ObjectBursting;
-                proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
+                set_projectile_animation(proj, Animation::ObjectBursting);
                 false
             } else {
                 true
@@ -4142,6 +4165,82 @@ mod tests {
                 .active_shot
                 .is_active(),
             "C++ shoot-list ownership ends once the sequence has no bow orders left"
+        );
+    }
+
+    #[test]
+    fn single_owner_tick_preserves_replaced_other_actor_shot() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut entities = entity_table(vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_pc(5.0, 0.0)),
+            Some(make_soldier(50.0, 0.0)),
+        ]);
+        let first = EntityId::Pc(crate::entity_id::PcId(0));
+        let other = EntityId::Pc(crate::entity_id::PcId(1));
+        let target = EntityId::Soldier(crate::entity_id::SoldierId(2));
+        let mut sm = SequenceManager::new();
+        let first_seq = sm.launch_element(build_shoot_bow_element(first, target));
+        sm.element_in_progress(first_seq, 0);
+        let other_seq = sm.launch_element(build_shoot_bow_element(other, target));
+        sm.element_in_progress(other_seq, 0);
+        let mut next_order_id = 1;
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                first,
+                target,
+                first_seq,
+                0,
+                false,
+                10,
+                None,
+                &mut next_order_id,
+            ),
+            BeginShotResult::Started
+        );
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                other,
+                target,
+                other_seq,
+                0,
+                false,
+                10,
+                None,
+                &mut next_order_id,
+            ),
+            BeginShotResult::Started
+        );
+        let mut replacement = entities
+            .get(other)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_shot;
+        replacement.released = true;
+        let selected_order = sm
+            .current_order_for_actor(first)
+            .expect("first bow order selected")
+            .2
+            .order_id;
+
+        CROSS_ACTOR_SHOT_REPLACEMENT.set(Some((other, replacement)));
+
+        tick_bow_shot_for_owner(&sim_context, &mut entities, &mut sm, first, selected_order);
+
+        assert_eq!(
+            entities
+                .get(other)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot,
+            replacement,
+            "single-owner bow execution must preserve a synchronous cross-actor replacement"
         );
     }
 
@@ -5676,9 +5775,9 @@ mod tests {
     }
 
     /// Apple impact on an FX target sets the burst animation + decay
-    /// counter and despawns after `BURST_ANIMATION_FRAMES` ticks.
+    /// row and leaves grounded animation/removal to the derived owner path.
     #[test]
-    fn tick_arrows_apple_bursts_and_despawns_after_frames() {
+    fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
@@ -5741,28 +5840,18 @@ mod tests {
             Entity::Projectile(p) => {
                 assert!(!p.projectile.flying);
                 assert_eq!(p.object.animation, Animation::ObjectBursting);
-                assert_eq!(p.projectile.burst_countdown, BURST_ANIMATION_FRAMES);
             }
             _ => panic!("expected apple projectile"),
         }
 
-        // Subsequent ticks: decrement burst_countdown; despawn on the
-        // tick it reaches 0.
-        let mut ticks_until_despawn = 0;
-        for _ in 0..20 {
-            ticks_until_despawn += 1;
-            let results = tick_arrows(
-                sim,
-                &mut entities,
-                crate::sight_obstacle::ObstacleList::empty(),
-            );
-            if results.iter().any(|r| r.despawn) {
-                break;
-            }
-        }
-        assert_eq!(
-            ticks_until_despawn, BURST_ANIMATION_FRAMES as usize,
-            "burst should last exactly BURST_ANIMATION_FRAMES ticks"
+        let grounded_base_results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+        assert!(
+            grounded_base_results.is_empty(),
+            "Projectile::Hourglass must not duplicate the derived landed animation/removal"
         );
     }
 

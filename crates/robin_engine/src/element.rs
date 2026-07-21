@@ -1883,11 +1883,6 @@ pub struct ProjectileData {
     /// each `ObjectType::Wasp` child, default for everything else.
     /// See [`WaspData`].
     pub wasp: WaspData,
-    /// Frames remaining in the post-impact `ObjectBursting` animation
-    /// for apples and stones.  Set on impact, decremented each tick;
-    /// the projectile despawns when it reaches 0.  Arrows never burst;
-    /// for them this stays 0 and they despawn immediately on impact.
-    pub burst_countdown: u16,
 }
 
 impl Default for ProjectileData {
@@ -1910,7 +1905,6 @@ impl Default for ProjectileData {
             falling_direction: 0,
             purse: PurseData::default(),
             wasp: WaspData::default(),
-            burst_countdown: 0,
         }
     }
 }
@@ -2240,20 +2234,6 @@ impl Entity {
     pub fn reveal_blip(&mut self) {
         let direction = (self.position_iface().get_direction().as_u8()) as u16;
         self.element_data_mut().reveal_blip(direction);
-    }
-
-    /// Per-frame update. Returns false if entity should be removed.
-    /// Subtype-specific logic will be added as behaviors are ported.
-    pub fn hourglass(&mut self) -> bool {
-        match self {
-            // legacy implementation `RHElementProjectile::Hourglass` returns false when
-            // inactive, causing the engine to unlink thrown/fired objects.
-            Self::Projectile(projectile) => projectile.element.active,
-            // `RHScript::Deactivate` only flips `mbActive`; ordinary
-            // bonuses, scrolls, FX, targets, and actors remain in both the
-            // engine element array and the script element array.
-            _ => true,
-        }
     }
 
     // — Sub-data accessors (return None if the entity doesn't have that level) —
@@ -3954,30 +3934,6 @@ mod tests {
         assert!(Posture::Lying.is_lying());
         assert!(Posture::Tied.is_lying());
         assert!(!Posture::Upright.is_lying());
-    }
-
-    #[test]
-    fn inactive_script_level_objects_survive_hourglass() {
-        let mut bonus = Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                active: false,
-                ..ElementData::default()
-            },
-            object: ObjectData::default(),
-        });
-        assert!(bonus.hourglass());
-
-        let mut projectile = Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: false,
-                ..ElementData::default()
-            },
-            object: ObjectData::default(),
-            projectile: ProjectileData::default(),
-        });
-        assert!(!projectile.hourglass());
     }
 
     #[test]

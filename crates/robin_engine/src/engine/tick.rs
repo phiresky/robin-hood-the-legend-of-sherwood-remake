@@ -17,6 +17,42 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
 #[cfg(test)]
+thread_local! {
+    static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn observe_projectile_derived_tail(
+    id: EntityId,
+    object_type: crate::element::ObjectType,
+) {
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((id, object_type));
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn capture_projectile_derived_tails<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, crate::element::ObjectType)>) {
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        assert!(trace.borrow().is_none(), "tail capture is not re-entrant");
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let tails = PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("tail capture must remain active")
+    });
+    (result, tails)
+}
+
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NpcHourglassPhase {
     SoldierPrelude,
@@ -278,7 +314,7 @@ mod mobile_owner_boundary_tests {
     }
 
     #[test]
-    fn mobile_children_skip_the_global_nonactor_batch_and_boundary_precedes_static_dispatch() {
+    fn mobile_boundary_precedes_static_dispatch_in_live_owner_walk() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
@@ -293,12 +329,6 @@ mod mobile_owner_boundary_tests {
         engine.world.mobile_elements.push(mobile(vec![child]));
         let mut assets = LevelAssets::default();
         assets.hiking_paths = std::sync::Arc::new(vec![path()]);
-
-        engine.tick_nonactor_entity_animations(&sim_context, &assets);
-        assert_eq!(
-            engine.world.mobile_elements[0].position.x, 0.0,
-            "the old global batch must not execute a mobile owner"
-        );
 
         let trace = std::cell::RefCell::new(Vec::new());
         engine.tick_actor_animation_action_change_slots_with_hooks(
@@ -996,14 +1026,13 @@ impl EngineInner {
         let was_swordfighting = self.hourglass_phase_entities(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let (positions_before_movement, processed_projectiles) =
-            self.hourglass_phase_entity_systems(sim, assets);
+        let positions_before_movement = self.hourglass_phase_entity_systems(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
         self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
-        self.hourglass_phase_gameplay_systems(sim, display, assets, &processed_projectiles);
+        self.hourglass_phase_gameplay_systems(sim, display, assets);
 
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(sim, display, assets);
@@ -1871,15 +1900,8 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         // Human concussion healing runs synchronously in each owner's
         // pre-Actor hook below.
-        let mut to_remove = Vec::new();
-        for (id, entity) in self.world.entities.occupied_mut() {
-            if !entity.hourglass() {
-                to_remove.push(id);
-            }
-        }
-        for id in to_remove {
-            self.remove_entity(id);
-        }
+        // Concrete entity Hourglasses and their virtual retain/remove results
+        // execute in the live owner walk below; there is no legacy base pass.
 
         // ── PC selection outline fade ────────────────────────────
         // The hulk state-machine block runs during the per-element
@@ -2050,10 +2072,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) -> (
-        EntitySlots<Option<crate::coordinates::MapPoint>>,
-        Vec<EntityId>,
-    ) {
+    ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
         // Preserve the position each element exposed before the globally
         // batched movement pass. The original does not have this batch:
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
@@ -2111,11 +2130,10 @@ impl EngineInner {
         // entity-iter borrow.
         self.pre_tick_pc_execute_validity(assets);
 
-        // Projectile/net/mobile animation remains in its existing lane. The
-        // supported static virtual Hourglass owners run below at live slots.
-        self.tick_nonactor_entity_animations(sim, assets);
-        let processed_projectiles =
-            self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
+        // Every supported nonactor virtual Hourglass now runs below at its
+        // live legacy slot: mobile boundary first, then static owners, then
+        // projectile/net dispatch.
+        self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
         // Separate Rust reconciliation boundary after owner movement.
         self.tick_zone_occupants(sim, assets);
 
@@ -2143,7 +2161,7 @@ impl EngineInner {
         // Keep those responsibilities batched until each consumer has the
         // mixed pre/post inputs required at an individual creation slot.
 
-        (positions_before_movement, processed_projectiles)
+        positions_before_movement
     }
 
     /// Execute an `RHElementMobile` at its first `RHElementFXMasked` child's
@@ -2507,6 +2525,12 @@ impl EngineInner {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
+                #[cfg(test)]
+                CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+                    if let Some(entities) = captured.borrow_mut().as_mut() {
+                        entities.push(entity_id);
+                    }
+                });
                 let entity = self
                     .world
                     .entities
@@ -2727,7 +2751,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
-    ) -> Vec<EntityId> {
+    ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
             assets,
@@ -2743,7 +2767,7 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
-    ) -> Vec<EntityId> {
+    ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
             assets,
@@ -2758,9 +2782,8 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
-    ) -> Vec<EntityId> {
+    ) {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
-        let mut processed_projectiles = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -2779,21 +2802,7 @@ impl EngineInner {
                 ) {
                     return;
                 }
-                let Some(Entity::Projectile(projectile)) = engine.get_entity(owner) else {
-                    return;
-                };
-                if matches!(
-                    projectile.object.object_type,
-                    crate::element::ObjectType::Purse
-                        | crate::element::ObjectType::Coin
-                        | crate::element::ObjectType::WaspNest
-                        | crate::element::ObjectType::BonusWaspNest
-                        | crate::element::ObjectType::Wasp
-                ) {
-                    return;
-                }
-                engine.tick_existing_projectile(sim, assets, owner);
-                processed_projectiles.push(owner);
+                engine.tick_projectile_or_net_hourglass(sim, assets, owner);
             },
             |engine, owner| {
                 if matches!(owner, EntityId::Soldier(_)) {
@@ -2829,7 +2838,14 @@ impl EngineInner {
                 }
             },
             |engine, owner, selected| {
-                engine.tick_entity_movement_owner(sim, assets, owner, selected)
+                // Snapshot the exact selected bow arm at base-Actor entry,
+                // before movement or any synchronous owner work can replace
+                // the current order.
+                let selected_bow = engine.selected_bow_order(owner);
+                engine.tick_entity_movement_owner(sim, assets, owner, selected);
+                if let Some((_, _, order_id)) = selected_bow {
+                    engine.tick_bow_shot_for(sim, assets, owner, order_id);
+                }
             },
             |engine, owner| {
                 let is_human = engine
@@ -2890,7 +2906,126 @@ impl EngineInner {
             },
         );
         self.finish_npc_owner_pass();
-        processed_projectiles
+    }
+
+    /// Dispatch the exact Original virtual `Hourglass` chain for a live
+    /// projectile/net creation slot.  Entity kind and `ObjectType` together
+    /// are the Rust vtable: accepting any other pairing here would fabricate
+    /// subtype behaviour that the loaded object never had.
+    fn tick_projectile_or_net_hourglass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        id: EntityId,
+    ) {
+        let Some(entity) = self.get_entity(id) else {
+            return;
+        };
+        // Validate the Rust kind/ObjectType vtable pairing before the base
+        // inactive-removal rule. Otherwise an impossible inactive object
+        // silently disappears while the same active object panics.
+        match entity {
+            Entity::Projectile(projectile)
+                if !matches!(
+                    projectile.object.object_type,
+                    crate::element::ObjectType::Arrow
+                        | crate::element::ObjectType::Apple
+                        | crate::element::ObjectType::Stone
+                        | crate::element::ObjectType::Purse
+                        | crate::element::ObjectType::Coin
+                        | crate::element::ObjectType::WaspNest
+                        | crate::element::ObjectType::BonusWaspNest
+                        | crate::element::ObjectType::Wasp
+                ) =>
+            {
+                panic!(
+                    "projectile entity {id:?} has unsupported ObjectType::{:?}; TODO(PA-013): map its Original concrete class",
+                    projectile.object.object_type
+                )
+            }
+            Entity::Net(net)
+                if !matches!(
+                    net.object.object_type,
+                    crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet
+                ) =>
+            {
+                panic!(
+                    "net entity {id:?} has unsupported ObjectType::{:?}; expected Net or BonusNet",
+                    net.object.object_type
+                )
+            }
+            _ => {}
+        }
+        let dispatch = match entity {
+            Entity::Projectile(projectile) => Some((
+                true,
+                projectile.object.object_type,
+                projectile.element.active,
+            )),
+            Entity::Net(net) => Some((false, net.object.object_type, net.element.active)),
+            _ => None,
+        };
+        let Some((is_projectile, object_type, base_active)) = dispatch else {
+            return;
+        };
+        let retain = if is_projectile {
+            match object_type {
+                crate::element::ObjectType::Arrow => {
+                    if base_active {
+                        self.tick_existing_projectile(sim, assets, id);
+                    }
+                    base_active
+                }
+                crate::element::ObjectType::Apple | crate::element::ObjectType::Stone => {
+                    if base_active {
+                        self.tick_existing_projectile(sim, assets, id);
+                    }
+                    let frozen = self.actors_frozen();
+                    if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
+                        && !projectile.projectile.flying
+                        && !frozen
+                    {
+                        #[cfg(test)]
+                        observe_projectile_derived_tail(id, object_type);
+                        let motion = projectile.element.sprite.perform_virgin_increment(
+                            sim,
+                            crate::sprite::FrameProgression::Default,
+                        );
+                        projectile.element.active =
+                            motion != crate::sprite::MotionState::Terminated;
+                    }
+                    // Apple/Stone return the Projectile base result even
+                    // though their grounded sprite tail may have changed
+                    // active state afterward.
+                    base_active
+                }
+                crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
+                    self.tick_purse_or_coin(sim, assets, id)
+                }
+                crate::element::ObjectType::WaspNest
+                | crate::element::ObjectType::BonusWaspNest
+                | crate::element::ObjectType::Wasp => {
+                    self.tick_wasp_nest_or_wasp(sim, assets, id);
+                    base_active
+                }
+                unsupported => panic!(
+                    "projectile entity {id:?} has unsupported ObjectType::{unsupported:?}; TODO(PA-013): map its Original concrete class"
+                ),
+            }
+        } else {
+            match object_type {
+                crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet => {
+                    self.tick_net(sim, assets, id);
+                    true
+                }
+                unsupported => panic!(
+                    "net entity {id:?} has unsupported ObjectType::{unsupported:?}; expected Net or BonusNet"
+                ),
+            }
+        };
+        if !retain && self.get_entity(id).is_some() {
+            self.remove_entity(id);
+        }
     }
 
     /// Apply the two sequence-command motion modifiers owned by
@@ -3149,7 +3284,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-        processed_projectiles: &[EntityId],
     ) {
         // The original loop is literally:
         //
@@ -3166,13 +3300,6 @@ impl EngineInner {
                 continue;
             };
 
-            #[cfg(test)]
-            CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-                if let Some(entities) = captured.borrow_mut().as_mut() {
-                    entities.push(entity_id);
-                }
-            });
-
             match entity_id {
                 EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
                     // `RHElementActor::Hourglass` executes the actor's active
@@ -3180,34 +3307,13 @@ impl EngineInner {
                     // auto-heal tail. Only one of bow/melee/ability can own
                     // that active order, but dispatching each narrow driver
                     // keeps stale-state cleanup behavior intact.
-                    self.tick_bow_shot_for(sim, assets, entity_id);
                     self.tick_straight_melee_for(sim, assets, entity_id);
                     self.tick_melee_completion_for(sim, assets, entity_id);
                     let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
                     self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
                     self.tick_ability_for(sim, display, assets, entity_id);
                 }
-                EntityId::Projectile(_) => {
-                    let object_type = match self.get_entity(entity_id) {
-                        Some(Entity::Projectile(projectile)) => projectile.object.object_type,
-                        _ => unreachable!("projectile id must resolve to a projectile entity"),
-                    };
-                    match object_type {
-                        crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
-                            self.tick_purse_or_coin(sim, assets, entity_id)
-                        }
-                        crate::element::ObjectType::WaspNest
-                        | crate::element::ObjectType::BonusWaspNest
-                        | crate::element::ObjectType::Wasp => {
-                            self.tick_wasp_nest_or_wasp(sim, assets, entity_id)
-                        }
-                        _ if !processed_projectiles.contains(&entity_id) => {
-                            self.tick_existing_projectile(sim, assets, entity_id)
-                        }
-                        _ => {}
-                    }
-                }
-                EntityId::Net(_) => self.tick_net(sim, assets, entity_id),
+                EntityId::Projectile(_) | EntityId::Net(_) => {}
                 _ => {}
             }
             slot += 1;

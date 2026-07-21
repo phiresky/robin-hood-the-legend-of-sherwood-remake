@@ -1923,7 +1923,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
         "dead",
         "unconscious",
         "active-melee",
-        "active-shot",
     ] {
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = crate::campaign::Campaign::default();
@@ -2029,17 +2028,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
                         Some(seq_id),
                         elem_idx,
                     );
-                }
-                "active-shot" => {
-                    entity
-                        .actor_data_mut()
-                        .expect("skipped actor is typed")
-                        .active_shot = crate::movement::ActiveShot {
-                        sequence_id: Some(seq_id),
-                        element_index: elem_idx,
-                        target: Some(stale),
-                        ..Default::default()
-                    };
                 }
                 _ => unreachable!(),
             }

@@ -176,7 +176,49 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | The live legacy-slot owner walk now covers ordinary and evidenced rider movement, the complete supported Actor/Human/PC/NPC envelope, mobile masters at their first adjacent masked child, and static FX/Target/Scroll/Bonus/Ale/Cape virtual Hourglasses. Mutable order, target, mobile geometry, crossing, completion, callbacks, patch finalization, Scroll VM work, and Bonus discovery close at the consuming owner slot; FrozenAll retains each Original non-sprite side effect while freezing the corresponding sprite work. Exact sequence/element/order selection prevents background movement from executing through a higher selected arm, and mobile crossing/waypoint/child-speed order matches `RHElementMobile::Hourglass`. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is active strike/bow/ability ownership (including PC Listen/object reveal and Target Heard), projectile/net owners, unsupported rider/Execute arms, and other unevidenced entity kinds (`RHengine.cpp:3715-3724,7909-7944,10191-10273`; `RHelementactor.cpp:534-728,1015-2740`; `RHelementactorhuman.cpp:277-324,3235-3560,9972-10097`; `RHelementactorpc.cpp:3616-3710,4950-4990,5481-5510`; `RHelementmobile.cpp:135+`; `RHelementfxmasked.cpp:128-149`; `RHelementfx.cpp:794-833`; `RHelementtarget.cpp:858-865`; `RHElementScroll.cpp:119-149`; `RHElementBonus.cpp:513-519`; `RHElementAle.cpp:65-68`; `RHElementCape.cpp:45-49`). |
+| PA-013 | High | incomplete | The live mutable-size legacy-slot walk now owns ordinary/evidenced rider movement, the supported Actor/Human/PC/NPC envelope, mobile masters and masked children, static FX/Target/Scroll/Bonus/Ale/Cape, selected bow, and the exhaustive projectile/net virtual dispatch. Mutable order, target, geometry, callbacks, patch/Scroll/Bonus work, and concrete projectile base/derived tails close at the consuming owner slot; there is no generic nonactor animation pass, processed-projectile set, second projectile scheduler, or legacy projectile-removal pre-pass. Exact sequence/element/order selection prevents background movement or bow state from suppressing a higher selected arm. FreezeAll preserves each evidenced non-sprite side effect while freezing the corresponding sprite work. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is active melee/ability ownership, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other unevidenced entity kinds. |
+
+### PA-013 projectile/net virtual-class map
+
+| Rust entity | `ObjectType` | Original concrete class and nesting |
+| --- | --- | --- |
+| `Projectile` | `Arrow` | `RHElementProjectile::Hourglass` |
+| `Projectile` | `Apple` | `RHElementApple::Hourglass` → projectile base → landed animation |
+| `Projectile` | `Stone` | `RHElementStone::Hourglass` → projectile base → landed animation |
+| `Projectile` | `Purse` | `RHElementPurse::Hourglass` → projectile base only while flying → purse animation/burst tail |
+| `Projectile` | `Coin` | `RHElementCoin::Hourglass` → projectile base only while flying → coin animation/burst tail |
+| `Projectile` | `WaspNest`, `BonusWaspNest` | `RHElementWaspNest::Hourglass` → projectile base → buzz tail. `BonusWaspNest` is the thrown bonus's Rust runtime tag, not a distinct Original virtual class. |
+| `Projectile` | `Wasp` | `RHElementWasp::Hourglass`; deliberately does not call projectile base |
+| `Net` | `Net`, `BonusNet` | `RHElementNet::Hourglass` → projectile base while flying → descent/capture/unfold/display/ground tail. `BonusNet` is the thrown bonus's Rust runtime tag. |
+
+Every other `ObjectType` paired with `Entity::Projectile` or `Entity::Net` is
+impossible in the supported loader/spawn paths and panics with the entity and
+type before virtual dispatch, so active state cannot hide an invalid
+virtual-class pairing. Pickup `BonusApple`, `BonusStone`, `BonusPurse`, and `BonusArrow` values
+remain `Entity::Bonus`; treating them as flying derived objects would invent an
+Original class relationship.
+
+The old `hourglass_phase_entities` compatibility pre-pass no longer removes
+inactive `Entity::Projectile` values. Validation and the concrete virtual
+result are applied only when the fused mutable-size walk reaches that creation
+slot. This is not blanket inactive removal: Net and Coin always retain;
+grounded Purse skips its base and retains; flying Purse returns its base bool
+after its sprite tail; and grounded Apple/Stone run their landed sprite tail
+before the saved base result is applied. Their old Rust burst-countdown
+despawn is retired from Projectile base processing, so an active grounded
+Apple/Stone cannot disappear before that derived tail. Ale's object/Bonus lane
+is unchanged. Apple/Stone impact now matches Original
+`ForceAnimation(ObjectBursting)`: it forces/resets the converted base row
+(direction 0), even when the projectile's flight direction is nonzero. Rust
+also synchronizes `object.animation` with that forced sprite state. The
+obsolete serialized Rust `burst_countdown` field has been removed.
+
+`RHElementNet::Hourglass` retains its exact switch gaps: a nonzero unfolding
+countdown performs no sprite call (including the decrement-to-zero tick), both
+ground unfolding cases only select the next row, and stationary `NetMoving`
+uses frozen progression without changing to `ObjectLying`. `FrozenAll` removes
+only the sprite call selected by those branches; net physics and state work
+continue.
 
 Focused PA-013 stationary/idle progress: the live actor-slot coordinator now
 applies WAIT_TIMER and WAIT_FREE_LIFT to the just-produced Execute result

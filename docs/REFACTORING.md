@@ -20,10 +20,22 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   virtual Hourglasses run inside the live legacy-slot owner coordinator, while
   mobile masters execute at their first adjacent masked-child slot.
   Static FX/Target/Scroll and proven Bonus/Ale/Cape classes are no longer
-  globally animated; projectile/net scheduling remains open. Mutable order,
-  target, mobile geometry, crossing, completion, and callback inputs are
-  sampled at the live owner boundary and close before ActionChange/tails;
-  mobile geometry is not a frame-global prepared snapshot.
+  globally animated. Mutable order, target, mobile geometry, crossing,
+  completion, and callback inputs are sampled at the live owner boundary and
+  close before ActionChange/tails; mobile geometry is not a frame-global
+  prepared snapshot.
+- The selected bow arm and exhaustive projectile/net virtual dispatcher share
+  that same live mutable-size slot walk. Projectile families no longer have a
+  generic-animation pass plus a second processed-projectile scheduler;
+  subtype base/derived work closes once at its owner slot, including appended
+  same-frame children and primer/live-slot double advancement. Bow dispatch is
+  a true single-owner operation keyed by the entry sequence/element/order; it
+  does not park other actors' active shots. Projectile validation and each
+  subtype's virtual return/removal decision likewise occur only at the fused
+  live slot, after any required derived tail, not in the legacy pre-pass. The
+  former Apple/Stone base-path burst countdown no longer duplicates their
+  derived sprite lifetime; impact forces the converted bursting base row, and
+  the obsolete countdown state has been removed.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -81,7 +93,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, mobile master/children, and static FX/Target/Scroll/Bonus-class Hourglasses are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active melee/bow/abilities, projectile/net scheduling, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. PC Listen/object reveal, Target Heard, active melee/abilities, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
 | 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |

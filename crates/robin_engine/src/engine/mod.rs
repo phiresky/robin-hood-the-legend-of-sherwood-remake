@@ -1987,11 +1987,9 @@ impl EngineInner {
     /// order, then clear `last_motion_state` on every sprite so the
     /// field is fresh for the next tick.
     ///
-    /// The per-actor sprite advance is split across several per-system
-    /// passes (`tick_entity_movement`, the live actor coordinator through
-    /// `tick_actor_animation_for`, `tick_nonactor_entity_animations`,
-    /// `tick_melee_combat`, `tick_active_jumps`, `tick_bow_shots`, and
-    /// `tick_abilities`); each one funnels through
+    /// Sprite advancement is split across the live owner coordinator and
+    /// the remaining specialized arms (`tick_actor_animation_for`, active
+    /// jumps, melee, bow, and abilities); each one funnels through
     /// [`Sprite::record_motion_state`](crate::sprite::Sprite), which
     /// stashes the result in [`Sprite::last_motion_state`].  This pass
     /// runs once per frame after every per-system tick has completed,
