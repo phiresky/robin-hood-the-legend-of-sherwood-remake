@@ -133,10 +133,13 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         },
     );
     let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(Default::default());
+    assets.profile_manager = std::sync::Arc::new(profiles);
     let mut engine = EngineInner::new();
     let listener = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let near = engine.add_entity(make_discovery_bonus(749.0));
-    let exact = engine.add_entity(make_discovery_bonus(750.0));
+    let near = engine.add_entity(make_discovery_bonus(450.0));
+    let exact = engine.add_entity(make_discovery_bonus(450.0));
     let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
         element: ElementData {
             kind: ElementKind::Target,
@@ -152,24 +155,23 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         .set_position(crate::coordinates::WorldPoint3D {
             x: 0.0,
             y: 0.0,
-            z: 10.0,
+            z: 0.0,
         });
     let near_element = engine.get_entity_mut(near).unwrap().element_data_mut();
-    near_element.set_position(crate::coordinates::WorldPoint3D {
-        x: 749.0,
-        y: 0.0,
-        z: 10.0,
-    });
+    near_element.set_position_map(MapPoint::new(450.0, 0.0));
     near_element.set_layer(7);
-    engine
-        .get_entity_mut(exact)
-        .unwrap()
-        .element_data_mut()
-        .set_position(crate::coordinates::WorldPoint3D {
-            x: 750.0,
-            y: 0.0,
-            z: 10.0,
-        });
+    near_element.set_position(crate::coordinates::WorldPoint3D {
+        x: 450.0,
+        y: 0.0,
+        z: 100.0,
+    });
+    let exact_element = engine.get_entity_mut(exact).unwrap().element_data_mut();
+    exact_element.set_position_map(MapPoint::new(450.0, 0.0));
+    exact_element.set_position(crate::coordinates::WorldPoint3D {
+        x: 450.0,
+        y: 0.0,
+        z: 600.0,
+    });
     let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
         unreachable!()
     };
@@ -249,11 +251,11 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     assert!(engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener));
     assert!(
         !engine.get_entity(near).unwrap().element_data().blipped,
-        "strictly-near cross-layer target reveals"
+        "450-100 strictly-near 3D cross-layer target reveals"
     );
     assert!(
         engine.get_entity(exact).unwrap().element_data().blipped,
-        "exactly 750 remains out"
+        "450-600-750 exact 3D boundary remains out"
     );
     let Entity::Target(target_entity) = engine.get_entity(target).unwrap() else {
         unreachable!()
