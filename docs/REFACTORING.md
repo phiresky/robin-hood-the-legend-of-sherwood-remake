@@ -1,6 +1,6 @@
 # Gameplay runtime refactoring roadmap
 
-Updated 2026-07-19. This document describes the current architecture and the
+Updated 2026-07-21. This document describes the current architecture and the
 remaining behavior-sensitive work. Completed migration plans are summarized in
 [`plans/`](plans/); their old future-tense PR sequences have been removed.
 
@@ -16,10 +16,12 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
-- Ordinary actor movement and evidenced rider movement arms run inside the
+- Ordinary actor movement, active Human melee Execute arms, and evidenced rider movement arms run inside the
   live legacy-slot Actor owner coordinator. `movement.rs` prepares only
   immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
-  completion, and callback work closes per owner before ActionChange/tails.
+  strike victim/damage/RNG, completion, and callback work closes per owner
+  before ActionChange/tails. Active melee is admitted only when its exact
+  sequence/element/order tuple is still the selected Execute arm.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split

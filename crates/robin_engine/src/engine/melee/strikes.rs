@@ -122,6 +122,69 @@ fn is_expected_non_attack_swordfight_substate(substate: crate::ai::Substate) -> 
 }
 
 impl EngineInner {
+    fn selected_melee_identity_is_live(
+        &self,
+        attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
+    ) -> bool {
+        let current_matches = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .is_some_and(|(seq_id, elem_idx, order)| {
+                seq_id == selected.seq_id
+                    && elem_idx == selected.elem_idx
+                    && order.order_id == selected.order_id
+            });
+        let melee_matches = self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| {
+                let melee = actor.active_melee;
+                melee.is_active()
+                    && melee.sequence_id == Some(selected.seq_id)
+                    && melee.element_index == selected.elem_idx
+                    && melee.order_id == Some(selected.order_id)
+            });
+        current_matches && melee_matches
+    }
+
+    /// Execute the active-melee Human Execute arm selected at base-Actor
+    /// entry. Each sub-arm revalidates the same sequence/element/order tuple
+    /// because synchronous damage and callbacks may replace it mid-dispatch.
+    pub(in crate::engine) fn tick_selected_melee_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
+    ) {
+        let execution_frozen = self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .unwrap_or_else(|| panic!("selected melee owner {attacker_id:?} is missing actor data"))
+            .execution_frozen;
+        if execution_frozen || !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return;
+        }
+
+        // The fixed-timer completion arm is already logically past its hit
+        // frame. Close it before attempting to drive the strike sprite again.
+        self.tick_melee_completion_for(sim, assets, attacker_id);
+        if !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return;
+        }
+        self.tick_straight_melee_for(sim, assets, attacker_id);
+        let initialized_sweep = if self.selected_melee_identity_is_live(attacker_id, selected) {
+            self.tick_nonstraight_melee_for(sim, assets, attacker_id)
+        } else {
+            false
+        };
+        if self.selected_melee_identity_is_live(attacker_id, selected) {
+            self.tick_sweep_for(sim, assets, attacker_id, initialized_sweep);
+        }
+    }
+
     // ─── Per-frame melee tick ───────────────────────────────────────
 
     /// Per-frame melee combat tick.
@@ -402,7 +465,11 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return;
         }
 
@@ -675,7 +742,7 @@ impl EngineInner {
     /// The real Hourglass orchestration runs every strike kind in its
     /// creation-ordered entity pass.
     #[cfg(test)]
-    pub(super) fn tick_melee_strikes(
+    pub(crate) fn tick_melee_strikes(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -701,7 +768,11 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) -> bool {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return false;
         }
 
@@ -1166,7 +1237,11 @@ impl EngineInner {
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return;
         }
 

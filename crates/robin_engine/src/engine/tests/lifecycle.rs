@@ -758,10 +758,8 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         profile_manager: std::sync::Arc::new(profiles),
         ..LevelAssets::new()
     };
-    let mut display = HostDisplayState::default();
-
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.tick_melee_strikes(sim, &assets);
     });
 
     let Entity::Pc(target) = engine
@@ -921,10 +919,8 @@ fn chained_nonstraight_strike_lives(
         profile_manager: std::sync::Arc::new(profiles),
         ..LevelAssets::new()
     };
-    let mut display = HostDisplayState::default();
-
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.tick_melee_strikes(sim, &assets);
     });
 
     let Entity::Pc(target) = engine

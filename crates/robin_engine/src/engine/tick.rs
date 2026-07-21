@@ -165,6 +165,19 @@ pub(super) fn capture_actor_owner_envelope<T>(
     (result, phases)
 }
 
+/// Exact base-Actor Execute identity selected at entry to one legacy slot.
+///
+/// Active melee state can outlive the sequence element which created it. The
+/// coordinator therefore carries all three Original identities and
+/// revalidates them immediately before dispatch instead of treating a latent
+/// `ActiveMelee` as the selected Execute arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::engine) struct MeleeOwnerSelection {
+    pub(in crate::engine) seq_id: crate::sequence::SequenceId,
+    pub(in crate::engine) elem_idx: usize,
+    pub(in crate::engine) order_id: std::num::NonZeroU32,
+}
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -1790,7 +1803,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             |_, _| {},
         );
     }
@@ -1807,7 +1820,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             after_slot,
         );
     }
@@ -1822,6 +1835,7 @@ impl EngineInner {
             &mut Self,
             EntityId,
             Option<super::movement::MovementOwnerSelection>,
+            Option<MeleeOwnerSelection>,
         ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
@@ -1877,11 +1891,13 @@ impl EngineInner {
                         entity_id,
                     ));
 
-                    let movement_selection = self
+                    let selected_order = self
                         .orders
                         .sequence_manager
                         .current_order_for_actor(entity_id)
-                        .and_then(|(seq_id, elem_idx, order)| {
+                        .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    let movement_selection =
+                        selected_order.and_then(|(seq_id, elem_idx, order_id)| {
                             self.orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
@@ -1896,14 +1912,32 @@ impl EngineInner {
                                 .map(|_| super::movement::MovementOwnerSelection {
                                     seq_id,
                                     elem_idx,
-                                    order_id: order.order_id,
+                                    order_id,
                                 })
+                        });
+                    let melee_selection =
+                        selected_order.and_then(|(seq_id, elem_idx, order_id)| {
+                            let melee = self
+                                .world
+                                .entities
+                                .get(entity_id)
+                                .and_then(Entity::actor_data)
+                                .map(|actor| actor.active_melee)?;
+                            (melee.is_active()
+                                && melee.sequence_id == Some(seq_id)
+                                && melee.element_index == elem_idx
+                                && melee.order_id == Some(order_id))
+                            .then_some(MeleeOwnerSelection {
+                                seq_id,
+                                elem_idx,
+                                order_id,
+                            })
                         });
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                         entity_id,
                     ));
-                    execute_owner_arm(self, entity_id, movement_selection);
+                    execute_owner_arm(self, entity_id, movement_selection, melee_selection);
 
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
@@ -1937,7 +1971,7 @@ impl EngineInner {
                         })
                         .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                        if movement_selection.is_some() {
+                        if movement_selection.is_some() || melee_selection.is_some() {
                             (Vec::new(), Default::default(), None)
                         } else if frozen_wait_execute.is_some() {
                             (Vec::new(), Default::default(), frozen_wait_execute)
@@ -2033,8 +2067,8 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Active melee, bow, abilities, and unsupported rider arms remain
-        // separate owners. The production caller installs movement and the
+        // Bow, abilities, and unsupported rider arms remain separate owners.
+        // The production caller installs movement, active melee, and the
         // human/PC/NPC tail hook before this loop advances.
     }
 
@@ -2140,8 +2174,11 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |engine, owner, selected| {
-                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected)
+            |engine, owner, movement, melee| {
+                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, movement);
+                if let Some(selection) = melee {
+                    engine.tick_selected_melee_owner(sim, assets, owner, selection);
+                }
             },
             |engine, owner| {
                 let is_human = engine
@@ -2487,16 +2524,10 @@ impl EngineInner {
 
             match entity_id {
                 EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
-                    // `RHElementActor::Hourglass` executes the actor's active
-                    // order before `RHElementActorPC::Hourglass` applies its
-                    // auto-heal tail. Only one of bow/melee/ability can own
-                    // that active order, but dispatching each narrow driver
-                    // keeps stale-state cleanup behavior intact.
+                    // Bow and abilities remain in this later gameplay slice.
+                    // Active melee is owned by the fused base-Actor Execute
+                    // slot above and must not be driven a second time here.
                     self.tick_bow_shot_for(sim, assets, entity_id);
-                    self.tick_straight_melee_for(sim, assets, entity_id);
-                    self.tick_melee_completion_for(sim, assets, entity_id);
-                    let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
-                    self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
                     self.tick_ability_for(sim, display, assets, entity_id);
                 }
                 EntityId::Projectile(_) => {
