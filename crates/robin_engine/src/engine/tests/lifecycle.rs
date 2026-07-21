@@ -899,7 +899,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         &assets,
         |_, _| {},
         |_, _| {},
-        |engine, selected_owner, _, _, bow| {
+        |engine, selected_owner, _, _, bow, _, _| {
             assert_eq!(selected_owner, owner);
             assert_eq!(bow, Some((sequence, 0, bow_order_id)));
             engine

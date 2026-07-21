@@ -425,6 +425,9 @@ pub struct ActiveAbility {
     /// Order ID for the sprite animation state machine.  `None` while
     /// the ability slot is idle.
     pub order_id: Option<std::num::NonZeroU32>,
+    /// Whether the legacy `RHMOTION_DONE` side effect has fired.  The
+    /// selected order remains owned by the actor until `TERMINATED`.
+    pub done_effect_applied: bool,
 }
 
 impl ActiveAbility {

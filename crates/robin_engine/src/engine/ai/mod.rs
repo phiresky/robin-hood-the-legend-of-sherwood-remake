@@ -4925,13 +4925,14 @@ impl EngineInner {
         self.ai.global.same_frame_target_claims.clear();
     }
 
-    pub(super) fn tick_non_npc_blip_detection(
+    pub(super) fn tick_enemy_ai_blip_detection_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        owner: EntityId,
     ) {
         let world = self.tick_enemy_ai_build_world_view(assets, None);
-        self.tick_enemy_ai_blip_detection(sim, assets, &world);
+        self.tick_enemy_ai_blip_detection(sim, assets, &world, Some(owner));
     }
 
     #[cfg(test)]
@@ -4963,7 +4964,7 @@ impl EngineInner {
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
         // RefreshDetection slot below.
-        self.tick_enemy_ai_blip_detection(sim, assets, &world);
+        self.tick_enemy_ai_blip_detection(sim, assets, &world, None);
 
         // ── 3. Creation-ordered per-NPC prelude + RefreshDetection. ───
         // Production first consumes the current NPC's inform/recovery outbox

@@ -7,10 +7,9 @@
 //!    and target, pushes an animation order, and sets
 //!    [`ActiveAbility`][crate::movement::ActiveAbility] on the actor.
 //!
-//! 2. [`tick_abilities`] runs every engine tick and, for each actor with
-//!    an active ability, drives the sprite animation via `perform_action`.
-//!    When the sprite reports [`SpriteMotionState::Done`], the tick
-//!    records the result and clears the ability state.
+//! 2. [`tick_ability`] runs from the selected actor's legacy owner slot and
+//!    drives its sprite via `perform_action`. `Done` emits the one-shot
+//!    effect; `Terminated` releases the selected sequence element.
 //!
 //! 3. The engine applies cross-entity effects (posture changes, HP
 //!    restoration, etc.) from the returned [`AbilityTickResult`] values
@@ -128,6 +127,9 @@ pub enum BeginResult {
 /// The engine applies these effects after the mutable entity borrow
 /// is released, avoiding double-borrow issues.
 pub enum AbilityTickResult {
+    /// A previously-Done selected ability reached `RHMOTION_TERMINATED` and
+    /// may now release its driving sequence element.
+    Terminated { seq_id: SequenceId, elem_idx: usize },
     /// Little John finished picking up a body.
     CarryDone {
         carrier_id: EntityId,
@@ -429,6 +431,7 @@ pub fn begin_carry(
         element_index: elem_idx,
         target: Some(target_id),
         order_id: Some(order_id),
+        done_effect_applied: false,
     };
     actor.clear_path();
     actor.action_state = ActionState::Waiting;
@@ -528,6 +531,7 @@ pub fn begin_drop(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Drop),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(carried_id),
@@ -664,6 +668,7 @@ pub fn begin_climb_on_shoulders(
     let actor = climber.actor_data_mut().unwrap();
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ClimbOnShoulders),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(helper_id),
@@ -778,6 +783,7 @@ pub fn begin_climb_down_from_shoulders(
     let actor = climber.actor_data_mut().unwrap();
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ClimbDownFromShoulders),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(carrier_id),
@@ -861,6 +867,7 @@ pub fn begin_tie(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Tie),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -948,6 +955,7 @@ pub fn begin_heal(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Heal),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1015,6 +1023,7 @@ pub fn begin_whistle(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Whistle),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1070,6 +1079,7 @@ pub fn begin_eat(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Eat),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1143,6 +1153,7 @@ pub fn begin_hit(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Hit),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1221,6 +1232,7 @@ pub fn begin_strangle(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Strangle),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1349,6 +1361,7 @@ pub fn begin_listen(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Listen),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1468,6 +1481,7 @@ pub fn begin_throw_net(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowNet),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None, // ground target, not entity
@@ -1585,6 +1599,7 @@ fn begin_throw_at_entity(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(kind),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1645,6 +1660,7 @@ pub fn begin_throw_wasp_nest(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowWaspNest),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1711,6 +1727,7 @@ pub fn begin_throw_purse(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowPurse),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1807,6 +1824,7 @@ pub fn begin_pay(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Pay),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(beggar_id),
@@ -1880,6 +1898,7 @@ pub fn begin_receive_purse(
     }
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ReceivePurse),
+        done_effect_applied: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1921,32 +1940,6 @@ fn ability_order_type(kind: AbilityKind) -> OrderType {
     }
 }
 
-/// Advance ability animations for every actor with an [`ActiveAbility`].
-///
-/// Returns a list of results for abilities that completed this frame.
-/// The engine applies cross-entity effects from these results after the
-/// mutable borrow on `entities` is released.
-pub fn tick_abilities(
-    sim: &crate::sim_rng::SimulationContext,
-
-    entities: &mut Entities,
-    sequence_manager: &SequenceManager,
-    order_id_counter: &mut u32,
-) -> Vec<AbilityTickResult> {
-    let actor_ids: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
-    let mut results = Vec::new();
-    for actor_id in actor_ids {
-        results.extend(tick_ability(
-            sim,
-            entities,
-            sequence_manager,
-            order_id_counter,
-            actor_id,
-        ));
-    }
-    results
-}
-
 /// Advance the active ability for one actor.
 ///
 /// This is the unit used by the engine's creation-ordered element pass. The
@@ -1959,6 +1952,7 @@ pub fn tick_ability(
     sequence_manager: &SequenceManager,
     order_id_counter: &mut u32,
     requested_actor: EntityId,
+    sprite_frozen: bool,
 ) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
 
@@ -2011,7 +2005,9 @@ pub fn tick_ability(
             let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
             let order_id = ability.order_id;
 
-            let motion = {
+            let motion = if sprite_frozen {
+                SpriteMotionState::InProgress
+            } else {
                 let elem = entity.element_data_mut();
                 elem.sprite.perform_action(
                     sim,
@@ -2103,7 +2099,9 @@ pub fn tick_ability(
             let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
             let order_id = ability.order_id;
 
-            let motion = {
+            let motion = if sprite_frozen {
+                SpriteMotionState::InProgress
+            } else {
                 let elem = entity.element_data_mut();
                 elem.sprite.perform_action(
                     sim,
@@ -2176,7 +2174,9 @@ pub fn tick_ability(
         let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
 
         // Drive the animation through the sprite state machine.
-        let motion = {
+        let motion = if sprite_frozen {
+            SpriteMotionState::InProgress
+        } else {
             let elem = entity.element_data_mut();
             elem.sprite.perform_action(
                 sim,
@@ -2206,6 +2206,25 @@ pub fn tick_ability(
             continue;
         }
 
+        // `DONE` is an effect boundary, not ownership completion. Keep the
+        // selected tuple installed until the sprite reports `TERMINATED` and
+        // suppress duplicate one-shot effects on looping terminal frames.
+        if motion == SpriteMotionState::Done {
+            let actor = entity.actor_data_mut().unwrap();
+            if actor.active_ability.done_effect_applied {
+                continue;
+            }
+            actor.active_ability.done_effect_applied = true;
+        } else if motion == SpriteMotionState::Terminated && ability.done_effect_applied {
+            let actor = entity.actor_data_mut().unwrap();
+            let seq_id = actor.active_ability.sequence_id.unwrap();
+            let elem_idx = actor.active_ability.element_index;
+            actor.active_ability.clear();
+            actor.action_state = ActionState::Waiting;
+            results.push(AbilityTickResult::Terminated { seq_id, elem_idx });
+            continue;
+        }
+
         // Animation finished — collect the result and clear the ability.
         let actor_pos = entity.element_data().position_map();
         let actor_direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
@@ -2220,8 +2239,10 @@ pub fn tick_ability(
         let actor = entity.actor_data_mut().unwrap();
         let seq_id = actor.active_ability.sequence_id.unwrap();
         let elem_idx = actor.active_ability.element_index;
-        actor.active_ability.clear();
-        actor.action_state = ActionState::Waiting;
+        if motion != SpriteMotionState::Done {
+            actor.active_ability.clear();
+            actor.action_state = ActionState::Waiting;
+        }
         // Whistle countdown should already be 0 by the time the
         // animation completes (TIME_LISTEN_WAIT < whistle anim length),
         // but clamp defensively so a follow-up whistle can re-arm

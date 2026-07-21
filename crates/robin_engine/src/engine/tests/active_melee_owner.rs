@@ -448,7 +448,7 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
         &assets,
         |_, _| {},
         |_, _| {},
-        |engine, owner, _, melee, _| {
+        |engine, owner, _, melee, _, _, _| {
             if owner != attacker {
                 return;
             }

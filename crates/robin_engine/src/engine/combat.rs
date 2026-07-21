@@ -2896,6 +2896,7 @@ impl EngineInner {
 
     /// Drive one actor's ability and apply its completion effects inline at
     /// that actor's creation-order position.
+    #[allow(unused_variables)] // Done results retain owner identity; Terminated consumes it.
     pub(super) fn tick_ability_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2906,16 +2907,23 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
+        let sprite_frozen = self.actors_frozen();
         let results = crate::abilities::tick_ability(
             sim,
             &mut self.world.entities,
             &self.orders.sequence_manager,
             &mut self.orders.next_order_id,
             actor_id,
+            sprite_frozen,
         );
         for result in results {
             use crate::abilities::AbilityTickResult;
             match result {
+                AbilityTickResult::Terminated { seq_id, elem_idx } => {
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                }
                 AbilityTickResult::CarryDone {
                     carrier_id,
                     target_id,
@@ -2935,9 +2943,6 @@ impl EngineInner {
                             actor.action_state = crate::element::ActionState::Waiting;
                         }
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         carrier = ?carrier_id,
                         target = ?target_id,
@@ -3068,9 +3073,6 @@ impl EngineInner {
                             target.element_data_mut().hidden_in_building = false;
                         }
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         carrier = ?carrier_id,
                         target = ?target_id,
@@ -3086,9 +3088,6 @@ impl EngineInner {
                     if let Some(target) = self.get_entity_mut(target_id) {
                         target.set_posture(crate::element::Posture::Tied);
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         actor = ?actor_id,
                         target = ?target_id,
@@ -3108,9 +3107,6 @@ impl EngineInner {
                     // low-priority Wait so its frozen-execution can
                     // re-enter the idle loop while still
                     // `CarryingOnShoulders`.
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     self.actor_wait(helper_id);
                     tracing::debug!(
                         climber = ?climber_id,
@@ -3244,9 +3240,6 @@ impl EngineInner {
                     // element.
                     self.actor_wait(helper_id);
 
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         climber = ?climber_id,
                         helper = ?helper_id,
@@ -3295,9 +3288,6 @@ impl EngineInner {
                     }
                     // Decrease healer's bandage ammo.
                     self.decrement_ability_ammo(assets, healer_id, crate::profiles::Action::Heal);
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         healer = ?healer_id,
                         target = ?target_id,
@@ -3359,9 +3349,6 @@ impl EngineInner {
                             );
                         }
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::WhistleDone {
                     actor_id,
@@ -3394,9 +3381,6 @@ impl EngineInner {
                         y = position.y,
                         "Whistle: noise emitted to attract NPCs"
                     );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::ListenEntered { actor_id } => {
                     // Entry transition animation just finished; the
@@ -3451,9 +3435,6 @@ impl EngineInner {
                     let Some((throw_pos, layer)) =
                         self.projectile_throw_origin(actor_id, "ThrowNetDone")
                     else {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
                         continue;
                     };
                     let target_3d = crate::coordinates::WorldPoint3D {
@@ -3489,9 +3470,6 @@ impl EngineInner {
                         "ThrowNet: spawned net projectile"
                     );
                     self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Net);
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::ThrowPurseDone {
                     actor_id,
@@ -3507,9 +3485,6 @@ impl EngineInner {
                     let Some((throw_pos, layer)) =
                         self.projectile_throw_origin(actor_id, "ThrowPurseDone")
                     else {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
                         continue;
                     };
                     let target_3d = crate::coordinates::WorldPoint3D {
@@ -3547,9 +3522,6 @@ impl EngineInner {
                     let face_value = crate::inventory::COINS_PER_PURSE as i32
                         * crate::inventory::COIN_VALUE as i32;
                     self.add_campaign_value(crate::campaign::CampaignValue::Ransom, -face_value);
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::ThrowWaspNestDone {
                     actor_id,
@@ -3563,9 +3535,6 @@ impl EngineInner {
                     let Some((throw_pos, layer)) =
                         self.projectile_throw_origin(actor_id, "ThrowWaspNestDone")
                     else {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
                         continue;
                     };
                     let target_3d = crate::coordinates::WorldPoint3D {
@@ -3599,9 +3568,6 @@ impl EngineInner {
                         actor_id,
                         crate::profiles::Action::WaspNest,
                     );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::ThrowAppleDone {
                     actor_id,
@@ -3616,9 +3582,6 @@ impl EngineInner {
                         crate::profiles::Action::Apple,
                         crate::element::ObjectType::Apple,
                     );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::ThrowStoneDone {
                     actor_id,
@@ -3633,9 +3596,6 @@ impl EngineInner {
                         crate::profiles::Action::Stone,
                         crate::element::ObjectType::Stone,
                     );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                 }
                 AbilityTickResult::PayDone {
                     pc_id,
@@ -3677,9 +3637,6 @@ impl EngineInner {
                         receive.priority = crate::sequence::SequencePriority::Normal;
                         self.launch_element(receive);
                     }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         pc = ?pc_id,
                         beggar = ?beggar_id,
@@ -3771,9 +3728,6 @@ impl EngineInner {
                     }
                     self.launch_element(dmg);
 
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         attacker = ?actor_id,
                         target = ?target_id,
@@ -3815,9 +3769,6 @@ impl EngineInner {
                             actor_id.index(),
                         );
                         self.dispatch_ai_stimulus(target_id, stimulus);
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
                         tracing::debug!(
                             attacker = ?actor_id,
                             target = ?target_id,
@@ -3847,9 +3798,6 @@ impl EngineInner {
                     );
                     self.launch_element(dmg);
 
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         attacker = ?actor_id,
                         target = ?target_id,

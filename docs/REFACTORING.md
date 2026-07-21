@@ -101,7 +101,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, active melee, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. PC Listen/object reveal, Target Heard, active abilities, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, active melee, active abilities, PC Listen/Target Heard, selected beggar simulation, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. Unsupported rider arms, zone occupancy, and remaining entity owners remain. |
 | 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
