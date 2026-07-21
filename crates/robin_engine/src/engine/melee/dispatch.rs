@@ -20,7 +20,7 @@ impl EngineInner {
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     pub(crate) fn dispatch_sword_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,
@@ -88,7 +88,6 @@ impl EngineInner {
             entity.element_data_mut().set_direction_instantly(dir);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
-                actor.action_state = ActionState::WaitingSword;
                 actor.clear_path();
             }
         }
@@ -118,22 +117,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
-
-        // Warn potential victims so they can auto-parry, and
-        // dispatch EventSwordstrike to NPC AI for the
-        // consider-to-begin-parade path.
-        let owner_weapon = self
-            .get_entity(owner)
-            .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager));
-        // WarnForStrike phase: collect victims with the
-        // warn-AI-extended tolerance so the circle strike's
-        // enemy-walking envelope is included.
-        let victims = self.execute_multi_target_strike(assets, owner, strike, owner_weapon, true);
-        if !victims.is_empty() {
-            self.warn_for_strike(sim, assets, owner, &victims, strike);
-        } else {
-            self.warn_for_strike(sim, assets, owner, &[target], strike);
-        }
 
         tracing::debug!(
             attacker = ?owner,

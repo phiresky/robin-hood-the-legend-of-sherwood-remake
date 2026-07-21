@@ -2812,7 +2812,11 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(crate::element::Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return;
         }
         let completion = self.get_entity(attacker_id).and_then(|entity| {

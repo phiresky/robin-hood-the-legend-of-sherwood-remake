@@ -254,7 +254,7 @@ mod mobile_owner_boundary_tests {
             |engine, _| {
                 observations.push(engine.first_live_mobile_polygon_point(0).x);
             },
-            |_, _, _| {},
+            |_, _, _, _| {},
             |_, _| {},
         );
         observations
@@ -305,7 +305,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
@@ -344,7 +344,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
@@ -617,6 +617,19 @@ pub(super) fn capture_actor_owner_envelope<T>(
             .expect("actor-owner envelope capture must remain active")
     });
     (result, phases)
+}
+
+/// Exact base-Actor Execute identity selected at entry to one legacy slot.
+///
+/// Active melee state can outlive the sequence element which created it. The
+/// coordinator therefore carries all three Original identities and
+/// revalidates them immediately before dispatch instead of treating a latent
+/// `ActiveMelee` as the selected Execute arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::engine) struct MeleeOwnerSelection {
+    pub(in crate::engine) seq_id: crate::sequence::SequenceId,
+    pub(in crate::engine) elem_idx: usize,
+    pub(in crate::engine) order_id: std::num::NonZeroU32,
 }
 
 // ─── Per-tick timing instrumentation ─────────────────────────────────
@@ -2487,7 +2500,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             |_, _| {},
         );
     }
@@ -2504,7 +2517,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _| {},
+            |_, _, _, _| {},
             after_slot,
         );
     }
@@ -2519,6 +2532,7 @@ impl EngineInner {
             &mut Self,
             EntityId,
             Option<super::movement::MovementOwnerSelection>,
+            Option<MeleeOwnerSelection>,
         ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
@@ -2580,11 +2594,13 @@ impl EngineInner {
                         entity_id,
                     ));
 
-                    let movement_selection = self
+                    let selected_order = self
                         .orders
                         .sequence_manager
                         .current_order_for_actor(entity_id)
-                        .and_then(|(seq_id, elem_idx, order)| {
+                        .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    let movement_selection =
+                        selected_order.and_then(|(seq_id, elem_idx, order_id)| {
                             self.orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
@@ -2599,14 +2615,32 @@ impl EngineInner {
                                 .map(|_| super::movement::MovementOwnerSelection {
                                     seq_id,
                                     elem_idx,
-                                    order_id: order.order_id,
+                                    order_id,
                                 })
+                        });
+                    let melee_selection =
+                        selected_order.and_then(|(seq_id, elem_idx, order_id)| {
+                            let melee = self
+                                .world
+                                .entities
+                                .get(entity_id)
+                                .and_then(Entity::actor_data)
+                                .map(|actor| actor.active_melee)?;
+                            (melee.is_active()
+                                && melee.sequence_id == Some(seq_id)
+                                && melee.element_index == elem_idx
+                                && melee.order_id == Some(order_id))
+                            .then_some(MeleeOwnerSelection {
+                                seq_id,
+                                elem_idx,
+                                order_id,
+                            })
                         });
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                         entity_id,
                     ));
-                    execute_owner_arm(self, entity_id, movement_selection);
+                    execute_owner_arm(self, entity_id, movement_selection, melee_selection);
 
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
@@ -2640,7 +2674,7 @@ impl EngineInner {
                         })
                         .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                        if movement_selection.is_some() {
+                        if movement_selection.is_some() || melee_selection.is_some() {
                             (Vec::new(), Default::default(), None)
                         } else if frozen_wait_execute.is_some() {
                             (Vec::new(), Default::default(), frozen_wait_execute)
@@ -2736,9 +2770,9 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Active melee, abilities, and unsupported rider arms remain separate
-        // owners. The production caller installs movement, selected bow, and
-        // the human/PC/NPC tail hook before this loop advances.
+        // Abilities and unsupported rider arms remain separate owners. The
+        // production caller installs movement, active melee, selected bow,
+        // and the human/PC/NPC tail hook before this loop advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
@@ -2836,12 +2870,15 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |engine, owner, selected| {
+            |engine, owner, movement, melee| {
                 // Snapshot the exact selected bow arm at base-Actor entry,
                 // before movement or any synchronous owner work can replace
                 // the current order.
                 let selected_bow = engine.selected_bow_order(owner);
-                engine.tick_entity_movement_owner(sim, assets, owner, selected);
+                engine.tick_entity_movement_owner(sim, assets, owner, movement);
+                if let Some(selection) = melee {
+                    engine.tick_selected_melee_owner(sim, assets, owner, selection);
+                }
                 if let Some((_, _, order_id)) = selected_bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
@@ -3301,15 +3338,9 @@ impl EngineInner {
 
             match entity_id {
                 EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
-                    // `RHElementActor::Hourglass` executes the actor's active
-                    // order before `RHElementActorPC::Hourglass` applies its
-                    // auto-heal tail. Only one of bow/melee/ability can own
-                    // that active order, but dispatching each narrow driver
-                    // keeps stale-state cleanup behavior intact.
-                    self.tick_straight_melee_for(sim, assets, entity_id);
-                    self.tick_melee_completion_for(sim, assets, entity_id);
-                    let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
-                    self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
+                    // Movement, active melee, and selected bow are owned by
+                    // the fused base-Actor Execute slot above. Abilities are
+                    // the remaining later actor driver.
                     self.tick_ability_for(sim, display, assets, entity_id);
                 }
                 EntityId::Projectile(_) | EntityId::Net(_) => {}

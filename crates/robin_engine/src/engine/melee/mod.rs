@@ -51,6 +51,39 @@ use crate::weapons::SwordStrike;
 #[cfg(test)]
 use crate::{element::Command, sequence::SequenceElementData};
 
+#[cfg(test)]
+thread_local! {
+    static CAPTURED_STRIKE_WARNINGS: std::cell::RefCell<Option<Vec<(EntityId, EntityId)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(in crate::engine) fn capture_strike_warnings<R>(
+    f: impl FnOnce() -> R,
+) -> (R, Vec<(EntityId, EntityId)>) {
+    CAPTURED_STRIKE_WARNINGS.with(|captured| {
+        assert!(captured.borrow().is_none(), "nested strike-warning capture");
+        *captured.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let warnings = CAPTURED_STRIKE_WARNINGS.with(|captured| {
+        captured
+            .borrow_mut()
+            .take()
+            .expect("strike-warning capture disappeared")
+    });
+    (result, warnings)
+}
+
+#[cfg(test)]
+fn record_strike_warning(attacker: EntityId, victim: EntityId) {
+    CAPTURED_STRIKE_WARNINGS.with(|captured| {
+        if let Some(warnings) = captured.borrow_mut().as_mut() {
+            warnings.push((attacker, victim));
+        }
+    });
+}
+
 // ─── Constants ──────────────────────────────────────────────────────
 
 /// Legacy constructor default retained for tests that explicitly exercise
@@ -1838,6 +1871,41 @@ fn collect_arc_victims(
     victims
 }
 
+/// Original lateral warning admission is intentionally looser than the hit
+/// collector: active human, not self, geometry only.
+fn collect_lateral_warning_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_pos: (f32, f32),
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        let target_id: EntityId = target_id.into();
+        if target_id == attacker_id || !entity.element_data().active {
+            continue;
+        }
+        let pos = entity.element_data().position_map();
+        let dx = pos.x - attacker_pos.0;
+        let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        if dx.abs().max(dy.abs()) >= 150.0 {
+            continue;
+        }
+        let distance = (dx * dx + dy * dy).sqrt();
+        if distance < min_distance || distance > max_distance {
+            continue;
+        }
+        let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+        if is_sector_between(sector, begin_sector, end_sector) {
+            victims.push(target_id);
+        }
+    }
+    victims
+}
+
 /// Collect possible victims for a circle sword strike in the
 /// WarnForStrike phase, with the per-victim distance extension for
 /// walking-with-sword enemies.
@@ -3057,6 +3125,12 @@ mod tests {
             Some(clicked),
         ));
         let seq_id = engine.launch_sequence(sequence);
+        let action_state_before_dispatch = engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state;
 
         engine.dispatch_sword_strike(
             sim,
@@ -3066,6 +3140,16 @@ mod tests {
             SwordStrike::A,
             seq_id,
             0,
+        );
+        assert_eq!(
+            engine
+                .get_entity(pc)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            action_state_before_dispatch,
+            "Instruct must not apply the Execute MotionState::Start WaitingSword transition"
         );
 
         assert_eq!(

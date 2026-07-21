@@ -122,6 +122,104 @@ fn is_expected_non_attack_swordfight_substate(substate: crate::ai::Substate) -> 
 }
 
 impl EngineInner {
+    fn begin_selected_melee_motion(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+    ) {
+        let (strike, profile_idx) = {
+            let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
+                panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
+            });
+            let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
+            entity.set_posture(Posture::Upright);
+            let actor = entity.actor_data_mut().unwrap_or_else(|| {
+                panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
+            });
+            actor.action_state = ActionState::WaitingSword;
+            (actor.active_melee.strike, profile_idx)
+        };
+
+        // RHElementActorHuman::Execute forecasts and warns only after
+        // PerformAction returns START. This may synchronously Think and draw
+        // RNG, so it belongs to the live owner slot rather than Instruct.
+        let victims =
+            self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
+        self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
+    }
+
+    fn selected_melee_identity_is_live(
+        &self,
+        attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
+    ) -> bool {
+        let current_matches = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .is_some_and(|(seq_id, elem_idx, order)| {
+                seq_id == selected.seq_id
+                    && elem_idx == selected.elem_idx
+                    && order.order_id == selected.order_id
+            });
+        let melee_matches = self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| {
+                let melee = actor.active_melee;
+                melee.is_active()
+                    && melee.sequence_id == Some(selected.seq_id)
+                    && melee.element_index == selected.elem_idx
+                    && melee.order_id == Some(selected.order_id)
+            });
+        current_matches && melee_matches
+    }
+
+    /// Execute the active-melee Human Execute arm selected at base-Actor
+    /// entry. Each sub-arm revalidates the same sequence/element/order tuple
+    /// because synchronous damage and callbacks may replace it mid-dispatch.
+    pub(in crate::engine) fn tick_selected_melee_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
+    ) {
+        let execution_frozen = self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .unwrap_or_else(|| panic!("selected melee owner {attacker_id:?} is missing actor data"))
+            .execution_frozen;
+        if execution_frozen || !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return;
+        }
+
+        // Original RHSprite::PerformAction returns IN_PROGRESS immediately
+        // under FrozenAll. No strike start, timer, sweep, completion, or order
+        // state is touched, while the surrounding Actor Hourglass envelope
+        // continues through ActionChange and derived tails.
+        if self.actors_frozen() {
+            return;
+        }
+
+        // The fixed-timer completion arm is already logically past its hit
+        // frame. Close it before attempting to drive the strike sprite again.
+        self.tick_melee_completion_for(sim, assets, attacker_id);
+        if !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return;
+        }
+        self.tick_straight_melee_for(sim, assets, attacker_id);
+        let initialized_sweep = if self.selected_melee_identity_is_live(attacker_id, selected) {
+            self.tick_nonstraight_melee_for(sim, assets, attacker_id)
+        } else {
+            false
+        };
+        if self.selected_melee_identity_is_live(attacker_id, selected) {
+            self.tick_sweep_for(sim, assets, attacker_id, initialized_sweep);
+        }
+    }
+
     // ─── Per-frame melee tick ───────────────────────────────────────
 
     /// Per-frame melee combat tick.
@@ -402,7 +500,11 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return;
         }
 
@@ -443,6 +545,7 @@ impl EngineInner {
 
         let mut hit = false;
         let mut completion = None;
+        let mut started = false;
         {
             let Some(entity) = self.get_entity_mut(attacker_id) else {
                 return;
@@ -471,6 +574,7 @@ impl EngineInner {
                     direction,
                     motion
                 );
+                started = matches!(motion, crate::sprite::MotionState::Start);
                 if !matches!(motion, crate::sprite::MotionState::Error) {
                     entity
                         .actor_data_mut()
@@ -520,6 +624,10 @@ impl EngineInner {
                 actor.active_melee.clear();
                 completion = Some((melee.sequence_id, melee.element_index));
             }
+        }
+
+        if started {
+            self.begin_selected_melee_motion(sim, assets, attacker_id);
         }
 
         if hit {
@@ -675,7 +783,7 @@ impl EngineInner {
     /// The real Hourglass orchestration runs every strike kind in its
     /// creation-ordered entity pass.
     #[cfg(test)]
-    pub(super) fn tick_melee_strikes(
+    pub(crate) fn tick_melee_strikes(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -701,7 +809,11 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) -> bool {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return false;
         }
 
@@ -723,6 +835,7 @@ impl EngineInner {
         let mut hits: Vec<StrikeHit> = Vec::new();
         let mut completed: Vec<CompletedStrike> = Vec::new();
         let mut initialized_sweep = false;
+        let mut started = false;
 
         // Phase 1: advance this attacker's timer and collect its hit.
         {
@@ -797,6 +910,7 @@ impl EngineInner {
                             direction,
                             motion
                         );
+                        started = matches!(motion, crate::sprite::MotionState::Start);
                         // Mark sprite as driving hit timing on first
                         // non-Error frame.  When sprite-driven, the
                         // natural frames_remaining countdown is frozen —
@@ -896,6 +1010,10 @@ impl EngineInner {
             }
         }
 
+        if started {
+            self.begin_selected_melee_motion(sim, assets, attacker_id);
+        }
+
         // Phase 2: apply this attacker's hit synchronously. Multi-target
         // victim vectors retain the original actor-list FIFO.
         for hit in hits {
@@ -925,7 +1043,6 @@ impl EngineInner {
                     hit.attacker_id,
                     hit.strike,
                     hit.attacker_profile_idx,
-                    false,
                 );
                 let mut all_victims = victims;
                 if !all_victims.contains(&hit.victim_id) {
@@ -976,7 +1093,6 @@ impl EngineInner {
                     hit.attacker_id,
                     hit.strike,
                     hit.attacker_profile_idx,
-                    false,
                 );
                 let mut all_victims = victims;
                 if !all_victims.contains(&hit.victim_id) {
@@ -1166,7 +1282,11 @@ impl EngineInner {
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
-        if self.actors_frozen() {
+        if self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return;
         }
 

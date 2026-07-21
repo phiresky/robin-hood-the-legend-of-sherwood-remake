@@ -36,6 +36,14 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   former Apple/Stone base-path burst countdown no longer duplicates their
   derived sprite lifetime; impact forces the converted bursting base row, and
   the obsolete countdown state has been removed.
+- Active Human melee Execute arms run in that same owner coordinator. Mutable
+  strike victim/damage/RNG and completion work closes before ActionChange/tails.
+  Active melee is admitted only when its exact
+  sequence/element/order tuple is still the selected Execute arm; stale melee
+  state cannot suppress the real selected generic arm. Strike-start state and
+  warning callbacks are owned by the first live sprite `MotionState::Start` and
+  use the Original principal/range straight collector plus its looser lateral
+  predicate. FrozenAll leaves every melee/sprite/order field untouched.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -93,7 +101,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. PC Listen/object reveal, Target Heard, active melee/abilities, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, active melee, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. PC Listen/object reveal, Target Heard, active abilities, unsupported rider arms, zone occupancy, and remaining entity owners remain. |
 | 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
@@ -131,7 +139,7 @@ missing source or unresolved coordinate/ordering boundary.
 `tick_zone_occupants` remains a documented Rust reconciliation boundary after
 the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
 establish it as actor-owned work; moving it per owner requires separate source
-evidence. Unsupported action arms and active strike/ability ownership also
+evidence. Unsupported action arms and active ability ownership also
 remain PA-013 debt.
 
 `WorldState::mobile_elements` remains the only mobile-master representation.

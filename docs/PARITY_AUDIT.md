@@ -176,7 +176,15 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | The live mutable-size legacy-slot walk now owns ordinary/evidenced rider movement, the supported Actor/Human/PC/NPC envelope, mobile masters and masked children, static FX/Target/Scroll/Bonus/Ale/Cape, selected bow, and the exhaustive projectile/net virtual dispatch. Mutable order, target, geometry, callbacks, patch/Scroll/Bonus work, and concrete projectile base/derived tails close at the consuming owner slot; there is no generic nonactor animation pass, processed-projectile set, second projectile scheduler, or legacy projectile-removal pre-pass. Exact sequence/element/order selection prevents background movement or bow state from suppressing a higher selected arm. FreezeAll preserves each evidenced non-sprite side effect while freezing the corresponding sprite work. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is active melee/ability ownership, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other unevidenced entity kinds. |
+| PA-013 | High | incomplete | The live mutable-size legacy-slot walk now owns ordinary/evidenced rider movement, active melee, the supported Actor/Human/PC/NPC envelope, mobile masters and masked children, static FX/Target/Scroll/Bonus/Ale/Cape, selected bow, and the exhaustive projectile/net virtual dispatch. Mutable order, target, geometry, callbacks, combat damage/RNG, patch/Scroll/Bonus work, and concrete projectile base/derived tails close at the consuming owner slot; there is no generic nonactor animation pass, processed-projectile set, second projectile scheduler, legacy projectile-removal pre-pass, or later melee driver. Exact sequence/element/order selection prevents background movement, melee, or bow state from suppressing a higher selected arm. FreezeAll preserves each evidenced non-sprite side effect while freezing the corresponding sprite/combat work. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is active ability ownership, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other unevidenced entity kinds. |
+
+Active straight/non-straight/completion/sweep melee executes after movement and
+before base completion, `ActionChange`, and derived tails. Strike
+`WaitingSword` state and `WarnForStrike` begin only on the first live sprite
+`MotionState::Start`; the warning collector preserves principal/range-only
+straight admission and the looser active-human lateral predicate. FrozenAll
+leaves sprite, melee, sweep, fallback, completion, order, and RNG state
+untouched while the enclosing non-sprite Actor envelope continues.
 
 ### PA-013 projectile/net virtual-class map
 
@@ -265,9 +273,10 @@ gates.
 At the end of this 2026-07-20 slice, remaining PA-013 debt still included
 movement, active strike and bow execution, ability ownership, remaining rider
 execution, PC Listen/object reveal, Target Heard, and remaining entity-kind
-Hourglass boundaries. Later owner-fusion work landed ordinary movement and
-Bonus `RefreshDiscovered`; the current remainder is summarized in the PA-013
-row above. This slice did not claim save/replay shape compatibility with its
+Hourglass boundaries. Later owner-fusion work landed ordinary movement,
+active melee, selected bow/projectiles, mobile/static owners, and Bonus
+`RefreshDiscovered`; the current remainder is summarized in the PA-013 row
+above. This slice did not claim save/replay shape compatibility with its
 pre-change snapshots.
 
 2026-07-20 script-native AI-state slice: accepted `SetAIState` calls now yield
@@ -332,8 +341,9 @@ that barrier is not a claim of arbitrary inline observation between pure-Rust
 statements. At the end of this slice, the then-remaining boundaries still
 prevented a full Actor Hourglass coordinator and exact NPC derived-class
 nesting around the base actor. Later owner-envelope work closed the supported
-NPC nesting; active melee/bow/ability ownership and unsupported action arms
-remain open under PA-013.
+NPC nesting, and subsequent work closed active melee and selected
+bow/projectile ownership. Active abilities and unsupported action arms remain
+open under PA-013.
 
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier
@@ -356,6 +366,18 @@ products from the live detectable list at every queued `Think`, preserves
 `seen_now` and `seen_last_frame` as separate ordered inputs, and makes stale
 NPC/detectable IDs fail with context. It also restores live lift/stairs target
 approach data and correct eye-point projection at equal ground elevation.
+
+2026-07-21 active-melee owner fusion: the straight, non-straight, fallback
+completion, and sweep helpers now run only from the exact live base-Actor
+Execute selection, immediately after movement. The later gameplay pass no
+longer drives melee; bow, projectiles, and abilities remain there. Exact
+sequence/element/order revalidation prevents latent strikes from leaking
+through a higher-priority arm, while synchronous damage and completion remain
+visible to ActionChange, derived tails, and later creation slots. Follow-up
+review fixes match `RHSprite::PerformAction` FrozenAll no-op behavior, move
+strike-start state/warnings out of Instruct, and let a higher selected generic
+arm run despite stale melee state. PA-013 stays incomplete for the remaining
+owners listed above.
 
 2026-07-19 non-straight melee follow-up: lateral, push-aside, half-circle,
 and full-circle strikes now advance and apply damage synchronously at the
@@ -509,9 +531,9 @@ need their own review.
 | Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
-| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot, including ordinary movement, rider GALOPP, and rider charge. Static Scroll Hourglass is owner-local; unsupported rider actions, active melee, abilities, and other unevidenced entity kinds remain separate. |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot, including ordinary movement, active melee, rider GALOPP, and rider charge. Static Scroll Hourglass is owner-local; unsupported rider actions, abilities, and other unevidenced entity kinds remain separate. |
 | NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, and patrol Think-before-direction are regression-covered. PC Listen/object reveal, Target Heard, and broader entity-owner debt remain open under PA-013. |
-| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Selected bow and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Creation order, straight/assault causality, non-straight phase timing, synchronous melee victim ordering, and owner-local rider-charge damage are regression-covered. Active melee/abilities, unsupported rider actions, and other combat maintenance remain open. |
+| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Active melee, selected bow, and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Creation order, straight/assault causality, non-straight phase timing, synchronous melee victim ordering, and owner-local rider-charge damage are regression-covered. Active abilities, unsupported rider actions, and other combat maintenance remain open. |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |
 | PostInitialize | mission loop in `RHgame.cpp` | host boundary verified by PA-029 |

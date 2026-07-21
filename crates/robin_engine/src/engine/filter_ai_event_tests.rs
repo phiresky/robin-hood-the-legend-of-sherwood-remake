@@ -1922,7 +1922,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
         "moving",
         "dead",
         "unconscious",
-        "active-melee",
     ] {
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = crate::campaign::Campaign::default();
@@ -2017,17 +2016,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
                         .human_data_mut()
                         .expect("skipped actor is human")
                         .unconscious = true;
-                }
-                "active-melee" => {
-                    entity
-                        .actor_data_mut()
-                        .expect("skipped actor is typed")
-                        .active_melee = crate::movement::ActiveMelee::new(
-                        stale,
-                        crate::weapons::SwordStrike::default(),
-                        Some(seq_id),
-                        elem_idx,
-                    );
                 }
                 _ => unreachable!(),
             }
@@ -2770,7 +2758,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
         &assets,
         |_, _| {},
         |_, _| {},
-        |engine, callback_owner, _| {
+        |engine, callback_owner, _, _| {
             if callback_owner != actor || replacement_sequence.is_some() {
                 return;
             }
