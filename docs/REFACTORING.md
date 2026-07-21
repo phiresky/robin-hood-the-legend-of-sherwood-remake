@@ -21,7 +21,10 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
   strike victim/damage/RNG, completion, and callback work closes per owner
   before ActionChange/tails. Active melee is admitted only when its exact
-  sequence/element/order tuple is still the selected Execute arm.
+  sequence/element/order tuple is still the selected Execute arm; stale melee
+  state cannot suppress the real selected generic arm. Strike-start state and
+  warning callbacks are owned by the first live sprite `MotionState::Start`,
+  and FrozenAll leaves every melee/sprite/order field untouched.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -113,7 +116,7 @@ missing source or unresolved coordinate/ordering boundary.
 `tick_zone_occupants` remains a documented Rust reconciliation boundary after
 the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
 establish it as actor-owned work; moving it per owner requires separate source
-evidence. Unsupported action arms and active strike/bow/ability ownership also
+evidence. Unsupported action arms and active bow/ability ownership also
 remain PA-013 debt.
 
 ## Validation ladder

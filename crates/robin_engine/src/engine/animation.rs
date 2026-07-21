@@ -3059,7 +3059,6 @@ impl EngineInner {
                         | crate::element::ActionState::MovingFastSword
                         | crate::element::ActionState::MovingShield
                 )
-                || actor.active_melee.is_active()
                 || actor.active_shot.is_active()
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
@@ -3321,19 +3320,10 @@ impl EngineInner {
                     break 'actor;
                 }
 
-                // Active melee strike: `tick_melee_strikes` drives the
-                // strike animation + hit timing itself via
-                // `sprite.perform_action`, reading the stamped id from
-                // `active_melee.order_id`.  If this generic animation
-                // driver *also* calls `perform_action` against the
-                // same sprite on the same tick with the Order-side id,
-                // the sprite's `last_processed_order_id` thrashes
-                // between the two drivers and the swing wedges at
-                // `MotionState::Start` forever — which is exactly the
-                // strike-animation-stuck bug from the replay.
-                if actor.active_melee.is_active() {
-                    break 'actor;
-                }
+                // Exact selected melee is admitted and suppresses this
+                // generic arm in the live owner coordinator. A stale
+                // background ActiveMelee must not suppress the actual current
+                // order here.
                 if actor.active_shot.is_active() {
                     break 'actor;
                 }

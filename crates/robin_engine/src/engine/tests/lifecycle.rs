@@ -679,10 +679,50 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
     );
 }
 
+fn install_owner_selected_test_melee(
+    engine: &mut EngineInner,
+    attacker: EntityId,
+    target: EntityId,
+    strike: crate::weapons::SwordStrike,
+    order_type: crate::order::OrderType,
+    frames_remaining: u16,
+    hit_applied: bool,
+) {
+    let sequence =
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::SwordstrikeThrustA,
+                Some(attacker),
+            ));
+    let order_id = engine.orders.allocate_order_id();
+    engine.orders.sequence_manager.push_order_on(
+        sequence,
+        0,
+        crate::order::Order::new(order_type, 0.0, 0.0, order_id),
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let mut active = crate::movement::ActiveMelee::new(target, strike, Some(sequence), 0);
+    active.frames_remaining = frames_remaining;
+    active.hit_applied = hit_applied;
+    active.order_id = Some(order_id);
+    engine
+        .get_entity_mut(attacker)
+        .expect("selected melee test attacker exists")
+        .actor_data_mut()
+        .expect("selected melee test attacker has actor data")
+        .active_melee = active;
+}
+
 fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
-    use crate::movement::{ActiveMelee, MELEE_HIT_FRAME, MELEE_STRIKE_DURATION};
+    use crate::movement::{MELEE_HIT_FRAME, MELEE_STRIKE_DURATION};
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
     use crate::weapons::SwordStrike;
 
@@ -706,6 +746,12 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     };
     soldier.npc.life_points = 1;
     soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test soldier has enemy AI")
+        .hth_weapon_id = 1;
     soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let mut final_target = make_test_pc(Posture::Upright);
     position(&mut final_target, 40.0);
@@ -725,19 +771,26 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         (interrupter_id, chained_attacker_id)
     };
     let final_target_id = engine.add_entity(final_target);
+    engine
+        .get_entity_mut(chained_attacker_id)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .me = chained_attacker_id.index();
 
     for (attacker, target) in [
         (interrupter_id, chained_attacker_id),
         (chained_attacker_id, final_target_id),
     ] {
-        let mut active = ActiveMelee::new(target, SwordStrike::A, None, 0);
-        active.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
-        engine
-            .get_entity_mut(attacker)
-            .expect("strike attacker present")
-            .actor_data_mut()
-            .expect("strike attacker has actor data")
-            .active_melee = active;
+        install_owner_selected_test_melee(
+            &mut engine,
+            attacker,
+            target,
+            SwordStrike::A,
+            crate::order::OrderType::StrikingStraightSword,
+            MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
+            false,
+        );
     }
 
     let mut profiles = ProfileManager::new();
@@ -759,7 +812,8 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.tick_melee_strikes(sim, &assets);
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        engine.tick_actor_owner_envelopes(sim, &assets, &positions);
     });
 
     let Entity::Pc(target) = engine
@@ -796,7 +850,7 @@ fn chained_nonstraight_strike_lives(
 ) -> (i16, i16) {
     use crate::coordinates::{MapVec, MoveBox, WorldPoint3D};
     use crate::element::Posture;
-    use crate::movement::{ActiveMelee, MELEE_HIT_FRAME, MELEE_STRIKE_DURATION, SweepState};
+    use crate::movement::{MELEE_HIT_FRAME, MELEE_STRIKE_DURATION, SweepState};
     use crate::profiles::{
         CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile, WeaponThrustDirection,
         WeaponThrustKind,
@@ -828,6 +882,12 @@ fn chained_nonstraight_strike_lives(
     };
     soldier.npc.life_points = 1;
     soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test soldier has enemy AI")
+        .hth_weapon_id = 1;
     soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let mut final_target = make_test_pc(Posture::Upright);
     // Remain within the chained attacker's 100-unit straight range but
@@ -849,18 +909,34 @@ fn chained_nonstraight_strike_lives(
         (interrupter_id, chained_attacker_id)
     };
     let final_target_id = engine.add_entity(final_target);
-
-    let mut chained = ActiveMelee::new(final_target_id, SwordStrike::A, None, 0);
-    chained.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
     engine
         .get_entity_mut(chained_attacker_id)
-        .expect("chained attacker present")
-        .actor_data_mut()
-        .expect("chained attacker has actor data")
-        .active_melee = chained;
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .me = chained_attacker_id.index();
+
+    install_owner_selected_test_melee(
+        &mut engine,
+        chained_attacker_id,
+        final_target_id,
+        SwordStrike::A,
+        crate::order::OrderType::StrikingStraightSword,
+        MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
+        false,
+    );
 
     match interrupt {
         NonstraightInterrupt::Lateral => {
+            install_owner_selected_test_melee(
+                &mut engine,
+                interrupter_id,
+                chained_attacker_id,
+                SwordStrike::D,
+                crate::order::OrderType::StrikingLeftSword,
+                2,
+                true,
+            );
             engine
                 .get_entity_mut(interrupter_id)
                 .expect("lateral attacker present")
@@ -879,14 +955,15 @@ fn chained_nonstraight_strike_lives(
             });
         }
         NonstraightInterrupt::Push => {
-            let mut push = ActiveMelee::new(chained_attacker_id, SwordStrike::D, None, 0);
-            push.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
-            engine
-                .get_entity_mut(interrupter_id)
-                .expect("push attacker present")
-                .actor_data_mut()
-                .expect("push attacker has actor data")
-                .active_melee = push;
+            install_owner_selected_test_melee(
+                &mut engine,
+                interrupter_id,
+                chained_attacker_id,
+                SwordStrike::D,
+                crate::order::OrderType::StrikingLeftSword,
+                MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
+                false,
+            );
         }
     }
 
@@ -920,7 +997,8 @@ fn chained_nonstraight_strike_lives(
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        engine.tick_melee_strikes(sim, &assets);
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        engine.tick_actor_owner_envelopes(sim, &assets, &positions);
     });
 
     let Entity::Pc(target) = engine

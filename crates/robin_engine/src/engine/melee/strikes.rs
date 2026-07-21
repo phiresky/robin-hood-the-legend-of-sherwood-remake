@@ -122,6 +122,44 @@ fn is_expected_non_attack_swordfight_substate(substate: crate::ai::Substate) -> 
 }
 
 impl EngineInner {
+    fn begin_selected_melee_motion(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+    ) {
+        let (target, strike, profile_idx) = {
+            let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
+                panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
+            });
+            let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
+            entity.set_posture(Posture::Upright);
+            let actor = entity.actor_data_mut().unwrap_or_else(|| {
+                panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
+            });
+            actor.action_state = ActionState::WaitingSword;
+            let melee = actor.active_melee;
+            (
+                melee.target.unwrap_or_else(|| {
+                    panic!("melee MotionState::Start owner {attacker_id:?} lost its target")
+                }),
+                melee.strike,
+                profile_idx,
+            )
+        };
+
+        // RHElementActorHuman::Execute forecasts and warns only after
+        // PerformAction returns START. This may synchronously Think and draw
+        // RNG, so it belongs to the live owner slot rather than Instruct.
+        let victims =
+            self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx, true);
+        if victims.is_empty() {
+            self.warn_for_strike(sim, assets, attacker_id, &[target], strike);
+        } else {
+            self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
+        }
+    }
+
     fn selected_melee_identity_is_live(
         &self,
         attacker_id: EntityId,
@@ -165,6 +203,14 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("selected melee owner {attacker_id:?} is missing actor data"))
             .execution_frozen;
         if execution_frozen || !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return;
+        }
+
+        // Original RHSprite::PerformAction returns IN_PROGRESS immediately
+        // under FrozenAll. No strike start, timer, sweep, completion, or order
+        // state is touched, while the surrounding Actor Hourglass envelope
+        // continues through ActionChange and derived tails.
+        if self.actors_frozen() {
             return;
         }
 
@@ -510,6 +556,7 @@ impl EngineInner {
 
         let mut hit = false;
         let mut completion = None;
+        let mut started = false;
         {
             let Some(entity) = self.get_entity_mut(attacker_id) else {
                 return;
@@ -538,6 +585,7 @@ impl EngineInner {
                     direction,
                     motion
                 );
+                started = matches!(motion, crate::sprite::MotionState::Start);
                 if !matches!(motion, crate::sprite::MotionState::Error) {
                     entity
                         .actor_data_mut()
@@ -587,6 +635,10 @@ impl EngineInner {
                 actor.active_melee.clear();
                 completion = Some((melee.sequence_id, melee.element_index));
             }
+        }
+
+        if started {
+            self.begin_selected_melee_motion(sim, assets, attacker_id);
         }
 
         if hit {
@@ -794,6 +846,7 @@ impl EngineInner {
         let mut hits: Vec<StrikeHit> = Vec::new();
         let mut completed: Vec<CompletedStrike> = Vec::new();
         let mut initialized_sweep = false;
+        let mut started = false;
 
         // Phase 1: advance this attacker's timer and collect its hit.
         {
@@ -868,6 +921,7 @@ impl EngineInner {
                             direction,
                             motion
                         );
+                        started = matches!(motion, crate::sprite::MotionState::Start);
                         // Mark sprite as driving hit timing on first
                         // non-Error frame.  When sprite-driven, the
                         // natural frames_remaining countdown is frozen —
@@ -965,6 +1019,10 @@ impl EngineInner {
                     });
                 }
             }
+        }
+
+        if started {
+            self.begin_selected_melee_motion(sim, assets, attacker_id);
         }
 
         // Phase 2: apply this attacker's hit synchronously. Multi-target

@@ -3057,6 +3057,12 @@ mod tests {
             Some(clicked),
         ));
         let seq_id = engine.launch_sequence(sequence);
+        let action_state_before_dispatch = engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state;
 
         engine.dispatch_sword_strike(
             sim,
@@ -3066,6 +3072,16 @@ mod tests {
             SwordStrike::A,
             seq_id,
             0,
+        );
+        assert_eq!(
+            engine
+                .get_entity(pc)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            action_state_before_dispatch,
+            "Instruct must not apply the Execute MotionState::Start WaitingSword transition"
         );
 
         assert_eq!(
