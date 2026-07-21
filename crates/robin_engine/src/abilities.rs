@@ -1265,58 +1265,6 @@ pub fn begin_strangle(
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-    // TODO(PA-013): Original sets direction goals and calls attacker then
-    // victim TurnFast before starting Strangling. This port still snaps both
-    // directions here. Moving-victim EventStop is likewise drained after
-    // dispatch instead of synchronously before the initial FREEZE lock.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    let facing = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-    actor_entity
-        .element_data_mut()
-        .set_direction_instantly(facing);
-
-    // Face the victim the same way the strangler faces, and lock the
-    // victim's AI with `AiLockFlags::FREEZE` for the duration of the
-    // strangle.  The matching unlock fires from
-    // `send_condolation_card_pc` when the strangle element terminates.
-    //
-    // Additionally: when the antagonist is an NPC currently moving,
-    // dispatch an `EventStop` stimulus so its AI registers the imminent
-    // strangle and halts.  Queue it via the cross-NPC drain so it fires
-    // later this tick (`process_pending_cross_npc_actions` runs after
-    // dispatch).  Push the stimulus BEFORE setting the FREEZE lock —
-    // ordering matters: the stimulus is a sequence transition (earlier)
-    // and the lock is part of the strangle init (later).
-    let victim = entities
-        .get_mut(target_id)
-        .unwrap_or_else(|| panic!("validated strangle target {target_id:?} vanished during begin"));
-    victim.element_data_mut().set_direction_instantly(facing);
-    let is_moving = victim
-        .actor_data()
-        .unwrap_or_else(|| {
-            panic!("validated strangle target {target_id:?} lost required actor state")
-        })
-        .action_state
-        .is_moving();
-    let ai = victim.ai_controller_mut().unwrap_or_else(|| {
-        panic!("validated strangle target {target_id:?} lost required AI state")
-    });
-    if is_moving {
-        ai.outbox
-            .reentrant
-            .cross_npc_actions
-            .push(crate::ai::CrossNpcAction::SendStimulus {
-                target: target_id.index(),
-                stimulus_type: crate::ai::StimulusType::EventStop,
-                info: crate::ai::StimulusInfo::None,
-                fallback_to_sender: None,
-                to_whole_patrol: false,
-            });
-    }
-    ai.non_script_lock(crate::ai::AiLockFlags::FREEZE);
-
     BeginResult::Started
 }
 
@@ -1954,7 +1902,7 @@ pub fn tick_ability(
 ) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
     let entity = entities
-        .get_mut(requested_actor)
+        .get(requested_actor)
         .unwrap_or_else(|| panic!("ability owner {requested_actor:?} disappeared"));
     assert!(
         entity.actor_data().is_some(),
@@ -1970,7 +1918,43 @@ pub fn tick_ability(
     }
 
     let ability = actor.active_ability.clone();
+    let listen_phase = actor.listen_phase;
+    let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
+
+    // RHElementActorPC::Perform(STRANGLING) uses C++ `&&` ordering:
+    // attacker TurnFast runs first, and the victim is not advanced until a
+    // later tick where the attacker was already aligned. PerformAction is
+    // likewise deferred until both calls return false. Direction goals and
+    // the victim FREEZE lock are installed by the engine at the original
+    // post-translation initialization boundary.
+    if kind == AbilityKind::Strangle {
+        if entities
+            .get_mut(requested_actor)
+            .expect("validated strangle owner vanished before TurnFast")
+            .position_iface_mut()
+            .turn_fast()
+        {
+            return results;
+        }
+        let victim_id = ability
+            .target
+            .expect("active Strangle ability must retain its antagonist");
+        let victim = entities
+            .get_mut(victim_id)
+            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished while turning"));
+        assert!(
+            victim.actor_data().is_some(),
+            "strangle victim {victim_id:?} lost required actor state while turning"
+        );
+        if victim.position_iface_mut().turn_fast() {
+            return results;
+        }
+    }
+
+    let entity = entities
+        .get_mut(requested_actor)
+        .unwrap_or_else(|| panic!("ability owner {requested_actor:?} disappeared after setup"));
 
     // ── Listen: phase-aware animation dispatch ──
     //
@@ -1981,7 +1965,7 @@ pub fn tick_ability(
     // plus the `listen_wait_time` countdown in
     // the selected PC owner arm.
     if kind == AbilityKind::Listen {
-        let phase = actor.listen_phase;
+        let phase = listen_phase;
         let order_type = match phase {
             ListenPhase::EnterTransition => OrderType::TransitionWaitingUprightListening,
             ListenPhase::ExitTransition => OrderType::TransitionListeningWaitingUpright,
@@ -2073,7 +2057,7 @@ pub fn tick_ability(
     // `reveal_scrolls`; on Transition→Inactive we emit
     // `ReceivePurseDone` to terminate the driving sequence element.
     if kind == AbilityKind::ReceivePurse {
-        let phase = actor.receive_purse_phase;
+        let phase = receive_purse_phase;
         let order_type = match phase {
             ReceivePursePhase::Receiving => OrderType::ReceivingPurse,
             ReceivePursePhase::Waiting => OrderType::WaitingWithPurse,
@@ -2811,6 +2795,88 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    #[test]
+    fn strangle_turn_fast_short_circuits_attacker_before_victim() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        entities.push(Some(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: CivilianData::default(),
+        })));
+        let attacker = entities.id_at_legacy_slot(0).unwrap();
+        let victim = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_goal(4);
+        entities
+            .get_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(8);
+        entities
+            .get_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_goal(4);
+        entities
+            .get_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_ability = ActiveAbility {
+            kind: Some(AbilityKind::Strangle),
+            sequence_id: Some(SequenceId(7)),
+            element_index: 3,
+            target: Some(victim),
+            order_id: std::num::NonZeroU32::new(11),
+            done_effect_applied: false,
+        };
+        let manager = SequenceManager::new();
+        let sim = crate::sim_rng::test_context();
+
+        for expected_attacker in [2, 4] {
+            assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
+            assert_eq!(
+                entities.get(attacker).unwrap().element_data().direction(),
+                expected_attacker
+            );
+            assert_eq!(entities.get(victim).unwrap().element_data().direction(), 8);
+        }
+        assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
+        assert_eq!(
+            entities.get(attacker).unwrap().element_data().direction(),
+            4
+        );
+        assert_eq!(entities.get(victim).unwrap().element_data().direction(), 6);
+        assert_eq!(
+            entities
+                .get(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_ability
+                .sequence_id,
+            Some(SequenceId(7)),
+            "turning must retain the exact owner/sequence/element/order identity",
+        );
     }
 
     #[test]

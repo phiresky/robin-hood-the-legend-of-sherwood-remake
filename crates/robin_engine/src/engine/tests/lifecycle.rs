@@ -1494,6 +1494,140 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
 }
 
 #[test]
+fn moving_strangle_victim_finishes_event_stop_before_freeze_and_preserves_fifo_identity() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
+    else {
+        unreachable!()
+    };
+    victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(20.0, 0.0));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Moving;
+    engine.dispatch_ai_stimulus(
+        victim,
+        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+    );
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            1,
+            Command::StrangleCmd,
+            Some(attacker),
+            Some(victim),
+        ));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(seq, 0)
+        .expect("strangle interaction identity must survive synchronous EventStop effects");
+    assert_eq!(element.state, SequenceState::InProgress);
+    let order = element
+        .current_order()
+        .expect("strangle order must remain selected");
+    let active = &engine
+        .get_entity(attacker)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_ability;
+    assert_eq!(active.sequence_id, Some(seq));
+    assert_eq!(active.element_index, 0);
+    assert_eq!(active.target, Some(victim));
+    assert_eq!(active.order_id, Some(order.order_id));
+
+    let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
+    assert!(
+        victim_ai
+            .locks_flag_field
+            .contains(crate::ai::AiLockFlags::FREEZE)
+    );
+    assert_eq!(
+        victim_ai
+            .ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == crate::ai::LogLineType::Event
+                    && line.info == crate::ai::StimulusType::EventStop as u16
+            })
+            .count(),
+        1,
+        "EventStop Think must complete while FREEZE is still absent",
+    );
+    assert_eq!(victim_ai.current_state, crate::ai::AiState::Seeking);
+    assert_eq!(
+        victim_ai.current_substate,
+        crate::ai::Substate::SeekingGotStopEvent,
+        "EventStop's re-entrant state/timer effects must be applied before FREEZE",
+    );
+    assert!(victim_ai.timer_is_running);
+    assert_eq!(
+        victim_ai
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![crate::ai::StimulusType::EventTimer],
+        "synchronous EventStop and its re-entrant effects must preserve the older FIFO",
+    );
+    assert_eq!(
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .direction(),
+        8,
+        "translation/initialization sets only the direction goal",
+    );
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .direction(),
+        8,
+        "victim direction must not snap during initialization",
+    );
+}
+
+#[test]
 fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
 {
     use crate::element::{Command, Posture};
