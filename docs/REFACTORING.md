@@ -131,7 +131,7 @@ missing source or unresolved coordinate/ordering boundary.
 `tick_zone_occupants` remains a documented Rust reconciliation boundary after
 the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
 establish it as actor-owned work; moving it per owner requires separate source
-evidence. Unsupported action arms and active strike/bow/ability ownership also
+evidence. Unsupported action arms and active strike/ability ownership also
 remain PA-013 debt.
 
 `WorldState::mobile_elements` remains the only mobile-master representation.
@@ -141,10 +141,10 @@ slot without adding an `Entity` variant or mirror. `FxData::mobile_index` and
 `MobileElement::sprite_ids` are validated as an exact, non-empty, adjacent,
 ordered relationship; the first child runs the master once, and every child
 then owns exactly one masked-animation call at its stored slot.
-Mobile children stay excluded from the legacy global nonactor-animation batch.
-Within the live nonactor slot hook, the mobile boundary is intentionally the
-first dispatch and returns before the independent static-nonmobile lane; keep
-that ordering when the static-owner merge lands.
+There is no legacy global nonactor-animation batch. Within the live nonactor
+slot hook, the mobile boundary is intentionally the first dispatch and returns
+before the independent static-nonmobile lane, which in turn precedes
+projectile/net virtual dispatch.
 
 ## Validation ladder
 

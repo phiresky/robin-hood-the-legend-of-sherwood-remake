@@ -2736,9 +2736,9 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Active melee, bow, abilities, and unsupported rider arms remain
-        // separate owners. The production caller installs movement and the
-        // human/PC/NPC tail hook before this loop advances.
+        // Active melee, abilities, and unsupported rider arms remain separate
+        // owners. The production caller installs movement, selected bow, and
+        // the human/PC/NPC tail hook before this loop advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
@@ -2788,10 +2788,9 @@ impl EngineInner {
             sim,
             assets,
             |engine, owner| {
-                // Integration contract for the static-owner merge: mobile
-                // children are excluded from the old global nonactor
-                // animation batch, and this boundary must remain before any
-                // static nonmobile dispatch installed in this slot hook.
+                // Original-derived nonactor nesting: the mobile master/child
+                // boundary runs before the independent static owner, followed
+                // by projectile/net virtual dispatch.
                 if engine.tick_mobile_child_owner_boundary(sim, assets, owner) {
                     return;
                 }

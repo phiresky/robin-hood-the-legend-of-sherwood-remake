@@ -246,37 +246,17 @@ impl EngineInner {
         shooter_id: EntityId,
         expected_order_id: std::num::NonZeroU32,
     ) -> Vec<EntityId> {
-        self.tick_bow_shots(sim, assets, Some((shooter_id, expected_order_id)))
-    }
-
-    /// Advance the shoot animation for every actor with an active bow
-    /// shot.  Computes ballistic trajectory, rolls hit chance, and
-    /// spawns arrows on the done frame.  Called from the main
-    /// hourglass loop.
-    pub(super) fn tick_bow_shots(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        selection: Option<(EntityId, std::num::NonZeroU32)>,
-    ) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
         if self.actors_frozen() {
             return spawned_projectiles;
         }
-        let events = match selection {
-            Some((owner, order_id)) => bow_shot::tick_bow_shot_for_owner(
-                sim,
-                &mut self.world.entities,
-                &mut self.orders.sequence_manager,
-                owner,
-                order_id,
-            ),
-            None => bow_shot::tick_bow_shots(
-                sim,
-                &mut self.world.entities,
-                &mut self.orders.sequence_manager,
-            ),
-        };
+        let events = bow_shot::tick_bow_shot_for_owner(
+            sim,
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+            shooter_id,
+            expected_order_id,
+        );
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
