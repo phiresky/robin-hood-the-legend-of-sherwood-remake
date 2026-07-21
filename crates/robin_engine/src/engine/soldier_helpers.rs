@@ -16,6 +16,10 @@ use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
 thread_local! {
     static CONDOLATION_STIMULUS_TRACE: std::cell::RefCell<Option<Vec<(EntityId, StimulusType)>>> =
         const { std::cell::RefCell::new(None) };
+    static CONDOLATION_NESTED_TERMINATION: std::cell::RefCell<Option<(EntityId, StimulusType, SequenceId, usize)>> =
+        const { std::cell::RefCell::new(None) };
+    static OWNER_BOUNDARY_RESUME_TRACE: std::cell::RefCell<Option<Vec<EntityId>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -42,6 +46,59 @@ fn observe_condolation_stimulus(owner: EntityId, stimulus: StimulusType) {
             trace.push((owner, stimulus));
         }
     });
+}
+
+#[cfg(test)]
+pub(super) fn install_condolation_nested_termination(
+    owner: EntityId,
+    stimulus: StimulusType,
+    seq_id: SequenceId,
+    elem_idx: usize,
+) {
+    CONDOLATION_NESTED_TERMINATION.with(|hook| {
+        assert!(
+            hook.borrow_mut()
+                .replace((owner, stimulus, seq_id, elem_idx))
+                .is_none(),
+            "nested-condolation test hook must not already be installed"
+        );
+    });
+}
+
+#[cfg(test)]
+pub(super) fn capture_owner_boundary_resumes<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
+    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
+        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
+    });
+    let result = f();
+    let observed = OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("owner-boundary resume trace remains installed")
+    });
+    (result, observed)
+}
+
+#[cfg(test)]
+fn take_condolation_nested_termination(
+    owner: EntityId,
+    stimulus: StimulusType,
+) -> Option<(SequenceId, usize)> {
+    CONDOLATION_NESTED_TERMINATION.with(|hook| {
+        let mut hook = hook.borrow_mut();
+        if hook
+            .as_ref()
+            .is_some_and(|(expected_owner, expected_stimulus, _, _)| {
+                *expected_owner == owner && *expected_stimulus == stimulus
+            })
+        {
+            hook.take()
+                .map(|(_, _, seq_id, elem_idx)| (seq_id, elem_idx))
+        } else {
+            None
+        }
+    })
 }
 
 impl EngineInner {
@@ -277,34 +334,54 @@ impl EngineInner {
         owner: EntityId,
         assets: &LevelAssets,
     ) {
-        let mut pending: std::collections::VecDeque<_> = self
-            .orders
+        let preexisting = self.orders.sequence_manager.drain_pending_condolations();
+        let (roots, foreign_backlog): (Vec<_>, Vec<_>) = preexisting
+            .into_iter()
+            .partition(|dispatch| dispatch.card.owner == owner);
+        for root in roots {
+            self.close_owner_boundary_condolation(sim, assets, root);
+        }
+        self.orders
             .sequence_manager
-            .drain_pending_condolations_for_owner(owner)
-            .into();
-        while let Some(dispatch) = pending.pop_front() {
-            let card_owner = dispatch.card.owner;
-            self.send_condolation_card(dispatch.card, assets);
-            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
-            self.orders
-                .sequence_manager
-                .finish_pending_condolation(dispatch);
-            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "owner-boundary condolation for {} failed to drain its synchronous successor: {error:?}",
-                        card_owner.index()
-                    )
-                });
-            for nested in self
-                .orders
-                .sequence_manager
-                .drain_pending_condolations()
-                .into_iter()
-                .rev()
-            {
-                pending.push_front(nested);
+            .restore_pending_condolations(foreign_backlog);
+    }
+
+    fn close_owner_boundary_condolation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        dispatch: crate::sequence::PendingCondolationDispatch,
+    ) {
+        let card_owner = dispatch.card.owner;
+        self.send_condolation_card(dispatch.card, assets);
+        self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+
+        // A SetState reached re-entrantly from SendCondolationCard belongs
+        // inside that call. Close those cards before resuming this outer
+        // SetState at Ready()/cascade.
+        for nested in self.orders.sequence_manager.drain_pending_condolations() {
+            self.close_owner_boundary_condolation(sim, assets, nested);
+        }
+
+        #[cfg(test)]
+        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
+            if let Some(trace) = trace.borrow_mut().as_mut() {
+                trace.push(card_owner);
             }
+        });
+        self.orders
+            .sequence_manager
+            .finish_pending_condolation(dispatch);
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "owner-boundary condolation for {} failed to drain its synchronous successor: {error:?}",
+                    card_owner.index()
+                )
+            });
+
+        for nested in self.orders.sequence_manager.drain_pending_condolations() {
+            self.close_owner_boundary_condolation(sim, assets, nested);
         }
     }
 
@@ -534,6 +611,11 @@ impl EngineInner {
         #[cfg(test)]
         if let Some(st) = stimulus {
             observe_condolation_stimulus(owner, st);
+            if let Some((seq_id, elem_idx)) = take_condolation_nested_termination(owner, st) {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+            }
         }
 
         if let Some(st) = stimulus

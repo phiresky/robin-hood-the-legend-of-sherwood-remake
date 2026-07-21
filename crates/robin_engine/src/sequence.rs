@@ -2250,6 +2250,14 @@ impl SequenceManager {
         std::mem::take(&mut self.pending_condolations)
     }
 
+    /// Restore a backlog detached around an owner-local synchronous boundary.
+    /// The detached cards predate anything still queued, so they retain their
+    /// original position at the front of the global FIFO.
+    pub fn restore_pending_condolations(&mut self, mut pending: Vec<PendingCondolationDispatch>) {
+        pending.append(&mut self.pending_condolations);
+        self.pending_condolations = pending;
+    }
+
     /// Drain only the pending condolations whose `owner` matches `owner`.
     /// Used by the per-NPC synchronous drain pass that runs right after
     /// each [`EngineInner::dispatch_filtered_stimulus`] — so a sequence

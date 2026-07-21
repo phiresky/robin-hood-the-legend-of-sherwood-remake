@@ -305,8 +305,12 @@ fn install_charge_victim_motion(
 #[test]
 fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
     use crate::ai::StimulusType;
-    use crate::element::Posture;
-    use crate::engine::soldier_helpers::capture_condolation_stimuli;
+    use crate::element::{Command, Posture};
+    use crate::engine::soldier_helpers::{
+        capture_condolation_stimuli, capture_owner_boundary_resumes,
+        install_condolation_nested_termination,
+    };
+    use crate::sequence::{Field, FieldValue, SequenceElement};
 
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
@@ -331,14 +335,61 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         .and_then(crate::element::Entity::actor_data)
         .and_then(|actor| actor.active_movement.sequence_id)
         .expect("movement is armed");
+    let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(17));
+    engine
+        .orders
+        .sequence_manager
+        .get_sequence_mut(movement_seq)
+        .expect("movement sequence remains installed")
+        .append_element(timer);
+
+    let foreign_owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let nested_owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let foreign_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Wait, Some(foreign_owner)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(foreign_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(foreign_seq, 0);
+    let nested_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Wait, Some(nested_owner)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(nested_seq, 0);
+    install_condolation_nested_termination(mover_id, StimulusType::EventReachPoint, nested_seq, 0);
     let sim = crate::sim_rng::test_context();
 
     engine.tick_entity_movement(&sim, &assets);
-    let (_, trace) = capture_condolation_stimuli(|| {
-        tick_production_owner_coordinator(&mut engine, &sim, &assets)
+    let ((_, resumes), trace) = capture_condolation_stimuli(|| {
+        capture_owner_boundary_resumes(|| {
+            tick_production_owner_coordinator(&mut engine, &sim, &assets)
+        })
     });
 
-    assert_eq!(trace, vec![(mover_id, StimulusType::EventReachPoint)]);
+    assert_eq!(
+        trace,
+        vec![
+            (mover_id, StimulusType::EventReachPoint),
+            (nested_owner, StimulusType::EventDone),
+        ]
+    );
+    assert_eq!(
+        resumes,
+        vec![nested_owner, mover_id],
+        "the nested cross-owner SetState must close before A resumes Ready/successors"
+    );
+    assert_eq!(engine.orders.timer_elements.len(), 1);
+    assert_eq!(engine.orders.timer_elements[0].remaining, 17);
     assert_eq!(
         engine
             .orders
@@ -348,14 +399,10 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
             .state,
         crate::sequence::SequenceState::Terminated
     );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .drain_pending_condolations()
-            .is_empty(),
-        "the owner boundary must close the real card instead of leaving a duplicate"
-    );
+    let backlog = engine.orders.sequence_manager.drain_pending_condolations();
+    assert_eq!(backlog.len(), 1);
+    assert_eq!(backlog[0].card.owner, foreign_owner);
+    assert_eq!(backlog[0].card.command, Command::Wait);
 }
 
 #[test]

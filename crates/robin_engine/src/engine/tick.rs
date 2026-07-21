@@ -1705,18 +1705,13 @@ impl EngineInner {
         // Fires `Think(EVENT_REACHPOINT)` when a MOVE sequence
         // element terminates.
 
-        // ── Dispatch EventGaloppLoopEnd to riders with RIDER_CHARGE flag ──
-        // When a rider's running animation reaches half/end frame
-        // with RIDER_CHARGE, fire `Think(EVENT_GALOPP_LOOP_END)` so
-        // the AI can check whether to begin the actual charge pass.
-
         // Separate Rust reconciliation boundary: the cited Original actor
         // Execute arms do not establish zone occupancy as owner-local work.
         // Fires EnterZone/ExitZone on zone scripts when occupancy changes.
 
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
-        // Moving actors are animated inside their live owner Execute arm.
+        // Supported moving actors are animated inside their live owner Execute arm.
         // Advance line-jump sequences: interpolate 3D position for
         // actors currently mid-jump.  Runs before the animation tick
         // so the sprite drawn this frame reflects the new position.

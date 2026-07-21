@@ -3557,18 +3557,12 @@ impl EngineInner {
         self.launch_ai_move(entity_id, &intent);
     }
 
-    /// Advance all entities that have active paths (per-frame movement).
+    /// Execute the selected movement arm for one live actor owner.
     ///
-    /// For each entity with a non-empty `path_waypoints`, advances its
-    /// position toward the current waypoint using [`movement::tick_movement`].
-    /// When an entity arrives at its destination, either advances to the
-    /// next [`ActiveDoorPass`] step or notifies the sequence manager that
-    /// the movement element is terminated.
-    ///
-    /// Returns `(reached_entities, galopp_loop_entities)`.
-    /// - `reached_entities`: entities that finished their path (need EventReachPoint).
-    /// - `galopp_loop_entities`: rider entities that reached intermediate waypoints
-    ///   with RIDER_CHARGE flag (need EventGaloppLoopEnd).
+    /// Mutable inputs are sampled at this owner's legacy slot. Movement and
+    /// its Execute-arm callbacks, completion, and condolence continuation are
+    /// applied synchronously before this function returns; no owner result
+    /// vectors escape to a later global dispatch pass.
     pub(super) fn tick_entity_movement_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -5965,6 +5959,19 @@ impl EngineInner {
             self.start_post_seek_sequence(entity_id, Some((seq_id, elem_idx)));
         }
 
+        // These are derived Execute-arm tails in Original, so they close
+        // after PerformMotion but before base Actor completion/DoNextOrder.
+        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
+        if !galopp_events.is_empty() {
+            self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
+        }
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "movement owner {owner:?} failed to drain synchronous Execute-arm callback work: {error:?}"
+                )
+            });
+
         // Drain collected waypoint pops against each actor's Move
         // element.  One pop per waypoint-arrival (both intermediate
         // and final).  When the final pop empties the order queue,
@@ -6018,15 +6025,6 @@ impl EngineInner {
             self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
 
-        // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
-        // WALKING_CARRYING_ON_SHOULDERS action arm, after PerformMotion.  Run
-        // the equivalent check from the captured action dispatches rather
-        // than from the carrier's persistent posture.
-        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
-
-        if !galopp_events.is_empty() {
-            self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
-        }
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
             .unwrap_or_else(|error| {
                 panic!(
