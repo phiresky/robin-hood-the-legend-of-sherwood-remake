@@ -83,10 +83,10 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-
+        let was_flying = match self.get_entity(id) {
+            Some(Entity::Projectile(projectile)) => projectile.projectile.flying,
+            _ => return,
+        };
         // ── Phase 1: trajectory advancement + impact detection ──────
         //
         // Pop trajectory waypoints and interpolate per frame until the
@@ -191,6 +191,26 @@ impl EngineInner {
             if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(id) {
                 purse.projectile.purse.child_coins = alive;
             }
+        }
+
+        // Derived Purse/Coin Hourglass animation follows the base call.  The
+        // branch is selected from IsFlying at virtual-entry time, so a
+        // projectile that lands in the base call still receives the flying
+        // skip-shadow increment once on that frame.
+        let frozen = self.actors_frozen();
+        if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
+            && !frozen
+        {
+            let progression = if was_flying {
+                crate::sprite::FrameProgression::SkipShadow
+            } else {
+                projectile.object.animation = crate::element::Animation::ObjectBursting;
+                crate::sprite::FrameProgression::FreezeWhenTerminated
+            };
+            projectile
+                .element
+                .sprite
+                .perform_virgin_increment(sim, progression);
         }
     }
 

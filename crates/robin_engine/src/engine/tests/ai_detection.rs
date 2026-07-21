@@ -5142,7 +5142,7 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
             Entity::Projectile(crate::element::ElementProjectile {
                 element,
                 object: crate::element::ObjectData {
-                    object_type: crate::element::ObjectType::Wasp,
+                    object_type: crate::element::ObjectType::Arrow,
                     ..Default::default()
                 },
                 projectile: Default::default(),
@@ -5150,7 +5150,10 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
         }
         crate::element::ElementKind::ObjectNet => Entity::Net(crate::element::ElementNet {
             element,
-            object: Default::default(),
+            object: crate::element::ObjectData {
+                object_type: crate::element::ObjectType::Net,
+                ..Default::default()
+            },
             projectile: Default::default(),
             net: Default::default(),
         }),

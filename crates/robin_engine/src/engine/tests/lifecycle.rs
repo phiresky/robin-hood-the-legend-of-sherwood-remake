@@ -455,7 +455,6 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         profile_manager: std::sync::Arc::new(profiles),
         ..LevelAssets::new()
     };
-    let mut display = HostDisplayState::default();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     bind_test_bow_release_action(&mut engine, shooter_id);
     let shoot_direction = crate::position_interface::vector_to_sector_0_to_15_iso(1000.0, 0.0);
@@ -493,9 +492,10 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         );
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
         capture_ordered_gameplay_entities(|| {
-            engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[])
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions)
         })
     });
 
@@ -761,7 +761,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine
@@ -924,7 +924,7 @@ fn chained_nonstraight_strike_lives(
     let mut display = HostDisplayState::default();
 
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets, &[]);
+        engine.hourglass_phase_gameplay_systems(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine

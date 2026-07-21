@@ -1885,9 +1885,6 @@ impl EngineInner {
         assets: &LevelAssets,
         projectile_id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
         self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
@@ -1909,9 +1906,6 @@ impl EngineInner {
         assets: &LevelAssets,
         arrow_id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
         self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),

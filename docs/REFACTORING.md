@@ -1,6 +1,6 @@
 # Gameplay runtime refactoring roadmap
 
-Updated 2026-07-19. This document describes the current architecture and the
+Updated 2026-07-21. This document describes the current architecture and the
 remaining behavior-sensitive work. Completed migration plans are summarized in
 [`plans/`](plans/); their old future-tense PR sequences have been removed.
 
@@ -20,6 +20,11 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   live legacy-slot Actor owner coordinator. `movement.rs` prepares only
   immutable, RNG-free shared mobile geometry; mutable order, target, crossing,
   completion, and callback work closes per owner before ActionChange/tails.
+- The selected bow arm and exhaustive projectile/net virtual dispatcher share
+  that same live mutable-size slot walk. Projectile families no longer have a
+  generic-animation pass plus a second processed-projectile scheduler;
+  subtype base/derived work closes once at its owner slot, including appended
+  same-frame children and primer/live-slot double advancement.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
@@ -77,7 +82,7 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions; move one evidenced entity family at a time. PC Listen/object reveal, Target Heard, active combat/abilities, unsupported rider arms, and other entity owners remain. |
+| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, selected bow, projectile/net families, and Bonus `RefreshDiscovered` are owner-local. Preserve the landed phase trace and creation-order regressions. PC Listen/object reveal, Target Heard, active melee/abilities, unsupported rider arms, and other entity owners remain. |
 | 2 | Close remaining snapshot inputs | Audit every `apply_commands` and `perform_hourglass` read. Simulation-relevant host/display controls must be snapshotted or command-derived. |
 | 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
 | 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |

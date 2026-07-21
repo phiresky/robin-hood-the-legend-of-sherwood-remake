@@ -152,7 +152,26 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. Subsequent slices restore creation-ordered melee, SEEK target sampling, detection, base Actor Execute/ActionChange, owner-local AI callbacks, stationary WAIT/Lift/WaitingSword work, and bonus-owned `RefreshDiscovered`. Ordinary movement, `RunningUpright` rider GALOPP, and selected `RiderCharging` now execute in the fused live Actor → Human → PC/NPC owner envelope. The coordinator snapshots the exact selected sequence/element/order identity; background in-progress movement cannot execute through a higher selected arm. Each owner closes anti-collision, crossings, door/seek/waypoint completion, the real exact-once ReachPoint condolation stack, GALOPP Think, sword and shoulder-carry checks, ActionChange, and derived tails before the next slot. Per-actor execution freeze suppresses every Human movement arm including RiderCharging, while global FrozenAll retains the charge polygon quirk and still runs base Actor timer/lift modifiers. `tick_zone_occupants` has no cited actor owner and remains an explicit separate boundary after the owner walk. Remaining debt is active strike/bow/ability ownership (including PC Listen/object reveal and Target Heard), unsupported rider/Execute arms, and remaining entity-kind Hourglass owners (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactor.cpp:534-728,1015-2740`; `RHelementactorhuman.cpp:277-324,3235-3560,9972-10097`; `RHelementactorpc.cpp:3616-3710,4950-4990,5481-5510`; `RHelementactorsoldier.cpp:1592-1608`; `RHElementBonus.cpp:513-519,583-625`). |
+| PA-013 | High | incomplete | The live mutable-size creation-order owner walk now owns selected bow execution and the complete projectile/net virtual dispatch; there is no processed-projectile set or second projectile scheduler. Bow selection is tied to the current sequence/element, runs after movement and before base completion/ActionChange/tails, and keeps the Original primer plus appended-slot second advance. Projectile/net dispatch is exhaustive (table below), removes inactive objects at their own slot, and preserves derived nesting and same-frame appended children. FreezeAll gates sprite increments rather than projectile physics/RNG/collision/effects/removal. Active melee, abilities, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other entity owners remain PA-013 debt. |
+
+### PA-013 projectile/net virtual-class map
+
+| Rust entity | `ObjectType` | Original concrete class and nesting |
+| --- | --- | --- |
+| `Projectile` | `Arrow` | `RHElementProjectile::Hourglass` |
+| `Projectile` | `Apple` | `RHElementApple::Hourglass` → projectile base → landed animation |
+| `Projectile` | `Stone` | `RHElementStone::Hourglass` → projectile base → landed animation |
+| `Projectile` | `Purse` | `RHElementPurse::Hourglass` → projectile base only while flying → purse animation/burst tail |
+| `Projectile` | `Coin` | `RHElementCoin::Hourglass` → projectile base only while flying → coin animation/burst tail |
+| `Projectile` | `WaspNest`, `BonusWaspNest` | `RHElementWaspNest::Hourglass` → projectile base → buzz tail. `BonusWaspNest` is the thrown bonus's Rust runtime tag, not a distinct Original virtual class. |
+| `Projectile` | `Wasp` | `RHElementWasp::Hourglass`; deliberately does not call projectile base |
+| `Net` | `Net`, `BonusNet` | `RHElementNet::Hourglass` → projectile base while flying → descent/capture/unfold/display/ground tail. `BonusNet` is the thrown bonus's Rust runtime tag. |
+
+Every other `ObjectType` paired with `Entity::Projectile` or `Entity::Net` is
+impossible in the supported loader/spawn paths and panics with the entity and
+type. Pickup `BonusApple`, `BonusStone`, `BonusPurse`, and `BonusArrow` values
+remain `Entity::Bonus`; treating them as flying derived objects would invent an
+Original class relationship.
 
 Focused PA-013 stationary/idle progress: the live actor-slot coordinator now
 applies WAIT_TIMER and WAIT_FREE_LIFT to the just-produced Execute result

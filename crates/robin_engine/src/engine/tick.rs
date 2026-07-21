@@ -572,14 +572,13 @@ impl EngineInner {
         let was_swordfighting = self.hourglass_phase_entities(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let (positions_before_movement, processed_projectiles) =
-            self.hourglass_phase_entity_systems(sim, assets);
+        let positions_before_movement = self.hourglass_phase_entity_systems(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
         self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
-        self.hourglass_phase_gameplay_systems(sim, display, assets, &processed_projectiles);
+        self.hourglass_phase_gameplay_systems(sim, display, assets);
 
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(sim, display, assets);
@@ -1626,10 +1625,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) -> (
-        EntitySlots<Option<crate::coordinates::MapPoint>>,
-        Vec<EntityId>,
-    ) {
+    ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
         // Preserve the position each element exposed before the globally
         // batched movement pass. The original does not have this batch:
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
@@ -1731,8 +1727,7 @@ impl EngineInner {
         // object animation completes before any actor ActionChange callback,
         // and a callback-spawned nonactor cannot advance until next tick.
         self.tick_nonactor_entity_animations(sim, assets);
-        let processed_projectiles =
-            self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
+        self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
         // Separate Rust reconciliation boundary after owner movement.
         self.tick_zone_occupants(sim, assets);
 
@@ -1767,7 +1762,7 @@ impl EngineInner {
         // Keep those responsibilities batched until each consumer has the
         // mixed pre/post inputs required at an individual creation slot.
 
-        (positions_before_movement, processed_projectiles)
+        positions_before_movement
     }
 
     /// Run the bounded base-actor Hourglass slice in live legacy creation
@@ -1828,6 +1823,12 @@ impl EngineInner {
         let mut slot = 0;
         while slot < self.world.entities.len() {
             if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
+                #[cfg(test)]
+                CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+                    if let Some(entities) = captured.borrow_mut().as_mut() {
+                        entities.push(entity_id);
+                    }
+                });
                 let entity = self
                     .world
                     .entities
@@ -2048,7 +2049,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
-    ) -> Vec<EntityId> {
+    ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
             assets,
@@ -2064,7 +2065,7 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
-    ) -> Vec<EntityId> {
+    ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
             assets,
@@ -2079,10 +2080,9 @@ impl EngineInner {
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
-    ) -> Vec<EntityId> {
+    ) {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
         let prepared_movement = self.prepare_movement_frame();
-        let mut processed_projectiles = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
@@ -2091,21 +2091,7 @@ impl EngineInner {
                     engine.refresh_bonus_discovered_for(assets, owner);
                     return;
                 }
-                let Some(Entity::Projectile(projectile)) = engine.get_entity(owner) else {
-                    return;
-                };
-                if matches!(
-                    projectile.object.object_type,
-                    crate::element::ObjectType::Purse
-                        | crate::element::ObjectType::Coin
-                        | crate::element::ObjectType::WaspNest
-                        | crate::element::ObjectType::BonusWaspNest
-                        | crate::element::ObjectType::Wasp
-                ) {
-                    return;
-                }
-                engine.tick_existing_projectile(sim, assets, owner);
-                processed_projectiles.push(owner);
+                engine.tick_projectile_or_net_hourglass(sim, assets, owner);
             },
             |engine, owner| {
                 if matches!(owner, EntityId::Soldier(_)) {
@@ -2141,7 +2127,33 @@ impl EngineInner {
                 }
             },
             |engine, owner, selected| {
-                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected)
+                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected);
+                let selected_bow = engine
+                    .get_entity(owner)
+                    .and_then(|entity| entity.actor_data())
+                    .map(|actor| actor.active_shot)
+                    .filter(|shot| shot.is_active())
+                    .and_then(|shot| {
+                        let seq_id = shot.sequence_id?;
+                        (selected.is_none()
+                            && shot.element_index
+                                == engine
+                                    .orders
+                                    .sequence_manager
+                                    .current_element_for_actor(owner)?
+                                    .1
+                            && Some(seq_id)
+                                == engine
+                                    .orders
+                                    .sequence_manager
+                                    .current_element_for_actor(owner)
+                                    .map(|current| current.0))
+                        .then_some(())
+                    })
+                    .is_some();
+                if selected_bow {
+                    engine.tick_bow_shot_for(sim, assets, owner);
+                }
             },
             |engine, owner| {
                 let is_human = engine
@@ -2202,7 +2214,65 @@ impl EngineInner {
             },
         );
         self.finish_npc_owner_pass();
-        processed_projectiles
+    }
+
+    /// Dispatch the exact Original virtual `Hourglass` chain for a live
+    /// projectile/net creation slot.  Entity kind and `ObjectType` together
+    /// are the Rust vtable: accepting any other pairing here would fabricate
+    /// subtype behaviour that the loaded object never had.
+    fn tick_projectile_or_net_hourglass(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        id: EntityId,
+    ) {
+        let Some(entity) = self.get_entity(id) else {
+            return;
+        };
+        if !entity.is_active() {
+            if matches!(entity, Entity::Projectile(_) | Entity::Net(_)) {
+                self.remove_entity(id);
+            }
+            return;
+        }
+        match entity {
+            Entity::Projectile(projectile) => match projectile.object.object_type {
+                crate::element::ObjectType::Arrow => self.tick_existing_projectile(sim, assets, id),
+                crate::element::ObjectType::Apple | crate::element::ObjectType::Stone => {
+                    self.tick_existing_projectile(sim, assets, id);
+                    let frozen = self.actors_frozen();
+                    if let Some(Entity::Projectile(projectile)) = self.get_entity_mut(id)
+                        && !projectile.projectile.flying
+                        && !frozen
+                    {
+                        let motion = projectile.element.sprite.perform_virgin_increment(
+                            sim,
+                            crate::sprite::FrameProgression::Default,
+                        );
+                        projectile.element.active =
+                            motion != crate::sprite::MotionState::Terminated;
+                    }
+                }
+                crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
+                    self.tick_purse_or_coin(sim, assets, id)
+                }
+                crate::element::ObjectType::WaspNest
+                | crate::element::ObjectType::BonusWaspNest
+                | crate::element::ObjectType::Wasp => self.tick_wasp_nest_or_wasp(sim, assets, id),
+                unsupported => panic!(
+                    "projectile entity {id:?} has unsupported ObjectType::{unsupported:?}; TODO(PA-013): map its Original concrete class"
+                ),
+            },
+            Entity::Net(net) => match net.object.object_type {
+                crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet => {
+                    self.tick_net(sim, assets, id)
+                }
+                unsupported => panic!(
+                    "net entity {id:?} has unsupported ObjectType::{unsupported:?}; expected Net or BonusNet"
+                ),
+            },
+            _ => {}
+        }
     }
 
     /// Apply the two sequence-command motion modifiers owned by
@@ -2461,7 +2531,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-        processed_projectiles: &[EntityId],
     ) {
         // The original loop is literally:
         //
@@ -2478,13 +2547,6 @@ impl EngineInner {
                 continue;
             };
 
-            #[cfg(test)]
-            CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-                if let Some(entities) = captured.borrow_mut().as_mut() {
-                    entities.push(entity_id);
-                }
-            });
-
             match entity_id {
                 EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
                     // `RHElementActor::Hourglass` executes the actor's active
@@ -2492,34 +2554,13 @@ impl EngineInner {
                     // auto-heal tail. Only one of bow/melee/ability can own
                     // that active order, but dispatching each narrow driver
                     // keeps stale-state cleanup behavior intact.
-                    self.tick_bow_shot_for(sim, assets, entity_id);
                     self.tick_straight_melee_for(sim, assets, entity_id);
                     self.tick_melee_completion_for(sim, assets, entity_id);
                     let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, entity_id);
                     self.tick_sweep_for(sim, assets, entity_id, initialized_sweep);
                     self.tick_ability_for(sim, display, assets, entity_id);
                 }
-                EntityId::Projectile(_) => {
-                    let object_type = match self.get_entity(entity_id) {
-                        Some(Entity::Projectile(projectile)) => projectile.object.object_type,
-                        _ => unreachable!("projectile id must resolve to a projectile entity"),
-                    };
-                    match object_type {
-                        crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
-                            self.tick_purse_or_coin(sim, assets, entity_id)
-                        }
-                        crate::element::ObjectType::WaspNest
-                        | crate::element::ObjectType::BonusWaspNest
-                        | crate::element::ObjectType::Wasp => {
-                            self.tick_wasp_nest_or_wasp(sim, assets, entity_id)
-                        }
-                        _ if !processed_projectiles.contains(&entity_id) => {
-                            self.tick_existing_projectile(sim, assets, entity_id)
-                        }
-                        _ => {}
-                    }
-                }
-                EntityId::Net(_) => self.tick_net(sim, assets, entity_id),
+                EntityId::Projectile(_) | EntityId::Net(_) => {}
                 _ => {}
             }
             slot += 1;

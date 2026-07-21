@@ -2874,6 +2874,14 @@ impl EngineInner {
                 continue;
             }
 
+            // Projectile and net animation belongs to their concrete virtual
+            // Hourglass tail at the live creation slot.  Advancing it here
+            // would run derived animation before the base projectile call and
+            // (for purse/coin) a second time afterward.
+            if matches!(entity, Entity::Projectile(_) | Entity::Net(_)) {
+                continue;
+            }
+
             // FX entities: frame advance. Mobile children freeze with their
             // stopped master (RHElementFXMasked::Hourglass checks
             // IsStopped before advancing). Patch FX entities need
@@ -2942,24 +2950,7 @@ impl EngineInner {
                 continue;
             }
 
-            // Flying purse/coin projectiles skip their shadow frame; landed
-            // ones hold the final bursting frame.
-            if let Entity::Projectile(p) = entity
-                && matches!(
-                    p.object.object_type,
-                    crate::element::ObjectType::Purse | crate::element::ObjectType::Coin
-                )
-            {
-                let progression = if p.projectile.flying {
-                    FrameProgression::SkipShadow
-                } else {
-                    FrameProgression::FreezeWhenTerminated
-                };
-                p.element.sprite.perform_virgin_increment(sim, progression);
-                continue;
-            }
-
-            // Bonus, Scroll, Mobile, Net, and remaining projectiles all use
+            // Bonus, Scroll, and Mobile entities use
             // the plain cyclical frame advance.
             entity
                 .element_data_mut()

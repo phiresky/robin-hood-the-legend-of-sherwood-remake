@@ -429,10 +429,10 @@ impl EngineInner {
         assets: &LevelAssets,
         net_id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
-        }
-
+        let was_flying = match self.get_entity(net_id) {
+            Some(Entity::Net(net)) => net.projectile.flying,
+            _ => return,
+        };
         // Phase 1: advance trajectory + classify the net into
         // (descending-near-landing, just-landed) and stamp the
         // in-flight animation transitions on it directly.
@@ -551,6 +551,33 @@ impl EngineInner {
             self.apply_projectile_landing_resolution(assets, net_id);
             self.snap_net_to_landing_obstacle(assets, net_id);
             self.register_net_repulsive_points(net_id);
+        }
+
+        // Net's derived sprite tail is inside its virtual Hourglass. FreezeAll
+        // suppresses only this sprite operation; trajectory, capture, landing,
+        // and bookkeeping above continue.
+        let frozen = self.actors_frozen();
+        if let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
+            && !frozen
+        {
+            use crate::sprite::FrameProgression;
+            let progression = if was_flying {
+                if net.object.animation == crate::element::Animation::ObjectFlying {
+                    FrameProgression::SkipShadow
+                } else {
+                    FrameProgression::SkipShadowFreezeWhenTerminated
+                }
+            } else {
+                match net.object.animation {
+                    crate::element::Animation::NetBeingTaken => {
+                        FrameProgression::FreezeWhenTerminated
+                    }
+                    _ => FrameProgression::Default,
+                }
+            };
+            net.element
+                .sprite
+                .perform_virgin_increment(sim, progression);
         }
     }
 
@@ -1008,7 +1035,10 @@ mod tests {
         element.set_position_map(MapPoint::from_world_xyz(landing.x, landing.y, landing.z));
         Entity::Net(ElementNet {
             element,
-            object: ObjectData::default(),
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Net,
+                ..ObjectData::default()
+            },
             projectile: ProjectileData {
                 end: landing,
                 flying: false,
