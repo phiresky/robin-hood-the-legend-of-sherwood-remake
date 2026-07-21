@@ -321,7 +321,7 @@ mod mobile_owner_boundary_tests {
     }
 
     #[test]
-    fn crossing_precedes_waypoint_rng_and_observes_the_old_increment() {
+    fn reached_waypoint_uses_old_child_speed_then_new_speed_next_tick() {
         crate::sim_rng::with_seed(17, |sim| {
             let mut engine = EngineInner::new();
             engine.set_actors_frozen(true);
@@ -367,6 +367,28 @@ mod mobile_owner_boundary_tests {
                 vec![crate::sim_rng::RngSite::MobileWaypointProbability]
             );
             assert_eq!(engine.world.mobile_elements[0].speed, 3.0);
+            let child_fx = engine
+                .get_entity(child)
+                .and_then(Entity::as_fx)
+                .expect("mobile child remains FX");
+            assert!(child_fx.element.active);
+            assert_eq!(
+                child_fx.fx.animation_speed, 0.5,
+                "this child Hourglass must retain the movement-frame speed"
+            );
+
+            engine.tick_mobile_child_owner_boundary(sim, &assets, child);
+            assert_eq!(engine.world.mobile_elements[0].speed, 3.0);
+            let next_speed = engine
+                .get_entity(child)
+                .and_then(Entity::as_fx)
+                .expect("mobile child remains FX")
+                .fx
+                .animation_speed;
+            assert!(
+                (next_speed - 1.0 / 3.0).abs() < f32::EPSILON,
+                "the waypoint speed must become child modulation on the next Update"
+            );
         });
     }
 
@@ -2220,8 +2242,14 @@ impl EngineInner {
                 .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
             if let Some(motion) = self.world.mobile_elements[mobile_index].begin_hourglass_motion()
             {
+                let movement_animation_speed =
+                    self.world.mobile_elements[mobile_index].animation_speed();
                 // Original `Update` translates every masked child before
-                // `CheckForLineCrossing` and before the goal/waypoint arm.
+                // `CheckForLineCrossing` and before the goal/waypoint arm. Its
+                // adaptive-speed branch also fixes this frame's child
+                // modulation now; a reached waypoint speed macro applies to
+                // the master immediately but not to child animation until the
+                // next Update.
                 for &sprite_id in &sprite_ids {
                     let fx = self
                         .world
@@ -2235,6 +2263,7 @@ impl EngineInner {
                         fx.element
                             .set_position_map(fx.element.position_map() + motion.movement);
                     }
+                    fx.fx.animation_speed = movement_animation_speed;
                 }
 
                 // This deliberately precedes waypoint execution. Projection
@@ -2251,7 +2280,6 @@ impl EngineInner {
 
                 let mobile = &self.world.mobile_elements[mobile_index];
                 let active = mobile.active;
-                let animation_speed = mobile.animation_speed();
                 let layer = mobile.layer;
                 let sector = mobile.sector;
                 for sprite_id in sprite_ids {
@@ -2262,9 +2290,8 @@ impl EngineInner {
                         .and_then(crate::element::Entity::as_fx_mut)
                         .unwrap_or_else(|| {
                             panic!("mobile {mobile_index} child {sprite_id} became stale during waypoint completion")
-                        });
+                    });
                     fx.element.active = active;
-                    fx.fx.animation_speed = animation_speed;
                     fx.element.set_layer(layer);
                     fx.element
                         .set_sector(crate::position_interface::SectorHandle::new(sector));

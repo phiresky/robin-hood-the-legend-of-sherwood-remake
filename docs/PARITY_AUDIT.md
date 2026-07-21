@@ -78,9 +78,12 @@ its pending list FIFO and calls `Go()` at
   IsGoalReached/ExecuteWayPoint` boundaries: crossing fallback observes the
   movement's old increment before probability RNG or waypoint direction,
   speed, and active-state changes. Inactive/stopped masters return before all
-  crossing/waypoint work. Mobile children remain excluded from the older
-  global nonactor-animation batch, and their boundary precedes the independent
-  static-nonmobile dispatch in the live slot hook.
+  crossing/waypoint work. Adaptive child animation speed is captured during
+  `Update`: a reached waypoint speed macro changes the master immediately and
+  propagates active state before the child Hourglass, but the child retains
+  the pre-waypoint modulation until the following tick. Mobile children remain
+  excluded from the older global nonactor-animation batch, and their boundary
+  precedes the independent static-nonmobile dispatch in the live slot hook.
 - **Deferred effects:** The original swordfight falling-edge check, titbit
   update, dead-selection scan, and anonymous timers retain their exact order
   at the start of `DeferredEffectsEnd`. Rust-only condolation, re-entrant
