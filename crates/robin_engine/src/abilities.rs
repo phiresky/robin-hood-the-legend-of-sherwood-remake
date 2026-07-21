@@ -1992,7 +1992,9 @@ pub fn tick_ability(
                 ability.sequence_id, ability.element_index, ability.order_id
             ),
         };
-        let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
+        let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
+            panic!("Listen owner {entity_id:?} has invalid animation direction")
+        });
         let order_id = ability.order_id;
 
         let motion = if sprite_frozen {
@@ -2014,10 +2016,9 @@ pub fn tick_ability(
         ) {
             return results;
         }
-        let actor = match entity.actor_data_mut() {
-            Some(a) => a,
-            None => return results,
-        };
+        let actor = entity.actor_data_mut().unwrap_or_else(|| {
+            panic!("asserted Listen owner {entity_id:?} lost required actor state")
+        });
         let seq_id = actor
             .active_ability
             .sequence_id
@@ -2083,7 +2084,9 @@ pub fn tick_ability(
                 ability.sequence_id, ability.element_index, ability.order_id
             ),
         };
-        let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
+        let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
+            panic!("ReceivePurse owner {entity_id:?} has invalid animation direction")
+        });
         let order_id = ability.order_id;
 
         let motion = if sprite_frozen {
@@ -2106,10 +2109,9 @@ pub fn tick_ability(
             return results;
         }
 
-        let actor = match entity.actor_data_mut() {
-            Some(a) => a,
-            None => return results,
-        };
+        let actor = entity.actor_data_mut().unwrap_or_else(|| {
+            panic!("asserted ReceivePurse owner {entity_id:?} lost required actor state")
+        });
         let seq_id = actor
             .active_ability
             .sequence_id
@@ -2160,7 +2162,8 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
-    let direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
+    let direction = u16::try_from(entity.element_data().direction())
+        .unwrap_or_else(|_| panic!("{kind:?} owner {entity_id:?} has invalid animation direction"));
 
     // Drive the animation through the sprite state machine.
     let motion = if sprite_frozen {
@@ -2209,21 +2212,28 @@ pub fn tick_ability(
     }
     if motion == SpriteMotionState::Terminated {
         let actor_pos = entity.element_data().position_map();
-        let actor_direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
-        let carried_posture = entity
-            .pc_data()
-            .map(|pc| pc.carried_posture)
-            .unwrap_or(Posture::Lying);
         match kind {
-            AbilityKind::Drop => results.push(AbilityTickResult::DropDone {
-                carrier_id: entity_id,
-                target_id: ability.target.expect("Drop target"),
-                drop_posture: carried_posture,
-                carrier_pos: actor_pos,
-                carrier_direction: actor_direction,
-                seq_id,
-                elem_idx,
-            }),
+            AbilityKind::Drop => {
+                let actor_direction = u16::try_from(entity.element_data().direction())
+                    .unwrap_or_else(|_| {
+                        panic!("Drop owner {entity_id:?} has invalid terminal direction")
+                    });
+                let carried_posture = entity
+                    .pc_data()
+                    .unwrap_or_else(|| {
+                        panic!("Drop owner {entity_id:?} requires PC carried-posture state")
+                    })
+                    .carried_posture;
+                results.push(AbilityTickResult::DropDone {
+                    carrier_id: entity_id,
+                    target_id: ability.target.expect("Drop target"),
+                    drop_posture: carried_posture,
+                    carrier_pos: actor_pos,
+                    carrier_direction: actor_direction,
+                    seq_id,
+                    elem_idx,
+                })
+            }
             AbilityKind::ClimbOnShoulders => {
                 results.push(AbilityTickResult::ClimbOnShouldersDone {
                     climber_id: entity_id,
@@ -2276,13 +2286,6 @@ pub fn tick_ability(
 
     // Animation finished — collect the result and clear the ability.
     let actor_pos = entity.element_data().position_map();
-    let actor_direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
-
-    // Read carried_posture before clearing (needed for Drop).
-    let carried_posture = entity
-        .pc_data()
-        .map(|pc| pc.carried_posture)
-        .unwrap_or(Posture::Lying);
 
     // Clear ability state and reset actor.
     let actor = entity.actor_data_mut().unwrap();
@@ -2296,6 +2299,12 @@ pub fn tick_ability(
 
     let result = match kind {
         AbilityKind::Carry => {
+            let carried_posture = entity
+                .pc_data()
+                .unwrap_or_else(|| {
+                    panic!("Carry owner {entity_id:?} requires PC carried-posture state")
+                })
+                .carried_posture;
             // Set carrier posture (target posture set by engine).
             entity.set_posture(Posture::CarryingCorpse);
             AbilityTickResult::CarryDone {
@@ -2307,6 +2316,14 @@ pub fn tick_ability(
             }
         }
         AbilityKind::Drop => {
+            let actor_direction = u16::try_from(entity.element_data().direction())
+                .unwrap_or_else(|_| panic!("Drop owner {entity_id:?} has invalid Done direction"));
+            let carried_posture = entity
+                .pc_data()
+                .unwrap_or_else(|| {
+                    panic!("Drop owner {entity_id:?} requires PC carried-posture state")
+                })
+                .carried_posture;
             entity.set_posture(Posture::Upright);
             AbilityTickResult::DropDone {
                 carrier_id: entity_id,
