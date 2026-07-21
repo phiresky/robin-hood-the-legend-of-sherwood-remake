@@ -1731,6 +1731,11 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    assert_ne!(
+        attacker.index(),
+        0,
+        "the attacker must have a non-null legacy AI handle so EventGotHit observation is meaningful"
+    );
     engine
         .get_entity_mut(attacker)
         .unwrap()
