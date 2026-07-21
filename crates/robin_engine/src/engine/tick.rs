@@ -36,6 +36,137 @@ pub(super) enum NpcHourglassPhase {
 }
 
 #[cfg(test)]
+mod mobile_owner_boundary_tests {
+    use super::*;
+    use crate::coordinates::{MapPoint, MapVec};
+    use crate::element::{ElementData, ElementFx, ElementKind, FxData};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    fn mobile_fx(index: u16, position: MapPoint) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::Fx,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position_map(position);
+        Entity::Fx(ElementFx {
+            element,
+            fx: FxData {
+                mobile_index: Some(index),
+                animation_speed: 1.0,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn path() -> RawHikingPath {
+        RawHikingPath {
+            waypoints: vec![
+                RawWaypoint {
+                    x: 0,
+                    y: 0,
+                    sector: 0,
+                    level: 0,
+                    command: WaypointCommand::None,
+                },
+                RawWaypoint {
+                    x: 100,
+                    y: 0,
+                    sector: 0,
+                    level: 0,
+                    command: WaypointCommand::None,
+                },
+            ],
+        }
+    }
+
+    fn mobile(children: Vec<EntityId>) -> crate::mobile::MobileElement {
+        crate::mobile::MobileElement {
+            sprite_ids: children,
+            motion_polygon: vec![
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(5.0, 0.0),
+                MapPoint::new(0.0, 5.0),
+            ],
+            position: MapPoint::new(0.0, 0.0),
+            old_position: MapPoint::new(0.0, 0.0),
+            path_index: 0,
+            current_waypoint: 1,
+            forward: true,
+            layer: 0,
+            sector: 0,
+            obstacle: None,
+            active: true,
+            stopped: false,
+            speed: 2.0,
+            speed_goal: 2.0,
+            acceleration: 0.0,
+            increment: MapVec::new(1.0, 0.0),
+            goal: MapPoint::new(100.0, 0.0),
+        }
+    }
+
+    #[test]
+    fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        engine.set_actors_frozen(true);
+        let first = engine.add_entity(mobile_fx(0, MapPoint::new(10.0, 5.0)));
+        let second = engine.add_entity(mobile_fx(0, MapPoint::new(20.0, 5.0)));
+        engine
+            .world
+            .mobile_elements
+            .push(mobile(vec![first, second]));
+        let mut assets = LevelAssets::default();
+        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+
+        assert!(engine.tick_mobile_child_owner_boundary(&sim_context, &assets, first));
+        assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
+        assert_eq!(
+            engine
+                .get_entity(first)
+                .unwrap()
+                .element_data()
+                .position_map()
+                .x,
+            12.0
+        );
+        assert_eq!(
+            engine
+                .get_entity(second)
+                .unwrap()
+                .element_data()
+                .position_map()
+                .x,
+            22.0
+        );
+
+        assert!(engine.tick_mobile_child_owner_boundary(&sim_context, &assets, second));
+        assert_eq!(
+            engine.world.mobile_elements[0].position.x, 2.0,
+            "later children must not retrigger the master"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "wrong master index")]
+    fn first_child_boundary_rejects_a_later_child_with_the_wrong_mobile_index() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_entity(mobile_fx(1, MapPoint::new(0.0, 0.0)));
+        engine
+            .world
+            .mobile_elements
+            .push(mobile(vec![first, second]));
+        let mut assets = LevelAssets::default();
+        assets.hiking_paths = std::sync::Arc::new(vec![path()]);
+
+        engine.tick_mobile_child_owner_boundary(&sim_context, &assets, first);
+    }
+}
+
+#[cfg(test)]
 thread_local! {
     static NPC_HOURGLASS_PHASE_TRACE: std::cell::RefCell<Option<Vec<NpcHourglassPhase>>> =
         const { std::cell::RefCell::new(None) };
@@ -1643,46 +1774,6 @@ impl EngineInner {
         // ── Per-frame movement tick ─────────────────────────────
         // Actor movement runs later, inside the live legacy-slot owner walk.
 
-        // RHElementMobile masters precede their RHElementFXMasked children in
-        // the original creation-ordered Hourglass loop. Advance the shipped
-        // chariot masters now, then translate/update their child FX before
-        // the generic FX animation pass below.
-        for mobile_index in 0..self.world.mobile_elements.len() {
-            let path_index = self.world.mobile_elements[mobile_index].path_index;
-            let path = assets
-                .hiking_paths
-                .get(usize::from(path_index))
-                .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
-            let tick = self.world.mobile_elements[mobile_index]
-                .hourglass(sim, path)
-                .unwrap_or_else(|e| panic!("mobile {mobile_index} hourglass failed: {e}"));
-            let active = self.world.mobile_elements[mobile_index].active;
-            let animation_speed = self.world.mobile_elements[mobile_index].animation_speed();
-            let layer = self.world.mobile_elements[mobile_index].layer;
-            let sector = self.world.mobile_elements[mobile_index].sector;
-            let sprite_ids = self.world.mobile_elements[mobile_index].sprite_ids.clone();
-            for sprite_id in sprite_ids {
-                let fx = self
-                    .world
-                    .entities
-                    .get_mut(sprite_id)
-                    .and_then(crate::element::Entity::as_fx_mut)
-                    .unwrap_or_else(|| {
-                        panic!("mobile {mobile_index} child {sprite_id} is missing or non-FX")
-                    });
-                if tick.movement != crate::coordinates::MapVec::ZERO {
-                    let position = fx.element.position_map() + tick.movement;
-                    fx.element.set_position_map(position);
-                }
-                fx.element.active = active;
-                fx.fx.animation_speed = animation_speed;
-                fx.element.set_layer(layer);
-                fx.element
-                    .set_sector(crate::position_interface::SectorHandle::new(sector));
-            }
-            self.check_mobile_line_crossing(assets, mobile_index);
-        }
-
         // `quit_swordfight_with_far_opponents` is called ONLY during
         // walking-with-sword movement, NOT for stationary entities.
         // Only check entities actively moving in sword state.
@@ -1768,6 +1859,147 @@ impl EngineInner {
         // mixed pre/post inputs required at an individual creation slot.
 
         (positions_before_movement, processed_projectiles)
+    }
+
+    /// Execute an `RHElementMobile` at its first `RHElementFXMasked` child's
+    /// creation slot, then execute that one child. Later child slots animate
+    /// only themselves and therefore cannot retrigger the master.
+    fn tick_mobile_child_owner_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        child_id: EntityId,
+    ) -> bool {
+        let Some(mobile_index_u16) = self
+            .world
+            .entities
+            .get(child_id)
+            .and_then(crate::element::Entity::as_fx)
+            .and_then(|fx| fx.fx.mobile_index)
+        else {
+            return false;
+        };
+        let mobile_index = usize::from(mobile_index_u16);
+        let (first_child, child_offset) = {
+            let mobile = self
+                .world
+                .mobile_elements
+                .get(mobile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mobile child {child_id} at its Hourglass slot references missing master index {mobile_index}"
+                    )
+                });
+            let first_child = *mobile.sprite_ids.first().unwrap_or_else(|| {
+                panic!("mobile {mobile_index} has no first masked child for its owner boundary")
+            });
+            let child_offset = mobile
+                .sprite_ids
+                .iter()
+                .position(|&candidate| candidate == child_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "FXMasked child {child_id} claims mobile {mobile_index}, but the master does not own it"
+                    )
+                });
+            (first_child, child_offset)
+        };
+
+        if child_id == first_child {
+            let first_slot = child_id.index();
+            let sprite_ids = self.world.mobile_elements[mobile_index].sprite_ids.clone();
+            for (offset, &expected_child) in sprite_ids.iter().enumerate() {
+                let slot = first_slot.checked_add(offset as u32).unwrap_or_else(|| {
+                    panic!(
+                        "mobile {mobile_index} child adjacency overflows after slot {first_slot}"
+                    )
+                });
+                let actual_child = self.world.entities.id_at_legacy_slot(slot).unwrap_or_else(|| {
+                    panic!(
+                        "mobile {mobile_index} child {expected_child} is missing from required adjacent slot {slot}"
+                    )
+                });
+                assert_eq!(
+                    actual_child, expected_child,
+                    "mobile {mobile_index} child {expected_child} expected at adjacent slot {slot}, found {actual_child}"
+                );
+                let actual_index = self
+                    .world
+                    .entities
+                    .get(actual_child)
+                    .and_then(crate::element::Entity::as_fx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "mobile {mobile_index} child {actual_child} at adjacent slot {slot} is missing or non-FX"
+                        )
+                    })
+                    .fx
+                    .mobile_index;
+                assert_eq!(
+                    actual_index,
+                    Some(mobile_index_u16),
+                    "mobile {mobile_index} child {actual_child} at adjacent slot {slot} has wrong master index {actual_index:?}"
+                );
+            }
+
+            let path_index = self.world.mobile_elements[mobile_index].path_index;
+            let path = assets
+                .hiking_paths
+                .get(usize::from(path_index))
+                .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
+            let tick = self.world.mobile_elements[mobile_index]
+                .hourglass(sim, path)
+                .unwrap_or_else(|error| {
+                    panic!("mobile {mobile_index} Hourglass at child {child_id} failed: {error}")
+                });
+            let mobile = &self.world.mobile_elements[mobile_index];
+            let active = mobile.active;
+            let animation_speed = mobile.animation_speed();
+            let layer = mobile.layer;
+            let sector = mobile.sector;
+            for sprite_id in sprite_ids {
+                let fx = self
+                    .world
+                    .entities
+                    .get_mut(sprite_id)
+                    .and_then(crate::element::Entity::as_fx_mut)
+                    .unwrap_or_else(|| {
+                        panic!("mobile {mobile_index} child {sprite_id} became stale during master Hourglass")
+                    });
+                if tick.movement != crate::coordinates::MapVec::ZERO {
+                    fx.element
+                        .set_position_map(fx.element.position_map() + tick.movement);
+                }
+                fx.element.active = active;
+                fx.fx.animation_speed = animation_speed;
+                fx.element.set_layer(layer);
+                fx.element
+                    .set_sector(crate::position_interface::SectorHandle::new(sector));
+            }
+            self.check_mobile_line_crossing(assets, mobile_index);
+        } else {
+            assert!(
+                child_offset > 0,
+                "mobile {mobile_index} first-child boundary bookkeeping failed for {child_id}"
+            );
+        }
+
+        let stopped = self.world.mobile_elements[mobile_index].stopped;
+        let frozen = self.actors_frozen();
+        let fx = self
+            .world
+            .entities
+            .get_mut(child_id)
+            .and_then(crate::element::Entity::as_fx_mut)
+            .unwrap_or_else(|| {
+                panic!("mobile {mobile_index} child {child_id} vanished before FXMasked Hourglass")
+            });
+        if fx.element.active && !stopped && !frozen {
+            fx.element
+                .sprite
+                .increment_frame_modulated(fx.fx.animation_speed);
+        }
+        true
     }
 
     /// Run the bounded base-actor Hourglass slice in live legacy creation
@@ -2081,12 +2313,14 @@ impl EngineInner {
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) -> Vec<EntityId> {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
-        let prepared_movement = self.prepare_movement_frame();
         let mut processed_projectiles = Vec::new();
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
             assets,
             |engine, owner| {
+                if engine.tick_mobile_child_owner_boundary(sim, assets, owner) {
+                    return;
+                }
                 if matches!(owner, EntityId::Bonus(_)) {
                     engine.refresh_bonus_discovered_for(assets, owner);
                     return;
@@ -2141,7 +2375,7 @@ impl EngineInner {
                 }
             },
             |engine, owner, selected| {
-                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected)
+                engine.tick_entity_movement_owner(sim, assets, owner, selected)
             },
             |engine, owner| {
                 let is_human = engine

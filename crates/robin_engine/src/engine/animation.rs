@@ -2881,21 +2881,11 @@ impl EngineInner {
             // transitions, and final patch effects on completion.
             if entity.is_fx() {
                 if let Entity::Fx(fx) = entity
-                    && let Some(mobile_index) = fx.fx.mobile_index
+                    && fx.fx.mobile_index.is_some()
                 {
-                    let stopped = self
-                        .world
-                        .mobile_elements
-                        .get(usize::from(mobile_index))
-                        .unwrap_or_else(|| {
-                            panic!("mobile FX references missing master {mobile_index}")
-                        })
-                        .stopped;
-                    if !stopped {
-                        fx.element
-                            .sprite
-                            .increment_frame_modulated(fx.fx.animation_speed);
-                    }
+                    // Mobile children own their creation-order slots in the
+                    // live entity walk. Their first slot also hosts the
+                    // otherwise non-entity mobile master's Hourglass.
                     continue;
                 }
                 let patch_idx = match entity {

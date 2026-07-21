@@ -31,10 +31,13 @@ enum LiftAnimContext {
     },
 }
 
-/// Immutable, RNG-free geometry shared by movement owners for one frame.
-/// Mutable actor/order/seek inputs are deliberately absent and are sampled
-/// inside each owner's live legacy slot.
-pub(super) struct PreparedMovementFrame {
+/// Mobile geometry sampled at one actor's live creation-order slot.
+///
+/// Unlike the other immutable movement preparation, this must not escape the
+/// owner boundary: an actor before a mobile sees its previous position and an
+/// actor after the mobile sees the geometry translated by that master's
+/// `Hourglass`.
+struct LiveMobileGeometry {
     mobile_lines_by_layer: std::collections::BTreeMap<u16, Vec<crate::fast_find_grid::GridLine>>,
     mobile_points_by_layer: std::collections::BTreeMap<u16, Vec<crate::repulsive::RepulsivePoint>>,
     mobile_polygons_by_layer:
@@ -833,8 +836,8 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
-    pub(super) fn prepare_movement_frame(&self) -> PreparedMovementFrame {
-        let mut prepared = PreparedMovementFrame {
+    fn live_mobile_geometry(&self) -> LiveMobileGeometry {
+        let mut prepared = LiveMobileGeometry {
             mobile_lines_by_layer: std::collections::BTreeMap::new(),
             mobile_points_by_layer: std::collections::BTreeMap::new(),
             mobile_polygons_by_layer: std::collections::BTreeMap::new(),
@@ -3568,7 +3571,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
         owner: EntityId,
-        prepared: &PreparedMovementFrame,
         selected: Option<MovementOwnerSelection>,
     ) {
         let Some(selected) = selected else { return };
@@ -3615,6 +3617,11 @@ impl EngineInner {
             self.tick_rider_charge_owner(sim, assets, owner, true);
             return;
         }
+
+        // Sample mutable mobile geometry only now, at this actor's Original
+        // entity slot. Preparing it once before the live owner walk freezes
+        // every actor onto the same side of intervening mobile masters.
+        let prepared = self.live_mobile_geometry();
 
         // Pre-pass: collect principal opponent positions for
         // combat-moving entities.  During sword/shield movement,
@@ -6041,7 +6048,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
     ) {
-        let prepared = self.prepare_movement_frame();
         let owners: Vec<EntityId> = self
             .world
             .entities
@@ -6064,7 +6070,7 @@ impl EngineInner {
                             order_id: order.order_id,
                         })
                 });
-            self.tick_entity_movement_owner(sim, assets, owner, &prepared, selected);
+            self.tick_entity_movement_owner(sim, assets, owner, selected);
         }
     }
 

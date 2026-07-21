@@ -117,10 +117,34 @@ impl WorldState {
                 })?;
         }
         for (mobile_index, mobile) in self.mobile_elements.iter().enumerate() {
-            for &sprite_id in &mobile.sprite_ids {
-                if !matches!(self.entities.get(sprite_id), Some(Entity::Fx(_))) {
+            let mobile_index_u16 = u16::try_from(mobile_index)
+                .map_err(|_| format!("mobile index {mobile_index} does not fit in u16"))?;
+            let first = *mobile.sprite_ids.first().ok_or_else(|| {
+                format!("mobile {mobile_index} has no first masked child owner boundary")
+            })?;
+            for (offset, &sprite_id) in mobile.sprite_ids.iter().enumerate() {
+                let expected_slot = first.index().checked_add(offset as u32).ok_or_else(|| {
+                    format!("mobile {mobile_index} child adjacency overflows after {first}")
+                })?;
+                let actual_id = self.entities.id_at_legacy_slot(expected_slot).ok_or_else(|| {
+                    format!(
+                        "mobile {mobile_index} child {sprite_id} is missing from required adjacent slot {expected_slot}"
+                    )
+                })?;
+                if actual_id != sprite_id {
                     return Err(format!(
+                        "mobile {mobile_index} child {sprite_id} expected at adjacent slot {expected_slot}, found {actual_id}"
+                    ));
+                }
+                let fx = self.entities.get(sprite_id).and_then(Entity::as_fx).ok_or_else(|| {
+                    format!(
                         "mobile {mobile_index} references missing or non-FX sprite entity {sprite_id}"
+                    )
+                })?;
+                if fx.fx.mobile_index != Some(mobile_index_u16) {
+                    return Err(format!(
+                        "mobile {mobile_index} child {sprite_id} has wrong master index {:?}",
+                        fx.fx.mobile_index
                     ));
                 }
             }

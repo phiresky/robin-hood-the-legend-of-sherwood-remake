@@ -60,6 +60,20 @@ its pending list FIFO and calls `Go()` at
   `Entities::occupied_mut()` walks those slots in ascending order. Focused
   tests prove slots are not reused and serde save/load preserves both holes
   and order. This supplies the Rust equivalent of original creation ordering.
+- **Mobile masters:** `RHEngine::AddElement` inserts each
+  `RHElementMobile` immediately before its owned `RHElementFXMasked` children
+  (`RHengine.cpp:10191-10273`). Rust retains the single
+  `WorldState::mobile_elements` master representation and hosts that otherwise
+  non-entity Hourglass at the first `MobileElement::sprite_ids` child slot.
+  The master completes path/speed/translation/geometry/line-crossing work
+  before child 0 animates; later children animate in stored adjacent order and
+  cannot retrigger it. Actor anti-collision samples mobile geometry at each
+  actor's live slot, so swapped actor/mobile creation order observes old/new
+  geometry respectively. The pre-loop `CheckForCollision` remains before all
+  owner slots and therefore intentionally uses previous-tick mobile movement.
+  FrozenAll still runs master translation while the RHSprite child-frame gate
+  remains frozen. Empty, stale, non-FX, wrongly indexed, and non-adjacent child
+  relationships fail contextually at load/attachment or the live boundary.
 - **Deferred effects:** The original swordfight falling-edge check, titbit
   update, dead-selection scan, and anonymous timers retain their exact order
   at the start of `DeferredEffectsEnd`. Rust-only condolation, re-entrant
@@ -75,7 +89,7 @@ its pending list FIFO and calls `Go()` at
   NPC tail (`original-code/RHelementactornpc.cpp:3495-3659`). `NpcOrders` and
   non-NPC Listen/object discovery remain separate system boundaries, as do the
   movement/combat/ability owners described below.
-- **Entity systems:** Movement, special projectile variants, active combat,
+- **Entity systems:** Special projectile variants, active combat,
   and ability work remain batched by system in Rust, whereas the original
   invoked subtype hourglasses from the creation-ordered element loop. Base entity refresh is
   now correctly placed, but the profile-dependent batched systems remain after
@@ -152,7 +166,7 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. Subsequent slices restore creation-ordered melee, SEEK target sampling, detection, base Actor Execute/ActionChange, owner-local AI callbacks, stationary WAIT/Lift/WaitingSword work, and bonus-owned `RefreshDiscovered`. Ordinary movement, `RunningUpright` rider GALOPP, and selected `RiderCharging` now execute in the fused live Actor → Human → PC/NPC owner envelope. The coordinator snapshots the exact selected sequence/element/order identity; background in-progress movement cannot execute through a higher selected arm. Each owner closes anti-collision, crossings, door/seek/waypoint completion, the real exact-once ReachPoint condolation stack, GALOPP Think, sword and shoulder-carry checks, ActionChange, and derived tails before the next slot. Per-actor execution freeze suppresses every Human movement arm including RiderCharging, while global FrozenAll retains the charge polygon quirk and still runs base Actor timer/lift modifiers. `tick_zone_occupants` has no cited actor owner and remains an explicit separate boundary after the owner walk. Remaining debt is active strike/bow/ability ownership (including PC Listen/object reveal and Target Heard), unsupported rider/Execute arms, and remaining entity-kind Hourglass owners (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactor.cpp:534-728,1015-2740`; `RHelementactorhuman.cpp:277-324,3235-3560,9972-10097`; `RHelementactorpc.cpp:3616-3710,4950-4990,5481-5510`; `RHelementactorsoldier.cpp:1592-1608`; `RHElementBonus.cpp:513-519,583-625`). |
+| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. Subsequent slices restore creation-ordered melee, SEEK target sampling, detection, base Actor Execute/ActionChange, owner-local AI callbacks, stationary WAIT/Lift/WaitingSword work, bonus-owned `RefreshDiscovered`, and the existing mobile-master owner at its first adjacent masked-child slot. Ordinary movement, `RunningUpright` rider GALOPP, and selected `RiderCharging` execute in the fused live Actor → Human → PC/NPC owner envelope; actor movement now samples live mobile geometry at that actor slot. The coordinator snapshots the exact selected sequence/element/order identity; background in-progress movement cannot execute through a higher selected arm. Each owner closes anti-collision, crossings, door/seek/waypoint completion, the real exact-once ReachPoint condolation stack, GALOPP Think, sword and shoulder-carry checks, ActionChange, and derived tails before the next slot. Per-actor execution freeze suppresses every Human movement arm including RiderCharging, while global FrozenAll retains the charge polygon quirk, still runs base Actor timer/lift modifiers, and still translates mobile masters/children while masked frames freeze. `tick_zone_occupants` has no cited actor owner and remains an explicit separate boundary after the owner walk. Remaining debt is active strike/bow/ability ownership (including PC Listen/object reveal and Target Heard), unsupported rider/Execute arms, and remaining entity-kind Hourglass owners (`RHengine.cpp:3715-3724,7909-7944,10191-10273`; `RHelementactor.cpp:534-728,1015-2740`; `RHelementactorhuman.cpp:277-324,3235-3560,9972-10097`; `RHelementactorpc.cpp:3616-3710,4950-4990,5481-5510`; `RHelementactorsoldier.cpp:1592-1608`; `RHelementmobile.cpp:135+`; `RHelementfxmasked.cpp:128-149`; `RHElementBonus.cpp:513-519,583-625`). |
 
 Focused PA-013 stationary/idle progress: the live actor-slot coordinator now
 applies WAIT_TIMER and WAIT_FREE_LIFT to the just-produced Execute result
