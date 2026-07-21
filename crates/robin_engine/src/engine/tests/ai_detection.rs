@@ -119,6 +119,164 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
 }
 
 #[test]
+fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
+    use crate::element::{Command, ElementData, ElementKind, TargetFilter};
+    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(
+        1,
+        crate::engine::SimConfig {
+            script_enabled: false,
+            ..Default::default()
+        },
+    );
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let listener = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let near = engine.add_entity(make_discovery_bonus(749.0));
+    let exact = engine.add_entity(make_discovery_bonus(750.0));
+    let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    engine
+        .get_entity_mut(listener)
+        .unwrap()
+        .element_data_mut()
+        .set_position(crate::coordinates::WorldPoint3D {
+            x: 0.0,
+            y: 0.0,
+            z: 10.0,
+        });
+    let near_element = engine.get_entity_mut(near).unwrap().element_data_mut();
+    near_element.set_position(crate::coordinates::WorldPoint3D {
+        x: 749.0,
+        y: 0.0,
+        z: 10.0,
+    });
+    near_element.set_layer(7);
+    engine
+        .get_entity_mut(exact)
+        .unwrap()
+        .element_data_mut()
+        .set_position(crate::coordinates::WorldPoint3D {
+            x: 750.0,
+            y: 0.0,
+            z: 10.0,
+        });
+    let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
+        unreachable!()
+    };
+    target_entity
+        .target
+        .action_filter
+        .insert(TargetFilter::LISTEN);
+
+    let mut element = SequenceElement::new(1, Command::EnterListen, Some(listener));
+    let listening = Order::test_new(OrderType::Listening, 0.0, 0.0);
+    let listening_id = listening.order_id;
+    element.orders.push_back(listening);
+    element.orders.push_back(Order::test_new(
+        OrderType::TransitionListeningWaitingUpright,
+        0.0,
+        0.0,
+    ));
+    let seq = engine.orders.sequence_manager.launch_element(element);
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    let actor = engine
+        .get_entity_mut(listener)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.listen_phase = crate::element::ListenPhase::CountingDown;
+    actor.listen_wait_time = 0;
+    actor.active_ability = ActiveAbility {
+        kind: Some(AbilityKind::Listen),
+        sequence_id: Some(seq),
+        element_index: 0,
+        target: None,
+        order_id: Some(listening_id),
+        done_effect_applied: false,
+    };
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    for (case, frozen_all, execution_frozen, fried, expected) in [
+        ("FrozenAll", true, false, false, 24),
+        ("execution_frozen", false, true, false, 0),
+        ("fried", false, false, true, 0),
+    ] {
+        let mut gated = engine.clone();
+        gated.set_actors_frozen(frozen_all);
+        let Entity::Pc(pc) = gated.get_entity_mut(listener).unwrap() else {
+            unreachable!()
+        };
+        pc.actor.execution_frozen = execution_frozen;
+        pc.pc.fried_psykokwack = fried;
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        gated.perform_hourglass(&mut display, &assets, &mut dev);
+        assert_eq!(
+            gated
+                .get_entity(listener)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .listen_wait_time,
+            expected,
+            "{case} owner gate"
+        );
+    }
+
+    for invocation in 1..25 {
+        assert!(!engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener));
+        assert_eq!(
+            engine
+                .get_entity(listener)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .listen_wait_time,
+            25 - invocation
+        );
+        assert!(engine.get_entity(near).unwrap().element_data().blipped);
+    }
+    assert!(engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener));
+    assert!(
+        !engine.get_entity(near).unwrap().element_data().blipped,
+        "strictly-near cross-layer target reveals"
+    );
+    assert!(
+        engine.get_entity(exact).unwrap().element_data().blipped,
+        "exactly 750 remains out"
+    );
+    let Entity::Target(target_entity) = engine.get_entity(target).unwrap() else {
+        unreachable!()
+    };
+    assert!(
+        target_entity
+            .target
+            .action_filter
+            .contains(TargetFilter::LISTEN),
+        "scripts-disabled Heard retains LISTEN"
+    );
+    assert_eq!(
+        engine
+            .get_entity(listener)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .listen_phase,
+        crate::element::ListenPhase::ExitTransition
+    );
+}
+
+#[test]
 fn pc_noise_is_live_at_the_following_npc_slot_only() {
     use crate::element::{Camp, Detectable, DetectableType};
     use crate::order::{Order, OrderType};

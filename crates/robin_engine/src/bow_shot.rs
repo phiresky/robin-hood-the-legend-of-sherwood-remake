@@ -6787,4 +6787,37 @@ mod tests {
             "wasp nest must stop flying once its trajectory is exhausted"
         );
     }
+
+    #[test]
+    fn every_thrown_object_path_is_primed_exactly_once_by_spawn() {
+        let thrower = EntityId::Pc(crate::entity_id::PcId(0));
+        let start = WorldPoint3D::new(0.0, 0.0, 20.0);
+        let end = WorldPoint3D::new(200.0, 0.0, 0.0);
+        let thrown = [
+            spawn_net(thrower, start, end, 0, None),
+            spawn_wasp_nest(thrower, start, end, 0, None),
+            spawn_purse(thrower, start, end, 0, None),
+            spawn_apple(thrower, start, end, Some(thrower), None, 0, None),
+            spawn_stone(thrower, start, end, Some(thrower), None, 0, None),
+            spawn_coin(None, start, end, 0, 0, None, APEX_BEGGAR_COIN, None),
+        ];
+        for (index, entity) in thrown.into_iter().enumerate() {
+            let (position, frame_count) = match entity {
+                Entity::Projectile(projectile) => (
+                    projectile.element.position(),
+                    projectile.projectile.frame_count,
+                ),
+                Entity::Net(net) => (net.element.position(), net.projectile.frame_count),
+                _ => unreachable!(),
+            };
+            assert_ne!(
+                position, start,
+                "throw path {index} omitted its explicit primer"
+            );
+            assert_eq!(
+                frame_count, 1,
+                "throw path {index} advanced more than once before insertion"
+            );
+        }
+    }
 }
