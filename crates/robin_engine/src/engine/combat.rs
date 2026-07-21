@@ -2894,6 +2894,98 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
+        let pending_strangle_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
+                    && !ability.strangle_initialized)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Strangle initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Strangle initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Strangle initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_strangle_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pending Strangle owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::StrangleCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Strangle element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Strangle,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let attacker_pos = self
+                .get_entity(actor_id)
+                .expect("validated strangler vanished during initialization")
+                .element_data()
+                .position_map();
+            let victim_pos = self
+                .get_entity(victim_id)
+                .expect("validated Strangle victim vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                victim_pos.x - attacker_pos.x,
+                victim_pos.y - attacker_pos.y,
+            );
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before FREEZE")
+                .ai_controller_mut()
+                .expect("validated Strangle victim lost AI before FREEZE")
+                .non_script_lock(crate::ai::AiLockFlags::FREEZE);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before initialization latch")
+                .actor_data_mut()
+                .expect("validated strangler lost actor state before initialization latch")
+                .active_ability
+                .strangle_initialized = true;
+        }
+
         let strangle_victim_after_attacker = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)

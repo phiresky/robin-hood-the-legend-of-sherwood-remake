@@ -441,6 +441,7 @@ pub fn begin_carry(
         target: Some(target_id),
         order_id: Some(order_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
     actor.clear_path();
     actor.action_state = ActionState::Waiting;
@@ -541,6 +542,7 @@ pub fn begin_drop(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Drop),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(carried_id),
@@ -678,6 +680,7 @@ pub fn begin_climb_on_shoulders(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ClimbOnShoulders),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(helper_id),
@@ -793,6 +796,7 @@ pub fn begin_climb_down_from_shoulders(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ClimbDownFromShoulders),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(carrier_id),
@@ -877,6 +881,7 @@ pub fn begin_tie(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Tie),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -965,6 +970,7 @@ pub fn begin_heal(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Heal),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1033,6 +1039,7 @@ pub fn begin_whistle(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Whistle),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1089,6 +1096,7 @@ pub fn begin_eat(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Eat),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1163,6 +1171,7 @@ pub fn begin_hit(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Hit),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1251,6 +1260,7 @@ pub fn begin_strangle(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Strangle),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1336,6 +1346,7 @@ pub fn begin_listen(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Listen),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1413,6 +1424,7 @@ pub fn begin_throw_net(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowNet),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None, // ground target, not entity
@@ -1531,6 +1543,7 @@ fn begin_throw_at_entity(
     actor.active_ability = ActiveAbility {
         kind: Some(kind),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(target_id),
@@ -1592,6 +1605,7 @@ pub fn begin_throw_wasp_nest(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowWaspNest),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1659,6 +1673,7 @@ pub fn begin_throw_purse(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ThrowPurse),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -1756,6 +1771,7 @@ pub fn begin_pay(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::Pay),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: Some(beggar_id),
@@ -1835,6 +1851,7 @@ pub fn begin_receive_purse(
     actor.active_ability = ActiveAbility {
         kind: Some(AbilityKind::ReceivePurse),
         done_effect_applied: false,
+        strangle_initialized: false,
         sequence_id: Some(seq_id),
         element_index: elem_idx,
         target: None,
@@ -2848,6 +2865,7 @@ mod tests {
             target: Some(victim),
             order_id: std::num::NonZeroU32::new(11),
             done_effect_applied: false,
+            strangle_initialized: true,
         };
         let manager = SequenceManager::new();
         let sim = crate::sim_rng::test_context();

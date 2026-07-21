@@ -428,6 +428,9 @@ pub struct ActiveAbility {
     /// Whether the legacy `RHMOTION_DONE` side effect has fired.  The
     /// selected order remains owned by the actor until `TERMINATED`.
     pub done_effect_applied: bool,
+    /// Whether a Strangle order has crossed its first owner-Execute
+    /// initialization boundary. Ignored by every other ability kind.
+    pub strangle_initialized: bool,
 }
 
 impl ActiveAbility {

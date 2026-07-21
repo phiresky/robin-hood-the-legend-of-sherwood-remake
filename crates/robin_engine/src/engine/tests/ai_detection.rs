@@ -222,6 +222,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         target: None,
         order_id: Some(listening_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -337,6 +338,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
         target: None,
         order_id: Some(order_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
     engine.set_actors_frozen(true);
 
