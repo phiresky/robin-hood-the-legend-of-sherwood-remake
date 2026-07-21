@@ -3059,7 +3059,7 @@ impl EngineInner {
     /// projectile/net creation slot.  Entity kind and `ObjectType` together
     /// are the Rust vtable: accepting any other pairing here would fabricate
     /// subtype behaviour that the loaded object never had.
-    fn tick_projectile_or_net_hourglass(
+    pub(super) fn tick_projectile_or_net_hourglass(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

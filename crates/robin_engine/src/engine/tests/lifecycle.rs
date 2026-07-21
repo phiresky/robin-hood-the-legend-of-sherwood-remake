@@ -527,6 +527,85 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 }
 
 #[test]
+fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{Entity, Posture};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let start = WorldPoint3D::new(0.0, 0.0, 20.0);
+    let end = WorldPoint3D::new(200.0, 0.0, 0.0);
+    let mut spawned = Vec::new();
+    let mut appended = false;
+
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &sim,
+        &assets,
+        |engine, id| {
+            if matches!(
+                engine.get_entity(id),
+                Some(Entity::Projectile(_) | Entity::Net(_))
+            ) {
+                engine.tick_projectile_or_net_hourglass(&sim, &assets, id);
+            }
+        },
+        |engine, owner| {
+            if owner != actor || appended {
+                return;
+            }
+            appended = true;
+            for entity in [
+                crate::bow_shot::spawn_net(actor, start, end, 0, None),
+                crate::bow_shot::spawn_wasp_nest(actor, start, end, 0, None),
+                crate::bow_shot::spawn_purse(actor, start, end, 0, None),
+                crate::bow_shot::spawn_apple(actor, start, end, None, None, 0, None),
+                crate::bow_shot::spawn_stone(actor, start, end, None, None, 0, None),
+                crate::bow_shot::spawn_coin(
+                    None,
+                    start,
+                    end,
+                    0,
+                    0,
+                    None,
+                    crate::bow_shot::APEX_BEGGAR_COIN,
+                    None,
+                ),
+            ] {
+                let id = engine.add_entity(entity);
+                let frame_count = match engine.get_entity(id).unwrap() {
+                    Entity::Projectile(projectile) => projectile.projectile.frame_count,
+                    Entity::Net(net) => net.projectile.frame_count,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    frame_count, 1,
+                    "{id:?} must enter EntitySlots after its primer"
+                );
+                spawned.push(id);
+            }
+        },
+        |_, _, _, _, _, _, _| {},
+        |_, _| {},
+    );
+
+    assert_eq!(spawned.len(), 6);
+    for id in spawned {
+        let frame_count = match engine.get_entity(id).unwrap() {
+            Entity::Projectile(projectile) => projectile.projectile.frame_count,
+            Entity::Net(net) => net.projectile.frame_count,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            frame_count, 2,
+            "{id:?} must receive one appended live-slot advance, neither zero nor two"
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "unsupported ObjectType::None")]
 fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
     let mut engine = EngineInner::new();

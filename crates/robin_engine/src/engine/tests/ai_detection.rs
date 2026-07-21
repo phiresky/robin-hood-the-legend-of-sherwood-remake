@@ -172,6 +172,23 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         y: 0.0,
         z: 600.0,
     });
+    let listener_z = engine
+        .get_entity(listener)
+        .unwrap()
+        .element_data()
+        .position()
+        .z;
+    let near_z = engine.get_entity(near).unwrap().element_data().position().z;
+    let exact_z = engine
+        .get_entity(exact)
+        .unwrap()
+        .element_data()
+        .position()
+        .z;
+    assert_eq!(near_z - listener_z, 100.0, "inside case must exercise Z");
+    assert_eq!(exact_z - listener_z, 600.0, "boundary case must exercise Z");
+    assert!(450.0_f32.powi(2) + 100.0_f32.powi(2) < 750.0_f32.powi(2));
+    assert_eq!(450.0_f32.powi(2) + 600.0_f32.powi(2), 750.0_f32.powi(2));
     let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
         unreachable!()
     };
