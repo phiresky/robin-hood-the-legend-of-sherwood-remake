@@ -1630,6 +1630,10 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             > 0,
         "victim virgin increment must occur during initial attacker Done setup"
     );
+    engine.dispatch_ai_stimulus(
+        victim,
+        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+    );
 
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
@@ -1700,8 +1704,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
-        vec![crate::ai::StimulusType::EventGotHit],
-        "the synchronous condolation Think must preserve the older terminal retaliation FIFO entry"
+        vec![
+            crate::ai::StimulusType::EventTimer,
+            crate::ai::StimulusType::EventGotHit,
+        ],
+        "the synchronous condolation Think must preserve every older FIFO entry in order"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);

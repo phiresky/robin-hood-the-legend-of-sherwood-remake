@@ -2848,9 +2848,10 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Abilities and unsupported rider arms remain separate owners. The
-        // production caller installs movement, active melee, selected bow,
-        // and the human/PC/NPC tail hook before this loop advances.
+        // Unsupported rider arms remain separate. The production caller
+        // installs movement, active melee, selected bow, owner-local active
+        // abilities and beggar work, and the human/PC/NPC tail hook before
+        // this loop advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one

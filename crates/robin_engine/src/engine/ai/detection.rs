@@ -1,8 +1,7 @@
-//! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
-//! enemy → PC and royalist → enemy `RefreshDetection` (P3). Enemy optical
-//! stimuli and NPC-owned blip detection dispatch at the matching per-NPC
-//! creation boundary. The preceding batched P2a pass is limited to PC Listen
-//! and object-owned discovery work.
+//! Owner-local visibility work: NPC blip detection and enemy → PC / royalist
+//! → enemy `RefreshDetection` dispatch at the matching NPC creation boundary.
+//! PC Listen performs its captured-length mixed reveal/Heard scan in the
+//! selected PC owner slot; object discovery remains with its object owner.
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
 
