@@ -254,7 +254,7 @@ mod mobile_owner_boundary_tests {
             |engine, _| {
                 observations.push(engine.first_live_mobile_polygon_point(0).x);
             },
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _, _| {},
             |_, _| {},
         );
         observations
@@ -305,7 +305,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
@@ -344,7 +344,7 @@ mod mobile_owner_boundary_tests {
                 }
             },
             |_, _| {},
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _, _| {},
             |_, _| {},
         );
         assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
@@ -1039,7 +1039,7 @@ impl EngineInner {
         let was_swordfighting = self.hourglass_phase_entities(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        let positions_before_movement = self.hourglass_phase_entity_systems(sim, assets);
+        let positions_before_movement = self.hourglass_phase_entity_systems(sim, display, assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
         self.hourglass_phase_npcs(sim, assets, &positions_before_movement);
@@ -2084,6 +2084,7 @@ impl EngineInner {
     fn hourglass_phase_entity_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
         // Preserve the position each element exposed before the globally
@@ -2146,7 +2147,12 @@ impl EngineInner {
         // Every supported nonactor virtual Hourglass now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
         // projectile/net dispatch.
-        self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
+        self.tick_actor_owner_envelopes_with_display(
+            sim,
+            display,
+            assets,
+            &positions_before_movement,
+        );
         // Separate Rust reconciliation boundary after owner movement.
         self.tick_zone_occupants(sim, assets);
 
@@ -2500,7 +2506,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _, _| {},
             |_, _| {},
         );
     }
@@ -2517,7 +2523,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _, _, _, _| {},
+            |_, _, _, _, _, _, _| {},
             after_slot,
         );
     }
@@ -2534,6 +2540,8 @@ impl EngineInner {
             Option<super::movement::MovementOwnerSelection>,
             Option<MeleeOwnerSelection>,
             Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
+            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
+            Option<std::num::NonZeroU32>,
         ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
@@ -2643,6 +2651,56 @@ impl EngineInner {
                     // actor's next Hourglass rather than entering generic
                     // Execute later in this same slot.
                     let bow_selection = self.selected_bow_order(entity_id);
+                    let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
+                        self.world
+                            .entities
+                            .get(entity_id)
+                            .and_then(Entity::actor_data)
+                            .is_some_and(|actor| {
+                                let expected_type = match actor.active_ability.kind {
+                                    Some(crate::movement::AbilityKind::Listen) => {
+                                        match actor.listen_phase {
+                                            crate::element::ListenPhase::EnterTransition => crate::order::OrderType::TransitionWaitingUprightListening,
+                                            crate::element::ListenPhase::CountingDown => crate::order::OrderType::Listening,
+                                            crate::element::ListenPhase::ExitTransition => crate::order::OrderType::TransitionListeningWaitingUpright,
+                                            crate::element::ListenPhase::Inactive => return false,
+                                        }
+                                    }
+                                    Some(crate::movement::AbilityKind::ReceivePurse) => {
+                                        match actor.receive_purse_phase {
+                                            crate::element::ReceivePursePhase::Receiving => crate::order::OrderType::ReceivingPurse,
+                                            crate::element::ReceivePursePhase::Waiting => crate::order::OrderType::WaitingWithPurse,
+                                            crate::element::ReceivePursePhase::Transition => crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright,
+                                            crate::element::ReceivePursePhase::Inactive => return false,
+                                        }
+                                    }
+                                    Some(crate::movement::AbilityKind::Heal)
+                                        if actor.active_ability.target == Some(entity_id) => crate::order::OrderType::Eating,
+                                    Some(kind) => crate::abilities::ability_order_type(kind),
+                                    None => return false,
+                                };
+                                actor.active_ability.is_active()
+                                    && actor.active_ability.sequence_id == Some(*seq)
+                                    && actor.active_ability.element_index == *elem
+                                    && actor.active_ability.order_id == Some(*order_id)
+                                    && self.orders.sequence_manager
+                                        .get_element(*seq, *elem)
+                                        .and_then(|element| element.current_order())
+                                        .is_some_and(|order| order.order_type == expected_type)
+                            })
+                    });
+                    let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(seq, elem)
+                            .and_then(|element| element.current_order())
+                            .and_then(|order| {
+                                (order.order_id == order_id
+                                    && order.order_type
+                                        == crate::order::OrderType::SimulatingBeggar)
+                                    .then_some(order_id)
+                            })
+                    });
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                         entity_id,
@@ -2653,6 +2711,8 @@ impl EngineInner {
                         movement_selection,
                         melee_selection,
                         bow_selection,
+                        ability_selection,
+                        beggar_selection,
                     );
 
                     #[cfg(test)]
@@ -2690,6 +2750,8 @@ impl EngineInner {
                         if movement_selection.is_some()
                             || melee_selection.is_some()
                             || bow_selection.is_some()
+                            || ability_selection.is_some()
+                            || beggar_selection.is_some()
                         {
                             (Vec::new(), Default::default(), None)
                         } else if frozen_wait_execute.is_some() {
@@ -2786,9 +2848,10 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Abilities and unsupported rider arms remain separate owners. The
-        // production caller installs movement, active melee, selected bow,
-        // and the human/PC/NPC tail hook before this loop advances.
+        // Unsupported rider arms remain separate. The production caller
+        // installs movement, active melee, selected bow, owner-local active
+        // abilities and beggar work, and the human/PC/NPC tail hook before
+        // this loop advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
@@ -2796,14 +2859,16 @@ impl EngineInner {
     /// `while slot < entities.len()` loop, including holes and callback-spawned
     /// later slots; this hook closes the derived tail before it increments the
     /// slot.
-    pub(super) fn tick_actor_owner_envelopes(
+    pub(super) fn tick_actor_owner_envelopes_with_display(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
+            display,
             assets,
             positions_before_movement,
             |_, _| {},
@@ -2818,8 +2883,10 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
+        let mut display = HostDisplayState::default();
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
+            &mut display,
             assets,
             positions_before_movement,
             owner_hook,
@@ -2829,6 +2896,7 @@ impl EngineInner {
     fn tick_actor_owner_envelopes_with_owner_hook(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
         assets: &LevelAssets,
         positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
@@ -2886,13 +2954,35 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |engine, owner, movement, melee, bow| {
+            |engine, owner, movement, melee, bow, ability, selected_beggar| {
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
                 }
                 if let Some((_, _, order_id)) = bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
+                }
+                let execution_frozen = engine
+                    .get_entity(owner)
+                    .and_then(Entity::actor_data)
+                    .is_some_and(|actor| actor.execution_frozen);
+                if ability.is_some() && !execution_frozen {
+                    let is_listen = engine
+                        .get_entity(owner)
+                        .and_then(Entity::actor_data)
+                        .is_some_and(|actor| {
+                            actor.active_ability.kind == Some(crate::movement::AbilityKind::Listen)
+                        });
+                    let listen_advanced = is_listen
+                        && engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
+                    if !listen_advanced {
+                        engine.tick_ability_for(sim, display, assets, owner);
+                    }
+                }
+                if let Some(order_id) = selected_beggar
+                    && !execution_frozen
+                {
+                    engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
             },
             |engine, owner| {
@@ -2956,11 +3046,27 @@ impl EngineInner {
         self.finish_npc_owner_pass();
     }
 
+    #[cfg(test)]
+    pub(super) fn tick_actor_owner_envelopes(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+    ) {
+        let mut display = HostDisplayState::default();
+        self.tick_actor_owner_envelopes_with_display(
+            sim,
+            &mut display,
+            assets,
+            positions_before_movement,
+        );
+    }
+
     /// Dispatch the exact Original virtual `Hourglass` chain for a live
     /// projectile/net creation slot.  Entity kind and `ObjectType` together
     /// are the Rust vtable: accepting any other pairing here would fabricate
     /// subtype behaviour that the loaded object never had.
-    fn tick_projectile_or_net_hourglass(
+    pub(super) fn tick_projectile_or_net_hourglass(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3195,17 +3301,11 @@ impl EngineInner {
     /// `original-code/RHelementactornpc.cpp:3495-3614`.
     fn hourglass_phase_npcs(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
         _positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
     ) {
-        // TODO(PA-013): PC Listen/object reveal and Target Heard remain in
-        // this batch until the active-ability owner slice lands. Bonus-owned
-        // RefreshDiscovered runs in the live non-actor slot above and is not
-        // gated by FrozenAll.
-        if !self.actors_frozen() {
-            self.tick_non_npc_blip_detection(sim, assets);
-        }
+        // Listen/object reveal and Target Heard are actor-owned Execute work.
         // ── Creation-ordered pre-detection boundary ──────────────
         // These observations remain coarse labels for the original nested
         // order. The coordinator below interleaves the actual operations per
@@ -3330,42 +3430,11 @@ impl EngineInner {
     pub(super) fn hourglass_phase_gameplay_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
+        _display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
-        // The original loop is literally:
-        //
-        // `for (i = 0; i < marrayElements.Size(); ++i) element[i]->Hourglass()`
-        //
-        // so both cross-type effects and entities appended during a virtual
-        // call are observable in creation order. These are the gameplay
-        // systems with proven cross-batch differences; keep the slot count
-        // live rather than snapshotting ids.
-        let mut slot = 0;
-        while slot < self.world.entities.len() {
-            let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) else {
-                slot += 1;
-                continue;
-            };
-
-            match entity_id {
-                EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
-                    // Movement, active melee, and selected bow are owned by
-                    // the fused base-Actor Execute slot above. Abilities are
-                    // the remaining later actor driver.
-                    self.tick_ability_for(sim, display, assets, entity_id);
-                }
-                EntityId::Projectile(_) | EntityId::Net(_) => {}
-                _ => {}
-            }
-            slot += 1;
-        }
-
-        // ── Beggar-solicitation tick ────────────────────────────
-        // For each PC currently in `SimulatingBeggar` posture,
-        // iterate civilians and toss a coin to the beggar if a
-        // donor passes the full predicate chain.
-        self.tick_beggar_bids(assets);
+        // Active abilities, Listen/Heard, projectiles, and beggar simulation
+        // already executed in their live owner slots.
 
         // Combat progression without a proven cross-subsystem ordering
         // discrepancy remains batched. Fallback-timed completions already

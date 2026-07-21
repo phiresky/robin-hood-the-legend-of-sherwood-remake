@@ -17,7 +17,7 @@
 use super::EngineInner;
 use crate::bow_shot;
 use crate::coordinates::MapPoint;
-use crate::element::{Entity, EntityId, ObjectType, Posture};
+use crate::element::{Entity, EntityId, ObjectType};
 use crate::inventory::COIN_VALUE;
 use crate::position_interface::vector_to_sector_0_to_15_iso;
 
@@ -62,7 +62,11 @@ pub(super) fn set_flags_of_near_coins_on_ground(
 /// Reads: NPC's `has_given_money_to_beggar`, `got_the_beggar_trick`,
 /// `money`, `direction`, `position_map`, `sector`, `ai_state`, and the
 /// human kind. Returns `false` (no donation) in every failure arm.
-fn can_give_money_to_beggar(engine: &EngineInner, npc_id: EntityId, beggar_id: EntityId) -> bool {
+pub(super) fn can_give_money_to_beggar(
+    engine: &EngineInner,
+    npc_id: EntityId,
+    beggar_id: EntityId,
+) -> bool {
     let Some(npc) = engine.get_entity(npc_id) else {
         return false;
     };
@@ -277,20 +281,47 @@ impl EngineInner {
 
     /// Per-frame driver for the beggar solicitation loop.
     ///
-    /// For every PC currently in `SimulatingBeggar` posture (and thus
-    /// standing in place with `action_state == Waiting`), invoke
-    /// [`EngineInner::bid_for_money`].
-    pub(crate) fn tick_beggar_bids(&mut self, assets: &crate::engine::LevelAssets) {
-        let pc_ids = self.world.pc_ids.clone();
-        for pc_id in pc_ids {
-            let is_beggar = self
-                .get_entity(pc_id)
-                .map(|e| e.element_data().posture == Posture::SimulatingBeggar)
-                .unwrap_or(false);
-            if !is_beggar {
-                continue;
-            }
-            self.bid_for_money(assets, pc_id);
+    /// Run the `RHANIMATION_SIMULATING_BEGGAR` bid belonging to one selected
+    /// PC Execute arm. Donors are searched in live NPC creation order.
+    pub(crate) fn tick_beggar_bid_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        pc_id: EntityId,
+        order_id: std::num::NonZeroU32,
+    ) {
+        let Some(entity) = self.get_entity(pc_id) else {
+            panic!("beggar owner {pc_id:?} disappeared in its Actor Hourglass slot");
+        };
+        assert!(matches!(entity, Entity::Pc(_)), "beggar owner must be a PC");
+        let sprite_frozen = self.actors_frozen();
+        let pc = self
+            .world
+            .entities
+            .get_mut(pc_id)
+            .expect("validated beggar owner disappeared");
+        // TurnFast precedes PerformAction in Original and is not a sprite
+        // increment, so FrozenAll still permits the turn and following Bid.
+        pc.position_iface_mut().turn();
+        let direction = u16::try_from(pc.element_data().direction())
+            .expect("beggar direction must be in the canonical 0..=15 range");
+        let motion = if sprite_frozen {
+            crate::sprite::MotionState::InProgress
+        } else {
+            pc.element_data_mut().sprite.perform_action(
+                sim,
+                Some(order_id),
+                crate::order::OrderType::SimulatingBeggar,
+                direction,
+                crate::sprite::FrameProgression::Default,
+                false,
+            )
+        };
+        if motion == crate::sprite::MotionState::Start {
+            let pc = self.world.entities.get_mut(pc_id).unwrap();
+            pc.set_posture(crate::element::Posture::SimulatingBeggar);
+            pc.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         }
+        self.bid_for_money(assets, pc_id);
     }
 }

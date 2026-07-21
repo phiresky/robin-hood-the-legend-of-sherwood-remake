@@ -13,7 +13,7 @@
 //!
 //! Step 1 (the Pay/Receive animation chain) lives in `abilities.rs`
 //! under `begin_pay` / `begin_receive_purse` and the phase-aware
-//! dispatch in `tick_abilities`; the `ReceivePurseRevealing` handler
+//! dispatch in the selected owner's `tick_ability`; the `ReceivePurseRevealing` handler
 //! in `engine/combat.rs` invokes [`EngineInner::reveal_scrolls`] on the
 //! `WaitingWithPurse` → transition boundary.
 

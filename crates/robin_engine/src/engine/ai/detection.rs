@@ -1,10 +1,22 @@
-//! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
-//! enemy → PC and royalist → enemy `RefreshDetection` (P3). Enemy optical
-//! stimuli and NPC-owned blip detection dispatch at the matching per-NPC
-//! creation boundary. The preceding batched P2a pass is limited to PC Listen
-//! and object-owned discovery work.
+//! Owner-local visibility work: NPC blip detection and enemy → PC / royalist
+//! → enemy `RefreshDetection` dispatch at the matching NPC creation boundary.
+//! PC Listen performs its captured-length mixed reveal/Heard scan in the
+//! selected PC owner slot; object discovery remains with its object owner.
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
+
+#[cfg(test)]
+thread_local! {
+    static HEARD_CALLBACK_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_heard_callback_observer(
+    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
+) {
+    HEARD_CALLBACK_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+}
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
@@ -387,8 +399,8 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        _world: &AiWorldView,
-    ) {
+        pc_id: EntityId,
+    ) -> bool {
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
         // ── Listen ability frame tick. ──────────────────────
@@ -401,27 +413,28 @@ impl EngineInner {
         //  - Decrement the countdown.  On the frame it reaches 0,
         //    fire the one-shot blip reveal + FX-target `Heard()`
         //    callback (below) and advance the phase to
-        //    `ExitTransition` so `tick_abilities` plays the exit
+        //    `ExitTransition` so owner-local `tick_ability` plays the exit
         //    transition animation and cleans up the ability.
         //
         // The action state stays `Listening` through the
-        // countdown — the exit transition in `tick_abilities`
+        // countdown — the exit transition in owner-local `tick_ability`
         // will flip it back to `Waiting`.
         #[derive(Clone, Copy)]
         struct FiringListener {
             position: MapPoint,
-            layer: u16,
             position_z: f32,
             pc_id: EntityId,
+            seq_id: crate::sequence::SequenceId,
+            elem_idx: usize,
         }
-        let mut firing_listeners: Vec<FiringListener> = Vec::new();
-        let next_order_id = &mut self.orders.next_order_id;
-        for &pc_id in &self.world.pc_ids {
-            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
-                continue;
+        let firing_listener = {
+            let pc = match self.world.entities.get_mut(pc_id) {
+                Some(Entity::Pc(pc)) => pc,
+                Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
+                None => panic!("Listen owner {pc_id:?} disappeared"),
             };
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
-                continue;
+                return false;
             }
             // Advance rotation toward `direction_goal` one step.
             // PI is the source of truth for direction now — no
@@ -431,174 +444,133 @@ impl EngineInner {
                 // First frame in the CountingDown phase — arm the
                 // countdown.
                 pc.actor.listen_wait_time = TIME_LISTEN_WAIT;
-                continue;
             }
             pc.actor.listen_wait_time -= 1;
             if pc.actor.listen_wait_time != 0 {
-                continue;
+                return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and
-            // advance the phase so `tick_abilities` plays the
+            // advance the phase so owner-local `tick_ability` plays the
             // exit transition next.
             let fl = FiringListener {
                 pc_id,
                 position: pc.element.position_map(),
-                layer: pc.element.layer(),
                 position_z: pc.element.position().z,
+                seq_id: pc
+                    .actor
+                    .active_ability
+                    .sequence_id
+                    .expect("Listen sequence"),
+                elem_idx: pc.actor.active_ability.element_index,
             };
-            pc.actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-            // Bump order_id so the exit transition animation
-            // starts fresh in `perform_action`.
-            pc.actor.active_ability.order_id =
-                Some(crate::abilities::next_listen_order_id(next_order_id));
-            firing_listeners.push(fl);
             tracing::debug!(
                 pc = pc_id.index(),
                 "Listen: one-shot reveal fired after TIME_LISTEN_WAIT frames"
             );
-        }
+            fl
+        };
 
-        let mut to_reveal: Vec<EntityId> = Vec::new();
-        // FX targets within listening range; `Heard(pc)` gets
-        // invoked on each below.  Pair: (target_id, listening_pc_id)
-        // so we can pass the PC handle to
-        // `IElementTargetScript::ActivatedByListenable`.
-        let mut to_hear: Vec<(EntityId, EntityId)> = Vec::new();
-
-        // ── FX target Heard() check. ─────────────────────
-        // Independent of the blip state — targets are always
-        // eligible for Heard() regardless of `blipped`.
-        if !firing_listeners.is_empty() {
-            for (entity_id, target) in self.world.entities.targets() {
-                let target_pos = target.element.position_map();
-                let target_layer = target.element.layer();
-                let target_z = target.element.position().z;
-                for pc in &firing_listeners {
-                    if pc.layer != target_layer {
-                        continue;
-                    }
-                    let dx = target_pos.x - pc.position.x;
-                    let dy = (target_pos.y - pc.position.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = target_z - pc.position_z;
-                    let dist_3d_sq = dx * dx + dy * dy + dz * dz;
-                    if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((entity_id.into(), pc.pc_id));
-                        break;
-                    }
-                }
-            }
-        }
-
-        for (entity_id, entity) in self
-            .world
-            .entities
-            .npcs()
-            .map(|(id, entity)| (EntityId::from(id), entity))
-            .chain(
-                self.world
-                    .entities
-                    .objects()
-                    .map(|(id, entity)| (EntityId::from(id), entity)),
-            )
+        let listener = firing_listener;
         {
-            let elem = entity.element_data();
-
-            if !elem.blipped {
-                continue;
-            }
-            // Listen path only fires on the frame a listening PC's
-            // countdown hit 0 — `firing_listeners` is non-empty
-            // only for that single frame.
-            let listen_gate = !firing_listeners.is_empty();
-
-            if !listen_gate {
-                continue;
-            }
-
-            let blip_pos = elem.position_map();
-            let blip_layer = elem.layer();
-            let mut revealed = false;
-
-            // ── Path B: ListenTo ─────────────────────────────
-            // Simple 3D distance check, no LOS, no cone.  One-shot.
-            if !revealed && listen_gate {
-                for pc in &firing_listeners {
-                    if pc.layer != blip_layer {
+            // C++ captures Size() once, then resolves each live slot and
+            // applies RevealBlip/Heard synchronously in that mixed order.
+            let captured_len = self.world.entities.len();
+            for slot in 0..captured_len {
+                let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) else {
+                    continue;
+                };
+                let Some(entity) = self.world.entities.get(entity_id) else {
+                    continue;
+                };
+                let elem = entity.element_data();
+                let pos = elem.position_map();
+                let dx = pos.x - listener.position.x;
+                let dy =
+                    (pos.y - listener.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let dz = elem.position().z - listener.position_z;
+                if dx * dx + dy * dy + dz * dz >= DISTANCE_LISTEN * DISTANCE_LISTEN {
+                    continue;
+                }
+                let reveal = elem.blipped
+                    && matches!(
+                        entity,
+                        Entity::Soldier(_)
+                            | Entity::Civilian(_)
+                            | Entity::Bonus(_)
+                            | Entity::Scroll(_)
+                            | Entity::Projectile(_)
+                            | Entity::Net(_)
+                    );
+                let heard = matches!(entity, Entity::Target(_));
+                if reveal {
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .unwrap()
+                        .reveal_blip();
+                }
+                if heard && sim.config().script_enabled {
+                    let target = match self.world.entities.get_mut(entity_id) {
+                        Some(Entity::Target(target)) => target,
+                        _ => panic!("Listen target {entity_id:?} changed type before Heard"),
+                    };
+                    if !target
+                        .target
+                        .action_filter
+                        .contains(crate::element::TargetFilter::LISTEN)
+                    {
                         continue;
                     }
-                    let dx = blip_pos.x - pc.position.x;
-                    let dy = (blip_pos.y - pc.position.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = elem.position().z - pc.position_z;
-                    let dist_3d_sq = dx * dx + dy * dy + dz * dz;
-                    if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        revealed = true;
-                        break;
-                    }
+                    target
+                        .target
+                        .action_filter
+                        .remove(crate::element::TargetFilter::LISTEN);
+                    assert!(
+                        !target.target.script_class.is_empty(),
+                        "LISTEN target {entity_id:?} has no required script class"
+                    );
+                    let target_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
+                    let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(listener.pc_id);
+                    self.call_script_vm(
+                        sim,
+                        assets,
+                        ScriptVmKey::Target(target_handle),
+                        "ActivatedByListenable",
+                        &[pc_handle],
+                        crate::natives::ScriptCallFrame::actor(target_handle),
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("ActivatedByListenable target {target_handle} failed: {error}")
+                    });
+                    #[cfg(test)]
+                    HEARD_CALLBACK_OBSERVER.with(|observer| {
+                        if let Some(observer) = observer.borrow_mut().as_mut() {
+                            observer(self, entity_id);
+                        }
+                    });
                 }
             }
-
-            if revealed {
-                to_reveal.push(entity_id);
-            }
+            self.do_next_order(listener.seq_id, listener.elem_idx);
+            let (exit_order_id, exit_order_type) = self
+                .orders
+                .sequence_manager
+                .get_element(listener.seq_id, listener.elem_idx)
+                .and_then(|element| element.current_order())
+                .map(|order| (order.order_id, order.order_type))
+                .unwrap_or_else(|| panic!("Listen countdown did not expose its exit order"));
+            assert_eq!(
+                exit_order_type,
+                crate::order::OrderType::TransitionListeningWaitingUpright
+            );
+            let actor = self
+                .get_entity_mut(listener.pc_id)
+                .and_then(Entity::actor_data_mut)
+                .expect("Listen owner vanished after synchronous scan");
+            actor.listen_phase = crate::element::ListenPhase::ExitTransition;
+            actor.active_ability.order_id = Some(exit_order_id);
+            actor.active_ability.done_effect_applied = false;
         }
-
-        for entity_id in to_reveal {
-            if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                tracing::debug!(
-                    entity = entity_id.index(),
-                    "reveal_blip: shadow revealed by blip detection"
-                );
-                entity.reveal_blip();
-            }
-        }
-
-        // Fire FX target Heard() callbacks.  If the target's action
-        // filter has `RHFILTER_LISTEN` set AND scripts are enabled,
-        // clear the bit and invoke the `ActivatedByListenable(pc)`
-        // script callback on the target's own VM.
-        //
-        // Scripts are always enabled at runtime here (no headless
-        // mode) so the script gate is effectively always true — if
-        // and when a `--no-script` CLI flag is plumbed, add a check
-        // on `GlobalOptions::script_enabled`.
-        //
-        // Collect (target_handle, pc_handle) pairs first so we can
-        // release the mutable entity borrow before dispatching to
-        // the mission script (which needs its own engine state
-        // swap).
-        let mut listenable_calls: Vec<(i32, i32)> = Vec::new();
-        for (target_id, listening_pc) in to_hear {
-            if let Some(Entity::Target(t)) = self.world.entities.get_mut(target_id)
-                && t.target
-                    .action_filter
-                    .contains(crate::element::TargetFilter::LISTEN)
-            {
-                t.target
-                    .action_filter
-                    .remove(crate::element::TargetFilter::LISTEN);
-                if !t.target.script_class.is_empty() {
-                    let target_handle = crate::natives::ScriptHandleCodec::actor_handle(target_id);
-                    let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(listening_pc);
-                    listenable_calls.push((target_handle, pc_handle));
-                }
-            }
-        }
-        if !listenable_calls.is_empty() {
-            for (target_handle, pc_handle) in listenable_calls {
-                if let Err(error) = self.call_script_vm(
-                    sim,
-                    assets,
-                    ScriptVmKey::Target(target_handle),
-                    "ActivatedByListenable",
-                    &[pc_handle],
-                    crate::natives::ScriptCallFrame::actor(target_handle),
-                ) {
-                    tracing::warn!("ActivatedByListenable (target {target_handle}): {error}");
-                }
-            }
-        }
+        true
     }
 
     /// Strict live `RHElementBonus::RefreshDiscovered` for one bonus-owned

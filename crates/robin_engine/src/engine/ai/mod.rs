@@ -7,6 +7,8 @@
 //!  - [`post_detection`] — phases P4..P6d: alert dispatch, pursuit, drains.
 
 mod detection;
+#[cfg(test)]
+pub(crate) use detection::set_heard_callback_observer;
 mod post_detection;
 mod snapshots;
 
@@ -4925,13 +4927,13 @@ impl EngineInner {
         self.ai.global.same_frame_target_claims.clear();
     }
 
-    pub(super) fn tick_non_npc_blip_detection(
+    pub(super) fn tick_enemy_ai_blip_detection_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) {
-        let world = self.tick_enemy_ai_build_world_view(assets, None);
-        self.tick_enemy_ai_blip_detection(sim, assets, &world);
+        owner: EntityId,
+    ) -> bool {
+        self.tick_enemy_ai_blip_detection(sim, assets, owner)
     }
 
     #[cfg(test)]
@@ -4963,7 +4965,10 @@ impl EngineInner {
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
         // RefreshDetection slot below.
-        self.tick_enemy_ai_blip_detection(sim, assets, &world);
+        let pc_ids = self.world.pc_ids.clone();
+        for pc_id in pc_ids {
+            self.tick_enemy_ai_blip_detection(sim, assets, pc_id);
+        }
 
         // ── 3. Creation-ordered per-NPC prelude + RefreshDetection. ───
         // Production first consumes the current NPC's inform/recovery outbox

@@ -442,37 +442,51 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
+        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            sim,
+            npc_id,
+            assets,
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
+        );
+    }
+
+    /// Run one legacy synchronous NPC Think while preserving older deferred
+    /// detection stimuli ahead of anything emitted by that Think.
+    pub(in crate::engine) fn dispatch_synchronous_ai_think_preserving_detection_fifo(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        stimulus: crate::ai::Stimulus,
+    ) {
         let mut preexisting = {
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                 panic!(
-                    "combat-injury Think lost NPC {} before detaching its stimulus FIFO",
+                    "synchronous Think lost NPC {} before detaching its stimulus FIFO",
                     npc_id.index()
                 )
             });
             let ai = entity.ai_controller_mut().unwrap_or_else(|| {
                 panic!(
-                    "combat-injury Think requires an AI controller for NPC {}",
+                    "synchronous Think requires an AI controller for NPC {}",
                     npc_id.index()
                 )
             });
             std::mem::take(&mut ai.outbox.detection.stimuli)
         };
 
-        self.dispatch_ai_stimulus(
-            npc_id,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
-        );
+        self.dispatch_ai_stimulus(npc_id, stimulus);
         self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
-                "combat-injury Think lost NPC {} before restoring its stimulus FIFO",
+                "synchronous Think lost NPC {} before restoring its stimulus FIFO",
                 npc_id.index()
             )
         });
         let ai = entity.ai_controller_mut().unwrap_or_else(|| {
             panic!(
-                "combat-injury Think lost the AI controller for NPC {} before restoring its stimulus FIFO",
+                "synchronous Think lost the AI controller for NPC {} before restoring its stimulus FIFO",
                 npc_id.index()
             )
         });

@@ -96,13 +96,14 @@ its pending list FIFO and calls `Go()` at
 - **NPCs:** The actor-owner envelope now nests the supported Soldier, Human,
   Actor, PC, and NPC Hourglass slices at each live legacy slot, including
   patrol, concussion wake, produced noise, tiredness, detection, and the full
-  NPC tail (`original-code/RHelementactornpc.cpp:3495-3659`). `NpcOrders`, PC
-  Listen/object reveal, and Target Heard remain separate system boundaries.
+  NPC tail (`original-code/RHelementactornpc.cpp:3495-3659`). `NpcOrders`
+  remains a separate system boundary; PC Listen/object reveal and Target Heard
+  are owner-local.
 - **Entity systems:** Ordinary movement, static object Hourglasses, selected
   bow, projectile/net variants, and Bonus `RefreshDiscovered` are owner-local,
   and each mobile master runs at its first adjacent masked-child slot. Active
-  melee, abilities, unsupported rider arms, zone occupancy, and remaining
-  entity-kind owners still retain separate boundaries in Rust. Base entity
+  melee and abilities are also owner-local. Unsupported rider arms, zone
+  occupancy, and remaining entity-kind owners still retain separate boundaries in Rust. Base entity
   refresh is now correctly placed.
   Exact intra-entity interleaving for the remaining debt requires owner-fusion
   work under PA-013. `tick_zone_occupants` remains an explicit separate boundary
@@ -141,7 +142,7 @@ or simplification.
 | PA-001 | PCs automatically collected nearby bonuses every tick. | `RHElementObject::BuildTakeSequence`, `RHelementobject.cpp`; `RHElementActorPC::Execute` Taking completion, `RHelementactorpc.cpp`. | Removed in commit `682dc1f49`; collection now requires the Take sequence. |
 | PA-002 | Unmapped AI stimuli skipped `FilterAIEvent`; comments incorrectly called original stimuli such as `EVENT_ENEMY_NEAR` Rust-only. | `RHArtificialIntelligence::StartThink`, `RHartificialintelligence.cpp`, assigns event code `-2` and still calls the script filter; enum in `RHartificialintelligence.h`. | Rust now calls `FilterAIEvent(source, -2)` through the normal filtered dispatch path and has a regression test. |
 | PA-003 | Default mission loss treated any living, conscious PC as playable and ignored `PcData::playable`. | `RHEngine::PerformHourglass`, `RHengine.cpp`; `RHElementActorPC::IsPlayable`, `RHelementactorpc.h`. | The check now uses the explicit playable flag plus guard state, with a focused test. |
-| PA-004 | Mission exits could replace a missing required campaign with `Campaign::default()`. | `RHCampaign`, `RHCampaign.cpp`, installs one concrete singleton; `launcher.cpp` owns that campaign across mission runs. | `c106f35b1` funnels mission exits through `restore_required_campaign`, which panics with boundary context instead of inventing campaign state. |
+| PA-004 | Mission exits could replace a missing required campaign with `Campaign::default()`. | `RHCampaign`, `RHCampaign.cpp`, installs one concrete singleton; `launcher.cpp` owns that campaign across mission runs. | `c106f35b1` first removed the fabricated default through `restore_required_campaign`; the ownership refactor later eliminated that transitional helper. A live `MissionDomain` now owns one required `Campaign`, and consuming mission finalization returns it by value, so no exit path can fabricate campaign state. |
 | PA-005 | Restore repaired malformed parallel fast-grid arrays with all-active values absent from the snapshot. | `RHEngine::Serialize`, `RHengine.cpp`, serializes the concrete engine/grid state; it has no all-active corruption-repair path. | `c5e277769` validates lengths before mutation and returns `SnapshotRestoreError`; the current restore entry point rejects corrupt or incompatible snapshots loudly rather than adapting an older schema. |
 | PA-010 | EnemyNear scanned every PC unconditionally and ran generic trouble/battle decisions. | `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest` and `EVENT_ENEMY_NEAR`, `RHartificialmalignity.cpp`. | `15e5ffd6f` restores the trainer/substate/time gates, ordered `mlistThem` scan, exact box/postures, stimulus target assignment, and `BeginSwordfight`. |
 | PA-011 | `reinitialize_them_list` retained an unseen saved primary target. | `RHArtificialMalignity::ReinitializeThemList`, `RHartificialmalignity.cpp`. | `4350e5092` rebuilds the list solely from visible, living enemies. |
@@ -164,7 +165,7 @@ or simplification.
 | PA-033 | Rollback reconstructed a default `HostDisplayState`, losing an active zoom transition even though its flags gate authoritative simulation work. | Original zoom messages enter through `RHGame` (`RHgame.cpp:2070-2071`), and `RHEngine::Serialize` persists the corresponding `mbackgroundTransform` transition state (`RHengine.cpp`). | `3b46c1720` derives the gameplay zoom gate from the serialized engine camera transition whenever a snapshot is restored and after replayed zoom commands. A rewind-during-zoom regression proves restored and uninterrupted simulations take the same gate. |
 | PA-031 | Push handling fell back to radial movement for unexpected thrust kinds. | `RHElementActorHuman` handles the three supported thrust kinds and asserts otherwise (`RHelementactorhuman.cpp`). | `954d4ee8d` restores the supported dispatch and rejects invalid thrust kinds with focused tests. |
 | PA-035 | A requested replay whose header could not be decoded warned and substituted the multiplayer seed or zero before Engine construction. | Replay is a Rust extension with no Original equivalent; explicit playback is a deterministic contract and cannot invent initial RNG state. | Replay seed resolution now returns a typed, contextual preload error before `Engine::new`; corrupt JSON/header data, invalid compact data, and missing fields are fatal, while valid replay and non-replay multiplayer seeds retain their priority. |
-| PA-037 | Campaign state moved through optional Engine, session, `ScriptContext`, and `GameHost` holders without proving that the one required allocation was restored on every exit. | Original exposes one required `RHCampaign` singleton across mission and script calls (`RHCampaign.cpp`, `RHgame.cpp`). | `bda4f3ffc` first added required campaign leases and identity checks; the ownership refactor later removed those transitional leases. A live `MissionDomain` now owns one concrete `Campaign`, script dispatch borrows it in place, and consuming mission finish returns it by value. Snapshot migration rejects a missing required campaign instead of fabricating one. |
+| PA-037 | Campaign state moved through optional Engine, session, `ScriptContext`, and `GameHost` holders without proving that the one required allocation was restored on every exit. | Original exposes one required `RHCampaign` singleton across mission and script calls (`RHCampaign.cpp`, `RHgame.cpp`). | `bda4f3ffc` first added required campaign leases and identity checks; the ownership refactor later removed those transitional leases. A live `MissionDomain` now owns one concrete `Campaign`, script dispatch borrows it in place, and consuming mission finish returns it by value. Current-format snapshot restoration rejects a missing required campaign instead of fabricating one. |
 | PA-038 | AI snapshots inferred archer identity from positive normal-shot range and reconstructed phalanx perception using the leftmost member's radius and stale neighbor entries. | `RHArtificialMalignity::IsArcher` is exactly bow presence, and phalanx merging evaluates each member's current detection inputs (`RHartificialmalignity.h`, `RHartificialmalignity.cpp`). | `55b85a1d9` defines archers by bow presence and snapshots each phalanx member's own radius, sector, elevation, posture, building state, detectable enemies, and current opponent list. Per-member 180/360-degree visibility and occlusion tests cover heterogeneous radii and stale entries. |
 | PA-039 | Fatal animated pushes set `Posture::Dead` during translation and omitted the original pushed-flight start and landing state boundaries. | `RHElementActorHuman::ExecuteFallingPushed` applies `Flying`/`WaitingSword` at motion start and `DeadBack` or `Lying` with `WaitingSword` at termination (`RHelementactorhuman.cpp`). | `b8fe27e82` defers animated death/knockout posture changes until the falling order starts and lands, preserves the dead-rider override, updates script sectors before domino effects, and tests fatal, knockout, rider, and already-grounded paths. |
 | PA-034 | Spellforge Lua could enter replay, rollback verification, or multiplayer even though its host-owned VM state is absent from Engine snapshots; required construction/startup and event errors were discarded, and startup RNG calls lacked an Engine scope. | Spellforge is a post-Original extension. Original only supplies the placement/failure boundary: SCB startup is structurally required, Initialize runs during engine initialization, PostInitialize follows the first refresh/sound boundary, and failed VM calls assert in debug builds (`GEngineScript.cpp`, `RHengine.cpp`, `RHgame.cpp`). | `cfcff6857` rejects Spellforge before deterministic/network Engine construction, makes required construction and startup dispatch fail with typed mission/event context, and installs the authoritative RNG scope. Ordinary single-player remains available by explicitly omitting its default rollback diagnostic. Lua snapshots and the unwired event surface remain future extension work, not claimed parity. |
@@ -176,7 +177,7 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | The live mutable-size legacy-slot walk now owns ordinary/evidenced rider movement, active melee, the supported Actor/Human/PC/NPC envelope, mobile masters and masked children, static FX/Target/Scroll/Bonus/Ale/Cape, selected bow, and the exhaustive projectile/net virtual dispatch. Mutable order, target, geometry, callbacks, combat damage/RNG, patch/Scroll/Bonus work, and concrete projectile base/derived tails close at the consuming owner slot; there is no generic nonactor animation pass, processed-projectile set, second projectile scheduler, legacy projectile-removal pre-pass, or later melee driver. Exact sequence/element/order selection prevents background movement, melee, or bow state from suppressing a higher selected arm. FreezeAll preserves each evidenced non-sprite side effect while freezing the corresponding sprite/combat work. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is active ability ownership, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other unevidenced entity kinds. |
+| PA-013 | High | incomplete | The live mutable-size legacy-slot walk now owns ordinary/evidenced rider movement, active melee, active abilities, PC Listen/Target Heard, selected beggar simulation, the supported Actor/Human/PC/NPC envelope, mobile masters and masked children, static FX/Target/Scroll/Bonus/Ale/Cape, selected bow, and the exhaustive projectile/net virtual dispatch. Actor entry latches the sequence/element/order identity used by every Execute arm; stale activity cannot suppress a different selected order. Listen uses a 25-invocation owner countdown and a captured-length, live-resolution mixed creation-order reveal/Heard scan. FreezeAll freezes sprite work while retaining evidenced non-sprite countdown/bid work. `tick_zone_occupants` remains a separate evidenced boundary. Remaining debt is unsupported rider/Execute arms and other unevidenced entity kinds. |
 
 Active straight/non-straight/completion/sweep melee executes after movement and
 before base completion, `ActionChange`, and derived tails. Strike
@@ -342,8 +343,49 @@ statements. At the end of this slice, the then-remaining boundaries still
 prevented a full Actor Hourglass coordinator and exact NPC derived-class
 nesting around the base actor. Later owner-envelope work closed the supported
 NPC nesting, and subsequent work closed active melee and selected
-bow/projectile ownership. Active abilities and unsupported action arms remain
-open under PA-013.
+bow/projectile ownership. Unsupported action arms remain open under PA-013.
+
+2026-07-21 active-ability owner fusion: actor entry captures the selected
+sequence/element/order ID and live `OrderType`; only the matching
+`ActiveAbility` executes, so stale or latent state neither runs nor suppresses
+a generic selected order. The entry latch is retained for the whole owner slot,
+deferring any successor exposed by terminal callbacks. One-shot effects,
+including Carry's posture/link change, occur once at `Done`, while ownership
+and the current order remain installed until `Terminated`; exact-owner aborts
+clear ability/phase state and take the Original impossible path. Drop teardown,
+climb teardown, and Strangle retaliation/damage retain their terminal
+boundaries. FrozenAll
+blocks sprite advancement (including throwable completion) but preserves
+Listen countdown, Whistle wait, and selected beggar bidding; fried PCs skip the
+actor envelope and `execution_frozen` suppresses active Execute and beggar work.
+
+Listen and ReceivePurse use the Original's real three-order elements rather
+than private phase IDs. Listen decrements from 25 on its first owner invocation
+and fires on the 25th, then performs one captured-length, live-resolution scan
+in creation order. Reveal and Heard callbacks occur synchronously in that
+mixed order; callback-appended entities are excluded. Distance is strict 3D
+`distance squared < 750 squared` with no layer gate. Heard requires LISTEN and
+enabled scripts, retains LISTEN while scripts are disabled, clears it before
+callback, and treats a missing required VM/script target as an invariant
+failure. ReceivePurse reveals at `WaitingWithPurse` termination before
+advancing. A LeaveListen issued during the non-interruptable EnterListen chain
+is postponed; Enter naturally owns Listening and its exit, then the restamped
+Leave becomes Impossible without rebinding ability identity. Beggar
+`Turn -> PerformAction -> Start -> Bid -> InProgress` is
+selected and advanced per owner, so earlier spawned coins are visible to later
+slots. Every throwable receives its explicit primer before insertion and
+exactly one additional advancement at its appended live creation slot in the
+same frame; the ability stays selected between spawn/debit `Done` and
+`Terminated`.
+
+Strangle coverage is deliberately boundary-specific: Done setup and its
+same-invocation victim increment, authorized-placement failure, and terminal
+non-stranglable cleanup are covered, including synchronous owner-boundary
+`Wait -> unlock -> EventGotHit Think -> LookForward` handling. Pre-Done turning
+still differs from the Original: Rust snaps both directions and drains a
+moving victim's EventStop after dispatch, while the Original uses
+attacker-then-victim `TurnFast` and delivers Stop before taking the
+initialization freeze lock.
 
 PA-013 progress note: `b9ba6f4ee` restores the original's two inactive
 eligibility gates for the implemented NPC-side blip/acoustic and soldier
@@ -531,9 +573,9 @@ need their own review.
 | Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
-| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot, including ordinary movement, active melee, rider GALOPP, and rider charge. Static Scroll Hourglass is owner-local; unsupported rider actions, abilities, and other unevidenced entity kinds remain separate. |
-| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, and patrol Think-before-direction are regression-covered. PC Listen/object reveal, Target Heard, and broader entity-owner debt remain open under PA-013. |
-| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Active melee, selected bow, and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Creation order, straight/assault causality, non-straight phase timing, synchronous melee victim ordering, and owner-local rider-charge damage are regression-covered. Active abilities, unsupported rider actions, and other combat maintenance remain open. |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot, including ordinary movement, active melee, active abilities, rider GALOPP, and rider charge. Static Scroll Hourglass is owner-local; unsupported rider actions and other unevidenced entity kinds remain separate. |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, patrol Think-before-direction, Listen's 25-invocation/strict-3D/scripts-disabled behavior, and script-enabled mixed reveal/Heard ordering with clear-before-callback and callback-appended exclusion have focused production coverage. Broader entity-owner debt remains open under PA-013. |
+| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Active melee, selected bow, active abilities, and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Exact selection identity, terminal-successor deferral, Done ownership retention, abort cleanup, LeaveListen postponement, Strangle's same-Done victim increment/non-stranglable terminal cleanup/authorized-placement failure boundary, throwable spawn timing, ReceivePurse reveal-before-order-advance, and selected beggar FrozenAll/gate/donor-coin ordering have focused production coverage. Unsupported rider actions and other combat maintenance remain open. |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |
 | PostInitialize | mission loop in `RHgame.cpp` | host boundary verified by PA-029 |
@@ -553,7 +595,7 @@ source-to-source pass is complete.
 | Movement, paths, doors, lifts | in progress, high risk | Retain PA-014/PA-022/PA-030, creation-ordered SEEK, motion-order cache, transition-prefix, and lift-approach regressions; audit remaining door and animation-callback timing. |
 | Script natives and callbacks | in progress, high risk | Retain PA-021/PA-023/PA-024/PA-028 regressions and audit remaining natives. |
 | Sequence manager and messages | in progress, high risk | PA-032 fixed; retain WAIT launch-return, condolence, and SendMessage ordering tests. |
-| Projectiles and abilities | in progress, high risk | Selected bow and projectile/net owner fusion, creation order, and spawn-frame behavior have focused PA-013 regressions. Complete true per-owner ability work without regressing those tests. |
+| Projectiles and abilities | in progress, high risk | Selected bow/projectile owner fusion, exact ability identity, Done/Terminated ownership, LeaveListen postponement, Listen/Heard synchronous callback semantics, ReceivePurse reveal ordering, selected beggar frozen/gate/donor ordering, and spawn-frame behavior have focused PA-013 production regressions. Retain them while auditing unsupported actions. |
 | Audio-driven AI state | in progress, high risk | Missing-duration parity is fixed; continue auditing completion callbacks. |
 | Deterministic snapshots and replay | in progress, high risk | PA-033/PA-035/PA-034 fixed or contained; retain active-zoom rewind, fatal replay preload, seed-priority, and Spellforge mode-rejection regressions. |
 | RNG | verified intentional architecture | Retain the typed, snapshotted stream, auxiliary/ambient classifications, structural inventory guard, and exact draw-order restoration tests from PA-036. |

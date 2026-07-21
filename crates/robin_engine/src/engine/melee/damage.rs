@@ -53,7 +53,7 @@ impl EngineInner {
     /// dispatch time instead of on every `DYING_*` / `FALLING_BACK_*`
     /// Execute init pass — same effect, fewer per-frame redundant
     /// relocations.
-    pub(super) fn find_place_to_die(&mut self, victim_id: EntityId) {
+    pub(crate) fn find_place_to_die(&mut self, victim_id: EntityId) {
         const BOX_LYING_X: f32 = 10.0;
         const BOX_LYING_Y: f32 = 5.0;
         let (start, layer) = match self.get_entity(victim_id) {

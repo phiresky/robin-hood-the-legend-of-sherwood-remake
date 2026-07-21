@@ -339,7 +339,7 @@ pub enum AbilityKind {
     Whistle,
     /// Any PC listens for nearby blipped NPCs / objects / FX targets.
     /// Drives a fixed-length countdown (`TIME_LISTEN_WAIT` = 25 frames)
-    /// in `engine/ai.rs` which fires a one-shot reveal + FX-target
+    /// in the selected PC owner arm, which fires a one-shot reveal + FX-target
     /// `Heard()` callback when it reaches 0.
     Listen,
     /// Stuteley throws a net trap.
@@ -410,7 +410,7 @@ pub enum AbilityKind {
 ///
 /// Similar to [`ActiveShot`] for bow shots and [`ActiveMelee`] for
 /// sword strikes.  Set by `abilities::begin_*` functions, consumed
-/// by `abilities::tick_abilities`.
+/// by owner-local `abilities::tick_ability`.
 #[derive(
     Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -425,6 +425,9 @@ pub struct ActiveAbility {
     /// Order ID for the sprite animation state machine.  `None` while
     /// the ability slot is idle.
     pub order_id: Option<std::num::NonZeroU32>,
+    /// Whether the legacy `RHMOTION_DONE` side effect has fired.  The
+    /// selected order remains owned by the actor until `TERMINATED`.
+    pub done_effect_applied: bool,
 }
 
 impl ActiveAbility {
