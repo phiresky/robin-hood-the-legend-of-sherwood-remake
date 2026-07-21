@@ -1418,12 +1418,10 @@ pub fn begin_listen(
 /// Called when `Command::LeaveListen` is dispatched — e.g. the
 /// player toggles Listen off mid-countdown.
 ///
-/// Unlike other `begin_*` functions, `LeaveListen` does not create a
-/// new `active_ability` — the still-active EnterListen ability tracks
-/// the exit animation.  This function just flips the phase and bumps
-/// `order_id` so `perform_action` starts the exit animation fresh.
-/// The `LeaveListen` sequence element itself is terminated
-/// immediately by the engine dispatcher (it has no ongoing task).
+/// Unlike other `begin_*` functions, `LeaveListen` reuses the existing
+/// three-order `EnterListen` element. It advances that element to its real
+/// exit order and keeps `active_ability` bound to the original owner tuple;
+/// the transient `LeaveListen` command element can terminate immediately.
 ///
 /// Returns `true` if the PC was in a cancellable phase and the
 /// transition was armed; `false` otherwise (already exiting or not
@@ -1432,9 +1430,6 @@ pub fn begin_leave_listen(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
-    order_id_counter: &mut u32,
 ) -> bool {
     let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
@@ -1452,22 +1447,25 @@ pub fn begin_leave_listen(
     }
     match actor.listen_phase {
         ListenPhase::CountingDown | ListenPhase::EnterTransition => {
-            let order_id = alloc_order_id(order_id_counter);
+            let seq_id = actor.active_ability.sequence_id.expect("Listen sequence");
+            let elem_idx = actor.active_ability.element_index;
+            let element = sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+                .expect("active Listen element missing during LeaveListen");
+            while element.current_order().is_some_and(|order| {
+                order.order_type != OrderType::TransitionListeningWaitingUpright
+            }) {
+                element.pop_current_order();
+            }
+            let order_id = element
+                .current_order()
+                .filter(|order| order.order_type == OrderType::TransitionListeningWaitingUpright)
+                .expect("EnterListen chain missing its real exit order")
+                .order_id;
             actor.listen_phase = ListenPhase::ExitTransition;
             actor.listen_wait_time = 0;
-            actor.active_ability.sequence_id = Some(seq_id);
-            actor.active_ability.element_index = elem_idx;
             actor.active_ability.order_id = Some(order_id);
             actor.active_ability.done_effect_applied = false;
-            let mut order = Order::new(
-                OrderType::TransitionListeningWaitingUpright,
-                0.0,
-                0.0,
-                order_id,
-            );
-            order.compute_direction = false;
-            order.lock_ai = true;
-            sequence_manager.push_order_on(seq_id, elem_idx, order);
             // Action state stays Listening until the exit transition
             // flips it to Waiting on Done (handled in tick_abilities).
             true

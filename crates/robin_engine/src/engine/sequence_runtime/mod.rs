@@ -1807,14 +1807,9 @@ impl DirectAbilityCommandContext<'_> {
                 self.finish_begin(result, seq_id, elem_idx)
             }
             Command::LeaveListen => {
-                if abilities::begin_leave_listen(
-                    self.entities,
-                    self.sequence_manager,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    self.next_order_id,
-                ) {
+                let started =
+                    abilities::begin_leave_listen(self.entities, self.sequence_manager, owner);
+                if started {
                     tracing::debug!(
                         ?owner,
                         "Listen: LeaveListen flipped phase to ExitTransition"

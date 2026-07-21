@@ -1389,6 +1389,183 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
 }
 
 #[test]
+fn production_leave_listen_owns_real_exit_order_until_full_termination() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let order_types = [
+        OrderType::TransitionWaitingUprightListening,
+        OrderType::Listening,
+        OrderType::TransitionListeningWaitingUpright,
+    ];
+    let scripts = order_types
+        .iter()
+        .map(|order_type| SpriteScript {
+            action_id: *order_type as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        })
+        .collect::<Vec<_>>();
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    for (row, order_type) in order_types.into_iter().enumerate() {
+        conversion[order_type as usize] = row as u16;
+    }
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(scripts),
+        std::sync::Arc::new(conversion),
+    );
+    let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        actions: [
+            crate::profiles::Action::Listen,
+            crate::profiles::Action::NoAction,
+            crate::profiles::Action::NoAction,
+        ],
+        ..Default::default()
+    });
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let enter_seq =
+        engine.launch_element(SequenceElement::new(1, Command::EnterListen, Some(owner)));
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    for _ in 0..20 {
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        if engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .listen_phase
+            == crate::element::ListenPhase::CountingDown
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .listen_phase,
+        crate::element::ListenPhase::CountingDown
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(enter_seq, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_type,
+        OrderType::Listening
+    );
+
+    let leave_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::LeaveListen, Some(owner)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(leave_seq, 0);
+    assert!(crate::abilities::begin_leave_listen(
+        &mut engine.world.entities,
+        &mut engine.orders.sequence_manager,
+        owner,
+    ));
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(leave_seq, 0);
+    let exit = engine
+        .orders
+        .sequence_manager
+        .get_element(enter_seq, 0)
+        .unwrap()
+        .current_order()
+        .unwrap();
+    assert_eq!(
+        exit.order_type,
+        OrderType::TransitionListeningWaitingUpright
+    );
+    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    assert_eq!(actor.active_ability.sequence_id, Some(enter_seq));
+    assert_eq!(actor.active_ability.element_index, 0);
+    assert_eq!(actor.active_ability.order_id, Some(exit.order_id));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(leave_seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated,
+        "transient LeaveListen element must never become the exit owner"
+    );
+
+    for _ in 0..20 {
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        if !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+        {
+            break;
+        }
+    }
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(enter_seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .listen_phase,
+        crate::element::ListenPhase::Inactive
+    );
+}
+
+#[test]
 fn melee_completion_precedes_a_later_ability_dispatch() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
