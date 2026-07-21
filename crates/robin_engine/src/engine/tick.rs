@@ -2906,20 +2906,44 @@ impl EngineInner {
             sim,
             assets,
             |engine, owner| {
+                use crate::element::OriginalHourglassClass as Class;
+
                 // Original-derived nonactor nesting: the mobile master/child
                 // boundary runs before the independent static owner, followed
                 // by projectile/net virtual dispatch.
-                if engine.tick_mobile_child_owner_boundary(sim, assets, owner) {
-                    return;
+                let class = engine
+                    .get_entity(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Hourglass owner {owner:?} disappeared immediately after live legacy-slot resolution"
+                        )
+                    })
+                    .original_hourglass_class();
+                match class {
+                    Class::FxMasked => assert!(
+                        engine.tick_mobile_child_owner_boundary(sim, assets, owner),
+                        "mapped FXMasked owner {owner:?} lost its mobile boundary"
+                    ),
+                    Class::Fx
+                    | Class::Target
+                    | Class::Bonus
+                    | Class::Ale
+                    | Class::Cape
+                    | Class::Scroll => {
+                        engine.tick_static_entity_hourglass_for(sim, assets, owner)
+                    }
+                    Class::Arrow
+                    | Class::Apple
+                    | Class::Stone
+                    | Class::Purse
+                    | Class::Coin
+                    | Class::Net
+                    | Class::WaspNest
+                    | Class::Wasp => {
+                        engine.tick_projectile_or_net_hourglass(sim, assets, owner)
+                    }
+                    Class::ActorPc | Class::ActorSoldier | Class::ActorCivilian => {}
                 }
-                engine.tick_static_entity_hourglass_for(sim, assets, owner);
-                if matches!(
-                    engine.get_entity(owner),
-                    Some(Entity::Fx(_) | Entity::Target(_) | Entity::Bonus(_) | Entity::Scroll(_))
-                ) {
-                    return;
-                }
-                engine.tick_projectile_or_net_hourglass(sim, assets, owner);
             },
             |engine, owner| {
                 if matches!(owner, EntityId::Soldier(_)) {
@@ -5951,7 +5975,11 @@ mod soldier_take_drink_parity_tests {
 
     fn make_bonus_object_at(object_type: ObjectType, x: f32, y: f32) -> Entity {
         let mut element = ElementData {
-            kind: ElementKind::ObjectBonus,
+            kind: if matches!(object_type, ObjectType::Ale | ObjectType::Cape) {
+                ElementKind::ObjectOther
+            } else {
+                ElementKind::ObjectBonus
+            },
             active: true,
             ..ElementData::default()
         };

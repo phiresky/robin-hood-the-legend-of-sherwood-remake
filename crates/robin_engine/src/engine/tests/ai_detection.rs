@@ -5428,6 +5428,10 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
         crate::element::ElementKind::ObjectScroll => {
             Entity::Scroll(crate::element::ElementScroll {
                 element,
+                object: crate::element::ObjectData {
+                    object_type: crate::element::ObjectType::Scroll,
+                    ..Default::default()
+                },
                 ..Default::default()
             })
         }

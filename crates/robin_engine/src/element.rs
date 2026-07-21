@@ -2151,6 +2151,137 @@ macro_rules! entity_variant_accessors {
 }
 
 impl Entity {
+    /// Resolve the Original concrete class whose virtual `Hourglass` chain
+    /// owns this Rust entity.
+    ///
+    /// `Entity`, `ElementKind`, and (for objects) `ObjectType` jointly replace
+    /// the Original class-id/vtable.  Keep the match exhaustive so adding a
+    /// Rust kind or object type cannot silently inherit an unrelated update.
+    pub(crate) fn original_hourglass_class(&self) -> OriginalHourglassClass {
+        let (expected_kind, class) = match self {
+            Self::Pc(_) => (ElementKind::ActorPc, OriginalHourglassClass::ActorPc),
+            Self::Soldier(_) => (
+                ElementKind::ActorSoldier,
+                OriginalHourglassClass::ActorSoldier,
+            ),
+            Self::Civilian(_) => (
+                ElementKind::ActorCivilian,
+                OriginalHourglassClass::ActorCivilian,
+            ),
+            Self::Fx(fx) => (
+                ElementKind::Fx,
+                if fx.fx.mobile_index.is_some() {
+                    OriginalHourglassClass::FxMasked
+                } else {
+                    OriginalHourglassClass::Fx
+                },
+            ),
+            Self::Target(_) => (ElementKind::Target, OriginalHourglassClass::Target),
+            Self::Bonus(bonus) => match bonus.object.object_type {
+                ObjectType::Ale => (ElementKind::ObjectOther, OriginalHourglassClass::Ale),
+                ObjectType::Cape => (ElementKind::ObjectOther, OriginalHourglassClass::Cape),
+                ObjectType::BonusAmulet
+                | ObjectType::BonusAle
+                | ObjectType::BonusApple
+                | ObjectType::BonusArrow
+                | ObjectType::BonusBlazon
+                | ObjectType::BonusLambLeg
+                | ObjectType::BonusNet
+                | ObjectType::BonusPlants
+                | ObjectType::BonusPurse
+                | ObjectType::BonusRansom
+                | ObjectType::BonusStone
+                | ObjectType::BonusWaspNest
+                | ObjectType::BonusAmpulla
+                | ObjectType::BonusCoronationSpoon
+                | ObjectType::BonusRichardsCrown
+                | ObjectType::BonusRoyalSeal
+                | ObjectType::BonusRoyalSceptre
+                | ObjectType::BonusDomesdayBook
+                | ObjectType::BonusSwordOfTheState => {
+                    (ElementKind::ObjectBonus, OriginalHourglassClass::Bonus)
+                }
+                ObjectType::None
+                | ObjectType::VirtualJumper
+                | ObjectType::VirtualListen
+                | ObjectType::Apple
+                | ObjectType::Arrow
+                | ObjectType::Stone
+                | ObjectType::Purse
+                | ObjectType::Coin
+                | ObjectType::Net
+                | ObjectType::Wasp
+                | ObjectType::WaspNest
+                | ObjectType::Scroll => panic!(
+                    "Entity::Bonus has no Original concrete-class mapping for ObjectType::{:?}",
+                    bonus.object.object_type
+                ),
+            },
+            Self::Scroll(scroll) => match scroll.object.object_type {
+                ObjectType::Scroll => (ElementKind::ObjectScroll, OriginalHourglassClass::Scroll),
+                object_type => panic!(
+                    "Entity::Scroll has invalid ObjectType::{object_type:?}; expected Scroll"
+                ),
+            },
+            Self::Projectile(projectile) => {
+                let class = match projectile.object.object_type {
+                    ObjectType::Arrow => OriginalHourglassClass::Arrow,
+                    ObjectType::Apple => OriginalHourglassClass::Apple,
+                    ObjectType::Stone => OriginalHourglassClass::Stone,
+                    ObjectType::Purse => OriginalHourglassClass::Purse,
+                    ObjectType::Coin => OriginalHourglassClass::Coin,
+                    ObjectType::WaspNest | ObjectType::BonusWaspNest => {
+                        OriginalHourglassClass::WaspNest
+                    }
+                    ObjectType::Wasp => OriginalHourglassClass::Wasp,
+                    ObjectType::None
+                    | ObjectType::VirtualJumper
+                    | ObjectType::VirtualListen
+                    | ObjectType::Ale
+                    | ObjectType::Net
+                    | ObjectType::Scroll
+                    | ObjectType::Cape
+                    | ObjectType::BonusAmulet
+                    | ObjectType::BonusAle
+                    | ObjectType::BonusApple
+                    | ObjectType::BonusArrow
+                    | ObjectType::BonusBlazon
+                    | ObjectType::BonusLambLeg
+                    | ObjectType::BonusNet
+                    | ObjectType::BonusPlants
+                    | ObjectType::BonusPurse
+                    | ObjectType::BonusRansom
+                    | ObjectType::BonusStone
+                    | ObjectType::BonusAmpulla
+                    | ObjectType::BonusCoronationSpoon
+                    | ObjectType::BonusRichardsCrown
+                    | ObjectType::BonusRoyalSeal
+                    | ObjectType::BonusRoyalSceptre
+                    | ObjectType::BonusDomesdayBook
+                    | ObjectType::BonusSwordOfTheState => panic!(
+                        "Entity::Projectile has no Original concrete-class mapping for ObjectType::{:?}",
+                        projectile.object.object_type
+                    ),
+                };
+                (ElementKind::ObjectProjectile, class)
+            }
+            Self::Net(net) => match net.object.object_type {
+                ObjectType::Net | ObjectType::BonusNet => {
+                    (ElementKind::ObjectNet, OriginalHourglassClass::Net)
+                }
+                object_type => panic!(
+                    "Entity::Net has invalid ObjectType::{object_type:?}; expected Net or BonusNet"
+                ),
+            },
+        };
+        assert_eq!(
+            self.kind(),
+            expected_kind,
+            "Rust entity variant/ElementKind invariant failed for Original {class:?}"
+        );
+        class
+    }
+
     pub fn entity_id_kind(&self) -> EntityIdKind {
         match self {
             Self::Pc(_) => EntityIdKind::Pc,
@@ -3197,6 +3328,29 @@ impl Entity {
     }
 }
 
+/// Concrete Original class selected by Rust's entity/object discriminants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OriginalHourglassClass {
+    ActorPc,
+    ActorSoldier,
+    ActorCivilian,
+    Fx,
+    FxMasked,
+    Target,
+    Bonus,
+    Ale,
+    Cape,
+    Scroll,
+    Arrow,
+    Apple,
+    Stone,
+    Purse,
+    Coin,
+    Net,
+    WaspNest,
+    Wasp,
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Trait hierarchy
 // ═══════════════════════════════════════════════════════════════════
@@ -3848,6 +4002,167 @@ impl ElementNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn object_data(object_type: ObjectType) -> ObjectData {
+        ObjectData {
+            object_type,
+            ..Default::default()
+        }
+    }
+
+    fn element_data(kind: ElementKind) -> ElementData {
+        ElementData {
+            kind,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn original_hourglass_mapping_covers_every_rust_concrete_class() {
+        use OriginalHourglassClass as Class;
+
+        let cases = [
+            (
+                Entity::Pc(ActorPc {
+                    element: element_data(ElementKind::ActorPc),
+                    actor: ActorData::default(),
+                    human: HumanData::default(),
+                    pc: PcData::default(),
+                }),
+                Class::ActorPc,
+            ),
+            (
+                Entity::Soldier(ActorSoldier {
+                    element: element_data(ElementKind::ActorSoldier),
+                    actor: ActorData::default(),
+                    human: HumanData::default(),
+                    npc: NpcData::default(),
+                    soldier: SoldierData::default(),
+                }),
+                Class::ActorSoldier,
+            ),
+            (
+                Entity::Civilian(ActorCivilian {
+                    element: element_data(ElementKind::ActorCivilian),
+                    actor: ActorData::default(),
+                    human: HumanData::default(),
+                    npc: NpcData::default(),
+                    civilian: CivilianData::default(),
+                }),
+                Class::ActorCivilian,
+            ),
+            (
+                Entity::Fx(ElementFx {
+                    element: element_data(ElementKind::Fx),
+                    fx: FxData::default(),
+                }),
+                Class::Fx,
+            ),
+            (
+                Entity::Fx(ElementFx {
+                    element: element_data(ElementKind::Fx),
+                    fx: FxData {
+                        mobile_index: Some(0),
+                        ..Default::default()
+                    },
+                }),
+                Class::FxMasked,
+            ),
+            (
+                Entity::Target(ElementTarget {
+                    element: element_data(ElementKind::Target),
+                    fx: FxData::default(),
+                    target: TargetData::default(),
+                }),
+                Class::Target,
+            ),
+            (
+                Entity::Bonus(ElementBonus {
+                    element: element_data(ElementKind::ObjectBonus),
+                    object: object_data(ObjectType::BonusAmulet),
+                }),
+                Class::Bonus,
+            ),
+            (
+                Entity::Bonus(ElementBonus {
+                    element: element_data(ElementKind::ObjectOther),
+                    object: object_data(ObjectType::Ale),
+                }),
+                Class::Ale,
+            ),
+            (
+                Entity::Bonus(ElementBonus {
+                    element: element_data(ElementKind::ObjectOther),
+                    object: object_data(ObjectType::Cape),
+                }),
+                Class::Cape,
+            ),
+            (
+                Entity::Scroll(ElementScroll {
+                    element: element_data(ElementKind::ObjectScroll),
+                    object: object_data(ObjectType::Scroll),
+                    ..Default::default()
+                }),
+                Class::Scroll,
+            ),
+        ];
+        for (entity, expected) in cases {
+            assert_eq!(entity.original_hourglass_class(), expected);
+        }
+
+        let projectile_cases = [
+            (ObjectType::Arrow, Class::Arrow),
+            (ObjectType::Apple, Class::Apple),
+            (ObjectType::Stone, Class::Stone),
+            (ObjectType::Purse, Class::Purse),
+            (ObjectType::Coin, Class::Coin),
+            (ObjectType::WaspNest, Class::WaspNest),
+            (ObjectType::BonusWaspNest, Class::WaspNest),
+            (ObjectType::Wasp, Class::Wasp),
+        ];
+        for (object_type, expected) in projectile_cases {
+            let entity = Entity::Projectile(ElementProjectile {
+                element: element_data(ElementKind::ObjectProjectile),
+                object: object_data(object_type),
+                projectile: ProjectileData::default(),
+            });
+            assert_eq!(
+                entity.original_hourglass_class(),
+                expected,
+                "{object_type:?}"
+            );
+        }
+        for object_type in [ObjectType::Net, ObjectType::BonusNet] {
+            let entity = Entity::Net(ElementNet {
+                element: element_data(ElementKind::ObjectNet),
+                object: object_data(object_type),
+                projectile: ProjectileData::default(),
+                net: NetData::default(),
+            });
+            assert_eq!(entity.original_hourglass_class(), Class::Net);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "variant/ElementKind invariant failed")]
+    fn original_hourglass_mapping_rejects_mismatched_element_kind() {
+        Entity::Projectile(ElementProjectile {
+            element: element_data(ElementKind::ObjectBonus),
+            object: object_data(ObjectType::Arrow),
+            projectile: ProjectileData::default(),
+        })
+        .original_hourglass_class();
+    }
+
+    #[test]
+    #[should_panic(expected = "no Original concrete-class mapping")]
+    fn original_hourglass_mapping_rejects_unproved_variant_object_pair() {
+        Entity::Bonus(ElementBonus {
+            element: element_data(ElementKind::ObjectBonus),
+            object: object_data(ObjectType::Coin),
+        })
+        .original_hourglass_class();
+    }
 
     #[test]
     fn entity_bonus_object_type_mapping_is_exhaustive_and_original_evidenced() {
