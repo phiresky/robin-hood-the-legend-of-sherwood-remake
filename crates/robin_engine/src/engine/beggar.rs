@@ -290,12 +290,20 @@ impl EngineInner {
             panic!("beggar owner {pc_id:?} disappeared in its Actor Hourglass slot");
         };
         assert!(matches!(entity, Entity::Pc(_)), "beggar owner must be a PC");
-        let motion = if self.actors_frozen() {
+        let sprite_frozen = self.actors_frozen();
+        let pc = self
+            .world
+            .entities
+            .get_mut(pc_id)
+            .expect("validated beggar owner disappeared");
+        // TurnFast precedes PerformAction in Original and is not a sprite
+        // increment, so FrozenAll still permits the turn and following Bid.
+        pc.position_iface_mut().turn();
+        let direction = u16::try_from(pc.element_data().direction())
+            .expect("beggar direction must be in the canonical 0..=15 range");
+        let motion = if sprite_frozen {
             crate::sprite::MotionState::InProgress
         } else {
-            let pc = self.world.entities.get_mut(pc_id).unwrap();
-            pc.position_iface_mut().turn();
-            let direction = u16::try_from(pc.element_data().direction()).unwrap_or(0);
             pc.element_data_mut().sprite.perform_action(
                 sim,
                 Some(order_id),

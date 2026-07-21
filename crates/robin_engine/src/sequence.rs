@@ -2345,6 +2345,11 @@ impl SequenceManager {
         self.sequences.values()
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
+        self.elements_to_go.contains(&(seq_id, elem_idx))
+    }
+
     /// Get a reference to a specific element within a sequence.
     pub fn get_element(&self, seq_id: SequenceId, elem_idx: usize) -> Option<&SequenceElement> {
         self.get_sequence(seq_id)?.get(elem_idx)
@@ -3012,7 +3017,9 @@ impl SequenceManager {
         let blocked = seq
             .elements
             .get(elem_idx)
-            .map(|elem| elem.priority.is_non_interruptable())
+            .map(|elem| {
+                elem.state == SequenceState::InProgress && elem.priority.is_non_interruptable()
+            })
             .unwrap_or(false);
         if blocked {
             tracing::debug!(
@@ -3467,6 +3474,12 @@ impl SequenceManager {
             && succ_elem.state == SequenceState::Postponed
         {
             succ_elem.state = SequenceState::Todo;
+            // Original re-enters Instruct after postponement and samples the
+            // owner's then-current posture/action state. Force the same
+            // restamp instead of retaining the state captured before the
+            // non-interruptable blocker ran to completion.
+            succ_elem.posture_after_transition = Posture::Undefined;
+            succ_elem.action_state_after_transition = ActionState::default();
             self.register_element_to_go(succ_seq_id, succ_idx);
         }
     }
@@ -5887,5 +5900,32 @@ mod tests {
         assert!(!mgr.is_next_movement(seq_id, 1)); // next is Jump (Simple) — not movement
         assert!(mgr.is_next_movement_or_jump(seq_id, 1));
         assert!(!mgr.is_next_movement(seq_id, 2)); // last element — nothing next
+    }
+
+    #[test]
+    fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+
+        let mut todo = SequenceElement::new(1, Command::LeaveListen, Some(owner));
+        todo.priority = SequencePriority::NonInterruptable;
+        let todo_seq = mgr.launch_element(todo);
+        mgr.element_impossible(todo_seq, 0);
+        assert_eq!(
+            mgr.get_element(todo_seq, 0).unwrap().state,
+            SequenceState::Impossible,
+            "preflight failure must reject a Todo non-interruptable element"
+        );
+
+        let mut active = SequenceElement::new(1, Command::EnterListen, Some(owner));
+        active.priority = SequencePriority::NonInterruptable;
+        let active_seq = mgr.launch_element(active);
+        mgr.element_in_progress(active_seq, 0);
+        mgr.element_impossible(active_seq, 0);
+        assert_eq!(
+            mgr.get_element(active_seq, 0).unwrap().state,
+            SequenceState::InProgress,
+            "an executing non-interruptable owner remains protected"
+        );
     }
 }

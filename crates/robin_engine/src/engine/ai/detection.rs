@@ -387,8 +387,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        _world: &AiWorldView,
-        requested_pc: Option<EntityId>,
+        pc_id: EntityId,
     ) -> bool {
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
@@ -416,16 +415,14 @@ impl EngineInner {
             seq_id: crate::sequence::SequenceId,
             elem_idx: usize,
         }
-        let mut firing_listeners: Vec<FiringListener> = Vec::new();
-        for &pc_id in &self.world.pc_ids {
-            if requested_pc.is_some_and(|requested| requested != pc_id) {
-                continue;
-            }
-            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
-                continue;
+        let firing_listener = {
+            let pc = match self.world.entities.get_mut(pc_id) {
+                Some(Entity::Pc(pc)) => pc,
+                Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
+                None => panic!("Listen owner {pc_id:?} disappeared"),
             };
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
-                continue;
+                return false;
             }
             // Advance rotation toward `direction_goal` one step.
             // PI is the source of truth for direction now — no
@@ -438,7 +435,7 @@ impl EngineInner {
             }
             pc.actor.listen_wait_time -= 1;
             if pc.actor.listen_wait_time != 0 {
-                continue;
+                return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and
             // advance the phase so `tick_abilities` plays the
@@ -454,15 +451,15 @@ impl EngineInner {
                     .expect("Listen sequence"),
                 elem_idx: pc.actor.active_ability.element_index,
             };
-            firing_listeners.push(fl);
             tracing::debug!(
                 pc = pc_id.index(),
                 "Listen: one-shot reveal fired after TIME_LISTEN_WAIT frames"
             );
-        }
+            fl
+        };
 
-        let fired = !firing_listeners.is_empty();
-        for listener in firing_listeners {
+        let listener = firing_listener;
+        {
             // C++ captures Size() once, then resolves each live slot and
             // applies RevealBlip/Heard synchronously in that mixed order.
             let captured_len = self.world.entities.len();
@@ -555,7 +552,7 @@ impl EngineInner {
             actor.active_ability.order_id = Some(exit_order_id);
             actor.active_ability.done_effect_applied = false;
         }
-        fired
+        true
     }
 
     /// Strict live `RHElementBonus::RefreshDiscovered` for one bonus-owned

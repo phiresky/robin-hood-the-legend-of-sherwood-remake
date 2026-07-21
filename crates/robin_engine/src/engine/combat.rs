@@ -2881,7 +2881,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
-        let strangle_victim = self
+        let strangle_victim_after_attacker = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
@@ -2890,15 +2890,6 @@ impl EngineInner {
                     .then_some(actor.active_ability.target)
                     .flatten()
             });
-        if let Some(victim_id) = strangle_victim
-            && !self.actors_frozen()
-        {
-            self.get_entity_mut(victim_id)
-                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
-                .element_data_mut()
-                .sprite
-                .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
-        }
         let sprite_frozen = self.actors_frozen();
         let results = crate::abilities::tick_ability(
             sim,
@@ -2907,6 +2898,15 @@ impl EngineInner {
             actor_id,
             sprite_frozen,
         );
+        if let Some(victim_id) = strangle_victim_after_attacker
+            && !sprite_frozen
+        {
+            self.get_entity_mut(victim_id)
+                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+                .element_data_mut()
+                .sprite
+                .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
+        }
         for result in results {
             use crate::abilities::AbilityTickResult;
             match result {
@@ -2964,7 +2964,14 @@ impl EngineInner {
                         }
                     }
                 }
-                AbilityTickResult::Aborted { seq_id, elem_idx } => {
+                AbilityTickResult::Aborted {
+                    actor_id,
+                    kind,
+                    seq_id,
+                    elem_idx,
+                    order_id,
+                } => {
+                    self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, order_id);
                     self.orders
                         .sequence_manager
                         .element_impossible(seq_id, elem_idx);
@@ -3777,24 +3784,27 @@ impl EngineInner {
                     // and the soldier gets an EventGotHit stimulus so
                     // it retaliates.
                     let stranglable = match self.get_entity(target_id) {
-                        Some(e) if e.is_dead() => false,
                         Some(crate::element::Entity::Soldier(s)) => assets
                             .profile_manager
                             .get_soldier(s.soldier.soldier_profile_index)
-                            .map(|p| p.strangle)
-                            .unwrap_or(true),
-                        Some(_) => true, // civilians / others: always stranglable
-                        None => false,
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "strangle victim {target_id:?} has missing soldier profile {}",
+                                    s.soldier.soldier_profile_index
+                                )
+                            })
+                            .strangle,
+                        Some(crate::element::Entity::Civilian(_)) => true,
+                        Some(_) => panic!("strangle victim {target_id:?} is not an NPC human"),
+                        None => panic!("strangle victim {target_id:?} disappeared at termination"),
                     };
 
                     if !stranglable {
-                        if let Some(victim) = self.get_entity_mut(target_id) {
-                            victim.actor_data_mut().unwrap().execution_frozen = false;
-                            victim
-                                .ai_controller_mut()
-                                .expect("non-stranglable victim must have AI")
-                                .non_script_unlock(crate::ai::AiLockFlags::FREEZE);
-                        }
+                        self.get_entity_mut(target_id)
+                            .expect("validated non-stranglable victim disappeared")
+                            .ai_controller_mut()
+                            .expect("non-stranglable victim must have AI")
+                            .non_script_unlock(crate::ai::AiLockFlags::FREEZE);
                         let stimulus = crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventGotHit,
                             actor_id.index(),
@@ -3805,25 +3815,26 @@ impl EngineInner {
                             target = ?target_id,
                             "Strangle: target not stranglable, dispatched EVENT_GOTHIT"
                         );
-                        return;
+                        continue;
                     }
 
                     // Full-life-points kill — launch ReceiveDamage on
                     // the victim with damage = current life and
-                    // concussion = 0.  Origin is the victim itself so
-                    // the kill doesn't misattribute XP to the strangler.
+                    // concussion = 0 and no damage origin.
                     let life = match self.get_entity(target_id) {
                         Some(crate::element::Entity::Soldier(s)) => s.npc.life_points,
                         Some(crate::element::Entity::Civilian(c)) => c.npc.life_points,
-                        Some(crate::element::Entity::Pc(pc)) => pc.pc.life_points,
-                        _ => 0,
-                    }
-                    .max(0) as u16;
+                        Some(_) => unreachable!("strangle victim kind validated above"),
+                        None => panic!("strangle victim {target_id:?} disappeared before damage"),
+                    };
+                    let life = u16::try_from(life).unwrap_or_else(|_| {
+                        panic!("strangle victim {target_id:?} has invalid life {life}")
+                    });
                     let dmg = crate::sequence::SequenceElement::new_damage(
                         1,
                         crate::element::Command::ReceiveDamage,
                         Some(target_id),
-                        Some(target_id),
+                        None,
                         life,
                         0,
                     );
@@ -3839,32 +3850,144 @@ impl EngineInner {
                 AbilityTickResult::StrangleSetupDone {
                     actor_id,
                     target_id,
-                    seq_id: _,
-                    elem_idx: _,
+                    seq_id,
+                    elem_idx,
                 } => {
-                    let (position, direction) = self
-                        .get_entity(actor_id)
-                        .map(|actor| {
-                            (
-                                actor.element_data().position_map(),
-                                u16::try_from(actor.element_data().direction()).unwrap_or(0),
-                            )
-                        })
-                        .unwrap_or_else(|| panic!("strangler {actor_id:?} vanished at Done"));
+                    let (position, action_point, direction, layer, sector, obstacle, plane) = {
+                        let attacker = self
+                            .get_entity(actor_id)
+                            .unwrap_or_else(|| panic!("strangler {actor_id:?} vanished at Done"));
+                        let position = attacker.element_data().position_map();
+                        let hotspot = attacker
+                            .sprite()
+                            .current_hotspot()
+                            .expect("strangler current animation has no action point");
+                        let sprite_pos = attacker.cxx_position_sprite();
+                        (
+                            position,
+                            crate::coordinates::MapPoint::new(
+                                sprite_pos.x + hotspot.x,
+                                sprite_pos.y + hotspot.y,
+                            ),
+                            u16::try_from(attacker.element_data().direction()).expect(
+                                "strangler direction must be in the canonical 0..=15 range",
+                            ),
+                            attacker.element_data().layer(),
+                            attacker.element_data().sector(),
+                            attacker.element_data().obstacle_index(),
+                            attacker.position_iface().get_plane().copied(),
+                        )
+                    };
+                    {
+                        let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        victim
+                            .element_data_mut()
+                            .set_obstacle_index(obstacle, plane);
+                        victim.element_data_mut().set_layer(layer);
+                        victim.element_data_mut().set_sector(sector);
+                        victim.element_data_mut().set_position_map(action_point);
+                        victim
+                            .element_data_mut()
+                            .set_direction_instantly(direction as i16);
+                    }
+                    let victim_move_box = {
+                        let victim = self.get_entity(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        *victim.position_iface().get_move_box()
+                    };
+                    let mut victim_box = victim_move_box.translated(action_point);
+                    if !victim_move_box.is_somewhere()
+                        || !self.world.fast_grid.find_authorized_position_toward(
+                            &mut victim_box,
+                            position,
+                            layer,
+                        )
+                    {
+                        self.cleanup_aborted_ability(
+                            actor_id,
+                            crate::movement::AbilityKind::Strangle,
+                            seq_id,
+                            elem_idx,
+                            self.get_entity(actor_id)
+                                .and_then(Entity::actor_data)
+                                .and_then(|actor| actor.active_ability.order_id),
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
+                        continue;
+                    }
+                    let authorized_position = victim_box.center();
+                    {
+                        let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        victim
+                            .element_data_mut()
+                            .set_position_map(authorized_position);
+                        victim.element_data_mut().sprite.display_order_ref = None;
+                        victim.element_data_mut().sprite.behind_display_order_ref = false;
+                    }
                     self.actor_freeze_execution(target_id);
                     let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
                         panic!("strangle victim {target_id:?} vanished at Done")
                     });
-                    victim.element_data_mut().set_position_map(position);
-                    victim
-                        .element_data_mut()
-                        .set_direction_instantly(direction as i16);
                     victim
                         .element_data_mut()
                         .sprite
                         .force_animation(crate::order::OrderType::BeingStrangled, direction);
+                    let remark = if matches!(victim, crate::element::Entity::Civilian(_)) {
+                        crate::ai::Remark::CivDies
+                    } else {
+                        crate::ai::Remark::Strangled
+                    };
+                    victim
+                        .ai_controller_mut()
+                        .expect("strangle victim must have AI")
+                        .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
+                    self.drain_ai_owner_work_for(sim, assets, target_id);
+                    if !sprite_frozen {
+                        self.get_entity_mut(target_id)
+                            .expect("strangle victim disappeared after speech")
+                            .element_data_mut()
+                            .sprite
+                            .perform_virgin_increment(
+                                sim,
+                                crate::sprite::FrameProgression::Default,
+                            );
+                    }
                 }
             }
+        }
+    }
+
+    pub(super) fn cleanup_aborted_ability(
+        &mut self,
+        actor_id: EntityId,
+        kind: crate::movement::AbilityKind,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_id: Option<std::num::NonZeroU32>,
+    ) {
+        if let Some(actor) = self
+            .get_entity_mut(actor_id)
+            .and_then(Entity::actor_data_mut)
+            && actor.active_ability.kind == Some(kind)
+            && actor.active_ability.sequence_id == Some(seq_id)
+            && actor.active_ability.element_index == elem_idx
+            && actor.active_ability.order_id == order_id
+        {
+            actor.active_ability.clear();
+            if kind == crate::movement::AbilityKind::Listen {
+                actor.listen_phase = crate::element::ListenPhase::Inactive;
+                actor.listen_wait_time = 0;
+            } else if kind == crate::movement::AbilityKind::ReceivePurse {
+                actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+            }
+            actor.action_state = crate::element::ActionState::Waiting;
         }
     }
 

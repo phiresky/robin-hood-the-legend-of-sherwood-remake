@@ -590,8 +590,8 @@ pub struct ActorData {
     pub whistle_wait_time: u32,
 
     /// Current phase of the Listen ability, if any.  We carry an
-    /// explicit phase so the ability tick in `abilities::tick_abilities`
-    /// and the countdown in `engine/ai.rs` section 2a can coordinate
+    /// explicit phase so owner-local ability animation and countdown work
+    /// can coordinate
     /// without re-parsing order types every frame.
     pub listen_phase: ListenPhase,
 

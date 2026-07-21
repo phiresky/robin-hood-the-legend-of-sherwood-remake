@@ -1807,15 +1807,11 @@ impl DirectAbilityCommandContext<'_> {
                 self.finish_begin(result, seq_id, elem_idx)
             }
             Command::LeaveListen => {
-                let started =
-                    abilities::begin_leave_listen(self.entities, self.sequence_manager, owner);
-                if started {
-                    tracing::debug!(
-                        ?owner,
-                        "Listen: LeaveListen flipped phase to ExitTransition"
-                    );
-                }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                // EnterListen is NON_INTERRUPTABLE in Original, so production
+                // arbitration postpones LeaveListen until the complete
+                // entry/listening/exit chain has restored Waiting. Re-dispatch
+                // then fails MUST_BE_LISTENING and is Impossible.
+                self.sequence_manager.element_impossible(seq_id, elem_idx);
                 OwnerActionBarrier::Reach
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {

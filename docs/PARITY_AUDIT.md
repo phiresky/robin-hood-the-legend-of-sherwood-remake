@@ -349,10 +349,12 @@ bow/projectile ownership. Unsupported action arms remain open under PA-013.
 sequence/element/order ID and live `OrderType`; only the matching
 `ActiveAbility` executes, so stale or latent state neither runs nor suppresses
 a generic selected order. The entry latch is retained for the whole owner slot,
-deferring any successor exposed by terminal callbacks. One-shot effects occur
-once at `Done`, while ownership and the current order remain installed until
-`Terminated`; aborts take the Original impossible path. Terminal-only carry,
-drop, climb, and strangle phases retain their distinct boundaries. FrozenAll
+deferring any successor exposed by terminal callbacks. One-shot effects,
+including Carry's posture/link change, occur once at `Done`, while ownership
+and the current order remain installed until `Terminated`; exact-owner aborts
+clear ability/phase state and take the Original impossible path. Drop teardown,
+climb teardown, and Strangle retaliation/damage retain their terminal
+boundaries. FrozenAll
 blocks sprite advancement (including throwable completion) but preserves
 Listen countdown, Whistle wait, and selected beggar bidding; fried PCs skip the
 actor envelope and `execution_frozen` suppresses active Execute and beggar work.
@@ -366,7 +368,10 @@ mixed order; callback-appended entities are excluded. Distance is strict 3D
 enabled scripts, retains LISTEN while scripts are disabled, clears it before
 callback, and treats a missing required VM/script target as an invariant
 failure. ReceivePurse reveals at `WaitingWithPurse` termination before
-advancing. Beggar `Turn -> PerformAction -> Start -> Bid -> InProgress` is
+advancing. A LeaveListen issued during the non-interruptable EnterListen chain
+is postponed; Enter naturally owns Listening and its exit, then the restamped
+Leave becomes Impossible without rebinding ability identity. Beggar
+`Turn -> PerformAction -> Start -> Bid -> InProgress` is
 selected and advanced per owner, so earlier spawned coins are visible to later
 slots. Every throwable receives its explicit primer before insertion and
 exactly one additional advancement at its appended live creation slot in the
@@ -560,8 +565,8 @@ need their own review.
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
 | Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed. The supported Soldier/Human/base Actor/PC-or-NPC envelope now shares each live legacy creation slot, including ordinary movement, active melee, active abilities, rider GALOPP, and rider charge. Static Scroll Hourglass is owner-local; unsupported rider actions and other unevidenced entity kinds remain separate. |
-| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, patrol Think-before-direction, PC Listen/object reveal, and Target Heard are regression-covered. Broader entity-owner debt remains open under PA-013. |
-| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Active melee, selected bow, active abilities, and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Creation order, Done-versus-Terminated effects, frozen gates, Listen/Heard, beggar selection, ReceivePurse, throwable spawn timing, synchronous melee victim ordering, and owner-local rider-charge damage are regression-covered. Unsupported rider actions and other combat maintenance remain open. |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | The complete supported NPC-derived envelope now nests patrol before Human/base Actor work and inform/view/detection/ambush/deafness plus the busy/ladder/speech/lock-gated suffix afterward. Live per-owner inputs, synchronous FIFO closure, lock/freeze gates, PC-noise ordering, wake effects, patrol Think-before-direction, and the Listen 25-invocation/strict-3D/scripts-disabled behavior have focused coverage. Script-enabled Heard callback re-entry remains a retained integration boundary. Broader entity-owner debt remains open under PA-013. |
+| Projectiles, melee, and abilities | per-type virtual Hourglass/Execute methods | Active melee, selected bow, active abilities, and exhaustive projectile/net virtual dispatch are fused into the live owner walk, including primer plus appended-slot advancement. Exact selection identity, terminal-successor deferral, Done ownership retention, abort cleanup, LeaveListen postponement, Strangle ordering, and throwable spawn timing have focused coverage. ReceivePurse reveal callback ordering and donor-driven beggar coin integration remain retained integration boundaries; unsupported rider actions and other combat maintenance remain open. |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
 | Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |
 | PostInitialize | mission loop in `RHgame.cpp` | host boundary verified by PA-029 |
@@ -581,7 +586,7 @@ source-to-source pass is complete.
 | Movement, paths, doors, lifts | in progress, high risk | Retain PA-014/PA-022/PA-030, creation-ordered SEEK, motion-order cache, transition-prefix, and lift-approach regressions; audit remaining door and animation-callback timing. |
 | Script natives and callbacks | in progress, high risk | Retain PA-021/PA-023/PA-024/PA-028 regressions and audit remaining natives. |
 | Sequence manager and messages | in progress, high risk | PA-032 fixed; retain WAIT launch-return, condolence, and SendMessage ordering tests. |
-| Projectiles and abilities | in progress, high risk | Selected bow, projectile/net, and active-ability owner fusion, exact selection identity, Done/Terminated ownership, creation order, Listen/Heard, beggar, ReceivePurse, and spawn-frame behavior have focused PA-013 regressions. Retain them while auditing unsupported actions. |
+| Projectiles and abilities | in progress, high risk | Selected bow/projectile owner fusion, exact ability identity, Done/Terminated ownership, LeaveListen postponement, Listen countdown/radius/scripts-disabled semantics, and spawn-frame behavior have focused PA-013 regressions. Retain them and add script-enabled Heard re-entry, ReceivePurse reveal-callback, and donor-driven beggar integration coverage while auditing unsupported actions. |
 | Audio-driven AI state | in progress, high risk | Missing-duration parity is fixed; continue auditing completion callbacks. |
 | Deterministic snapshots and replay | in progress, high risk | PA-033/PA-035/PA-034 fixed or contained; retain active-zoom rewind, fatal replay preload, seed-priority, and Spellforge mode-rejection regressions. |
 | RNG | verified intentional architecture | Retain the typed, snapshotted stream, auxiliary/ambient classifications, structural inventory guard, and exact draw-order restoration tests from PA-036. |

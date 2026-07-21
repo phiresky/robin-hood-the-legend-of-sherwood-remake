@@ -1158,6 +1158,264 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
 }
 
 #[test]
+fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
+    use crate::element::{Command, Posture};
+    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceId};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let original = ActiveAbility {
+        kind: Some(AbilityKind::Listen),
+        sequence_id: Some(SequenceId(41)),
+        element_index: 2,
+        target: None,
+        order_id: Some(std::num::NonZeroU32::new(9).unwrap()),
+        done_effect_applied: false,
+    };
+    let actor = engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.active_ability = original.clone();
+    actor.listen_phase = crate::element::ListenPhase::ExitTransition;
+    actor.listen_wait_time = 7;
+    engine.cleanup_aborted_ability(
+        owner,
+        AbilityKind::Listen,
+        SequenceId(99),
+        2,
+        original.order_id,
+    );
+    let retained = &engine
+        .get_entity(owner)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_ability;
+    assert_eq!(
+        (
+            retained.kind,
+            retained.sequence_id,
+            retained.element_index,
+            retained.order_id
+        ),
+        (
+            original.kind,
+            original.sequence_id,
+            original.element_index,
+            original.order_id
+        ),
+        "stale abort must not clear another selected identity"
+    );
+
+    engine.cleanup_aborted_ability(
+        owner,
+        AbilityKind::Listen,
+        SequenceId(41),
+        2,
+        original.order_id,
+    );
+    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    assert!(!actor.active_ability.is_active());
+    assert_eq!(actor.listen_phase, crate::element::ListenPhase::Inactive);
+    assert_eq!(actor.listen_wait_time, 0);
+
+    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
+    let order = Order::test_new(OrderType::Eating, 0.0, 0.0);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let seq = engine.orders.sequence_manager.launch_element(element);
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_ability = ActiveAbility {
+        kind: Some(AbilityKind::Eat),
+        sequence_id: Some(seq),
+        element_index: 0,
+        target: None,
+        order_id: Some(order_id),
+        done_effect_applied: false,
+    };
+    let mut selected = None;
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        |_, _| {},
+        |_, _| {},
+        |_, id, _, _, _, ability, _| selected = Some((id, ability)),
+        |_, _| {},
+    );
+    assert_eq!(selected, Some((owner, Some((seq, 0, order_id)))));
+}
+
+#[test]
+fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
+{
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn bind(engine: &mut EngineInner, id: EntityId, action: OrderType) {
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        engine.get_entity_mut(id).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+    }
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    bind(&mut engine, attacker, OrderType::Strangling);
+    bind(&mut engine, victim, OrderType::BeingStrangled);
+    for id in [attacker, victim] {
+        engine
+            .get_entity_mut(id)
+            .unwrap()
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
+            ));
+    }
+    let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(Default::default());
+    profiles.soldiers.push(crate::profiles::SoldierProfile {
+        strangle: false,
+        ..Default::default()
+    });
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::StrangleCmd,
+            Some(attacker),
+        ));
+    assert_eq!(
+        crate::abilities::begin_strangle(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            attacker,
+            victim,
+            seq,
+            0,
+            &mut engine.orders.next_order_id
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    let mut display = HostDisplayState::default();
+
+    for _ in 0..10 {
+        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+        if engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .done_effect_applied
+        {
+            break;
+        }
+    }
+    assert!(
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .done_effect_applied
+    );
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_action,
+        OrderType::BeingStrangled,
+        "attacker Done must force the victim animation before its same-invocation increment"
+    );
+    assert!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame
+            > 0,
+        "victim virgin increment must occur during initial attacker Done setup"
+    );
+
+    for _ in 0..10 {
+        engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+        if !engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+        {
+            break;
+        }
+    }
+    assert!(
+        !engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active(),
+        "non-stranglable retaliation must not return before the following Terminated cleanup"
+    );
+    assert_ne!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::InProgress
+    );
+    let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
+    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+    assert_eq!(
+        engine.orders.sequence_manager.sequences_iter().count(),
+        sequence_count,
+        "retaliation side effects must not repeat after terminal cleanup"
+    );
+}
+
+#[test]
 fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -1389,7 +1647,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
 }
 
 #[test]
-fn production_leave_listen_owns_real_exit_order_until_full_termination() {
+fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
@@ -1480,51 +1738,47 @@ fn production_leave_listen_owns_real_exit_order_until_full_termination() {
         OrderType::Listening
     );
 
-    let leave_seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::LeaveListen, Some(owner)));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(leave_seq, 0);
-    assert!(crate::abilities::begin_leave_listen(
-        &mut engine.world.entities,
-        &mut engine.orders.sequence_manager,
-        owner,
-    ));
-    engine
-        .orders
-        .sequence_manager
-        .element_terminated(leave_seq, 0);
-    let exit = engine
+    let listening_order_id = engine
         .orders
         .sequence_manager
         .get_element(enter_seq, 0)
         .unwrap()
         .current_order()
+        .unwrap()
+        .order_id;
+    let leave_seq =
+        engine.launch_element(SequenceElement::new(1, Command::LeaveListen, Some(owner)));
+    let leave = engine
+        .orders
+        .sequence_manager
+        .get_element(leave_seq, 0)
         .unwrap();
-    assert_eq!(
-        exit.order_type,
-        OrderType::TransitionListeningWaitingUpright
-    );
+    assert_eq!(leave.state, SequenceState::Postponed);
+    assert!(leave.orders.is_empty());
     let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
     assert_eq!(actor.active_ability.sequence_id, Some(enter_seq));
     assert_eq!(actor.active_ability.element_index, 0);
-    assert_eq!(actor.active_ability.order_id, Some(exit.order_id));
+    assert_eq!(actor.active_ability.order_id, Some(listening_order_id));
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .get_element(leave_seq, 0)
+            .get_element(enter_seq, 0)
             .unwrap()
             .state,
-        SequenceState::Terminated,
-        "transient LeaveListen element must never become the exit owner"
+        SequenceState::InProgress,
+        "LeaveListen must not replace the non-interruptable EnterListen owner"
     );
 
-    for _ in 0..20 {
+    let mut saw_enter_exit = false;
+    for _ in 0..80 {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
+        saw_enter_exit |= engine
+            .orders
+            .sequence_manager
+            .get_element(enter_seq, 0)
+            .and_then(|element| element.current_order())
+            .is_some_and(|order| order.order_type == OrderType::TransitionListeningWaitingUpright);
         if !engine
             .get_entity(owner)
             .unwrap()
@@ -1536,6 +1790,10 @@ fn production_leave_listen_owns_real_exit_order_until_full_termination() {
             break;
         }
     }
+    assert!(
+        saw_enter_exit,
+        "EnterListen must own its existing exit order"
+    );
     assert!(
         !engine
             .get_entity(owner)
@@ -1562,6 +1820,59 @@ fn production_leave_listen_owns_real_exit_order_until_full_termination() {
             .unwrap()
             .listen_phase,
         crate::element::ListenPhase::Inactive
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
+        crate::element::ActionState::Waiting
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(leave_seq, 0),
+        "released LeaveListen must be registered for production re-dispatch"
+    );
+    for _ in 0..20 {
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        if engine
+            .orders
+            .sequence_manager
+            .get_element(leave_seq, 0)
+            .unwrap()
+            .state
+            == SequenceState::Impossible
+        {
+            break;
+        }
+    }
+    let leave = engine
+        .orders
+        .sequence_manager
+        .get_element(leave_seq, 0)
+        .unwrap();
+    assert_eq!(leave.state, SequenceState::Impossible);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(leave_seq, 0),
+        "released LeaveListen action must be consumed exactly once"
+    );
+    assert!(leave.orders.is_empty());
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active(),
+        "released LeaveListen must not install stale ability ownership"
     );
 }
 
