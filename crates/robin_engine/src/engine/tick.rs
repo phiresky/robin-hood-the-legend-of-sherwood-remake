@@ -1772,9 +1772,11 @@ impl EngineInner {
         use crate::sprite::{FrameProgression, MotionState};
 
         let frozen = self.actors_frozen();
-        let Some(entity) = self.world.entities.get(owner) else {
-            return;
-        };
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!(
+                "static Hourglass owner {owner:?} disappeared immediately after live legacy-slot resolution"
+            )
+        });
         match entity {
             Entity::Fx(fx) if fx.fx.mobile_index.is_some() => return,
             Entity::Fx(_) => {
@@ -1838,18 +1840,17 @@ impl EngineInner {
                     return;
                 }
                 self.dispatch_scroll_hourglass_for(sim, assets, owner);
-                if !frozen
-                    && self
-                        .world
-                        .entities
-                        .get(owner)
-                        .is_some_and(Entity::is_active)
-                {
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .unwrap()
-                        .element_data_mut()
+                if !frozen && let Some(entity) = self.world.entities.get_mut(owner) {
+                    let Entity::Scroll(scroll) = entity else {
+                        panic!(
+                            "scroll {owner:?} changed concrete type before entry-active sprite Hourglass"
+                        )
+                    };
+                    // Original tests IsActive only once on entry. A due VM
+                    // callback may deactivate this surviving scroll, but its
+                    // sprite still advances before this Hourglass returns.
+                    scroll
+                        .element
                         .sprite
                         .perform_virgin_increment(sim, FrameProgression::Default);
                 }

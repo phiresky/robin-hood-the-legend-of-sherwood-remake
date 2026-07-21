@@ -1,5 +1,424 @@
 use super::*;
 
+fn animated_sprite() -> crate::sprite::Sprite {
+    let script = crate::sprite_script::SpriteScript {
+        action_id: 0,
+        action_done: 2,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0, 0, 0],
+    };
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]),
+    );
+    sprite.current_row = 0;
+    sprite.current_frame = 0;
+    sprite.frame_count = 0;
+    sprite
+}
+
+fn animated_scroll() -> Entity {
+    Entity::Scroll(crate::element::ElementScroll {
+        element: ElementData {
+            kind: ElementKind::ObjectScroll,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        script_hourglass_timeout: 24,
+        ..Default::default()
+    })
+}
+
+fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
+    Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: crate::element::TargetData {
+            progression: progression as u32,
+            ..Default::default()
+        },
+    })
+}
+
+fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Entity {
+    Entity::Bonus(crate::element::ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectBonus,
+            active,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type,
+            ..Default::default()
+        },
+    })
+}
+
+fn empty_positions(
+    engine: &EngineInner,
+) -> crate::entities::EntitySlots<Option<crate::coordinates::MapPoint>> {
+    crate::entities::EntitySlots::filled(engine.world.entities.len(), None)
+}
+
+#[test]
+fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(message_script());
+    let scroll_id = engine.add_entity(animated_scroll());
+    let handle = ScriptHandleCodec::actor_handle(scroll_id);
+    let instance = engine
+        .scripts
+        .mission
+        .as_ref()
+        .unwrap()
+        .manager
+        .create_instance("SelfDeactivatingScroll")
+        .expect("self-deactivating scroll class");
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .scroll_instances
+        .insert(handle, instance);
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.attach_script_bindings(&assets);
+
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+
+    let Entity::Scroll(scroll) = engine
+        .get_entity(scroll_id)
+        .expect("scroll survives callback")
+    else {
+        unreachable!()
+    };
+    assert!(!scroll.element.active, "due callback ran before animation");
+    assert_eq!(
+        scroll.script_hourglass_timeout, 0,
+        "due timeout reset after VM"
+    );
+    assert_eq!(
+        scroll.element.sprite.current_frame, 1,
+        "entry-active Scroll still animates after self-deactivation"
+    );
+
+    let frozen_id = engine.add_entity(animated_scroll());
+    let frozen_handle = ScriptHandleCodec::actor_handle(frozen_id);
+    let frozen_instance = engine
+        .scripts
+        .mission
+        .as_ref()
+        .unwrap()
+        .manager
+        .create_instance("SelfDeactivatingScroll")
+        .expect("frozen self-deactivating scroll class");
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .scroll_instances
+        .insert(frozen_handle, frozen_instance);
+    engine.set_actors_frozen(true);
+    let positions = empty_positions(&engine);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+    let Entity::Scroll(frozen_scroll) = engine.get_entity(frozen_id).unwrap() else {
+        unreachable!()
+    };
+    assert!(
+        !frozen_scroll.element.active,
+        "FrozenAll does not suppress Scroll VM"
+    );
+    assert_eq!(frozen_scroll.script_hourglass_timeout, 0);
+    assert_eq!(
+        frozen_scroll.element.sprite.current_frame, 0,
+        "FrozenAll gates only the sprite step"
+    );
+}
+
+#[test]
+#[should_panic(expected = "disappeared immediately after live legacy-slot resolution")]
+fn resolved_static_owner_must_still_exist_at_dispatch() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
+    engine.remove_entity(owner);
+    engine.tick_static_entity_hourglass_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+}
+
+#[test]
+fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
+    fn run(seed: u64, reverse: bool) -> (u16, u16) {
+        let mut engine = EngineInner::new();
+        let (a, b) = if reverse {
+            let b = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let a = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            (a, b)
+        } else {
+            let a = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let b = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            (a, b)
+        };
+        let positions = empty_positions(&engine);
+        let assets = LevelAssets::new();
+        crate::sim_rng::with_seed(seed, |sim| {
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+        });
+        (
+            engine
+                .get_entity(a)
+                .unwrap()
+                .element_data()
+                .sprite
+                .current_frame,
+            engine
+                .get_entity(b)
+                .unwrap()
+                .element_data()
+                .sprite
+                .current_frame,
+        )
+    }
+
+    let seed = (0_u64..1_000_000)
+        .find(|seed| {
+            crate::sim_rng::with_seed(*seed, |sim| {
+                let first =
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpriteBoredStart, ..250);
+                let second =
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SpriteBoredStart, ..250);
+                (first == 0) != (second == 0)
+            })
+        })
+        .expect("reviewed RNG stream must expose distinct first/second BoredAnim draws");
+    let forward = run(seed, false);
+    assert_ne!(forward.0, forward.1);
+    assert_eq!(run(seed, true), (forward.1, forward.0));
+}
+
+#[test]
+fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
+    let mut engine = EngineInner::new();
+    let target = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
+    let ale = engine.add_entity(animated_bonus(crate::element::ObjectType::Ale, false));
+    let cape = engine.add_entity(animated_bonus(crate::element::ObjectType::Cape, false));
+    let bonus = engine.add_entity(animated_bonus(
+        crate::element::ObjectType::BonusApple,
+        false,
+    ));
+    let projectile = engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
+        element: ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::Wasp,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+    }));
+    let net = engine.add_entity(Entity::Net(crate::element::ElementNet {
+        element: ElementData {
+            kind: ElementKind::ObjectNet,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::Net,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+        net: Default::default(),
+    }));
+    let assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_nonactor_entity_animations(&sim, &assets);
+    assert_eq!(
+        engine
+            .get_entity(target)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        0
+    );
+    let projectile_frame = engine
+        .get_entity(projectile)
+        .unwrap()
+        .element_data()
+        .sprite
+        .current_frame;
+    let net_frame = engine
+        .get_entity(net)
+        .unwrap()
+        .element_data()
+        .sprite
+        .current_frame;
+    let positions = empty_positions(&engine);
+    engine.tick_actor_owner_envelopes(&sim, &assets, &positions);
+
+    assert!(
+        engine.get_entity(ale).is_none(),
+        "inactive RHElementAle returns false"
+    );
+    assert_eq!(
+        engine
+            .get_entity(cape)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        1
+    );
+    assert_eq!(
+        engine
+            .get_entity(bonus)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        1
+    );
+    assert_eq!(
+        engine
+            .get_entity(target)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        1
+    );
+    assert_eq!(
+        engine
+            .get_entity(projectile)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        projectile_frame
+    );
+    assert_eq!(
+        engine
+            .get_entity(net)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        net_frame
+    );
+
+    let mobile_child = engine.add_entity(Entity::Fx(crate::element::ElementFx {
+        element: ElementData {
+            kind: ElementKind::Fx,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        fx: crate::element::FxData {
+            mobile_index: Some(0),
+            ..Default::default()
+        },
+    }));
+    engine.tick_static_entity_hourglass_for(&sim, &assets, mobile_child);
+    engine.tick_static_entity_hourglass_for(&sim, &assets, projectile);
+    assert_eq!(
+        engine
+            .get_entity(mobile_child)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        0
+    );
+    assert_eq!(
+        engine
+            .get_entity(projectile)
+            .unwrap()
+            .element_data()
+            .sprite
+            .current_frame,
+        projectile_frame
+    );
+}
+
+#[test]
+fn completed_fx_patch_is_visible_to_the_later_live_slot() {
+    let mut engine = EngineInner::new();
+    engine.scripts.mission = Some(message_script());
+    let fx = Entity::Fx(crate::element::ElementFx {
+        element: ElementData {
+            kind: ElementKind::Fx,
+            active: true,
+            sprite: animated_sprite(),
+            ..Default::default()
+        },
+        fx: crate::element::FxData {
+            patch_index: crate::patch::PatchIndex::new(0),
+            ..Default::default()
+        },
+    });
+    let fx_id = engine.add_entity(fx);
+    let later = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
+    engine
+        .script_domains
+        .interactables
+        .patches
+        .push(crate::patch::Patch {
+            active: true,
+            in_transition: true,
+            applied: false,
+            ..Default::default()
+        });
+    let Entity::Fx(fx) = engine.get_entity_mut(fx_id).unwrap() else {
+        unreachable!()
+    };
+    fx.element.sprite.current_frame = 1;
+    let assets = LevelAssets::new();
+    let mut later_observed_final = false;
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &sim,
+        &assets,
+        |engine, owner| {
+            engine.tick_static_entity_hourglass_for(&sim, &assets, owner);
+            if owner == later {
+                let patch = &engine.script_domains.interactables.patches[0];
+                later_observed_final = patch.applied && !patch.in_transition;
+            }
+        },
+        |_, _| {},
+        |_, _, _| {},
+        |_, _| {},
+    );
+    assert!(
+        later_observed_final,
+        "later slot sees synchronous SetInTransition(false)+ApplyFinal"
+    );
+}
+
 #[test]
 fn ownerless_send_message_routes_to_global_process_message() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
