@@ -1634,6 +1634,10 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         victim,
         crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
     );
+    engine.dispatch_ai_stimulus(
+        victim,
+        crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
+    );
 
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
@@ -1711,8 +1715,25 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
-        vec![crate::ai::StimulusType::EventTimer],
-        "both synchronous EventGotHit Thinks must preserve the genuinely pre-existing FIFO"
+        vec![
+            crate::ai::StimulusType::EventTimer,
+            crate::ai::StimulusType::EventFitAgain,
+        ],
+        "both synchronous EventGotHit Thinks must preserve the genuinely pre-existing FIFO in exact order"
+    );
+    assert_eq!(
+        victim_entity
+            .ai_controller()
+            .unwrap()
+            .ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == crate::ai::LogLineType::Event
+                    && line.info == crate::ai::StimulusType::EventGotHit as u16
+            })
+            .count(),
+        2,
+        "the direct retaliation and condolation EventGotHit handlers must both execute synchronously"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
