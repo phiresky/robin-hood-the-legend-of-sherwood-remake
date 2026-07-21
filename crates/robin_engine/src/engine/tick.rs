@@ -1448,6 +1448,15 @@ impl EngineInner {
         // pre-Actor hook below.
         let mut to_remove = Vec::new();
         for (id, entity) in self.world.entities.occupied_mut() {
+            // Projectile base inactive validation/removal belongs exclusively
+            // to its fused live creation slot. The legacy Rust pre-pass used
+            // to unlink it here, before ObjectType validation and before any
+            // earlier/later owner ordering could be observed. Net already
+            // returned true here and Ale is an object/Bonus, so their
+            // established own-slot semantics are unchanged.
+            if matches!(entity, Entity::Projectile(_)) {
+                continue;
+            }
             if !entity.hourglass() {
                 to_remove.push(id);
             }
@@ -2127,32 +2136,13 @@ impl EngineInner {
                 }
             },
             |engine, owner, selected| {
+                // Snapshot the exact selected bow arm at base-Actor entry,
+                // before movement or any synchronous owner work can replace
+                // the current order.
+                let selected_bow = engine.selected_bow_order(owner);
                 engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected);
-                let selected_bow = engine
-                    .get_entity(owner)
-                    .and_then(|entity| entity.actor_data())
-                    .map(|actor| actor.active_shot)
-                    .filter(|shot| shot.is_active())
-                    .and_then(|shot| {
-                        let seq_id = shot.sequence_id?;
-                        (selected.is_none()
-                            && shot.element_index
-                                == engine
-                                    .orders
-                                    .sequence_manager
-                                    .current_element_for_actor(owner)?
-                                    .1
-                            && Some(seq_id)
-                                == engine
-                                    .orders
-                                    .sequence_manager
-                                    .current_element_for_actor(owner)
-                                    .map(|current| current.0))
-                        .then_some(())
-                    })
-                    .is_some();
-                if selected_bow {
-                    engine.tick_bow_shot_for(sim, assets, owner);
+                if let Some((_, _, order_id)) = selected_bow {
+                    engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
             },
             |engine, owner| {
@@ -2229,10 +2219,46 @@ impl EngineInner {
         let Some(entity) = self.get_entity(id) else {
             return;
         };
-        if !entity.is_active() {
-            if matches!(entity, Entity::Projectile(_) | Entity::Net(_)) {
-                self.remove_entity(id);
+        // Validate the Rust kind/ObjectType vtable pairing before the base
+        // inactive-removal rule. Otherwise an impossible inactive object
+        // silently disappears while the same active object panics.
+        match entity {
+            Entity::Projectile(projectile)
+                if !matches!(
+                    projectile.object.object_type,
+                    crate::element::ObjectType::Arrow
+                        | crate::element::ObjectType::Apple
+                        | crate::element::ObjectType::Stone
+                        | crate::element::ObjectType::Purse
+                        | crate::element::ObjectType::Coin
+                        | crate::element::ObjectType::WaspNest
+                        | crate::element::ObjectType::BonusWaspNest
+                        | crate::element::ObjectType::Wasp
+                ) =>
+            {
+                panic!(
+                    "projectile entity {id:?} has unsupported ObjectType::{:?}; TODO(PA-013): map its Original concrete class",
+                    projectile.object.object_type
+                )
             }
+            Entity::Net(net)
+                if !matches!(
+                    net.object.object_type,
+                    crate::element::ObjectType::Net | crate::element::ObjectType::BonusNet
+                ) =>
+            {
+                panic!(
+                    "net entity {id:?} has unsupported ObjectType::{:?}; expected Net or BonusNet",
+                    net.object.object_type
+                )
+            }
+            _ => {}
+        }
+        if !matches!(entity, Entity::Projectile(_) | Entity::Net(_)) {
+            return;
+        }
+        if !entity.is_active() {
+            self.remove_entity(id);
             return;
         }
         match entity {

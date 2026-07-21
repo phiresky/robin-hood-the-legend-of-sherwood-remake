@@ -152,7 +152,7 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | The live mutable-size creation-order owner walk now owns selected bow execution and the complete projectile/net virtual dispatch; there is no processed-projectile set or second projectile scheduler. Bow selection is tied to the current sequence/element, runs after movement and before base completion/ActionChange/tails, and keeps the Original primer plus appended-slot second advance. Projectile/net dispatch is exhaustive (table below), removes inactive objects at their own slot, and preserves derived nesting and same-frame appended children. FreezeAll gates sprite increments rather than projectile physics/RNG/collision/effects/removal. Active melee, abilities, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other entity owners remain PA-013 debt. |
+| PA-013 | High | incomplete | The live mutable-size creation-order owner walk now owns selected bow execution and the complete projectile/net virtual dispatch; there is no processed-projectile set or second projectile scheduler. Bow selection snapshots exact sequence/element/order identity at base-Actor entry, runs after movement and before base completion/ActionChange/tails, and keeps the Original primer plus appended-slot second advance. The bow driver is a true single-owner primitive and never detaches/restores other actors. Projectile/net dispatch is exhaustive (table below), validates before inactive own-slot removal, and preserves derived nesting and same-frame appended children. FreezeAll gates sprite increments rather than projectile physics/RNG/collision/effects/removal. Active melee, abilities, PC Listen/object reveal, Target Heard, unsupported rider/Execute arms, and other entity owners remain PA-013 debt. |
 
 ### PA-013 projectile/net virtual-class map
 
@@ -169,9 +169,23 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 Every other `ObjectType` paired with `Entity::Projectile` or `Entity::Net` is
 impossible in the supported loader/spawn paths and panics with the entity and
-type. Pickup `BonusApple`, `BonusStone`, `BonusPurse`, and `BonusArrow` values
+type before inactive-slot removal, so active state cannot hide an invalid
+virtual-class pairing. Pickup `BonusApple`, `BonusStone`, `BonusPurse`, and `BonusArrow` values
 remain `Entity::Bonus`; treating them as flying derived objects would invent an
 Original class relationship.
+
+The old `hourglass_phase_entities` compatibility pre-pass no longer removes
+inactive `Entity::Projectile` values. Validation and removal occur only when
+the fused mutable-size walk reaches that projectile's creation slot. Net's
+legacy pre-pass behavior (always retain) and Ale's object/Bonus lane are
+unchanged.
+
+`RHElementNet::Hourglass` retains its exact switch gaps: a nonzero unfolding
+countdown performs no sprite call (including the decrement-to-zero tick), both
+ground unfolding cases only select the next row, and stationary `NetMoving`
+uses frozen progression without changing to `ObjectLying`. `FrozenAll` removes
+only the sprite call selected by those branches; net physics and state work
+continue.
 
 Focused PA-013 stationary/idle progress: the live actor-slot coordinator now
 applies WAIT_TIMER and WAIT_FREE_LIFT to the just-produced Execute result

@@ -3051,7 +3051,6 @@ impl EngineInner {
                         | crate::element::ActionState::MovingShield
                 )
                 || actor.active_melee.is_active()
-                || actor.active_shot.is_active()
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
@@ -3074,6 +3073,13 @@ impl EngineInner {
                     )
                 })
                 .command;
+            let exact_selected_bow = actor.active_shot.is_active()
+                && actor.active_shot.sequence_id == Some(seq_id)
+                && actor.active_shot.element_index == elem_idx
+                && crate::bow_shot::is_active_bow_order(order.order_type);
+            if exact_selected_bow {
+                return (Vec::new(), AnimCompletionOutcomes::default(), None);
+            }
             let anim_type = order.order_type;
             if actor.execution_frozen
                 && !matches!(cur_command, Command::WaitTimer | Command::WaitFreeLift)
@@ -3325,10 +3331,6 @@ impl EngineInner {
                 if actor.active_melee.is_active() {
                     break 'actor;
                 }
-                if actor.active_shot.is_active() {
-                    break 'actor;
-                }
-
                 let direction = entity.element_data().direction() as u16;
 
                 // Read the actor's current in-progress sequence element
@@ -3355,6 +3357,14 @@ impl EngineInner {
                     } else {
                         (None, crate::order::OrderType::Invalid, None, None)
                     };
+                if let Some((seq_id, elem_idx)) = order_seq_elem
+                    && actor.active_shot.is_active()
+                    && actor.active_shot.sequence_id == Some(seq_id)
+                    && actor.active_shot.element_index == elem_idx
+                    && crate::bow_shot::is_active_bow_order(anim_type)
+                {
+                    break 'actor;
+                }
                 let antagonist = validated_antagonist.or(order_antagonist);
 
                 // Is the current element a one-shot action (not the

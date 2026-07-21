@@ -527,6 +527,98 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 }
 
 #[test]
+#[should_panic(expected = "unsupported ObjectType::None")]
+fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ObjectProjectile,
+            active: false,
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::None,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+    }));
+    engine.perform_hourglass(
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+        &mut DevState::default(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "net entity Net(NetId(0)) has unsupported ObjectType::None")]
+fn inactive_unsupported_net_mapping_panics_before_owner_slot_removal() {
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Net(crate::element::ElementNet {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ObjectNet,
+            active: false,
+            ..Default::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::None,
+            ..Default::default()
+        },
+        projectile: Default::default(),
+        net: Default::default(),
+    }));
+    engine.perform_hourglass(
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+        &mut DevState::default(),
+    );
+}
+
+#[test]
+fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut selected = SequenceElement::new(1, Command::Wait, Some(owner));
+    let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
+    let order_id = order.order_id;
+    selected.orders.push_back(order);
+    let selected_seq = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(selected_seq, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_shot = ActiveShot {
+        sequence_id: Some(selected_seq),
+        element_index: 0,
+        target: Some(owner),
+        order_id: Some(order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+
+    assert!(engine.selected_bow_order(owner).is_none());
+    let (_, _, executed) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    assert!(
+        executed.is_some(),
+        "latent active_shot must not suppress the exact selected nonbow Execute arm"
+    );
+}
+
+#[test]
 fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

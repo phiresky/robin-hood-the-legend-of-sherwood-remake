@@ -221,44 +221,32 @@ impl EngineInner {
         }
     }
 
-    /// Advance one actor's bow state without advancing later-created
-    /// shooters. `bow_shot::tick_bow_shots` predates the ordered hourglass
-    /// spine and is all-actor; temporarily detaching the other active shots
-    /// narrows that existing implementation without duplicating its state
-    /// machine.
+    pub(super) fn selected_bow_order(
+        &self,
+        owner: EntityId,
+    ) -> Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)> {
+        let shot = self.get_entity(owner)?.actor_data()?.active_shot;
+        let (seq_id, elem_idx, order) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)?;
+        (shot.is_active()
+            && shot.sequence_id == Some(seq_id)
+            && shot.element_index == elem_idx
+            && bow_shot::is_active_bow_order(order.order_type))
+        .then_some((seq_id, elem_idx, order.order_id))
+    }
+
+    /// Advance one exact selected bow arm without detaching or restoring any
+    /// other actor state.
     pub(super) fn tick_bow_shot_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         shooter_id: EntityId,
+        expected_order_id: std::num::NonZeroU32,
     ) -> Vec<EntityId> {
-        let mut detached = Vec::new();
-        for (actor_id, entity) in self.world.entities.actors_mut() {
-            let actor_id: EntityId = actor_id.into();
-            let Some(actor) = entity.actor_data_mut() else {
-                continue;
-            };
-            if actor_id != shooter_id && actor.active_shot.is_active() {
-                detached.push((actor_id, actor.active_shot));
-                actor.active_shot.clear();
-            }
-        }
-
-        let spawned = self.tick_bow_shots(sim, assets);
-
-        for (actor_id, active_shot) in detached {
-            let actor = self
-                .get_entity_mut(actor_id)
-                .and_then(|entity| entity.actor_data_mut())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "active bow shooter {actor_id:?} disappeared during another actor's Hourglass"
-                    )
-                });
-            debug_assert!(!actor.active_shot.is_active());
-            actor.active_shot = active_shot;
-        }
-        spawned
+        self.tick_bow_shots(sim, assets, Some((shooter_id, expected_order_id)))
     }
 
     /// Advance the shoot animation for every actor with an active bow
@@ -269,16 +257,26 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        selection: Option<(EntityId, std::num::NonZeroU32)>,
     ) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
         if self.actors_frozen() {
             return spawned_projectiles;
         }
-        let events = bow_shot::tick_bow_shots(
-            sim,
-            &mut self.world.entities,
-            &mut self.orders.sequence_manager,
-        );
+        let events = match selection {
+            Some((owner, order_id)) => bow_shot::tick_bow_shot_for_owner(
+                sim,
+                &mut self.world.entities,
+                &mut self.orders.sequence_manager,
+                owner,
+                order_id,
+            ),
+            None => bow_shot::tick_bow_shots(
+                sim,
+                &mut self.world.entities,
+                &mut self.orders.sequence_manager,
+            ),
+        };
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(

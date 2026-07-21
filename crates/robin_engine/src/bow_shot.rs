@@ -406,7 +406,7 @@ fn is_bow_transition_order(ot: OrderType) -> bool {
     )
 }
 
-fn is_active_bow_order(ot: OrderType) -> bool {
+pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
     is_shoot_order(ot) || is_bow_transition_order(ot)
 }
 
@@ -1707,6 +1707,24 @@ pub struct BowTickEvents {
     pub completed: Vec<(SequenceId, usize)>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static CROSS_ACTOR_SHOT_REPLACEMENT: std::cell::Cell<Option<(EntityId, ActiveShot)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn apply_cross_actor_shot_replacement(entities: &mut Entities) {
+    let Some((actor_id, replacement)) = CROSS_ACTOR_SHOT_REPLACEMENT.take() else {
+        return;
+    };
+    entities
+        .get_mut(actor_id)
+        .and_then(Entity::actor_data_mut)
+        .expect("cross-actor replacement target must remain an actor")
+        .active_shot = replacement;
+}
+
 /// Advance the shoot animation for every actor with an [`ActiveShot`].
 ///
 /// Returns a list of results for actors whose shoot animation reached
@@ -1716,9 +1734,34 @@ pub struct BowTickEvents {
 /// AimingWithBow action state.
 pub fn tick_bow_shots(
     sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
+) -> BowTickEvents {
+    tick_bow_shots_matching(sim, entities, sequence_manager, None, None)
+}
+
+pub fn tick_bow_shot_for_owner(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    owner: EntityId,
+    expected_order_id: std::num::NonZeroU32,
+) -> BowTickEvents {
+    tick_bow_shots_matching(
+        sim,
+        entities,
+        sequence_manager,
+        Some(owner),
+        Some(expected_order_id),
+    )
+}
+
+fn tick_bow_shots_matching(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    only_owner: Option<EntityId>,
+    expected_order_id: Option<std::num::NonZeroU32>,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
@@ -1727,8 +1770,14 @@ pub fn tick_bow_shots(
         target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
     }
 
+    #[cfg(test)]
+    apply_cross_actor_shot_replacement(entities);
+
     for (actor_id, entity) in entities.actors_mut() {
         let shooter_id: EntityId = actor_id.into();
+        if only_owner.is_some_and(|owner| owner != shooter_id) {
+            continue;
+        }
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -1764,6 +1813,9 @@ pub fn tick_bow_shots(
             Some(o) => (o.order_type, Some(o.order_id)),
             None => continue,
         };
+        if expected_order_id.is_some() && expected_order_id != current_order_id {
+            continue;
+        }
         if !is_active_bow_order(current_order_type) {
             let bow_order_pending = sequence_manager
                 .get_element(shot_seq_id, shot_elem_idx)
@@ -4142,6 +4194,82 @@ mod tests {
                 .active_shot
                 .is_active(),
             "C++ shoot-list ownership ends once the sequence has no bow orders left"
+        );
+    }
+
+    #[test]
+    fn single_owner_tick_preserves_replaced_other_actor_shot() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut entities = entity_table(vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_pc(5.0, 0.0)),
+            Some(make_soldier(50.0, 0.0)),
+        ]);
+        let first = EntityId::Pc(crate::entity_id::PcId(0));
+        let other = EntityId::Pc(crate::entity_id::PcId(1));
+        let target = EntityId::Soldier(crate::entity_id::SoldierId(2));
+        let mut sm = SequenceManager::new();
+        let first_seq = sm.launch_element(build_shoot_bow_element(first, target));
+        sm.element_in_progress(first_seq, 0);
+        let other_seq = sm.launch_element(build_shoot_bow_element(other, target));
+        sm.element_in_progress(other_seq, 0);
+        let mut next_order_id = 1;
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                first,
+                target,
+                first_seq,
+                0,
+                false,
+                10,
+                None,
+                &mut next_order_id,
+            ),
+            BeginShotResult::Started
+        );
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                other,
+                target,
+                other_seq,
+                0,
+                false,
+                10,
+                None,
+                &mut next_order_id,
+            ),
+            BeginShotResult::Started
+        );
+        let mut replacement = entities
+            .get(other)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_shot;
+        replacement.released = true;
+        let selected_order = sm
+            .current_order_for_actor(first)
+            .expect("first bow order selected")
+            .2
+            .order_id;
+
+        CROSS_ACTOR_SHOT_REPLACEMENT.set(Some((other, replacement)));
+
+        tick_bow_shot_for_owner(&sim_context, &mut entities, &mut sm, first, selected_order);
+
+        assert_eq!(
+            entities
+                .get(other)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot,
+            replacement,
+            "single-owner bow execution must preserve a synchronous cross-actor replacement"
         );
     }
 

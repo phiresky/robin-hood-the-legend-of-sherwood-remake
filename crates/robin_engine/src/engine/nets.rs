@@ -36,6 +36,42 @@ const SQUARE_RADIUS_NET_CAPTURE: f32 = 1600.0;
 /// capture sweep every frame, while still descending.
 const NET_DESCENT_APPLY_THRESHOLD: f32 = 60.0;
 
+#[cfg(test)]
+thread_local! {
+    static NET_SPRITE_PROGRESSIONS: std::cell::RefCell<Option<Vec<(EntityId, crate::sprite::FrameProgression)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_net_sprite_progression(net: EntityId, progression: crate::sprite::FrameProgression) {
+    NET_SPRITE_PROGRESSIONS.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((net, progression));
+        }
+    });
+}
+
+#[cfg(test)]
+fn capture_net_sprite_progressions<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, crate::sprite::FrameProgression)>) {
+    NET_SPRITE_PROGRESSIONS.with(|trace| {
+        assert!(
+            trace.borrow().is_none(),
+            "net sprite capture is not re-entrant"
+        );
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let trace = NET_SPRITE_PROGRESSIONS.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("net sprite capture must remain active")
+    });
+    (result, trace)
+}
+
 /// Cosine threshold for the landing-slope crumple test in
 /// [`EngineInner::detect_initial_net_crumple`]: any obstacle with a
 /// top-plane normal tilted more than ~30° from vertical (cos ≈ 0.87)
@@ -414,10 +450,11 @@ impl EngineInner {
     ///   plane and register the dual repulsive points so actors path
     ///   around the net.
     /// * **On the ground**: resolve the post-landing animation
-    ///   transition (`NetUnfolding` → `ObjectLying`/`NetMoving` per
-    ///   `any_victim_is_moving`, `NetUnfoldingCrumpled` →
-    ///   `NetLyingCrumpled`); toggle between `NetMoving` and
-    ///   `ObjectLying` based on victim wriggle each frame. Release
+    ///   transition (`NetUnfolding` → `ObjectLying`/`NetMoving`,
+    ///   `NetUnfoldingCrumpled` → `NetLyingCrumpled`) without advancing the
+    ///   new row that tick. Stationary `NetMoving` stays on that row and uses
+    ///   frozen progression; the Original transition back to `ObjectLying`
+    ///   is commented out. Release
     ///   happens via `Command::Take` pickup — the `TakingNet`
     ///   animation-Done handler in `engine/animation.rs` queues a
     ///   net-antagonist pickup, and the pickup branch in
@@ -436,7 +473,7 @@ impl EngineInner {
         // Phase 1: advance trajectory + classify the net into
         // (descending-near-landing, just-landed) and stamp the
         // in-flight animation transitions on it directly.
-        let (apply, just_landed) = {
+        let (apply, just_landed, skip_sprite_this_tick) = {
             let Some(Entity::Net(net)) = self.world.entities.get_mut(net_id) else {
                 return;
             };
@@ -446,6 +483,7 @@ impl EngineInner {
 
             let mut apply = false;
             let mut just_landed = false;
+            let mut skip_sprite_this_tick = false;
             if net.projectile.flying {
                 advance_net_trajectory(net);
 
@@ -455,6 +493,11 @@ impl EngineInner {
                 // frames leave the animation alone; the sprite plays
                 // out until the landing transition.
                 if net.net.time_till_unfolding > 0 {
+                    // Original's `if (mulTimeTillUnfolding != 0)` arm never
+                    // reaches either sprite increment, including when this
+                    // decrement changes the counter to zero and selects the
+                    // unfolding animation.
+                    skip_sprite_this_tick = true;
                     net.net.time_till_unfolding -= 1;
                     if net.net.time_till_unfolding == 0 {
                         net.object.animation = if net.net.crumpled {
@@ -488,60 +531,28 @@ impl EngineInner {
                     net.net.was_flying = false;
                 }
             } else {
-                // ── Ground state ───────────────────────────────────
-                // Resolve the one-shot animation transition first.
-                if !net.net.landed_animation_resolved {
-                    let next = match net.object.animation {
-                        crate::element::Animation::NetUnfolding => {
-                            if net.net.victims.is_empty() {
-                                crate::element::Animation::ObjectLying
-                            } else {
-                                crate::element::Animation::NetMoving
-                            }
-                        }
-                        crate::element::Animation::NetUnfoldingCrumpled => {
-                            crate::element::Animation::NetLyingCrumpled
-                        }
-                        _ => net.object.animation,
-                    };
-                    if next != net.object.animation {
-                        net.object.animation = next;
+                // The two transition cases contain only SetAnimation + break;
+                // the newly selected row must not advance until next tick.
+                match net.object.animation {
+                    crate::element::Animation::NetUnfolding => {
+                        net.object.animation = if net.net.victims.is_empty() {
+                            crate::element::Animation::ObjectLying
+                        } else {
+                            crate::element::Animation::NetMoving
+                        };
                         net.net.landed_animation_resolved = true;
+                        skip_sprite_this_tick = true;
                     }
+                    crate::element::Animation::NetUnfoldingCrumpled => {
+                        net.object.animation = crate::element::Animation::NetLyingCrumpled;
+                        net.net.landed_animation_resolved = true;
+                        skip_sprite_this_tick = true;
+                    }
+                    _ => {}
                 }
             }
-            (apply, just_landed)
+            (apply, just_landed, skip_sprite_this_tick)
         };
-
-        // Phase 1b — `NetMoving` ↔ `ObjectLying` toggle. While the
-        // net's animation is `ObjectLying` or `NetMoving`, swap based
-        // on whether any victim is currently in `WriggleUnderNet`.
-        // Done in a separate read pass so we can borrow victim
-        // entities.
-        let wriggle_update = match self.get_entity(net_id) {
-            Some(Entity::Net(net))
-                if net.element.active
-                    && !net.projectile.flying
-                    && matches!(
-                        net.object.animation,
-                        crate::element::Animation::NetMoving
-                            | crate::element::Animation::ObjectLying
-                    ) =>
-            {
-                let desired = if self.any_victim_is_moving(&net.net.victims) {
-                    crate::element::Animation::NetMoving
-                } else {
-                    crate::element::Animation::ObjectLying
-                };
-                (desired != net.object.animation).then_some(desired)
-            }
-            _ => None,
-        };
-        if let Some(animation) = wriggle_update
-            && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
-        {
-            net.object.animation = animation;
-        }
 
         // Phase 2: apply effects (mutable engine borrow released above).
         if apply {
@@ -556,28 +567,52 @@ impl EngineInner {
         // Net's derived sprite tail is inside its virtual Hourglass. FreezeAll
         // suppresses only this sprite operation; trajectory, capture, landing,
         // and bookkeeping above continue.
-        let frozen = self.actors_frozen();
-        if let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
-            && !frozen
-        {
-            use crate::sprite::FrameProgression;
-            let progression = if was_flying {
-                if net.object.animation == crate::element::Animation::ObjectFlying {
-                    FrameProgression::SkipShadow
-                } else {
-                    FrameProgression::SkipShadowFreezeWhenTerminated
+        let progression = if skip_sprite_this_tick {
+            None
+        } else if was_flying {
+            match self.get_entity(net_id) {
+                Some(Entity::Net(net))
+                    if net.object.animation == crate::element::Animation::ObjectFlying =>
+                {
+                    Some(crate::sprite::FrameProgression::SkipShadow)
                 }
-            } else {
-                match net.object.animation {
-                    crate::element::Animation::NetBeingTaken => {
-                        FrameProgression::FreezeWhenTerminated
+                Some(Entity::Net(_)) => {
+                    Some(crate::sprite::FrameProgression::SkipShadowFreezeWhenTerminated)
+                }
+                _ => None,
+            }
+        } else {
+            match self.get_entity(net_id) {
+                Some(Entity::Net(net)) => match net.object.animation {
+                    crate::element::Animation::ObjectLying
+                    | crate::element::Animation::NetLyingCrumpled => {
+                        Some(crate::sprite::FrameProgression::Default)
                     }
-                    _ => FrameProgression::Default,
-                }
-            };
-            net.element
-                .sprite
-                .perform_virgin_increment(sim, progression);
+                    crate::element::Animation::NetMoving => {
+                        if self.any_victim_is_moving(&net.net.victims) {
+                            Some(crate::sprite::FrameProgression::Default)
+                        } else {
+                            Some(crate::sprite::FrameProgression::Frozen)
+                        }
+                    }
+                    crate::element::Animation::NetBeingTaken => {
+                        Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(progression) = progression {
+            if !self.actors_frozen()
+                && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
+            {
+                #[cfg(test)]
+                observe_net_sprite_progression(net_id, progression);
+                net.element
+                    .sprite
+                    .perform_virgin_increment(sim, progression);
+            }
         }
     }
 
@@ -1046,6 +1081,131 @@ mod tests {
             },
             net: NetData::default(),
         })
+    }
+
+    fn run_net_owner_path(
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+    ) -> Vec<(EntityId, crate::sprite::FrameProgression)> {
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        let (_, trace) = capture_net_sprite_progressions(|| {
+            crate::sim_rng::with_seed(0x4E45_5431, |sim| {
+                engine.tick_actor_owner_envelopes(sim, assets, &positions);
+            });
+        });
+        trace
+    }
+
+    #[test]
+    fn owner_path_unfold_countdown_never_advances_sprite_including_zero_tick() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 10.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.projectile.flying = true;
+        net.projectile.trajectory_frame_count = 1;
+        net.net.time_till_unfolding = 1;
+        net.object.animation = crate::element::Animation::ObjectFlying;
+        let net_id = engine.add_entity(entity);
+
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.net.time_till_unfolding, 0);
+        assert_eq!(
+            net.object.animation,
+            crate::element::Animation::NetUnfolding
+        );
+        assert!(
+            trace.is_empty(),
+            "zero-count transition must not advance the new row"
+        );
+    }
+
+    #[test]
+    fn owner_path_ground_unfold_transitions_set_rows_without_advancing_them() {
+        for (crumpled, source, expected) in [
+            (
+                false,
+                crate::element::Animation::NetUnfolding,
+                crate::element::Animation::ObjectLying,
+            ),
+            (
+                true,
+                crate::element::Animation::NetUnfoldingCrumpled,
+                crate::element::Animation::NetLyingCrumpled,
+            ),
+        ] {
+            let mut engine = make_engine();
+            let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 0.0));
+            let Entity::Net(net) = &mut entity else {
+                unreachable!()
+            };
+            net.net.crumpled = crumpled;
+            net.object.animation = source;
+            let net_id = engine.add_entity(entity);
+            let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+            let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+                unreachable!()
+            };
+            assert_eq!(net.object.animation, expected);
+            assert!(
+                trace.is_empty(),
+                "ground transition must only select its new row"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_path_stationary_net_moving_stays_moving_with_frozen_progression() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 0.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.object.animation = crate::element::Animation::NetMoving;
+        net.net.landed_animation_resolved = true;
+        let net_id = engine.add_entity(entity);
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.object.animation, crate::element::Animation::NetMoving);
+        assert_eq!(
+            trace,
+            vec![(net_id, crate::sprite::FrameProgression::Frozen)]
+        );
+    }
+
+    #[test]
+    fn owner_path_frozen_all_keeps_net_physics_but_suppresses_sprite_call() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(1.0, 2.0, 10.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.projectile.flying = true;
+        net.projectile.trajectory_frame_count = 1;
+        net.projectile.velocity_increment = WorldVec3D::new(3.0, 4.0, 1.0);
+        net.object.animation = crate::element::Animation::ObjectFlying;
+        let net_id = engine.add_entity(entity);
+        engine.set_actors_frozen(true);
+
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.projectile.frame_count, 1);
+        assert_eq!(
+            net.element.position_map(),
+            MapPoint::from_world_xyz(4.0, 6.0, 11.0)
+        );
+        assert!(
+            trace.is_empty(),
+            "FrozenAll must suppress the selected sprite call"
+        );
     }
 
     fn make_soldier(pos: WorldPoint3D, profile_idx: u32, rider: bool) -> Entity {
