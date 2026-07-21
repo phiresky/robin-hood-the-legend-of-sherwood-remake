@@ -2907,6 +2907,11 @@ mod tests {
             ]
         );
         assert_eq!(
+            actual.iter().map(|entry| entry.1.get()).collect::<Vec<_>>(),
+            vec![100, 101, 102]
+        );
+        assert_eq!(next_id, 103);
+        assert_eq!(
             entities
                 .get(owner)
                 .unwrap()
@@ -2916,6 +2921,64 @@ mod tests {
                 .order_id,
             Some(actual[0].1)
         );
+    }
+
+    #[test]
+    fn carry_creates_only_its_canonical_sequence_order() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 100,
+                ..Default::default()
+            },
+        })));
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Dead,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 0,
+                ..Default::default()
+            },
+        })));
+        let carrier = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id =
+            launch_ability_element(&mut manager, crate::element::Command::TakeCorpse, carrier);
+        let mut next_id = 300;
+
+        assert_eq!(
+            begin_carry(
+                &mut entities,
+                &mut manager,
+                carrier,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+        let element = manager.get_element_mut(seq_id, 0).unwrap();
+        let order = element.pop_current_order().expect("canonical Carry order");
+        assert_eq!(
+            (order.order_type, order.order_id.get()),
+            (OrderType::TransitionWaitingUprightCarryingCorpse, 300)
+        );
+        assert!(element.pop_current_order().is_none());
+        assert_eq!(next_id, 301);
     }
 
     #[test]
