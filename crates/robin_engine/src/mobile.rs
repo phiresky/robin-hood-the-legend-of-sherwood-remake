@@ -37,10 +37,10 @@ pub struct MobileElement {
     pub goal: MapPoint,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MobileTick {
+#[derive(Debug, Clone, Copy)]
+pub struct MobileMotionPhase {
     pub movement: MapVec,
-    pub active_changed: bool,
+    pub reached_goal: bool,
 }
 
 impl MobileElement {
@@ -202,13 +202,12 @@ impl MobileElement {
         self.position != self.old_position
     }
 
-    pub fn hourglass(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        path: &RawHikingPath,
-    ) -> Result<MobileTick, String> {
+    /// Original `NewMove(); Update()` slice. `None` is the strict early return
+    /// for inactive/stopped masters; callers must not run crossing or waypoint
+    /// work in that case.
+    pub fn begin_hourglass_motion(&mut self) -> Option<MobileMotionPhase> {
         if !self.active || self.stopped {
-            return Ok(MobileTick::default());
+            return None;
         }
 
         self.old_position = self.position;
@@ -233,18 +232,26 @@ impl MobileElement {
         }
 
         let to_goal = self.goal - self.position;
-        let reached = self.increment.x * to_goal.x + self.increment.y * to_goal.y <= 0.0;
-        let mut active_changed = false;
-        if reached {
-            let was_active = self.active;
-            self.execute_waypoint(sim, path)?;
-            active_changed = was_active != self.active;
-        }
-
-        Ok(MobileTick {
+        let reached_goal = self.increment.x * to_goal.x + self.increment.y * to_goal.y <= 0.0;
+        Some(MobileMotionPhase {
             movement,
-            active_changed,
+            reached_goal,
         })
+    }
+
+    /// Original goal-test/`ExecuteWayPoint` slice. This must run only after
+    /// line crossing because waypoint macros may consume probability RNG,
+    /// change speed/active state, and replace the path increment.
+    pub fn finish_hourglass_waypoint(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        path: &RawHikingPath,
+        reached_goal: bool,
+    ) -> Result<(), String> {
+        if reached_goal {
+            self.execute_waypoint(sim, path)?;
+        }
+        Ok(())
     }
 
     fn execute_waypoint(
@@ -529,11 +536,17 @@ mod tests {
             assert!((mobile.acceleration - -0.105).abs() < 0.000_01);
             assert_eq!(mobile.current_waypoint, 1);
 
-            let first = mobile.hourglass(sim, &path).unwrap();
+            let first = mobile.begin_hourglass_motion().unwrap();
+            mobile
+                .finish_hourglass_waypoint(sim, &path, first.reached_goal)
+                .unwrap();
             assert!((first.movement.x - 4.895).abs() < 0.000_01);
 
             for _ in 0..200 {
-                mobile.hourglass(sim, &path).unwrap();
+                let phase = mobile.begin_hourglass_motion().unwrap();
+                mobile
+                    .finish_hourglass_waypoint(sim, &path, phase.reached_goal)
+                    .unwrap();
                 if !mobile.active {
                     break;
                 }
@@ -572,7 +585,7 @@ mod tests {
                 MobileElement::from_raw(sim, &raw_mobile(), &path, Vec::new()).unwrap();
             let position = mobile.position;
             mobile.stop();
-            assert_eq!(mobile.hourglass(sim, &path).unwrap().movement, MapVec::ZERO);
+            assert!(mobile.begin_hourglass_motion().is_none());
             assert_eq!(mobile.position, position);
         });
     }

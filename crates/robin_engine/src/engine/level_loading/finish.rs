@@ -16,6 +16,14 @@ impl EngineInner {
         // master is simulation-only, matching C++: only its child
         // RHElementFXMasked objects enter the general element/render array.
         for (mobile_index, raw_mobile) in loaded.mission.mobile_elements.iter().enumerate() {
+            if raw_mobile.sprites.is_empty() {
+                return Err(EngineError::MissionLevelStage {
+                    stage: "mobile elements",
+                    reason: format!(
+                        "mobile {mobile_index} has no first masked child for its Hourglass owner boundary"
+                    ),
+                });
+            }
             let mobile_index_u16 =
                 u16::try_from(mobile_index).map_err(|_| EngineError::MissionLevelStage {
                     stage: "mobile elements",
