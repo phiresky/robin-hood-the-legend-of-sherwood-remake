@@ -90,6 +90,165 @@ fn translated_push_posture(
 }
 
 impl EngineInner {
+    /// Original `GetPossibleVictimsOfSwordStrike(..., true)` collector used by
+    /// the MotionState::Start warning pass. This is intentionally separate
+    /// from MOTION_DONE hit collection: in particular, lateral warnings admit
+    /// every active human in the arc, while straight/assault warnings consider
+    /// only the attacker's principal swordfight opponent.
+    pub(super) fn collect_sword_strike_warning_victims(
+        &self,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        strike: SwordStrike,
+        profile_idx: Option<u32>,
+    ) -> Vec<EntityId> {
+        let profile_idx = profile_idx.unwrap_or_else(|| {
+            panic!(
+                "sword-strike warning collector attacker {attacker_id:?} has no HtH weapon profile id"
+            )
+        });
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "sword-strike warning collector attacker {attacker_id:?} has missing HtH weapon profile {profile_idx}"
+                )
+            });
+        let Some(attacker) = self.get_entity(attacker_id) else {
+            panic!("sword-strike warning collector lost attacker {attacker_id:?}");
+        };
+        let attacker_pos = attacker.element_data().position_map();
+        let attacker_dir = attacker.element_data().direction();
+        let thrust = &profile.thrusts[strike as usize];
+        let min_dist = thrust.minimal_distance as f32;
+        let max_dist = thrust.maximal_distance as f32;
+        let obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+
+        match thrust.kind {
+            WeaponThrustKind::Straight | WeaponThrustKind::Assault => {
+                let human = attacker.human_data().unwrap_or_else(|| {
+                    panic!("sword-strike warning collector attacker {attacker_id:?} is not human")
+                });
+                let Some(principal_id) = human.opponents.first().copied() else {
+                    return Vec::new();
+                };
+                let Some(principal) = self.get_entity(principal_id) else {
+                    panic!(
+                        "sword-strike warning collector attacker {attacker_id:?} has missing principal opponent {principal_id:?}"
+                    );
+                };
+                let principal_pos = principal.element_data().position_map();
+                let dx = attacker_pos.x - principal_pos.x;
+                let dy = (attacker_pos.y - principal_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+                let distance = (dx * dx + dy * dy).sqrt();
+                (distance >= min_dist && distance <= max_dist)
+                    .then_some(principal_id)
+                    .into_iter()
+                    .collect()
+            }
+            WeaponThrustKind::Lateral => {
+                let dir_angle = sector_to_angle(attacker_dir);
+                let (begin_sector, end_sector) = match thrust.direction {
+                    crate::profiles::WeaponThrustDirection::RightToLeft => (
+                        angle_to_sector(
+                            dir_angle - thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
+                        ),
+                        angle_to_sector(
+                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
+                        ),
+                    ),
+                    _ => (
+                        angle_to_sector(
+                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0,
+                        ),
+                        angle_to_sector(
+                            dir_angle + thrust.final_angle as f32 * std::f32::consts::PI / 180.0,
+                        ),
+                    ),
+                };
+                collect_lateral_warning_victims(
+                    &self.world.entities,
+                    attacker_id,
+                    (attacker_pos.x, attacker_pos.y),
+                    min_dist,
+                    max_dist,
+                    begin_sector,
+                    end_sector,
+                )
+            }
+            WeaponThrustKind::PushAside => {
+                let (dir_x, dir_y) = sector_to_direction(attacker_dir);
+                collect_push_victims(
+                    &self.world.entities,
+                    &PushStrikeParams {
+                        attacker_id,
+                        attacker_pos: (attacker_pos.x, attacker_pos.y),
+                        attacker_elevation: attacker.position_iface().get_elevation(),
+                        dir_x,
+                        dir_y,
+                        min_distance: min_dist,
+                        max_distance: max_dist,
+                        half_width: thrust.repulsion as f32 / 2.0,
+                    },
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                )
+            }
+            WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
+                let dir_angle = sector_to_angle(attacker_dir);
+                let (begin_sector, end_sector) = match thrust.direction {
+                    crate::profiles::WeaponThrustDirection::RightToLeft => {
+                        let initial =
+                            dir_angle + thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        (
+                            angle_to_sector(initial - std::f32::consts::PI),
+                            angle_to_sector(initial),
+                        )
+                    }
+                    _ => {
+                        let initial =
+                            dir_angle - thrust.initial_angle as f32 * std::f32::consts::PI / 180.0;
+                        (
+                            angle_to_sector(initial),
+                            angle_to_sector(initial + std::f32::consts::PI),
+                        )
+                    }
+                };
+                collect_arc_victims(
+                    &self.world.entities,
+                    attacker_id,
+                    (attacker_pos.x, attacker_pos.y),
+                    min_dist,
+                    max_dist,
+                    begin_sector,
+                    end_sector,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                )
+            }
+            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
+                collect_circle_warn_victims(
+                    &self.world.entities,
+                    attacker_id,
+                    (attacker_pos.x, attacker_pos.y),
+                    attacker_dir,
+                    max_dist,
+                    thrust.rotation_angle,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                )
+            }
+        }
+    }
+
     // ─── Push / stumble effects ─────────────────────────────────────
 
     /// Apply push-back movement and posture-aware falling animation to a
@@ -1217,7 +1376,6 @@ impl EngineInner {
         attacker_id: EntityId,
         strike: SwordStrike,
         profile_idx: Option<u32>,
-        warn_ai: bool,
     ) -> Vec<EntityId> {
         let profile = profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -1355,38 +1513,18 @@ impl EngineInner {
                     obstacles,
                 )
             }
-            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-                // Full circle: all directions.  When invoked from the
-                // WarnForStrike phase, extend the max distance for
-                // walking-with-sword enemies (the warn-AI branch of
-                // circle-strike victim collection).
-                if warn_ai {
-                    collect_circle_warn_victims(
-                        &self.world.entities,
-                        attacker_id,
-                        attacker_pos,
-                        attacker_dir,
-                        max_dist,
-                        thrust.rotation_angle,
-                        &assets.profile_manager,
-                        &self.world.fast_grid,
-                        obstacles,
-                    )
-                } else {
-                    collect_arc_victims(
-                        &self.world.entities,
-                        attacker_id,
-                        attacker_pos,
-                        min_dist,
-                        max_dist,
-                        0,
-                        15,
-                        &assets.profile_manager,
-                        &self.world.fast_grid,
-                        obstacles,
-                    )
-                }
-            }
+            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => collect_arc_victims(
+                &self.world.entities,
+                attacker_id,
+                attacker_pos,
+                min_dist,
+                max_dist,
+                0,
+                15,
+                &assets.profile_manager,
+                &self.world.fast_grid,
+                obstacles,
+            ),
         }
     }
 }

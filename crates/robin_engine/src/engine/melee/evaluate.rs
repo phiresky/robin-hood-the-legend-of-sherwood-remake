@@ -1327,6 +1327,8 @@ impl EngineInner {
         strike: SwordStrike,
     ) {
         for &victim_id in victims {
+            #[cfg(test)]
+            record_strike_warning(attacker_id, victim_id);
             // Check what kind of victim this is and their state
             let victim_info = {
                 let victim = match self.get_entity(victim_id) {

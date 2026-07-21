@@ -23,7 +23,8 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   before ActionChange/tails. Active melee is admitted only when its exact
   sequence/element/order tuple is still the selected Execute arm; stale melee
   state cannot suppress the real selected generic arm. Strike-start state and
-  warning callbacks are owned by the first live sprite `MotionState::Start`,
+  warning callbacks are owned by the first live sprite `MotionState::Start` and
+  use the Original principal/range straight collector plus its looser lateral predicate,
   and FrozenAll leaves every melee/sprite/order field untouched.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.

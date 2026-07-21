@@ -6,6 +6,33 @@ use crate::order::{Order, OrderType};
 use crate::sequence::SequenceElement;
 use crate::weapons::SwordStrike;
 
+fn straight_warning_assets(min_distance: u16, max_distance: u16) -> LevelAssets {
+    let mut profiles = crate::profiles::ProfileManager::new();
+    let mut weapon = crate::profiles::HtHWeaponProfile::default();
+    let thrust = &mut weapon.thrusts[SwordStrike::A as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::Straight;
+    thrust.minimal_distance = min_distance;
+    thrust.maximal_distance = max_distance;
+    profiles.hth_weapons.push(weapon);
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        hth_weapon_id: 1,
+        fighting: 100,
+        ..crate::profiles::CharacterProfile::default()
+    });
+    LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    }
+}
+
+fn set_map_position(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
+    engine
+        .get_entity_mut(actor)
+        .expect("test actor exists")
+        .element_data_mut()
+        .set_position_map(MapPoint::new(x, y));
+}
+
 fn positions(engine: &EngineInner) -> crate::entities::EntitySlots<Option<MapPoint>> {
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
@@ -314,7 +341,7 @@ fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
     let victim = engine.add_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, victim, MELEE_STRIKE_DURATION, false);
-    run_owner_walk(&mut engine, &LevelAssets::new());
+    run_owner_walk(&mut engine, &straight_warning_assets(0, 100));
     let entity = engine.get_entity(attacker).unwrap();
     assert_eq!(entity.element_data().sprite.current_frame, 0);
     assert_eq!(
@@ -323,6 +350,82 @@ fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
         "WaitingSword belongs to the live MotionState::Start transition"
     );
     assert!(entity.actor_data().unwrap().active_melee.sprite_driving_hit);
+}
+
+#[test]
+fn straight_start_does_not_warn_or_draw_for_out_of_range_or_nonprincipal_target() {
+    for case in ["out_of_range", "nonprincipal"] {
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+        let principal = engine.add_entity(make_test_pc(Posture::Upright));
+        let nominal_target = if case == "nonprincipal" {
+            engine.add_entity(make_test_pc(Posture::Upright))
+        } else {
+            principal
+        };
+        set_map_position(&mut engine, attacker, 0.0, 0.0);
+        set_map_position(&mut engine, principal, 200.0, 0.0);
+        if nominal_target != principal {
+            set_map_position(&mut engine, nominal_target, 20.0, 0.0);
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(principal);
+        bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+        install_selected_melee(
+            &mut engine,
+            attacker,
+            nominal_target,
+            MELEE_STRIKE_DURATION,
+            false,
+        );
+        let assets = straight_warning_assets(10, 50);
+        let (((), rng_trace), warnings) = super::super::melee::capture_strike_warnings(|| {
+            crate::sim_rng::with_draw_trace(|| run_owner_walk(&mut engine, &assets))
+        });
+        assert!(warnings.is_empty(), "{case} warning: {warnings:?}");
+        assert!(rng_trace.is_empty(), "{case} RNG: {rng_trace:?}");
+    }
+}
+
+#[test]
+fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    set_map_position(&mut engine, principal, 20.0, 0.0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(principal);
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    install_selected_melee(
+        &mut engine,
+        attacker,
+        principal,
+        MELEE_STRIKE_DURATION,
+        false,
+    );
+    let assets = straight_warning_assets(10, 50);
+
+    let (_, start_warnings) =
+        super::super::melee::capture_strike_warnings(|| run_owner_walk(&mut engine, &assets));
+    assert_eq!(start_warnings, vec![(attacker, principal)]);
+
+    let (_, in_progress_warnings) =
+        super::super::melee::capture_strike_warnings(|| run_owner_walk(&mut engine, &assets));
+    assert!(
+        in_progress_warnings.is_empty(),
+        "WarnForStrike must not repeat after MotionState::Start: {in_progress_warnings:?}"
+    );
 }
 
 #[test]

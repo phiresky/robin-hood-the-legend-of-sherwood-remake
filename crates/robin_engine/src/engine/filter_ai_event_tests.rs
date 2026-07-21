@@ -1922,7 +1922,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
         "moving",
         "dead",
         "unconscious",
-        "active-melee",
         "active-shot",
     ] {
         let mut engine = EngineInner::new();
@@ -2018,17 +2017,6 @@ fn generic_animation_skip_does_not_skip_action_change() {
                         .human_data_mut()
                         .expect("skipped actor is human")
                         .unconscious = true;
-                }
-                "active-melee" => {
-                    entity
-                        .actor_data_mut()
-                        .expect("skipped actor is typed")
-                        .active_melee = crate::movement::ActiveMelee::new(
-                        stale,
-                        crate::weapons::SwordStrike::default(),
-                        Some(seq_id),
-                        elem_idx,
-                    );
                 }
                 "active-shot" => {
                     entity

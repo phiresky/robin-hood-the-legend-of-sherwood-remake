@@ -128,7 +128,7 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let (target, strike, profile_idx) = {
+        let (strike, profile_idx) = {
             let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
                 panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
             });
@@ -138,26 +138,15 @@ impl EngineInner {
                 panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
             });
             actor.action_state = ActionState::WaitingSword;
-            let melee = actor.active_melee;
-            (
-                melee.target.unwrap_or_else(|| {
-                    panic!("melee MotionState::Start owner {attacker_id:?} lost its target")
-                }),
-                melee.strike,
-                profile_idx,
-            )
+            (actor.active_melee.strike, profile_idx)
         };
 
         // RHElementActorHuman::Execute forecasts and warns only after
         // PerformAction returns START. This may synchronously Think and draw
         // RNG, so it belongs to the live owner slot rather than Instruct.
         let victims =
-            self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx, true);
-        if victims.is_empty() {
-            self.warn_for_strike(sim, assets, attacker_id, &[target], strike);
-        } else {
-            self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
-        }
+            self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
+        self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
     }
 
     fn selected_melee_identity_is_live(
@@ -1054,7 +1043,6 @@ impl EngineInner {
                     hit.attacker_id,
                     hit.strike,
                     hit.attacker_profile_idx,
-                    false,
                 );
                 let mut all_victims = victims;
                 if !all_victims.contains(&hit.victim_id) {
@@ -1105,7 +1093,6 @@ impl EngineInner {
                     hit.attacker_id,
                     hit.strike,
                     hit.attacker_profile_idx,
-                    false,
                 );
                 let mut all_victims = victims;
                 if !all_victims.contains(&hit.victim_id) {
