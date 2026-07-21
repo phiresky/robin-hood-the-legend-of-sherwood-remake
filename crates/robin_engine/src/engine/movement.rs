@@ -41,6 +41,13 @@ pub(super) struct PreparedMovementFrame {
         std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MovementOwnerSelection {
+    pub seq_id: crate::sequence::SequenceId,
+    pub elem_idx: usize,
+    pub order_id: std::num::NonZeroU32,
+}
+
 fn order_uses_distance_motion(order: OrderType) -> bool {
     matches!(
         order,
@@ -3568,7 +3575,28 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         owner: EntityId,
         prepared: &PreparedMovementFrame,
+        selected: Option<MovementOwnerSelection>,
     ) {
+        let Some(selected) = selected else { return };
+        let selected_is_live = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .filter(|element| element.owner == Some(owner) && element.data.is_movement())
+            .and_then(|element| element.current_order())
+            .is_some_and(|order| order.order_id == selected.order_id);
+        if !selected_is_live {
+            return;
+        }
+        if self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| entity.actor_data())
+            .is_some_and(|actor| actor.execution_frozen)
+        {
+            return;
+        }
         let selected_command = self
             .orders
             .sequence_manager
@@ -3761,13 +3789,7 @@ impl EngineInner {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
-            let Some((seq_id, elem_idx)) = self
-                .orders
-                .sequence_manager
-                .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement())
-            else {
-                continue;
-            };
+            let (seq_id, elem_idx) = (selected.seq_id, selected.elem_idx);
             if let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                 speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
@@ -3873,10 +3895,12 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some((_, _, order)) = self
+            let Some(order) = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(soldier_id)
+                .get_element(selected.seq_id, selected.elem_idx)
+                .and_then(|element| element.current_order())
+                .filter(|order| order.order_id == selected.order_id)
             else {
                 continue;
             };
@@ -4080,7 +4104,6 @@ impl EngineInner {
 
         // Collect movement results that need sequence manager notification.
         // We can't call sequence_manager while iterating entities mutably.
-        let mut arrived: Vec<(EntityId, ActiveMovement)> = Vec::new();
         // Door-pass triggers to execute after the movement loop (need &mut self).
         let mut door_triggers: Vec<(EntityId, crate::gate::DoorIndex, bool, u8)> = Vec::new();
         // Door-pass Transition orders to push onto the actor's current
@@ -4260,7 +4283,15 @@ impl EngineInner {
                 let move_elem = self
                     .orders
                     .sequence_manager
-                    .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement());
+                    .get_element(selected.seq_id, selected.elem_idx)
+                    .filter(|element| {
+                        element.owner == Some(entity_id)
+                            && element.data.is_movement()
+                            && element
+                                .current_order()
+                                .is_some_and(|order| order.order_id == selected.order_id)
+                    })
+                    .map(|_| (selected.seq_id, selected.elem_idx));
                 let Some((seq_id, elem_idx)) = move_elem else {
                     if !has_moving_state {
                         continue;
@@ -5002,7 +5033,6 @@ impl EngineInner {
                                 if let Some((door_index, direct)) = completed {
                                     completed_door_passes.push((eid, door_index, direct));
                                 }
-                                arrived.push((eid, actor.active_movement));
                                 actor.clear_path();
                                 actor.action_state =
                                     if is_swordfighting || actor.action_state.is_sword() {
@@ -5537,7 +5567,6 @@ impl EngineInner {
                             // leave an end-transition order as the
                             // new current, which the animation driver
                             // will play next tick.
-                            arrived.push((eid, actor.active_movement));
                             actor.clear_path();
                             // Flip action_state to Waiting so any
                             // pending end-transition order on the
@@ -5859,6 +5888,31 @@ impl EngineInner {
             self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
         }
 
+        // These calls are inside the Human/PC sword movement Execute arms,
+        // after PerformMotion and before base Actor completion/DoNextOrder.
+        if executed_sword_movement {
+            self.quit_swordfight_with_far_opponents(sim, assets, owner);
+            if matches!(owner, EntityId::Pc(_)) {
+                let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
+                    entity.actor_data()?;
+                    if !entity.position_iface().is_moving_map()
+                        || !crate::engine::melee::enemies_are_blocking_my_movement(
+                            &self.world.entities,
+                            owner,
+                        )
+                    {
+                        return None;
+                    }
+                    Some((selected.seq_id, selected.elem_idx))
+                });
+                if let Some((seq_id, elem_idx)) = pinch_abort {
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
+                }
+            }
+        }
+
         // Execute pending door-pass triggers (PassingDoor steps).
         // These need &mut self for layer/sector changes and building callbacks.
         for (entity_id, door_index, direct, trigger_num) in door_triggers {
@@ -5948,6 +6002,21 @@ impl EngineInner {
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
         }
+        let selected_terminal = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .is_some_and(|element| {
+                matches!(
+                    element.state,
+                    crate::sequence::SequenceState::Terminated
+                        | crate::sequence::SequenceState::Impossible
+                        | crate::sequence::SequenceState::Interrupted
+                )
+            });
+        if selected_terminal {
+            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+        }
 
         // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
         // WALKING_CARRYING_ON_SHOULDERS action arm, after PerformMotion.  Run
@@ -5955,50 +6024,6 @@ impl EngineInner {
         // than from the carrier's persistent posture.
         self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
 
-        // These calls are part of the Human/PC sword movement Execute arms,
-        // after PerformMotion and before base Actor completion. Do not infer
-        // them from persistent posture/action state outside this owner arm.
-        if executed_sword_movement {
-            self.quit_swordfight_with_far_opponents(sim, assets, owner);
-            if matches!(owner, EntityId::Pc(_)) {
-                let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
-                    let actor = entity.actor_data()?;
-                    if !entity.position_iface().is_moving_map()
-                        || !crate::engine::melee::enemies_are_blocking_my_movement(
-                            &self.world.entities,
-                            owner,
-                        )
-                    {
-                        return None;
-                    }
-                    Some((
-                        actor.active_movement.sequence_id?,
-                        actor.active_movement.element_index,
-                    ))
-                });
-                if let Some((seq_id, elem_idx)) = pinch_abort {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(seq_id, elem_idx);
-                }
-            }
-        }
-
-        // Collect entity IDs for EventReachPoint dispatch.  Two paths
-        // fire the same event: the condolation drain (triggered by
-        // `element_terminated` above) and
-        // `dispatch_reach_point_events` called from the caller after
-        // this function returns.  Keep the explicit return so callers
-        // that don't yet rely on the condolation-side dispatch (and
-        // for now to preserve existing event-timing) still receive
-        // the arrival list.
-        let mut reach_point_entities: Vec<EntityId> = Vec::new();
-        for (entity_id, _am) in &arrived {
-            reach_point_entities.push(*entity_id);
-        }
-        if !reach_point_entities.is_empty() {
-            self.dispatch_reach_point_events(sim, assets, &reach_point_entities);
-        }
         if !galopp_events.is_empty() {
             self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
         }
@@ -6026,7 +6051,22 @@ impl EngineInner {
             .map(|(id, _)| id.into())
             .collect();
         for owner in owners {
-            self.tick_entity_movement_owner(sim, assets, owner, &prepared);
+            let selected = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .and_then(|(seq_id, elem_idx, order)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .filter(|element| element.data.is_movement())
+                        .map(|_| MovementOwnerSelection {
+                            seq_id,
+                            elem_idx,
+                            order_id: order.order_id,
+                        })
+                });
+            self.tick_entity_movement_owner(sim, assets, owner, &prepared, selected);
         }
     }
 

@@ -3201,9 +3201,9 @@ impl EngineInner {
     ///
     /// `send_condolation_card` calls `think(EVENT_REACHPOINT)` when a
     /// MOVE sequence element reaches the terminated state.  Originally
-    /// this fired from inside the sequence manager's state-change
-    /// callback; here we collect the arrivals from
-    /// `tick_entity_movement` and dispatch in this pass.
+    /// this fires through the owner-local pending-condolation drain after
+    /// movement terminates the selected element. This helper remains for
+    /// non-movement callers that explicitly synthesize the same stimulus.
     ///
     /// Any new orders produced by the AI (e.g. "walk to next waypoint")
     /// will be drained on the next frame by `process_pending_ai_orders`.

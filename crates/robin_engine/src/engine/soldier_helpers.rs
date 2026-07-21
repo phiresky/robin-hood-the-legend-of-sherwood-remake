@@ -12,6 +12,38 @@ use crate::element::{Command, Entity, EntityId};
 use crate::order::OrderType;
 use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
 
+#[cfg(test)]
+thread_local! {
+    static CONDOLATION_STIMULUS_TRACE: std::cell::RefCell<Option<Vec<(EntityId, StimulusType)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn capture_condolation_stimuli<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, StimulusType)>) {
+    CONDOLATION_STIMULUS_TRACE.with(|trace| {
+        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
+    });
+    let result = f();
+    let observed = CONDOLATION_STIMULUS_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("condolation trace remains installed")
+    });
+    (result, observed)
+}
+
+#[cfg(test)]
+fn observe_condolation_stimulus(owner: EntityId, stimulus: StimulusType) {
+    CONDOLATION_STIMULUS_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((owner, stimulus));
+        }
+    });
+}
+
 impl EngineInner {
     /// Request a soldier enter or leave attentive mode, launching the
     /// appropriate transition-animation sequence element.
@@ -236,6 +268,46 @@ impl EngineInner {
         self.dispatch_condolations(sim, assets);
     }
 
+    /// Close only the terminal cards created by one live actor owner, then
+    /// follow any nested cross-owner cards depth-first. Cards that predate
+    /// this owner slot remain queued for their established boundary.
+    pub(super) fn dispatch_condolations_for_owner_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        owner: EntityId,
+        assets: &LevelAssets,
+    ) {
+        let mut pending: std::collections::VecDeque<_> = self
+            .orders
+            .sequence_manager
+            .drain_pending_condolations_for_owner(owner)
+            .into();
+        while let Some(dispatch) = pending.pop_front() {
+            let card_owner = dispatch.card.owner;
+            self.send_condolation_card(dispatch.card, assets);
+            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+            self.orders
+                .sequence_manager
+                .finish_pending_condolation(dispatch);
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "owner-boundary condolation for {} failed to drain its synchronous successor: {error:?}",
+                        card_owner.index()
+                    )
+                });
+            for nested in self
+                .orders
+                .sequence_manager
+                .drain_pending_condolations()
+                .into_iter()
+                .rev()
+            {
+                pending.push_front(nested);
+            }
+        }
+    }
+
     /// Dispatch a single `SendCondolationCard` to the owner entity.
     ///
     /// When a sequence element reaches a terminal state, walk the
@@ -458,6 +530,11 @@ impl EngineInner {
 
             _ => None,
         };
+
+        #[cfg(test)]
+        if let Some(st) = stimulus {
+            observe_condolation_stimulus(owner, st);
+        }
 
         if let Some(st) = stimulus
             && let Some(entity) = self.world.entities.get_mut(owner)

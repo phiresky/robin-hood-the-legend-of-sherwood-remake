@@ -1,5 +1,125 @@
 use super::*;
 
+fn tick_production_owner_coordinator(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+) {
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(entity.element_data().position_map());
+    }
+    engine.tick_actor_owner_envelopes(sim, assets, &positions);
+}
+
+#[test]
+fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
+    use crate::engine::melee::{
+        clear_test_sword_damage_observations, take_test_sword_damage_observations,
+    };
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        crate::order::OrderType::RiderCharging,
+        vec![0, 0],
+    );
+    engine
+        .get_entity_mut(rider)
+        .and_then(crate::element::Entity::enemy_ai_mut)
+        .expect("rider has enemy AI")
+        .hth_weapon_id = 1;
+    add_charge_victim(&mut engine, MapPoint::new(100.0, 100.0));
+    engine
+        .get_entity_mut(rider)
+        .and_then(crate::element::Entity::actor_data_mut)
+        .expect("rider remains an actor")
+        .execution_frozen = true;
+
+    clear_test_sword_damage_observations();
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+
+    let actor = engine
+        .get_entity(rider)
+        .and_then(crate::element::Entity::actor_data)
+        .expect("rider remains an actor");
+    assert!(actor.active_rider_charge.is_none());
+    assert!(actor.last_executed_rider_charge_order_id.is_none());
+    assert!(take_test_sword_damage_observations().is_empty());
+}
+
+#[test]
+fn production_owner_uses_exact_selected_element_not_background_movement() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, selected_seq, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        OrderType::RiderCharging,
+        vec![0, 0],
+    );
+    engine
+        .get_entity_mut(rider)
+        .and_then(crate::element::Entity::enemy_ai_mut)
+        .expect("rider has enemy AI")
+        .hth_weapon_id = 1;
+
+    let mut background =
+        SequenceElement::new_movement(1, Command::Move, Some(rider), OrderType::RiderCharging);
+    background
+        .orders
+        .push_back(Order::test_new(OrderType::RiderCharging, 300.0, 100.0));
+    let movement_seq = engine.orders.sequence_manager.launch_element(background);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_seq, 0);
+
+    let generic_data = SequenceElement::new_generic(1, Command::Point, Some(rider)).data;
+    let selected = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(selected_seq, 0)
+        .expect("selected fixture element remains installed");
+    selected.command = Command::Point;
+    selected.data = generic_data;
+    selected.orders.clear();
+    selected
+        .orders
+        .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(rider),
+        Some((selected_seq, 0))
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_seq, 0)
+            .expect("background movement remains installed")
+            .state,
+        crate::sequence::SequenceState::InProgress
+    );
+
+    engine.set_actors_frozen(true);
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    let actor = engine
+        .get_entity(rider)
+        .and_then(crate::element::Entity::actor_data)
+        .expect("rider remains an actor");
+    assert!(actor.active_rider_charge.is_none());
+    assert!(actor.last_executed_rider_charge_order_id.is_none());
+}
+
 fn install_rider_charge_fixture(
     engine: &mut EngineInner,
     assets: &mut LevelAssets,
@@ -180,6 +300,62 @@ fn install_charge_victim_motion(
         .actor_data_mut()
         .unwrap()
         .active_movement = ActiveMovement::new(sequence, 0);
+}
+
+#[test]
+fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
+    use crate::ai::StimulusType;
+    use crate::element::Posture;
+    use crate::engine::soldier_helpers::capture_condolation_stimuli;
+
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let mut mover = make_test_pc(Posture::Upright);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().posture = Posture::Upright;
+    let mover_id = engine.add_entity(mover);
+    install_charge_victim_motion(
+        &mut engine,
+        mover_id,
+        MapPoint::new(0.0, 0.0),
+        MapPoint::new(1.0, 0.0),
+    );
+    engine
+        .get_entity_mut(mover_id)
+        .expect("mover remains installed")
+        .element_data_mut()
+        .sprite
+        .last_processed_order_id = u32::MAX;
+    let movement_seq = engine
+        .get_entity(mover_id)
+        .and_then(crate::element::Entity::actor_data)
+        .and_then(|actor| actor.active_movement.sequence_id)
+        .expect("movement is armed");
+    let sim = crate::sim_rng::test_context();
+
+    engine.tick_entity_movement(&sim, &assets);
+    let (_, trace) = capture_condolation_stimuli(|| {
+        tick_production_owner_coordinator(&mut engine, &sim, &assets)
+    });
+
+    assert_eq!(trace, vec![(mover_id, StimulusType::EventReachPoint)]);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_seq, 0)
+            .expect("completed movement remains inspectable")
+            .state,
+        crate::sequence::SequenceState::Terminated
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .drain_pending_condolations()
+            .is_empty(),
+        "the owner boundary must close the real card instead of leaving a duplicate"
+    );
 }
 
 #[test]

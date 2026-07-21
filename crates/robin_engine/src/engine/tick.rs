@@ -1683,7 +1683,6 @@ impl EngineInner {
             self.check_mobile_line_crossing(assets, mobile_index);
         }
 
-        // ── Quit swordfight with far opponents ──────────────────
         // `quit_swordfight_with_far_opponents` is called ONLY during
         // walking-with-sword movement, NOT for stationary entities.
         // Only check entities actively moving in sword state.
@@ -1711,11 +1710,9 @@ impl EngineInner {
         // with RIDER_CHARGE, fire `Think(EVENT_GALOPP_LOOP_END)` so
         // the AI can check whether to begin the actual charge pass.
 
-        // ── Per-frame zone occupant update ─────────────────────
         // Separate Rust reconciliation boundary: the cited Original actor
         // Execute arms do not establish zone occupancy as owner-local work.
         // Fires EnterZone/ExitZone on zone scripts when occupancy changes.
-        self.tick_zone_occupants(sim, assets);
 
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
@@ -1741,6 +1738,8 @@ impl EngineInner {
         self.tick_nonactor_entity_animations(sim, assets);
         let processed_projectiles =
             self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
+        // Separate Rust reconciliation boundary after owner movement.
+        self.tick_zone_occupants(sim, assets);
 
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
@@ -1796,7 +1795,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _| {},
+            |_, _, _| {},
             |_, _| {},
         );
     }
@@ -1813,7 +1812,7 @@ impl EngineInner {
             assets,
             |_, _| {},
             |_, _| {},
-            |_, _| {},
+            |_, _, _| {},
             after_slot,
         );
     }
@@ -1824,7 +1823,11 @@ impl EngineInner {
         assets: &LevelAssets,
         mut non_actor_slot: impl FnMut(&mut Self, EntityId),
         mut before_actor: impl FnMut(&mut Self, EntityId),
-        mut execute_owner_arm: impl FnMut(&mut Self, EntityId),
+        mut execute_owner_arm: impl FnMut(
+            &mut Self,
+            EntityId,
+            Option<super::movement::MovementOwnerSelection>,
+        ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
         let mut slot = 0;
@@ -1879,35 +1882,70 @@ impl EngineInner {
                         entity_id,
                     ));
 
-                    let movement_execute_selected = self
+                    let movement_selection = self
                         .orders
                         .sequence_manager
-                        .current_element_for_actor(entity_id)
-                        .and_then(|(seq_id, elem_idx)| {
-                            self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                        })
-                        .is_some_and(|element| {
-                            element.data.is_movement()
-                                && element.current_order().is_some()
-                                && !matches!(
-                                    element.command,
-                                    crate::element::Command::WaitTimer
-                                        | crate::element::Command::WaitFreeLift
-                                )
+                        .current_order_for_actor(entity_id)
+                        .and_then(|(seq_id, elem_idx, order)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .filter(|element| {
+                                    element.data.is_movement()
+                                        && !matches!(
+                                            element.command,
+                                            crate::element::Command::WaitTimer
+                                                | crate::element::Command::WaitFreeLift
+                                        )
+                                })
+                                .map(|_| super::movement::MovementOwnerSelection {
+                                    seq_id,
+                                    elem_idx,
+                                    order_id: order.order_id,
+                                })
                         });
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
                         entity_id,
                     ));
-                    execute_owner_arm(self, entity_id);
+                    execute_owner_arm(self, entity_id, movement_selection);
 
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
                         entity_id,
                     ));
+                    let frozen_wait_execute = self
+                        .actors_frozen()
+                        .then(|| {
+                            self.orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id)
+                                .and_then(|(seq_id, elem_idx, order)| {
+                                    let element = self
+                                        .orders
+                                        .sequence_manager
+                                        .get_element(seq_id, elem_idx)?;
+                                    matches!(
+                                        element.command,
+                                        crate::element::Command::WaitTimer
+                                            | crate::element::Command::WaitFreeLift
+                                    )
+                                    .then_some(
+                                        super::animation::ActorExecuteResult {
+                                            order_type: order.order_type,
+                                            entry_seq_id: seq_id,
+                                            entry_elem_idx: elem_idx,
+                                            motion: crate::sprite::MotionState::InProgress,
+                                        },
+                                    )
+                                })
+                        })
+                        .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                        if movement_execute_selected {
+                        if movement_selection.is_some() {
                             (Vec::new(), Default::default(), None)
+                        } else if frozen_wait_execute.is_some() {
+                            (Vec::new(), Default::default(), frozen_wait_execute)
                         } else {
                             self.tick_actor_animation_for(sim, assets, entity_id)
                         };
@@ -2072,8 +2110,8 @@ impl EngineInner {
                     engine.process_shoot_list_for(owner);
                 }
             },
-            |engine, owner| {
-                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement)
+            |engine, owner, selected| {
+                engine.tick_entity_movement_owner(sim, assets, owner, &prepared_movement, selected)
             },
             |engine, owner| {
                 let is_human = engine
@@ -4272,6 +4310,42 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
+    fn frozen_all_wait_timer_still_completes_in_owner_slot() {
+        use crate::sequence::{Field, FieldValue};
+
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
+        wait.set_property(Field::Timer, FieldValue::Integer(0));
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitTimer, seq_id, 0);
+        let _ = engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions();
+        engine.set_actors_frozen(true);
+
+        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .expect("wait timer remains inspectable")
+                .state,
+            SequenceState::Terminated
+        );
+    }
+
+    #[test]
     fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
@@ -4775,7 +4849,7 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
-    fn lift_wait_rechecks_each_execute_and_promotes_wait_successor_in_authorizing_slot() {
+    fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
@@ -4812,13 +4886,7 @@ mod bow_command_body_parity_tests {
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
-        engine
-            .world
-            .entities
-            .get_mut(owner)
-            .and_then(|entity| entity.actor_data_mut())
-            .expect("lift wait owner is an actor")
-            .execution_frozen = true;
+        engine.set_actors_frozen(true);
         let _ = engine
             .orders
             .sequence_manager
