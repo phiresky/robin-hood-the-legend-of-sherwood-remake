@@ -74,6 +74,13 @@ its pending list FIFO and calls `Go()` at
   FrozenAll still runs master translation while the RHSprite child-frame gate
   remains frozen. Empty, stale, non-FX, wrongly indexed, and non-adjacent child
   relationships fail contextually at load/attachment or the live boundary.
+  The master itself is split at the Original `Update -> CheckForLineCrossing ->
+  IsGoalReached/ExecuteWayPoint` boundaries: crossing fallback observes the
+  movement's old increment before probability RNG or waypoint direction,
+  speed, and active-state changes. Inactive/stopped masters return before all
+  crossing/waypoint work. Mobile children remain excluded from the older
+  global nonactor-animation batch, and their boundary precedes the independent
+  static-nonmobile dispatch in the live slot hook.
 - **Deferred effects:** The original swordfight falling-edge check, titbit
   update, dead-selection scan, and anonymous timers retain their exact order
   at the start of `DeferredEffectsEnd`. Rust-only condolation, re-entrant

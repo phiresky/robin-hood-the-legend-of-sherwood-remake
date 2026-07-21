@@ -122,6 +122,10 @@ slot without adding an `Entity` variant or mirror. `FxData::mobile_index` and
 `MobileElement::sprite_ids` are validated as an exact, non-empty, adjacent,
 ordered relationship; the first child runs the master once, and every child
 then owns exactly one masked-animation call at its stored slot.
+Mobile children stay excluded from the legacy global nonactor-animation batch.
+Within the live nonactor slot hook, the mobile boundary is intentionally the
+first dispatch and returns before the independent static-nonmobile lane; keep
+that ordering when the static-owner merge lands.
 
 ## Validation ladder
 

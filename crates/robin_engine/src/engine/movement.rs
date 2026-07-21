@@ -44,6 +44,16 @@ struct LiveMobileGeometry {
         std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static LAST_MOBILE_CROSSING_INCREMENT: std::cell::Cell<Option<MapVec>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn take_last_mobile_crossing_increment() -> Option<MapVec> {
+    LAST_MOBILE_CROSSING_INCREMENT.with(|increment| increment.take())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MovementOwnerSelection {
     pub seq_id: crate::sequence::SequenceId,
@@ -863,6 +873,20 @@ impl EngineInner {
                 .push(mobile.motion_polygon.clone());
         }
         prepared
+    }
+
+    #[cfg(test)]
+    pub(super) fn first_live_mobile_polygon_point(
+        &self,
+        layer: u16,
+    ) -> crate::coordinates::MapPoint {
+        self.live_mobile_geometry()
+            .mobile_polygons_by_layer
+            .get(&layer)
+            .and_then(|polygons| polygons.first())
+            .and_then(|polygon| polygon.first())
+            .copied()
+            .unwrap_or_else(|| panic!("no live mobile polygon point on layer {layer}"))
     }
 
     /// Execute the Original's `RHNONANIMATION_RIDER_CHARGING` arm inside its
@@ -6459,6 +6483,8 @@ impl EngineInner {
                 mobile.obstacle,
             )
         };
+        #[cfg(test)]
+        LAST_MOBILE_CROSSING_INCREMENT.with(|observed| observed.set(Some(increment)));
         if old_pos == new_pos {
             return;
         }
