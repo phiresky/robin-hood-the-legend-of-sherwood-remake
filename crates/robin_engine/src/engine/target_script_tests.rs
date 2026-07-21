@@ -137,12 +137,14 @@ const GLOBAL_ID_APPLE: i32 = 102;
 const GLOBAL_ID_HEAL: i32 = 103;
 const GLOBAL_ID_MONEY: i32 = 104;
 const GLOBAL_ID_ARROW: i32 = 105;
+pub(crate) const GLOBAL_ID_HEARD: i32 = 106;
 const SENTINEL_LEVER: i32 = 0x11111111;
 const SENTINEL_SEARCH: i32 = 0x22222222;
 const SENTINEL_APPLE: i32 = 0x33333333;
 const SENTINEL_HEAL: i32 = 0x44444444;
 const SENTINEL_MONEY: i32 = 0x55555555;
 const SENTINEL_ARROW: i32 = 0x66666666;
+pub(crate) const SENTINEL_HEARD: i32 = 0x77777777;
 
 /// Construct an SCB with a `StartUp` class (required by
 /// `MissionScript::from_scb`) and a `TestTarget` class exposing six
@@ -169,6 +171,7 @@ fn build_test_scb() -> ScbFile {
         ("ActivatedByHeal", GLOBAL_ID_HEAL, SENTINEL_HEAL),
         ("ActivatedByMoney", GLOBAL_ID_MONEY, SENTINEL_MONEY),
         ("ActivatedByArrow", GLOBAL_ID_ARROW, SENTINEL_ARROW),
+        ("ActivatedByListenable", GLOBAL_ID_HEARD, SENTINEL_HEARD),
     ] {
         let base = target_quads.len() as i32;
         let (f, q) = activated_by_function(name, base, gid, sentinel);
@@ -193,7 +196,7 @@ fn build_test_scb() -> ScbFile {
 /// Stand up an engine with a `MissionScript` loaded from the synthetic
 /// SCB, plus an FX target entity bound to the `TestTarget` class.
 /// Returns the engine and the target entity id.
-fn build_engine_with_target() -> (EngineInner, EntityId) {
+pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     let script = MissionScript::from_scb(build_test_scb()).expect("mission script builds");
@@ -244,7 +247,7 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
 
 /// Read back a host-global value after a dispatch.  Returns the
 /// default (0) if the global wasn't written.
-fn host_global(engine: &EngineInner, id: i32) -> i32 {
+pub(crate) fn host_global(engine: &EngineInner, id: i32) -> i32 {
     engine
         .scripts
         .mission

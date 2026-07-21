@@ -6,6 +6,19 @@ use crate::bow_shot::{self};
 use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Command, Entity, EntityId};
 
+#[cfg(test)]
+thread_local! {
+    static RECEIVE_PURSE_REVEAL_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_receive_purse_reveal_observer(
+    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+) {
+    RECEIVE_PURSE_REVEAL_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+}
+
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
 pub const APPLE_SMELL_DURATION: u32 = 1500;
 
@@ -3702,6 +3715,12 @@ impl EngineInner {
                              (non-beggar?), ignoring"
                         ),
                     }
+                    #[cfg(test)]
+                    RECEIVE_PURSE_REVEAL_OBSERVER.with(|observer| {
+                        if let Some(observer) = observer.borrow_mut().as_mut() {
+                            observer(self, beggar_id);
+                        }
+                    });
                 }
                 AbilityTickResult::ReceivePurseDone {
                     beggar_id,

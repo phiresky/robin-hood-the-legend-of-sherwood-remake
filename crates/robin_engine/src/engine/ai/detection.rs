@@ -5,6 +5,19 @@
 //! and object-owned discovery work.
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
+
+#[cfg(test)]
+thread_local! {
+    static HEARD_CALLBACK_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_heard_callback_observer(
+    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
+) {
+    HEARD_CALLBACK_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+}
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
@@ -401,11 +414,11 @@ impl EngineInner {
         //  - Decrement the countdown.  On the frame it reaches 0,
         //    fire the one-shot blip reveal + FX-target `Heard()`
         //    callback (below) and advance the phase to
-        //    `ExitTransition` so `tick_abilities` plays the exit
+        //    `ExitTransition` so owner-local `tick_ability` plays the exit
         //    transition animation and cleans up the ability.
         //
         // The action state stays `Listening` through the
-        // countdown — the exit transition in `tick_abilities`
+        // countdown — the exit transition in owner-local `tick_ability`
         // will flip it back to `Waiting`.
         #[derive(Clone, Copy)]
         struct FiringListener {
@@ -438,7 +451,7 @@ impl EngineInner {
                 return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and
-            // advance the phase so `tick_abilities` plays the
+            // advance the phase so owner-local `tick_ability` plays the
             // exit transition next.
             let fl = FiringListener {
                 pc_id,
@@ -529,6 +542,12 @@ impl EngineInner {
                     )
                     .unwrap_or_else(|error| {
                         panic!("ActivatedByListenable target {target_handle} failed: {error}")
+                    });
+                    #[cfg(test)]
+                    HEARD_CALLBACK_OBSERVER.with(|observer| {
+                        if let Some(observer) = observer.borrow_mut().as_mut() {
+                            observer(self, entity_id);
+                        }
                     });
                 }
             }

@@ -2966,8 +2966,14 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .is_some_and(|actor| actor.execution_frozen);
                 if ability.is_some() && !execution_frozen {
-                    let listen_advanced =
-                        engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
+                    let is_listen = engine
+                        .get_entity(owner)
+                        .and_then(Entity::actor_data)
+                        .is_some_and(|actor| {
+                            actor.active_ability.kind == Some(crate::movement::AbilityKind::Listen)
+                        });
+                    let listen_advanced = is_listen
+                        && engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
                     if !listen_advanced {
                         engine.tick_ability_for(sim, display, assets, owner);
                     }

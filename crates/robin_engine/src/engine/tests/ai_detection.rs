@@ -296,6 +296,119 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
 }
 
 #[test]
+fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_callback_append() {
+    use crate::element::{Command, ElementData, ElementKind, TargetFilter};
+    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let (mut engine, target) = crate::engine::target_script_tests::build_engine_with_target();
+    let listener = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let reveal = engine.add_entity(make_discovery_bonus(10.0));
+    let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
+        unreachable!()
+    };
+    target_entity.target.action_filter = TargetFilter::LISTEN;
+    target_entity
+        .element
+        .set_position_map(MapPoint::new(20.0, 0.0));
+
+    let mut element = SequenceElement::new(1, Command::EnterListen, Some(listener));
+    let listening = Order::test_new(OrderType::Listening, 0.0, 0.0);
+    let order_id = listening.order_id;
+    element.orders.push_back(listening);
+    element.orders.push_back(Order::test_new(
+        OrderType::TransitionListeningWaitingUpright,
+        0.0,
+        0.0,
+    ));
+    let seq = engine.orders.sequence_manager.launch_element(element);
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    let actor = engine
+        .get_entity_mut(listener)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.listen_phase = crate::element::ListenPhase::CountingDown;
+    actor.active_ability = ActiveAbility {
+        kind: Some(AbilityKind::Listen),
+        sequence_id: Some(seq),
+        element_index: 0,
+        target: None,
+        order_id: Some(order_id),
+        done_effect_applied: false,
+    };
+    engine.set_actors_frozen(true);
+
+    let observed_clear = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed_later_reveal_still_blipped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let appended = std::rc::Rc::new(std::cell::Cell::new(None));
+    let observed_clear_hook = observed_clear.clone();
+    let observed_later_reveal_hook = observed_later_reveal_still_blipped.clone();
+    let appended_hook = appended.clone();
+    crate::engine::ai::set_heard_callback_observer(Some(Box::new(move |engine, heard_target| {
+        let Entity::Target(target) = engine.get_entity(heard_target).unwrap() else {
+            unreachable!()
+        };
+        observed_clear_hook.set(!target.target.action_filter.contains(TargetFilter::LISTEN));
+        observed_later_reveal_hook.set(
+            engine
+                .get_entity(reveal)
+                .expect("later reveal entity exists during Heard callback")
+                .element_data()
+                .blipped,
+        );
+        let appended_id = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..Default::default()
+            },
+            fx: Default::default(),
+            target: crate::element::TargetData {
+                action_filter: TargetFilter::LISTEN,
+                script_class: "TestTarget".into(),
+                ..Default::default()
+            },
+        }));
+        appended_hook.set(Some(appended_id));
+    })));
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    for _ in 0..25 {
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+    }
+    crate::engine::ai::set_heard_callback_observer(None);
+
+    assert!(!engine.get_entity(reveal).unwrap().element_data().blipped);
+    assert!(
+        observed_later_reveal_still_blipped.get(),
+        "earlier Target Heard callback must run before the later-created reveal entity"
+    );
+    assert!(
+        observed_clear.get(),
+        "LISTEN must clear before the VM callback returns"
+    );
+    assert_eq!(
+        crate::engine::target_script_tests::host_global(
+            &engine,
+            crate::engine::target_script_tests::GLOBAL_ID_HEARD
+        ),
+        crate::engine::target_script_tests::SENTINEL_HEARD
+    );
+    let appended = appended.get().expect("callback appended target");
+    let Entity::Target(appended) = engine.get_entity(appended).unwrap() else {
+        unreachable!()
+    };
+    assert!(
+        appended.target.action_filter.contains(TargetFilter::LISTEN),
+        "captured-length scan must exclude callback-appended entities"
+    );
+}
+
+#[test]
 fn pc_noise_is_live_at_the_following_npc_slot_only() {
     use crate::element::{Camp, Detectable, DetectableType};
     use crate::order::{Order, OrderType};

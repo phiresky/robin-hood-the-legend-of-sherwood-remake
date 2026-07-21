@@ -7,6 +7,8 @@
 //!  - [`post_detection`] — phases P4..P6d: alert dispatch, pursuit, drains.
 
 mod detection;
+#[cfg(test)]
+pub(crate) use detection::set_heard_callback_observer;
 mod post_detection;
 mod snapshots;
 

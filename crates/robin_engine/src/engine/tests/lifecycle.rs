@@ -1255,6 +1255,245 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
 }
 
 #[test]
+fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
+    use crate::element::{Command, Posture, ReceivePursePhase};
+    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let beggar = engine.add_entity(make_test_civilian(Posture::Upright));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() else {
+        unreachable!()
+    };
+    civilian.civilian.beggar_scroll_sets = Some(vec![vec![]]);
+    let script = SpriteScript {
+        action_id: OrderType::WaitingWithPurse as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2],
+        delays: vec![0, 0],
+        distances: vec![0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+        sound_ids: vec![0; 2],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::WaitingWithPurse as usize] = 0;
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(conversion),
+    );
+    let mut element = SequenceElement::new(1, Command::ReceivePurse, Some(beggar));
+    let waiting = Order::test_new(OrderType::WaitingWithPurse, 0.0, 0.0);
+    let waiting_id = waiting.order_id;
+    element.orders.push_back(waiting);
+    element.orders.push_back(Order::test_new(
+        OrderType::TransitionWaitingWithPurseWaitingUpright,
+        0.0,
+        0.0,
+    ));
+    let seq = engine.orders.sequence_manager.launch_element(element);
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    let actor = engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.receive_purse_phase = ReceivePursePhase::Waiting;
+    actor.active_ability = ActiveAbility {
+        kind: Some(AbilityKind::ReceivePurse),
+        sequence_id: Some(seq),
+        element_index: 0,
+        target: None,
+        order_id: Some(waiting_id),
+        done_effect_applied: false,
+    };
+
+    let observed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed_hook = observed.clone();
+    crate::engine::combat::set_receive_purse_reveal_observer(Some(Box::new(
+        move |engine, owner| {
+            let (_, _, order) = engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .expect("ReceivePurse reveal retains its current order");
+            observed_hook.set(
+                order.order_id == waiting_id && order.order_type == OrderType::WaitingWithPurse,
+            );
+        },
+    )));
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(Default::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for _ in 0..10 {
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &positions,
+            |_, _| {},
+        );
+        if observed.get() {
+            break;
+        }
+    }
+    crate::engine::combat::set_receive_purse_reveal_observer(None);
+    assert!(observed.get());
+    assert_eq!(
+        engine
+            .get_entity(beggar)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .receive_purse_phase,
+        ReceivePursePhase::Transition
+    );
+}
+
+#[test]
+fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_fried_skip() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let beggar = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
+    let donor = engine.add_entity(make_test_civilian(Posture::Upright));
+    let donor_actor = engine
+        .get_entity_mut(donor)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    donor_actor.action_state = ActionState::Moving;
+    let donor_data = engine
+        .get_entity_mut(donor)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap();
+    donor_data.money = 200;
+    engine
+        .get_entity_mut(donor)
+        .unwrap()
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_corners(
+            crate::coordinates::MapVec::new(-5.0, -5.0),
+            crate::coordinates::MapVec::new(5.0, 5.0),
+        ));
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(1);
+    let donor_direction = (0..16)
+        .find(|direction| {
+            engine
+                .get_entity_mut(donor)
+                .unwrap()
+                .element_data_mut()
+                .set_direction_instantly(*direction);
+            crate::engine::beggar::can_give_money_to_beggar(&engine, donor, beggar)
+        })
+        .expect("test geometry has an eligible donor direction");
+    engine
+        .get_entity_mut(donor)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(donor_direction);
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(0);
+    let mut element = SequenceElement::new(1, Command::EnterBeggar, Some(beggar));
+    let order = Order::test_new(OrderType::SimulatingBeggar, 0.0, 0.0);
+    element.orders.push_back(order);
+    let seq = engine.orders.sequence_manager.launch_element(element);
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .position_iface_mut()
+        .set_direction(crate::position_interface::Direction::from_raw(1));
+    engine.set_actors_frozen(true);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+
+    for (name, execution_frozen, fried) in
+        [("execution_frozen", true, false), ("fried", false, true)]
+    {
+        let mut gated = engine.clone();
+        let Entity::Pc(pc) = gated.get_entity_mut(beggar).unwrap() else {
+            unreachable!()
+        };
+        pc.actor.execution_frozen = execution_frozen;
+        pc.pc.fried_psykokwack = fried;
+        gated.tick_actor_owner_envelopes_with_test_owner_hook(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &positions,
+            |_, _| {},
+        );
+        assert!(
+            !gated
+                .world
+                .entities
+                .occupied()
+                .any(|(_, entity)| entity.object_data().is_some_and(|o| o.belongs_to_beggar)),
+            "{name} must suppress selected beggar dispatch"
+        );
+    }
+
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &positions,
+        |_, _| {},
+    );
+    assert_eq!(
+        engine
+            .get_entity(beggar)
+            .unwrap()
+            .element_data()
+            .direction(),
+        1
+    );
+    let coin = engine
+        .world
+        .entities
+        .occupied()
+        .find_map(|(id, entity)| {
+            entity
+                .object_data()
+                .is_some_and(|object| object.belongs_to_beggar)
+                .then_some(id)
+        })
+        .expect("FrozenAll Turn is followed by Bid and a live appended coin");
+    assert!(
+        coin.index() > donor.index(),
+        "coin must occupy a later live creation slot"
+    );
+    assert!(
+        engine
+            .get_entity(donor)
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .has_given_money_to_beggar
+    );
+}
+
+#[test]
 fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
 {
     use crate::element::{Command, Posture};
