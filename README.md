@@ -13,7 +13,7 @@ and plays them through a pure-Rust engine.
 Playable mostly on the Leicester demo and the full campaign: main
 menu, missions, save/load, replays should all _mostly_ work. Most testing has been done on the demo so the campaign logic is likely not fully working yet.
 A fair amount of things are still broken, like bow / special items and some triggers.
-~270K LOC across five workspace crates, ~1,600 tests. See [NEW_FEATURES.md](docs/NEW_FEATURES.md)
+The six-crate workspace contains 300K+ lines of Rust and 3,000+ tests. See [NEW_FEATURES.md](docs/NEW_FEATURES.md)
 for new and future additions.
 
 ## Building
@@ -218,7 +218,7 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 
 ### Developer tools
 
-Shipped as examples — built on demand with `cargo run --example <name>`:
+Notable examples, built on demand with `cargo run --example <name>`:
 
     cpf_to_json       — dump a character-profile .cpf file as JSON
     dump_res          — inspect a .res resource archive
@@ -254,6 +254,7 @@ On my machine, several pre-laid-out datadirs live under `datadirs/` for developm
 
     crates/robin_engine/       pure-sim tick, entities, AI, combat, pathfinding
     crates/robin_rs/           host: winit window/input, wgpu renderer, audio, UI, save I/O
+    crates/robin_lua/          Spellforge Lua runtime integration
     crates/robin_assets/       asset decoders (sprites, sounds, scripts, levels)
     crates/robin_util/         shared helpers
     crates/robin_state_hash_derive/ — derive macro for rollback state hashing
@@ -264,7 +265,8 @@ On my machine, several pre-laid-out datadirs live under `datadirs/` for developm
 
 - **Save format is serde JSON**. Saves live
   under the OS-appropriate user data dir (`dirs::data_dir()`), not next
-  to the binary. A read-only loader exists for older binary saves.
+  to the binary. Save loading is current-version-only and rejects corrupt or
+  incompatible formats rather than migrating older saves.
 - **Deterministic lockstep sim**, with a per-frame state hash, replay
   files, and a rollback checker - prerequisites for multiplayer (see
   [MULTIPLAYER.md](docs/MULTIPLAYER.md)).

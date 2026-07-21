@@ -38,7 +38,7 @@ world through that host viewport while HUD/input query the Engine selection for
 camera design: split-screen or replay-from-another-seat would need an explicit
 host viewport policy.
 
-## Protocol 11
+## Protocol 12
 
 Messages are bitcode-encoded binary WebSocket frames. The handshake rejects a
 different protocol version.
