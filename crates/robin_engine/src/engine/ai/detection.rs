@@ -389,7 +389,7 @@ impl EngineInner {
         assets: &LevelAssets,
         _world: &AiWorldView,
         requested_pc: Option<EntityId>,
-    ) {
+    ) -> bool {
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
         // ── Listen ability frame tick. ──────────────────────
@@ -413,9 +413,10 @@ impl EngineInner {
             position: MapPoint,
             position_z: f32,
             pc_id: EntityId,
+            seq_id: crate::sequence::SequenceId,
+            elem_idx: usize,
         }
         let mut firing_listeners: Vec<FiringListener> = Vec::new();
-        let next_order_id = &mut self.orders.next_order_id;
         for &pc_id in &self.world.pc_ids {
             if requested_pc.is_some_and(|requested| requested != pc_id) {
                 continue;
@@ -446,12 +447,13 @@ impl EngineInner {
                 pc_id,
                 position: pc.element.position_map(),
                 position_z: pc.element.position().z,
+                seq_id: pc
+                    .actor
+                    .active_ability
+                    .sequence_id
+                    .expect("Listen sequence"),
+                elem_idx: pc.actor.active_ability.element_index,
             };
-            pc.actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-            // Bump order_id so the exit transition animation
-            // starts fresh in `perform_action`.
-            pc.actor.active_ability.order_id =
-                Some(crate::abilities::next_listen_order_id(next_order_id));
             firing_listeners.push(fl);
             tracing::debug!(
                 pc = pc_id.index(),
@@ -459,6 +461,7 @@ impl EngineInner {
             );
         }
 
+        let fired = !firing_listeners.is_empty();
         for listener in firing_listeners {
             // C++ captures Size() once, then resolves each live slot and
             // applies RevealBlip/Heard synchronously in that mixed order.
@@ -532,7 +535,27 @@ impl EngineInner {
                     });
                 }
             }
+            self.do_next_order(listener.seq_id, listener.elem_idx);
+            let (exit_order_id, exit_order_type) = self
+                .orders
+                .sequence_manager
+                .get_element(listener.seq_id, listener.elem_idx)
+                .and_then(|element| element.current_order())
+                .map(|order| (order.order_id, order.order_type))
+                .unwrap_or_else(|| panic!("Listen countdown did not expose its exit order"));
+            assert_eq!(
+                exit_order_type,
+                crate::order::OrderType::TransitionListeningWaitingUpright
+            );
+            let actor = self
+                .get_entity_mut(listener.pc_id)
+                .and_then(Entity::actor_data_mut)
+                .expect("Listen owner vanished after synchronous scan");
+            actor.listen_phase = crate::element::ListenPhase::ExitTransition;
+            actor.active_ability.order_id = Some(exit_order_id);
+            actor.active_ability.done_effect_applied = false;
         }
+        fired
     }
 
     /// Strict live `RHElementBonus::RefreshDiscovered` for one bonus-owned

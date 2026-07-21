@@ -2651,16 +2651,42 @@ impl EngineInner {
                     // actor's next Hourglass rather than entering generic
                     // Execute later in this same slot.
                     let bow_selection = self.selected_bow_order(entity_id);
-                    let ability_selection = selected_order.filter(|(seq, elem, order)| {
+                    let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
                         self.world
                             .entities
                             .get(entity_id)
                             .and_then(Entity::actor_data)
                             .is_some_and(|actor| {
+                                let expected_type = match actor.active_ability.kind {
+                                    Some(crate::movement::AbilityKind::Listen) => {
+                                        match actor.listen_phase {
+                                            crate::element::ListenPhase::EnterTransition => crate::order::OrderType::TransitionWaitingUprightListening,
+                                            crate::element::ListenPhase::CountingDown => crate::order::OrderType::Listening,
+                                            crate::element::ListenPhase::ExitTransition => crate::order::OrderType::TransitionListeningWaitingUpright,
+                                            crate::element::ListenPhase::Inactive => return false,
+                                        }
+                                    }
+                                    Some(crate::movement::AbilityKind::ReceivePurse) => {
+                                        match actor.receive_purse_phase {
+                                            crate::element::ReceivePursePhase::Receiving => crate::order::OrderType::ReceivingPurse,
+                                            crate::element::ReceivePursePhase::Waiting => crate::order::OrderType::WaitingWithPurse,
+                                            crate::element::ReceivePursePhase::Transition => crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright,
+                                            crate::element::ReceivePursePhase::Inactive => return false,
+                                        }
+                                    }
+                                    Some(crate::movement::AbilityKind::Heal)
+                                        if actor.active_ability.target == Some(entity_id) => crate::order::OrderType::Eating,
+                                    Some(kind) => crate::abilities::ability_order_type(kind),
+                                    None => return false,
+                                };
                                 actor.active_ability.is_active()
                                     && actor.active_ability.sequence_id == Some(*seq)
                                     && actor.active_ability.element_index == *elem
-                                    && actor.active_ability.order_id == Some(*order)
+                                    && actor.active_ability.order_id == Some(*order_id)
+                                    && self.orders.sequence_manager
+                                        .get_element(*seq, *elem)
+                                        .and_then(|element| element.current_order())
+                                        .is_some_and(|order| order.order_type == expected_type)
                             })
                     });
                     let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
@@ -2940,8 +2966,11 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .is_some_and(|actor| actor.execution_frozen);
                 if ability.is_some() && !execution_frozen {
-                    engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
-                    engine.tick_ability_for(sim, display, assets, owner);
+                    let listen_advanced =
+                        engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
+                    if !listen_advanced {
+                        engine.tick_ability_for(sim, display, assets, owner);
+                    }
                 }
                 if let Some(order_id) = selected_beggar
                     && !execution_frozen

@@ -4930,9 +4930,9 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) {
+    ) -> bool {
         let world = self.tick_enemy_ai_build_world_view(assets, None);
-        self.tick_enemy_ai_blip_detection(sim, assets, &world, Some(owner));
+        self.tick_enemy_ai_blip_detection(sim, assets, &world, Some(owner))
     }
 
     #[cfg(test)]

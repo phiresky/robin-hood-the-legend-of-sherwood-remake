@@ -980,28 +980,17 @@ impl EngineInner {
         action: crate::profiles::Action,
         object_type: crate::element::ObjectType,
     ) {
-        let target_id = match target {
-            Some(t) => t,
-            None => return,
-        };
-        let Some((throw_pos, layer)) =
-            self.projectile_throw_origin(actor_id, "on_throw_projectile_done")
-        else {
-            return;
-        };
+        let target_id = target.expect("apple/stone throw selected without its required target");
+        let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "on_throw_projectile_done");
         // Lead the victim's forecasted motion only when it's an NPC
         // (Soldier/Civilian); FX targets and fellow-PC victims fall
         // through to the centre branch with no movement lead.
         let (target_pos, target_forecasted_movement) = match self.get_entity(target_id) {
             Some(e) => {
                 if e.is_human() {
-                    let Some(pos) = e.compute_eyes_point(None) else {
-                        tracing::warn!(
-                            ?target_id,
-                            "on_throw_projectile_done: human target missing eyes hotspot"
-                        );
-                        return;
-                    };
+                    let pos = e.compute_eyes_point(None).unwrap_or_else(|| {
+                        panic!("projectile human target {target_id:?} missing eyes hotspot")
+                    });
                     let movement = if e.is_npc() {
                         Some(e.position_iface().get_forecasted_movement())
                     } else {
@@ -1009,24 +998,18 @@ impl EngineInner {
                     };
                     (pos, movement)
                 } else if e.is_fx_target() {
-                    let Some(pos) = e.compute_target_center() else {
-                        tracing::warn!(
-                            ?target_id,
-                            "on_throw_projectile_done: FX target missing center hotspot"
-                        );
-                        return;
-                    };
+                    let pos = e.compute_target_center().unwrap_or_else(|| {
+                        panic!("projectile FX target {target_id:?} missing center hotspot")
+                    });
                     (pos, None)
                 } else {
-                    tracing::warn!(
-                        ?target_id,
-                        kind = ?e.kind(),
-                        "on_throw_projectile_done: unsupported projectile target"
+                    panic!(
+                        "projectile target {target_id:?} has unsupported kind {:?}",
+                        e.kind()
                     );
-                    return;
                 }
             }
-            None => return,
+            None => panic!("projectile target {target_id:?} disappeared before Done"),
         };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
@@ -1072,20 +1055,14 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         context: &'static str,
-    ) -> Option<(crate::coordinates::WorldPoint3D, u16)> {
-        let Some(entity) = self.get_entity(actor_id) else {
-            tracing::warn!(?actor_id, context, "projectile throw actor missing");
-            return None;
-        };
-        let Some(hand) = entity.compute_hand_point(None) else {
-            tracing::warn!(
-                ?actor_id,
-                context,
-                "projectile throw actor missing hand hotspot"
-            );
-            return None;
-        };
-        Some((hand, entity.element_data().layer()))
+    ) -> (crate::coordinates::WorldPoint3D, u16) {
+        let entity = self
+            .get_entity(actor_id)
+            .unwrap_or_else(|| panic!("{context}: projectile throw actor {actor_id:?} missing"));
+        let hand = entity.compute_hand_point(None).unwrap_or_else(|| {
+            panic!("{context}: projectile throw actor {actor_id:?} missing hand hotspot")
+        });
+        (hand, entity.element_data().layer())
     }
 
     /// Disable a PC action slot and deselect if it's the current action.
@@ -2904,25 +2881,93 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
-        if self.actors_frozen() {
-            return;
+        let strangle_victim = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                (actor.active_ability.kind == Some(crate::movement::AbilityKind::Strangle)
+                    && actor.active_ability.done_effect_applied)
+                    .then_some(actor.active_ability.target)
+                    .flatten()
+            });
+        if let Some(victim_id) = strangle_victim
+            && !self.actors_frozen()
+        {
+            self.get_entity_mut(victim_id)
+                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+                .element_data_mut()
+                .sprite
+                .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
         }
         let sprite_frozen = self.actors_frozen();
         let results = crate::abilities::tick_ability(
             sim,
             &mut self.world.entities,
             &self.orders.sequence_manager,
-            &mut self.orders.next_order_id,
             actor_id,
             sprite_frozen,
         );
         for result in results {
             use crate::abilities::AbilityTickResult;
             match result {
-                AbilityTickResult::Terminated { seq_id, elem_idx } => {
+                AbilityTickResult::Terminated {
+                    actor_id,
+                    kind,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    self.do_next_order(seq_id, elem_idx);
+                    let next = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|element| element.current_order())
+                        .map(|order| (order.order_id, order.order_type));
+                    if let Some(actor) = self
+                        .get_entity_mut(actor_id)
+                        .and_then(Entity::actor_data_mut)
+                        && actor.active_ability.kind == Some(kind)
+                        && actor.active_ability.sequence_id == Some(seq_id)
+                        && actor.active_ability.element_index == elem_idx
+                    {
+                        match (kind, next) {
+                            (crate::movement::AbilityKind::Listen, Some((order_id, crate::order::OrderType::Listening))) => {
+                                actor.listen_phase = crate::element::ListenPhase::CountingDown;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::Listen, Some((order_id, crate::order::OrderType::TransitionListeningWaitingUpright))) => {
+                                actor.listen_phase = crate::element::ListenPhase::ExitTransition;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::ReceivePurse, Some((order_id, crate::order::OrderType::WaitingWithPurse))) => {
+                                actor.receive_purse_phase = crate::element::ReceivePursePhase::Waiting;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::ReceivePurse, Some((order_id, crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright))) => {
+                                actor.receive_purse_phase = crate::element::ReceivePursePhase::Transition;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            _ => {
+                                if kind == crate::movement::AbilityKind::Listen {
+                                    actor.listen_phase = crate::element::ListenPhase::Inactive;
+                                    actor.listen_wait_time = 0;
+                                } else if kind == crate::movement::AbilityKind::ReceivePurse {
+                                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+                                }
+                                actor.active_ability.clear();
+                                actor.action_state = crate::element::ActionState::Waiting;
+                            }
+                        }
+                    }
+                }
+                AbilityTickResult::Aborted { seq_id, elem_idx } => {
                     self.orders
                         .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
+                        .element_impossible(seq_id, elem_idx);
                 }
                 AbilityTickResult::CarryDone {
                     carrier_id,
@@ -3415,9 +3460,6 @@ impl EngineInner {
                             Some(actor_id),
                             crate::profiles::Action::Listen as u32,
                         ));
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         actor = ?actor_id,
                         "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"
@@ -3432,11 +3474,7 @@ impl EngineInner {
                     // Spawn a net projectile entity with ballistic
                     // trajectory.  Launch origin is the thrower's hand
                     // point, not their feet.
-                    let Some((throw_pos, layer)) =
-                        self.projectile_throw_origin(actor_id, "ThrowNetDone")
-                    else {
-                        continue;
-                    };
+                    let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "ThrowNetDone");
                     let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -3482,11 +3520,8 @@ impl EngineInner {
                     // the purse arcs over walls / falls onto roofs the
                     // same way other ground-targeted throwables do.
                     // Launch origin is the thrower's hand point.
-                    let Some((throw_pos, layer)) =
-                        self.projectile_throw_origin(actor_id, "ThrowPurseDone")
-                    else {
-                        continue;
-                    };
+                    let (throw_pos, layer) =
+                        self.projectile_throw_origin(actor_id, "ThrowPurseDone");
                     let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -3532,11 +3567,8 @@ impl EngineInner {
                     // Spawn a wasp nest projectile entity with ballistic
                     // trajectory.  Launch origin is the thrower's hand
                     // point.
-                    let Some((throw_pos, layer)) =
-                        self.projectile_throw_origin(actor_id, "ThrowWaspNestDone")
-                    else {
-                        continue;
-                    };
+                    let (throw_pos, layer) =
+                        self.projectile_throw_origin(actor_id, "ThrowWaspNestDone");
                     let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -3669,9 +3701,6 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
                     tracing::debug!(
                         beggar = ?beggar_id,
                         "ReceivePurse: animation chain complete"
@@ -3742,12 +3771,7 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
-                    // At strangle-animation completion, freeze the
-                    // victim and cascade-interrupt their current
-                    // sequence element so the impending kill
-                    // `ReceiveDamage` lands on a clean state (no
-                    // in-flight reaction can race the death animation).
-                    self.actor_freeze_execution(target_id);
+                    self.find_place_to_die(target_id);
                     // A soldier flagged not-stranglable in their profile
                     // survives the strangle — the AI lock is released
                     // and the soldier gets an EventGotHit stimulus so
@@ -3764,6 +3788,13 @@ impl EngineInner {
                     };
 
                     if !stranglable {
+                        if let Some(victim) = self.get_entity_mut(target_id) {
+                            victim.actor_data_mut().unwrap().execution_frozen = false;
+                            victim
+                                .ai_controller_mut()
+                                .expect("non-stranglable victim must have AI")
+                                .non_script_unlock(crate::ai::AiLockFlags::FREEZE);
+                        }
                         let stimulus = crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventGotHit,
                             actor_id.index(),
@@ -3804,6 +3835,34 @@ impl EngineInner {
                         life,
                         "Strangle: launched RECEIVE_DAMAGE for kill"
                     );
+                }
+                AbilityTickResult::StrangleSetupDone {
+                    actor_id,
+                    target_id,
+                    seq_id: _,
+                    elem_idx: _,
+                } => {
+                    let (position, direction) = self
+                        .get_entity(actor_id)
+                        .map(|actor| {
+                            (
+                                actor.element_data().position_map(),
+                                u16::try_from(actor.element_data().direction()).unwrap_or(0),
+                            )
+                        })
+                        .unwrap_or_else(|| panic!("strangler {actor_id:?} vanished at Done"));
+                    self.actor_freeze_execution(target_id);
+                    let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                        panic!("strangle victim {target_id:?} vanished at Done")
+                    });
+                    victim.element_data_mut().set_position_map(position);
+                    victim
+                        .element_data_mut()
+                        .set_direction_instantly(direction as i16);
+                    victim
+                        .element_data_mut()
+                        .sprite
+                        .force_animation(crate::order::OrderType::BeingStrangled, direction);
                 }
             }
         }

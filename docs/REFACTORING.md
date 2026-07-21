@@ -139,8 +139,9 @@ missing source or unresolved coordinate/ordering boundary.
 `tick_zone_occupants` remains a documented Rust reconciliation boundary after
 the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
 establish it as actor-owned work; moving it per owner requires separate source
-evidence. Unsupported action arms and active ability ownership also
-remain PA-013 debt.
+evidence. Unsupported action arms remain PA-013 debt. Active abilities,
+Listen/Heard, and selected beggar simulation now execute in the selected
+actor owner's live slot.
 
 `WorldState::mobile_elements` remains the only mobile-master representation.
 Because the Original master and its first `RHElementFXMasked` child are

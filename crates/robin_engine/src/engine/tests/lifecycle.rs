@@ -1014,6 +1014,72 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
 }
 
 #[test]
+fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_execute() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
+    let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let seq_id = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(seq_id, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_ability = crate::movement::ActiveAbility {
+        kind: Some(crate::movement::AbilityKind::Eat),
+        sequence_id: Some(seq_id),
+        element_index: 0,
+        target: None,
+        order_id: Some(order_id),
+        done_effect_applied: false,
+    };
+
+    let mut observed = None;
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &sim,
+        &LevelAssets::new(),
+        |_, _| {},
+        |_, _| {},
+        |_, selected_owner, _, _, _, ability, _| observed = Some((selected_owner, ability)),
+        |_, _| {},
+    );
+    assert_eq!(observed, Some((owner, None)));
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .order_id,
+        Some(order_id),
+        "a stale type mismatch remains latent and does not execute"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .unwrap()
+            .2
+            .order_type,
+        OrderType::WaitingUpright,
+        "the generic selected order remains authoritative"
+    );
+}
+
+#[test]
 fn melee_completion_precedes_a_later_ability_dispatch() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
