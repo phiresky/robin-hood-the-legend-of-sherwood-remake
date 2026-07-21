@@ -1688,73 +1688,57 @@ impl EngineInner {
         }
     }
 
-    /// Per-frame scroll script `Hourglass(0)` dispatch.
-    ///
-    /// For every active scroll with a bound script (i.e.
-    /// `scroll_instances.contains_key(handle)`), increment
-    /// `script_hourglass_timeout` and, when it reaches
-    /// `SCRIPT_HOURGLASS_TIMEOUT = 25`, fire `IScrollScript::Hourglass(0)`
-    /// with the executing-scroll frame carried by the shared
-    /// [`ScriptVmKey::Scroll`] driver, then reset the counter.
-    ///
-    /// Sprite frame advance for scrolls lives in the generic animation
-    /// tick; this function only handles the per-25-tick script
-    /// callback dispatched alongside the frame advance.
-    pub(crate) fn dispatch_scroll_hourglasses(
+    /// Dispatch one scroll's due callback at its live legacy slot. The caller
+    /// owns active checking and sprite advancement so callback mutations are
+    /// visible before animation and before later slots.
+    pub(super) fn dispatch_scroll_hourglass_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        scroll_id: EntityId,
     ) {
         const SCRIPT_HOURGLASS_TIMEOUT: u32 = 25;
-
-        if self.scripts.mission.is_none() {
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll_id);
+        let has_script = self
+            .scripts
+            .mission
+            .as_ref()
+            .is_some_and(|mission| mission.scroll_instances.contains_key(&handle));
+        if !has_script {
             return;
         }
-
-        // Phase 1: bump timers; collect handles whose script is due to
-        // fire this frame. The mutable walk can't also borrow the mission
-        // script, so the list of ready-to-fire scrolls is captured first.
-        let mut ready: Vec<i32> = Vec::new();
-        for (id, s) in self.world.entities.scrolls_mut() {
-            if !s.element.active {
-                continue;
-            }
-            let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
-            let has_script = self
-                .scripts
-                .mission
-                .as_ref()
-                .is_some_and(|ms| ms.scroll_instances.contains_key(&handle));
-            if !has_script {
-                continue;
-            }
-            s.script_hourglass_timeout += 1;
-            if s.script_hourglass_timeout >= SCRIPT_HOURGLASS_TIMEOUT {
-                s.script_hourglass_timeout = 0;
-                ready.push(handle);
-            }
-        }
-
-        if ready.is_empty() {
+        let timeout = {
+            let Entity::Scroll(scroll) =
+                self.world.entities.get_mut(scroll_id).unwrap_or_else(|| {
+                    panic!("scroll {scroll_id:?} vanished before its Hourglass timeout increment")
+                })
+            else {
+                panic!("scroll Hourglass owner {scroll_id:?} is not Entity::Scroll")
+            };
+            scroll.script_hourglass_timeout += 1;
+            scroll.script_hourglass_timeout
+        };
+        if timeout != SCRIPT_HOURGLASS_TIMEOUT {
             return;
         }
-
-        // Phase 2: dispatch in scroll slot order. Per-scroll `Hourglass` is
-        // distinct from the engine callback and passes the literal zero.
-        for handle in &ready {
-            let frame = crate::natives::ScriptCallFrame::default()
-                .with_script_this(*handle)
-                .with_current_scroll(*handle);
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Scroll(*handle),
-                "Hourglass",
-                &[0],
-                frame,
-            ) {
-                tracing::warn!("Scroll Hourglass (handle {handle}): {error}");
-            }
+        let frame = crate::natives::ScriptCallFrame::default()
+            .with_script_this(handle)
+            .with_current_scroll(handle);
+        if let Err(error) = self.call_script_vm(
+            sim,
+            assets,
+            ScriptVmKey::Scroll(handle),
+            "Hourglass",
+            &[0],
+            frame,
+        ) {
+            tracing::warn!("Scroll Hourglass (handle {handle}): {error}");
+        }
+        if let Some(entity) = self.world.entities.get_mut(scroll_id) {
+            let Entity::Scroll(scroll) = entity else {
+                panic!("scroll {scroll_id:?} changed concrete type during Hourglass callback")
+            };
+            scroll.script_hourglass_timeout = 0;
         }
     }
 

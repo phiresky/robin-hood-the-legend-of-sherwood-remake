@@ -5118,7 +5118,10 @@ fn make_discovery_bonus(x: f32) -> Entity {
     element.set_position_map(MapPoint::new(x, 0.0));
     Entity::Bonus(crate::element::ElementBonus {
         element,
-        object: Default::default(),
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::BonusApple,
+            ..Default::default()
+        },
     })
 }
 

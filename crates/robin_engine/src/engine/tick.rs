@@ -2111,9 +2111,8 @@ impl EngineInner {
         // entity-iter borrow.
         self.pre_tick_pc_execute_validity(assets);
 
-        // Preserve the pre-PA-013 batching boundary for nonactors: patch/FX/
-        // object animation completes before any actor ActionChange callback,
-        // and a callback-spawned nonactor cannot advance until next tick.
+        // Projectile/net/mobile animation remains in its existing lane. The
+        // supported static virtual Hourglass owners run below at live slots.
         self.tick_nonactor_entity_animations(sim, assets);
         let processed_projectiles =
             self.tick_actor_owner_envelopes(sim, assets, &positions_before_movement);
@@ -2137,13 +2136,6 @@ impl EngineInner {
         // FX (the `current_sound_id()` block every element type
         // runs during refresh / execute).
         self.dispatch_frame_sounds();
-
-        // ── Per-scroll script Hourglass dispatch ────────────────
-        // Every active scroll with a bound script bumps a per-scroll
-        // `script_hourglass_timeout` counter; on every 25th active
-        // frame the scroll's `IScrollScript::Hourglass(0)` fires
-        // (bracketed by `SetScrollExecutingScript` / reset).
-        self.dispatch_scroll_hourglasses(sim, assets);
 
         // TODO(original-parity): the followed-target position oracle below
         // proves one movement/NPC-refresh interleaving, but the rest of this
@@ -2320,6 +2312,141 @@ impl EngineInner {
                 .increment_frame_modulated(fx.fx.animation_speed);
         }
         true
+    }
+
+    pub(super) fn tick_static_entity_hourglass_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        use crate::element::OriginalBonusConcreteClass;
+        use crate::sprite::{FrameProgression, MotionState};
+
+        let frozen = self.actors_frozen();
+        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+            panic!(
+                "static Hourglass owner {owner:?} disappeared immediately after live legacy-slot resolution"
+            )
+        });
+        match entity {
+            Entity::Fx(fx) if fx.fx.mobile_index.is_some() => return,
+            Entity::Fx(_) => {
+                if !entity.is_active() || frozen {
+                    return;
+                }
+                let patch_idx = entity.as_fx().and_then(|fx| fx.fx.patch_index);
+                let (progression, in_transition) = if let Some(patch_idx) = patch_idx {
+                    if self.scripts.mission.is_none() {
+                        (FrameProgression::Default, false)
+                    } else {
+                        let patch = self
+                            .script_domains
+                            .interactables
+                            .patches
+                            .get(usize::from(patch_idx))
+                            .unwrap_or_else(|| panic!("FX {owner:?} references missing patch {patch_idx} at its live Hourglass slot"));
+                        (
+                            if patch.applied && patch.in_transition {
+                                FrameProgression::Reversed
+                            } else {
+                                FrameProgression::Default
+                            },
+                            patch.in_transition,
+                        )
+                    }
+                } else {
+                    (FrameProgression::Default, false)
+                };
+                let motion = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap_or_else(|| panic!("FX {owner:?} vanished before sprite Hourglass"))
+                    .element_data_mut()
+                    .sprite
+                    .perform_virgin_increment(sim, progression);
+                if matches!(motion, MotionState::Terminated) && in_transition {
+                    self.finish_patch_transition_for(
+                        sim,
+                        assets,
+                        patch_idx.expect("transitioning FX must retain its patch"),
+                    );
+                }
+            }
+            Entity::Target(target) => {
+                let active = target.element.active;
+                let progression = FrameProgression::from_ordinal(target.target.progression);
+                if active && !frozen {
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .unwrap()
+                        .element_data_mut()
+                        .sprite
+                        .perform_virgin_increment(sim, progression);
+                }
+            }
+            Entity::Scroll(scroll) => {
+                if !scroll.element.active {
+                    return;
+                }
+                self.dispatch_scroll_hourglass_for(sim, assets, owner);
+                // RHSprite samples the engine FreezeAll state after the
+                // synchronous Scroll VM returns, not at Hourglass entry.
+                if !self.actors_frozen()
+                    && let Some(entity) = self.world.entities.get_mut(owner)
+                {
+                    let Entity::Scroll(scroll) = entity else {
+                        panic!(
+                            "scroll {owner:?} changed concrete type before entry-active sprite Hourglass"
+                        )
+                    };
+                    // Original tests IsActive only once on entry. A due VM
+                    // callback may deactivate this surviving scroll, but its
+                    // sprite still advances before this Hourglass returns.
+                    scroll
+                        .element
+                        .sprite
+                        .perform_virgin_increment(sim, FrameProgression::Default);
+                }
+            }
+            Entity::Bonus(bonus) => match bonus.original_concrete_class() {
+                OriginalBonusConcreteClass::Bonus => {
+                    if !frozen {
+                        self.world
+                            .entities
+                            .get_mut(owner)
+                            .unwrap()
+                            .element_data_mut()
+                            .sprite
+                            .perform_virgin_increment(sim, FrameProgression::Default);
+                    }
+                    self.refresh_bonus_discovered_for(assets, owner);
+                }
+                OriginalBonusConcreteClass::Ale => {
+                    if !bonus.element.active {
+                        self.remove_entity(owner);
+                    }
+                }
+                OriginalBonusConcreteClass::Cape => {
+                    if !frozen {
+                        self.world
+                            .entities
+                            .get_mut(owner)
+                            .unwrap()
+                            .element_data_mut()
+                            .sprite
+                            .perform_virgin_increment(sim, FrameProgression::Default);
+                    }
+                }
+                OriginalBonusConcreteClass::Unsupported => panic!(
+                    "Entity::Bonus {owner:?} has unsupported Original concrete-class mapping for {:?}",
+                    bonus.object.object_type
+                ),
+            },
+            _ => {}
+        }
     }
 
     /// Run the bounded base-actor Hourglass slice in live legacy creation
@@ -2645,8 +2772,11 @@ impl EngineInner {
                 if engine.tick_mobile_child_owner_boundary(sim, assets, owner) {
                     return;
                 }
-                if matches!(owner, EntityId::Bonus(_)) {
-                    engine.refresh_bonus_discovered_for(assets, owner);
+                engine.tick_static_entity_hourglass_for(sim, assets, owner);
+                if matches!(
+                    engine.get_entity(owner),
+                    Some(Entity::Fx(_) | Entity::Target(_) | Entity::Bonus(_) | Entity::Scroll(_))
+                ) {
                     return;
                 }
                 let Some(Entity::Projectile(projectile)) = engine.get_entity(owner) else {

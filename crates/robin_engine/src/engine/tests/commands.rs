@@ -1673,7 +1673,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
-    engine.dispatch_scroll_hourglasses(sim, &assets);
+    engine.tick_static_entity_hourglass_for(sim, &assets, scroll_id);
     let entity = engine.get_entity(scroll_id);
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,

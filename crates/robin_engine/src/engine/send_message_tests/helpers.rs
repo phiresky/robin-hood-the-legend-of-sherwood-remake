@@ -77,6 +77,32 @@ pub(super) fn return_value(sym: u16) -> Quad {
     quad
 }
 
+fn freeze_toggling_scroll_class(class_name: &str, frozen: bool) -> ClassEntry {
+    ClassEntry {
+        source_file: "send_message_test.scs".into(),
+        class_name: class_name.into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "Hourglass".into(),
+            address: 0,
+            num_parameters: 1,
+            size_of_return_value: 0,
+            size_of_parameters: 4,
+            size_of_volatile: 0,
+            size_of_temporary: 4,
+        }],
+        quads: vec![
+            begin_function(1),
+            integer_constant(TMP0, i32::from(frozen)),
+            native_param(TMP0),
+            native_call(NativeFn::FreezeAll),
+            quad(Opcode::Return),
+            quad(Opcode::EndFunction),
+        ],
+    }
+}
+
 /// `ProcessMessage(message, _, _)` stores the received message in global 900.
 /// Sending 41 then 72 must therefore leave 72, pinning callback launch order.
 pub(super) fn message_script() -> MissionScript {
@@ -441,6 +467,32 @@ pub(super) fn message_script() -> MissionScript {
             quad(Opcode::EndFunction),
         ],
     };
+    let self_deactivating_scroll = ClassEntry {
+        source_file: "send_message_test.scs".into(),
+        class_name: "SelfDeactivatingScroll".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "Hourglass".into(),
+            address: 0,
+            num_parameters: 1,
+            size_of_return_value: 0,
+            size_of_parameters: 4,
+            size_of_volatile: 0,
+            size_of_temporary: 4,
+        }],
+        quads: vec![
+            begin_function(1),
+            native_call(NativeFn::ThisScroll),
+            native_return(TMP0),
+            native_param(TMP0),
+            native_call(NativeFn::Deactivate),
+            quad(Opcode::Return),
+            quad(Opcode::EndFunction),
+        ],
+    };
+    let freeze_on_scroll = freeze_toggling_scroll_class("FreezeOnScroll", true);
+    let freeze_off_scroll = freeze_toggling_scroll_class("FreezeOffScroll", false);
     let scroll_relay = ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "ScrollRelay".into(),
@@ -830,6 +882,9 @@ pub(super) fn message_script() -> MissionScript {
             relay,
             ordering,
             scroll_observer,
+            self_deactivating_scroll,
+            freeze_on_scroll,
+            freeze_off_scroll,
             scroll_relay,
             recursive,
             heap_a,
