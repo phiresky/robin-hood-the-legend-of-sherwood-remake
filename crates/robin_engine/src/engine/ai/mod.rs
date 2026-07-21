@@ -29,6 +29,13 @@ use crate::engine::SimScratch;
 use crate::entities::{Entities, EntitySlots};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+thread_local! {
+    static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
+        Option<Box<dyn FnMut(&EngineInner, EntityId)>>
+    > = std::cell::RefCell::new(None);
+}
+
 /// Immutable, RNG-free inputs prepared once before the live actor-owner walk.
 /// Volatile entity/AI views are deliberately absent and rebuilt at each NPC
 /// slot after earlier owners have closed their recursive work.
@@ -3256,6 +3263,13 @@ impl EngineInner {
 
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
+    #[cfg(test)]
+    pub(super) fn set_galopp_dispatch_observer(
+        observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+    ) {
+        GALOPP_DISPATCH_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+    }
+
     /// Dispatch `EventGaloppLoopEnd` to riders with `RHMOVE_RIDER_CHARGE`
     /// flag that reached an intermediate waypoint during movement.
     ///
@@ -3303,6 +3317,12 @@ impl EngineInner {
         // the mutable legacy walk can advance to the next owner.
         let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
         self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
+        #[cfg(test)]
+        GALOPP_DISPATCH_OBSERVER.with(|observer| {
+            if let Some(observer) = observer.borrow_mut().as_mut() {
+                observer(self, entity_id);
+            }
+        });
     }
 
     /// Map a PC's currently-executing animation (`OrderType`) to the

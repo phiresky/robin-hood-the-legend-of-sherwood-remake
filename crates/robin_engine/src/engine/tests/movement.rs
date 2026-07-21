@@ -51,6 +51,89 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
 }
 
 #[test]
+fn frozen_all_repeats_running_rider_galopp_callback_on_the_frozen_frame() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_galopp_fixture(&mut engine, &mut assets, vec![20, 20]);
+    engine.set_actors_frozen(true);
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let observed = calls.clone();
+    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |_, owner| {
+        assert_eq!(owner, rider);
+        observed.set(observed.get() + 1);
+    })));
+
+    for _ in 0..3 {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    }
+    EngineInner::set_galopp_dispatch_observer(None);
+
+    assert_eq!(calls.get(), 3);
+    assert_eq!(engine.get_entity(rider).unwrap().sprite().current_frame, 0);
+}
+
+#[test]
+fn one_frame_running_rider_fires_original_last_frame_galopp_disjunct() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
+    engine.set_actors_frozen(true);
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed = fired.clone();
+    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |_, owner| {
+        assert_eq!(owner, rider);
+        observed.set(true);
+    })));
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    EngineInner::set_galopp_dispatch_observer(None);
+    assert!(fired.get());
+}
+
+#[test]
+fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, order_id) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
+    let later = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    engine.set_actors_frozen(true);
+    let callback_closed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let callback_observed = callback_closed.clone();
+    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |engine, owner| {
+        assert_eq!(owner, rider);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("frozen gallop retains its selected movement element");
+        assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+        assert_eq!(element.current_order().unwrap().order_id, order_id);
+        callback_observed.set(true);
+    })));
+
+    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let next_owner_observed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let next_observed = next_owner_observed.clone();
+    let callback_for_next = callback_closed.clone();
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &positions,
+        move |_, owner| {
+            if owner == later {
+                assert!(
+                    callback_for_next.get(),
+                    "gallop Think/script/order drain must close before the next owner slot"
+                );
+                next_observed.set(true);
+            }
+        },
+    );
+    EngineInner::set_galopp_dispatch_observer(None);
+    assert!(callback_closed.get());
+    assert!(next_owner_observed.get());
+}
+
+#[test]
 #[should_panic(expected = "GALOPP Execute callback owner Soldier(SoldierId(0)) is not a rider")]
 fn galopp_execute_callback_rejects_non_rider_owner() {
     let mut engine = EngineInner::new();
@@ -233,6 +316,48 @@ fn install_rider_charge_fixture(
         .unwrap()
         .active_movement = ActiveMovement::new(sequence_id, 0);
     (rider_id, sequence_id, order_id)
+}
+
+fn install_galopp_fixture(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    frame_delays: Vec<u16>,
+) -> (EntityId, crate::sequence::SequenceId, std::num::NonZeroU32) {
+    use crate::order::OrderType;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let result =
+        install_rider_charge_fixture(engine, assets, OrderType::RunningUpright, vec![20, 20]);
+    let frames = frame_delays.len();
+    let script = SpriteScript {
+        action_id: OrderType::RunningUpright as u16,
+        action_done: frames.saturating_sub(1) as u16,
+        average_speed: 4.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: frames as u16 * 4,
+        frame_ids: (0..frames as u32).collect(),
+        delays: frame_delays,
+        distances: vec![4; frames],
+        offsets: vec![SpriteFrameOffset::ZERO; frames],
+        sound_ids: vec![0; frames],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::RunningUpright as usize] = 0;
+    let rider = engine.get_entity_mut(result.0).unwrap();
+    rider
+        .enemy_ai_mut()
+        .expect("gallop fixture remains an enemy soldier")
+        .hth_weapon_id = 1;
+    rider.element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    rider
+        .element_data_mut()
+        .sprite
+        .position_iface
+        .set_anti_collision_on(false);
+    result
 }
 
 fn rider_charge_point(origin: MapPoint, direction: i16, forward: f32, side: f32) -> MapPoint {
