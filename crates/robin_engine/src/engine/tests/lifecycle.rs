@@ -782,6 +782,10 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             "regression requires a nonzero impact direction"
         );
         assert_eq!(projectile.element.sprite.current_row, 16);
+        assert_eq!(
+            projectile.element.sprite.current_frame, 1,
+            "the zero-delay first burst frame must advance in the impact derived tail"
+        );
 
         for _ in 0..8 {
             if !engine.get_entity(projectile_id).unwrap().is_active() {

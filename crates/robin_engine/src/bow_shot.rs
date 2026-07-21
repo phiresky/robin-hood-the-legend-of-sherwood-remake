@@ -108,7 +108,6 @@ fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) 
     // Original Apple/Stone HitObstacle/HitHuman/HitTarget use the
     // directionless ForceAnimation overload, whose default direction is 0.
     proj.element.sprite.force_animation(animation, 0);
-    proj.element.sprite.reset_sprite_frame(false);
 }
 
 /// Z offset added to the bow point for long (high) shots.
