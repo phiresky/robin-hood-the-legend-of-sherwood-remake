@@ -1840,7 +1840,11 @@ impl EngineInner {
                     return;
                 }
                 self.dispatch_scroll_hourglass_for(sim, assets, owner);
-                if !frozen && let Some(entity) = self.world.entities.get_mut(owner) {
+                // RHSprite samples the engine FreezeAll state after the
+                // synchronous Scroll VM returns, not at Hourglass entry.
+                if !self.actors_frozen()
+                    && let Some(entity) = self.world.entities.get_mut(owner)
+                {
                     let Entity::Scroll(scroll) = entity else {
                         panic!(
                             "scroll {owner:?} changed concrete type before entry-active sprite Hourglass"

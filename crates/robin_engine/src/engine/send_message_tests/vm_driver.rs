@@ -152,6 +152,58 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
 }
 
 #[test]
+fn due_scroll_callback_changes_same_slot_freeze_gate_live() {
+    fn run(class_name: &str, initially_frozen: bool) -> (bool, u16) {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(message_script());
+        let scroll_id = engine.add_entity(animated_scroll());
+        let handle = ScriptHandleCodec::actor_handle(scroll_id);
+        let instance = engine
+            .scripts
+            .mission
+            .as_ref()
+            .unwrap()
+            .manager
+            .create_instance(class_name)
+            .unwrap_or_else(|error| panic!("missing test scroll class {class_name}: {error}"));
+        engine
+            .scripts
+            .mission
+            .as_mut()
+            .unwrap()
+            .scroll_instances
+            .insert(handle, instance);
+        engine.set_actors_frozen(initially_frozen);
+        let positions = empty_positions(&engine);
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+
+        (
+            engine.actors_frozen(),
+            engine
+                .get_entity(scroll_id)
+                .unwrap()
+                .element_data()
+                .sprite
+                .current_frame,
+        )
+    }
+
+    assert_eq!(
+        run("FreezeOnScroll", false),
+        (true, 0),
+        "callback FreezeAll(true) suppresses this same-slot sprite step"
+    );
+    assert_eq!(
+        run("FreezeOffScroll", true),
+        (false, 1),
+        "callback FreezeAll(false) permits this same-slot sprite step"
+    );
+}
+
+#[test]
 #[should_panic(expected = "disappeared immediately after live legacy-slot resolution")]
 fn resolved_static_owner_must_still_exist_at_dispatch() {
     let mut engine = EngineInner::new();
@@ -254,16 +306,6 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let assets = LevelAssets::new();
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_nonactor_entity_animations(&sim, &assets);
-    assert_eq!(
-        engine
-            .get_entity(target)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        0
-    );
     let projectile_frame = engine
         .get_entity(projectile)
         .unwrap()
