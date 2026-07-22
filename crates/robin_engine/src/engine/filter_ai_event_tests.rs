@@ -3482,6 +3482,50 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
 }
 
 #[test]
+fn every_active_ability_order_routes_to_the_production_ability_owner() {
+    use super::tick::{ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::{CivilianId, PcId};
+    use crate::movement::AbilityKind;
+    use crate::order::OrderType;
+
+    let pc = EntityId::Pc(PcId(0));
+    for kind in AbilityKind::ALL {
+        let assert_route = |actor, order| {
+            assert_eq!(
+                classify_live_actor_execute_arm(actor, order),
+                Some(ExecuteOwnerFamily::Ability),
+                "{kind:?} phase {order:?} is not routed to its production owner"
+            );
+        };
+        match kind {
+            AbilityKind::Listen => {
+                for order in [
+                    OrderType::TransitionWaitingUprightListening,
+                    OrderType::Listening,
+                    OrderType::TransitionListeningWaitingUpright,
+                ] {
+                    assert_route(pc, order);
+                }
+            }
+            AbilityKind::ReceivePurse => {
+                for order in [
+                    OrderType::ReceivingPurse,
+                    OrderType::WaitingWithPurse,
+                    OrderType::TransitionWaitingWithPurseWaitingUpright,
+                ] {
+                    assert_route(EntityId::Civilian(CivilianId(0)), order);
+                }
+            }
+            AbilityKind::Heal => {
+                assert_route(pc, OrderType::Healing);
+                assert_route(pc, OrderType::Eating);
+            }
+            other => assert_route(pc, crate::abilities::ability_order_type(other)),
+        }
+    }
+}
+
+#[test]
 fn later_smalltalk_hint_defers_for_already_visited_defender() {
     use crate::element::Command;
 
