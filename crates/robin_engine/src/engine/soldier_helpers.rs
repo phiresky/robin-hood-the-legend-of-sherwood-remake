@@ -322,6 +322,7 @@ impl EngineInner {
             let owner = dispatch.card.owner;
             self.send_condolation_card(sim, dispatch.card, assets);
             self.drain_self_stimuli_for_npc(sim, owner, assets);
+            self.dispatch_condolation_owner_moves(sim, assets, owner, active_scripts)?;
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
@@ -397,29 +398,14 @@ impl EngineInner {
         // Ready() continuation resumes. Promote only this owner's newly
         // queued move and drive its exact deferred InstructOwner action at
         // the same boundary. Other owners' FIFO positions remain untouched.
-        let launched_moves = self.drain_pending_move_requests_for_owner(card_owner);
         let mut active_scripts = Vec::new();
-        for sequence_id in launched_moves {
-            let action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(card_owner, sequence_id, 0)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "condolation owner {} Move dispatch failed: {detail}",
-                        card_owner.index()
-                    )
-                });
-            if let Some(action) = action {
-                self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "condolation owner {} synchronous Move dispatch failed: {error:?}",
-                            card_owner.index()
-                        )
-                    });
-            }
-        }
+        self.dispatch_condolation_owner_moves(sim, assets, card_owner, &mut active_scripts)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "condolation owner {} synchronous Move dispatch failed: {error:?}",
+                    card_owner.index()
+                )
+            });
 
         // A SetState reached re-entrantly from SendCondolationCard belongs
         // inside that call. Close those cards before resuming this outer
@@ -448,6 +434,35 @@ impl EngineInner {
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
             self.close_owner_boundary_condolation(sim, assets, nested);
         }
+    }
+
+    /// Promote and synchronously instruct Move elements launched re-entrantly
+    /// by an owner's condolence-card Think call. In the Original this entire
+    /// chain remains inside `SendCondolationCard`; unrelated owners keep their
+    /// established queue positions.
+    fn dispatch_condolation_owner_moves(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+    ) -> Result<(), crate::engine::script::ScriptDriverError> {
+        for sequence_id in self.drain_pending_move_requests_for_owner(owner) {
+            let action = self
+                .orders
+                .sequence_manager
+                .take_deferred_owner_action(owner, sequence_id, 0)
+                .unwrap_or_else(|detail| {
+                    panic!(
+                        "condolation owner {} Move dispatch failed: {detail}",
+                        owner.index()
+                    )
+                });
+            if let Some(action) = action {
+                self.dispatch_script_synchronous_action(sim, assets, action, active_scripts)?;
+            }
+        }
+        Ok(())
     }
 
     /// Dispatch a single `SendCondolationCard` to the owner entity.

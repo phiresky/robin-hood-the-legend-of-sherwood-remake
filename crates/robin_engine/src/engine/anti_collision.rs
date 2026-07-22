@@ -654,7 +654,8 @@ pub fn apply_anti_collision_step(
             _ => false,
         };
         if reachable {
-            if let Some(grid) = grid
+            if mobile_interferes
+                && let Some(grid) = grid
                 && is_blocked_by_mobile(
                     grid,
                     mover.position_map,
@@ -718,16 +719,18 @@ pub fn apply_anti_collision_step(
             None => false,
         };
         if reachable {
-            if is_blocked_by_mobile(
-                grid.expect("reachable mobile recovery requires a grid"),
-                mover.position_map,
-                deviated_future,
-                mover.layer,
-                state.half_diagonal,
-                &state.move_box,
-                mobile_lines,
-                mobile_polygons,
-            ) {
+            if mobile_interferes
+                && is_blocked_by_mobile(
+                    grid.expect("reachable mobile recovery requires a grid"),
+                    mover.position_map,
+                    deviated_future,
+                    mover.layer,
+                    state.half_diagonal,
+                    &state.move_box,
+                    mobile_lines,
+                    mobile_polygons,
+                )
+            {
                 return (0.0, 0.0);
             }
             state.pi.deviated = false;
@@ -753,26 +756,30 @@ pub fn apply_anti_collision_step(
         }
     };
 
-    let can_commit = grid.is_straight_movement_authorized(
+    let straight_authorized = grid.is_straight_movement_authorized(
         mover.position_map.to_geo().into(),
         deviated_future.to_geo().into(),
         mover.layer,
         &state.move_box,
-    ) && !is_blocked_by_mobile(
-        grid,
-        mover.position_map,
-        deviated_future,
-        mover.layer,
-        state.half_diagonal,
-        &state.move_box,
-        mobile_lines,
-        mobile_polygons,
-    ) && grid.is_reachable_thick(
+    );
+    let blocked_by_mobile = mobile_interferes
+        && is_blocked_by_mobile(
+            grid,
+            mover.position_map,
+            deviated_future,
+            mover.layer,
+            state.half_diagonal,
+            &state.move_box,
+            mobile_lines,
+            mobile_polygons,
+        );
+    let reachable_to_goal = grid.is_reachable_thick(
         deviated_future.to_geo().into(),
         state.goal_map.to_geo().into(),
         mover.layer,
         state.half_diagonal,
     );
+    let can_commit = straight_authorized && !blocked_by_mobile && reachable_to_goal;
 
     if can_commit {
         // Commit the deviation and track it in the blocked-box so
@@ -802,16 +809,18 @@ pub fn apply_anti_collision_step(
         // geometry before its break-through/barge escape. A cart is never
         // barged through, even when static anti-collision has been blocked
         // long enough to trigger the escape hatch.
-        if is_blocked_by_mobile(
-            grid,
-            mover.position_map,
-            deviated_future,
-            mover.layer,
-            state.half_diagonal,
-            &state.move_box,
-            mobile_lines,
-            mobile_polygons,
-        ) {
+        if mobile_interferes
+            && is_blocked_by_mobile(
+                grid,
+                mover.position_map,
+                deviated_future,
+                mover.layer,
+                state.half_diagonal,
+                &state.move_box,
+                mobile_lines,
+                mobile_polygons,
+            )
+        {
             return (0.0, 0.0);
         }
         let to_goal = MapVec::new(

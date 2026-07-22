@@ -24,12 +24,12 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 25. The current first
-divergence is frame 26: soldier 89 is one direction step behind, and soldier 94
-has changed from `MoveOk` to `Wait` before Original. These may be independent;
-investigate both from their producer boundaries before treating either as
-downstream. Increase the clean-prefix statement only after a normal
-first-divergence run has passed that frame.
+The current verified clean prefix is through frame 26. At frame 27 the Original
+consumes global RNG draw 119 while Rust consumes no draw. Identify the Original
+call site and missing logical decision before advancing the replay cursor;
+never consume a value merely to silence the cursor assertion. Increase the
+clean-prefix statement only after a normal first-divergence run has passed that
+frame.
 
 ## Change ledger
 
@@ -48,11 +48,14 @@ first-divergence run has passed that frame.
 | Done | Motion start tick | Original initializes a new motion order and advances its animation in the same invocation, making frame-zero distance immediately available. | `perform_motion` performs that first increment while the general action entry point retains its distinct start semantics. Unit coverage: `perform_motion_start_tick_advances_and_emits_frame_zero_distance`. |
 | Done | Direction sector classifier | `atan2` plus rounding differed for boundary vectors created by anti-collision. | Ported `SBGeoVector2D::GetSector0to15` as the same f32 half-plane classifier and literal constants. |
 | Done | Anti-collision direction | During deviation, Original faces the committed deviation step and rebuilds its normal increment when deviation ends. | Direction/increment are derived after the committed step; deviation recovery invalidates and recomputes the normal goal increment. |
+| Done | Mobile anti-collision scope | Original calls `IsBlockedByMobile` only when `GetMobileRepulsiveObjects` reported a mobile intersecting the actor's future box. Layer-wide mobile geometry must not block an unrelated actor's recovery or break-through corridor. | Mobile blocking checks in deviation recovery, ordinary commit, and break-through are gated by the future-box intersection result. |
+| Done | Transition anti-collision | Soldier 89 retained `deviated=true` through a running-to-walking transition at frame 25, so frame 26 incorrectly used anti-vibration turning and remained at direction 3. Original sends every nonzero `PerformMotion` distance, including `TILL_LAST_FRAME`, through `UpdatePositionAntiCollision`; it recovered on frame 25 and ordinarily turned to direction 4. | Nonzero movement transitions now use the same anti-collision step and recovery commit as walking motion while retaining their distinct animation-completion semantics. |
 | Done | Vision geometry | Rust applied the map's isometric Y correction at a point where Original compares raw view-space X/Y, shifting cone membership. | The detection cone now uses the Original coordinate convention at that boundary. |
 | Done | `Turn`/`FaceTo` during movement | Original turns once toward the retained movement goal, halts/promotes the turn immediately, retains the map goal, and drives the movement-exit animation through ordinary `Execute` even though action state remains `Moving` until that transition completes. | The old-goal turn step precedes halt, the turn sequence is launched eagerly, its requested direction goal is installed, and the retained map goal is restored. Generic animation dispatch admits non-movement walking/running exit transitions while the old moving state is still live. Unit coverage classifies the admitted transition family. |
 | Done | Actor idle exit inside movement | Original's bored-to-waiting animation always uses base `PerformAction`, including when the order is stored in a movement element; only particular movement animation arms branch on `IsMovement()` and use `PerformMotion`. | Generic animation execution no longer rejects an order solely because its command/element is movement-shaped. The live animation-arm catalog remains the owner selector, and the universal base-actor idle state effects now apply to PCs as well as NPCs. Regression coverage verifies a PC changes from `Bored` to `Waiting` on bored-exit completion. |
 | Done | Patrol `GoToSpeed` close-point gate | At frame 24 Rust changed soldier 92 from patrol-running to waiting and issued `Turn`; Original downgraded it to patrol-walking and retained `MoveOk`. `RHArtificialIntelligence::GoTo` only synthesizes `EventReachPoint` within five units when the current animation is an idle wait. | `go_to_speed`, which represents the same Original overload, now applies the idle-animation, likes-to-sit, and special-action gates before setting `already_on_point`. Regression coverage exercises both ordinary and speed variants, including a nearby running actor that must still queue movement. |
-| In progress | Frame-26 movement frontier | Soldier 89 faces direction 3 in Rust versus 4 in Original; soldier 94 is already on `Wait` versus Original `MoveOk`. | Determine whether these share an order-completion/creation-slot timing cause. Preserve them as separate leads until the trace and Original call order establish a common producer. |
+| Done | Re-entrant move after condolation | Soldier 94's Turn completion advances `DefaultGotoRouteTurn` to `DefaultEnroute` and launches the next patrol move during the sequence-manager pass. Original's active `Hourglass` loop instructs that newly registered Move before returning; Rust left it queued and exposed `Wait` for frame 26. | Generic condolation dispatch now promotes and synchronously instructs only the card owner's re-entrant Move before `Ready()` resumes. Other owners retain their FIFO positions, preserving the earlier deferred-patrol ordering fix. |
+| In progress | Frame-27 RNG frontier | Original consumes draw 119 during frame 27; Rust reaches the frame boundary without consuming it. | Map the recorded Original call-site provenance to its gameplay decision, then reproduce that decision and consume the draw at the corresponding Rust simulation point. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow

@@ -5164,9 +5164,9 @@ impl EngineInner {
             // goal (without this advance, soldiers stop at the
             // running-phase endpoint and never close the final ~26u
             // gap, leaving them outside sword_range forever and unable
-            // to trigger begin_swordfight).  We skip the full walk
-            // body below (anti-collision, arrival-pop, line-crossing)
-            // since those apply to waypoint-driven walks.
+            // to trigger begin_swordfight). Arrival-pop and line-crossing
+            // remain waypoint-walk concerns, but C++ routes every nonzero
+            // transition distance through UpdatePositionAntiCollision too.
             //
             // C++ seeds `PositionInterface` at the start of every new
             // sprite motion order and moves transition animations via
@@ -5182,12 +5182,82 @@ impl EngineInner {
                     );
                 }
                 if transition_has_map_target && speed > 0.0 && dist > 0.01 {
+                    // Match GetIncrementMap(): PerformMotion seeded this
+                    // normalized vector when the order began and reuses it
+                    // unchanged until anti-collision explicitly rebuilds it.
+                    let increment = entity.position_iface().get_increment_map();
+                    let nx = increment.x;
+                    let ny = increment.y;
+                    let anti_on = entity.position_iface().is_anti_collision_on();
+                    let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                    let (move_box, half_diagonal) = {
+                        let pi = entity.position_iface();
+                        (*pi.get_move_box(), pi.get_half_diagonal())
+                    };
+                    let (dx_step, dy_step, deviated, recovered_from_deviation) =
+                        if let Some(mover_snap) =
+                            anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                        {
+                            let pi = entity.position_iface_mut();
+                            let was_deviated = pi.is_deviated();
+                            let mut state = super::anti_collision::AntiCollisionState {
+                                pi,
+                                move_box,
+                                half_diagonal,
+                                goal_map,
+                            };
+                            let (dx_step, dy_step) =
+                                super::anti_collision::apply_anti_collision_step(
+                                    mover_snap,
+                                    anti_snapshots.as_slice(),
+                                    &self.ai.global.repulsive_points,
+                                    prepared
+                                        .mobile_points_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_lines_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_polygons_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    Some(&self.world.fast_grid),
+                                    Some(&mut state),
+                                    nx,
+                                    ny,
+                                    speed,
+                                    anti_on,
+                                );
+                            (
+                                dx_step,
+                                dy_step,
+                                state.pi.is_deviated(),
+                                was_deviated && !state.pi.is_deviated(),
+                            )
+                        } else {
+                            (nx * speed, ny * speed, false, false)
+                        };
                     let elem = entity.element_data_mut();
-                    let pi = &mut elem.sprite.position_iface;
-                    // `motion_order_state_mismatch` above guarantees the
-                    // same-id cache established by `PerformMotion` is still
-                    // intact. C++ never reconstructs this state mid-order.
-                    pi.update_position_map_scaled(speed);
+                    if deviated && (dx_step != 0.0 || dy_step != 0.0) {
+                        let raw = vector_to_sector_0_to_15(dx_step, dy_step);
+                        elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
+                    }
+                    let mut position = elem.position_map();
+                    position.x += dx_step;
+                    position.y += dy_step;
+                    elem.set_position_map(position);
+                    if deviated && (dx_step != 0.0 || dy_step != 0.0) {
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(false);
+                    } else if recovered_from_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(true);
+                    }
                     elem.update_grid_cell();
                 }
                 if matches!(motion_state, MotionState::Terminated) {
