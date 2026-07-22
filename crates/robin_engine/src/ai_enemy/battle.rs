@@ -20,6 +20,22 @@ use super::{
 };
 
 impl EnemyAi {
+    pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
+        let target = self.get_new_primary_target(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+            ctx,
+            tick,
+        );
+        self.base.primary_target = target;
+        if target != 0 {
+            self.base.outbox.actor.focus = Some(target);
+        } else {
+            self.base.outbox.actor.unfocus = true;
+        }
+        self.set_state(AiState::Attacking, Substate::AttackingReserve);
+        self.base.launch_timer(50, ctx.frame);
+    }
+
     // -----------------------------------------------------------------------
     // approach_sleeping_enemies
     // -----------------------------------------------------------------------
@@ -816,19 +832,7 @@ impl EnemyAi {
                 }
 
                 Decision::Reserve => {
-                    let target = self.get_new_primary_target(
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-                        ctx,
-                        tick,
-                    );
-                    self.base.primary_target = target;
-                    if target != 0 {
-                        self.base.outbox.actor.focus = Some(target);
-                    } else {
-                        self.base.outbox.actor.unfocus = true;
-                    }
-                    self.set_state(AiState::Attacking, Substate::AttackingReserve);
-                    self.base.launch_timer(50, ctx.frame);
+                    self.enter_battle_reserve(ctx, tick);
                 }
 
                 Decision::LastReserve => {
@@ -1054,11 +1058,12 @@ impl EnemyAi {
                         .find_fighter(target, tick)
                         .map(|f| f.position)
                         .unwrap_or(self.base.seek_position);
-                    if !self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
-                        decision = Decision::Reserve;
-                        continue;
-                    } else {
-                        self.base.say(Remark::OfficerGivesAttackOrder);
+                    match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
+                        super::alert::CommandSoldiersStart::Pending => return,
+                        super::alert::CommandSoldiersStart::Rejected => {
+                            decision = Decision::Reserve;
+                            continue;
+                        }
                     }
                 }
 

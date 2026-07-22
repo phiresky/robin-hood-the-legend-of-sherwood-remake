@@ -1394,6 +1394,26 @@ impl Decision {
 /// delivering `CALL_INSTRUCTION`, and recursive `BreakPhalanx`.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum CrossNpcAction {
+    /// Synchronously deliver `CALL_ALERT` and resume the caller with the
+    /// recipient's actual `Think` result. The original uses the returned bool
+    /// to decide whether the reporting NPC may enter its approach/report
+    /// handshake; predicting from a recipient snapshot loses script-filter and
+    /// re-entrant callback effects.
+    RequestAlert {
+        target: NpcHandle,
+        caller: NpcHandle,
+        continuation: AlertContinuation,
+    },
+    /// Synchronously deliver a direct `Think` call whose boolean controls a
+    /// caller-side continuation. The recipient may re-enter and mutate the
+    /// caller before returning, so the continuation resumes on live fields.
+    RequestThinkResult {
+        target: NpcHandle,
+        caller: NpcHandle,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+        continuation: ThinkResultContinuation,
+    },
     /// Set gather position on target NPC, then deliver `CALL_INSTRUCTION`.
     InstructGatherPosition {
         target: NpcHandle,
@@ -1488,6 +1508,15 @@ pub enum CrossNpcAction {
         /// (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
         flags: u16,
     },
+    /// Resume the outer AlertSoldiers call after the final accepted
+    /// soldier's ConsiderReport call and all of its owner-side effects have
+    /// closed. A refused final Think has no report boundary and finalizes
+    /// directly in the result continuation.
+    FinalizeAlertSoldiers {
+        caller: NpcHandle,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
     /// Push `actor` onto `target`'s `synchronizing_actors` list. Used by
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
@@ -1498,6 +1527,41 @@ pub enum CrossNpcAction {
     ReportBackToOfficer {
         officer: NpcHandle,
         charly: NpcHandle,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlertContinuation {
+    CivilianReachedSoldier,
+    CivilianSawSoldier,
+    SoldierSawOfficer,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlertSoldiersFailureContinuation {
+    None,
+    ReturnToDuty,
+    SeekBody { center: Position, radius: u16 },
+    SeekMissingInstructedSoldier,
+    SeekMissedCharly { center: Position },
+    FleeingRunToDoor,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum ThinkResultContinuation {
+    OfficerCalledSoldier,
+    OfficerSentCharlyToOfficer,
+    OfficerInstructedGroupSoldier {
+        last: bool,
+    },
+    OfficerAlertedSoldier {
+        last: bool,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
+    OfficerCombatAlertedSoldier {
+        last: bool,
+        use_formation: bool,
     },
 }
 
