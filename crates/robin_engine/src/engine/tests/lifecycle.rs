@@ -927,6 +927,202 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
 }
 
 #[test]
+fn bound_bow_transition_advances_through_production_owner_coordinator() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let script = SpriteScript {
+        action_id: OrderType::TransitionEquipBow as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::TransitionEquipBow as usize] = 0;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
+    let order = Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let actor = engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::Waiting;
+    actor.active_shot = ActiveShot {
+        sequence_id: Some(sequence),
+        element_index: 0,
+        target: Some(owner),
+        order_id: Some(order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    positions[owner] = Some(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+    );
+
+    engine.tick_actor_owner_envelopes(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &positions,
+    );
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.sprite().last_action, OrderType::TransitionEquipBow);
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
+        ActionState::AimingWithBow
+    );
+}
+
+#[test]
+fn unbound_bow_transition_still_uses_generic_execute() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let script = SpriteScript {
+        action_id: OrderType::TransitionEquipBow as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::TransitionEquipBow as usize] = 0;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+    element
+        .orders
+        .push_back(Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    positions[owner] = Some(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+    );
+
+    engine.tick_actor_owner_envelopes(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &positions,
+    );
+
+    assert_eq!(
+        engine.get_entity(owner).unwrap().sprite().last_action,
+        OrderType::TransitionEquipBow
+    );
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_shot
+            .is_active()
+    );
+}
+
+#[test]
+fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm() {
+    use crate::element::{Command, Posture};
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element = SequenceElement::new(1, Command::WaitTimer, Some(owner));
+    let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execution_frozen = true;
+
+    let (_, outcomes, result) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    let result = result.expect("frozen wait still returns the base Execute identity");
+    assert_eq!(result.entry_seq_id, sequence);
+    assert_eq!(result.entry_elem_idx, 0);
+    assert_eq!(result.order_type, OrderType::WaitingUpright);
+    assert_eq!(result.motion, crate::sprite::MotionState::InProgress);
+    assert!(outcomes.seq_advance.is_empty());
+    assert_ne!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        order_id.get(),
+        "per-actor execution freeze returns before the selected sprite call"
+    );
+}
+
+#[test]
 fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass() {
     use crate::element::{Command, Posture};
     use crate::movement::ActiveShot;
@@ -1022,6 +1218,88 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         next_execute.unwrap().order_type,
         OrderType::WaitingUpright,
         "the exposed generic successor must become eligible at the next Execute boundary"
+    );
+}
+
+#[test]
+fn execution_frozen_selected_bow_does_not_advance_or_fire() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let shooter = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
+    let mut order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    order.antagonist = Some(target);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let actor = engine
+        .get_entity_mut(shooter)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.execution_frozen = true;
+    actor.active_shot = ActiveShot {
+        sequence_id: Some(sequence),
+        element_index: 0,
+        target: Some(target),
+        order_id: Some(order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+    let before = engine
+        .get_entity(shooter)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_shot;
+
+    assert!(
+        engine
+            .tick_bow_shot_for(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                shooter,
+                order_id
+            )
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .get_entity(shooter)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_shot,
+        before
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(shooter)
+            .unwrap()
+            .2
+            .order_id,
+        order_id
+    );
+    assert_eq!(
+        engine
+            .get_entity(shooter)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        u32::MAX
     );
 }
 
@@ -1225,7 +1503,8 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     assert_eq!(actor.listen_phase, crate::element::ListenPhase::Inactive);
     assert_eq!(actor.listen_wait_time, 0);
 
-    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
+    // This is an owner-selection fixture, not an Eat validity fixture.
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
     let order = Order::test_new(OrderType::Eating, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
@@ -2265,8 +2544,10 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
-    let ability_order = Order::test_new(OrderType::Eating, 0.0, 0.0);
+    // This fixture isolates owner identity; the real projectile terminal
+    // effect is covered by the production coordinator regression below.
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+    let ability_order = Order::test_new(OrderType::ThrowingApple, 0.0, 0.0);
     let ability_id = ability_order.order_id;
     element.orders.push_back(ability_order);
     element
@@ -2280,7 +2561,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         .actor_data_mut()
         .unwrap()
         .active_ability = crate::movement::ActiveAbility {
-        kind: Some(crate::movement::AbilityKind::Eat),
+        kind: Some(crate::movement::AbilityKind::ThrowApple),
         sequence_id: Some(seq),
         element_index: 0,
         target: None,
@@ -2339,6 +2620,160 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
             .2
             .order_type,
         OrderType::WaitingUpright
+    );
+}
+
+#[test]
+fn unbound_ability_catalog_order_still_uses_generic_execute() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let script = SpriteScript {
+        action_id: OrderType::ThrowingApple as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::ThrowingApple as usize] = 0;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+    element
+        .orders
+        .push_back(Order::test_new(OrderType::ThrowingApple, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    assert_eq!(
+        engine.get_entity(owner).unwrap().sprite().last_action,
+        OrderType::ThrowingApple
+    );
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+    );
+}
+
+#[test]
+fn production_throw_apple_owner_emits_terminal_projectile_effect() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(40.0, 0.0));
+    bind_test_action_point(
+        &mut engine,
+        owner,
+        OrderType::ThrowingApple,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let script = SpriteScript {
+        action_id: OrderType::ThrowingApple as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::ThrowingApple as usize] = 0;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    let element =
+        SequenceElement::new_interaction(1, Command::ThrowApple, Some(owner), Some(target));
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    assert_eq!(
+        crate::abilities::begin_throw_apple(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            owner,
+            target,
+            sequence,
+            0,
+            &mut engine.orders.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    for _ in 0..10 {
+        let mut positions_before_movement =
+            crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (entity_id, entity) in engine.world.entities.occupied() {
+            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+        }
+        let mut display = HostDisplayState::default();
+        engine.tick_actor_owner_envelopes_with_display(
+            &sim,
+            &mut display,
+            &assets,
+            &positions_before_movement,
+        );
+    }
+
+    assert_eq!(engine.world.entities.projectiles().count(), 1);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Terminated
     );
 }
 

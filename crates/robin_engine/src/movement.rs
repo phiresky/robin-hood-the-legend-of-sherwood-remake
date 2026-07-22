@@ -406,6 +406,29 @@ pub enum AbilityKind {
     ClimbDownFromShoulders,
 }
 
+impl AbilityKind {
+    pub const ALL: [Self; 18] = [
+        Self::Carry,
+        Self::Drop,
+        Self::Tie,
+        Self::Heal,
+        Self::Whistle,
+        Self::Listen,
+        Self::ThrowNet,
+        Self::ThrowWaspNest,
+        Self::ThrowPurse,
+        Self::ThrowApple,
+        Self::ThrowStone,
+        Self::Pay,
+        Self::ReceivePurse,
+        Self::Hit,
+        Self::Strangle,
+        Self::Eat,
+        Self::ClimbOnShoulders,
+        Self::ClimbDownFromShoulders,
+    ];
+}
+
 /// Tracks an in-progress ability animation on an actor.
 ///
 /// Similar to [`ActiveShot`] for bow shots and [`ActiveMelee`] for

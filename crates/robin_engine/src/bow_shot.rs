@@ -364,7 +364,29 @@ pub(crate) fn bow_sprite_hand_point(
     ))
 }
 
-/// Whether this order type is a bow shoot animation.
+/// Canonical order set accepted by the selected active-bow owner.
+pub(crate) const ACTIVE_BOW_ORDERS: &[OrderType] = &[
+    OrderType::ShootingWithBow,
+    OrderType::ShootingWithBowUp,
+    OrderType::ShootingWithBowLeaningOut,
+    OrderType::ShootingWithBowAnonymous,
+    OrderType::ShootingWithBowUpAnonymous,
+    OrderType::TransitionEquipBow,
+    OrderType::TransitionRaisingBow,
+    OrderType::TransitionLoweringBow,
+    OrderType::TransitionRaisingBowLeaningOut,
+    OrderType::TransitionLoweringBowLeaningOut,
+    OrderType::TransitionLoadingBow,
+    OrderType::TransitionUnloadBow,
+    OrderType::TransitionUnequipBow,
+    OrderType::TransitionEquipBowAnonymous,
+    OrderType::TransitionRaisingBowAnonymous,
+    OrderType::TransitionLoweringBowAnonymous,
+    OrderType::TransitionLoadingBowAnonymous,
+    OrderType::TransitionUnloadBowAnonymous,
+    OrderType::TransitionUnequipBowAnonymous,
+];
+
 fn is_shoot_order(ot: OrderType) -> bool {
     matches!(
         ot,
@@ -398,7 +420,7 @@ fn is_bow_transition_order(ot: OrderType) -> bool {
 }
 
 pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
-    is_shoot_order(ot) || is_bow_transition_order(ot)
+    ACTIVE_BOW_ORDERS.contains(&ot)
 }
 
 fn has_active_bow_order(element: &crate::sequence::SequenceElement) -> bool {
@@ -1728,7 +1750,7 @@ pub fn tick_bow_shots(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
 ) -> BowTickEvents {
-    tick_bow_shots_matching(sim, entities, sequence_manager, None, None)
+    tick_bow_shots_matching(sim, entities, sequence_manager, None, None, false)
 }
 
 pub fn tick_bow_shot_for_owner(
@@ -1737,6 +1759,7 @@ pub fn tick_bow_shot_for_owner(
     sequence_manager: &mut SequenceManager,
     owner: EntityId,
     expected_order_id: std::num::NonZeroU32,
+    sprite_frozen: bool,
 ) -> BowTickEvents {
     tick_bow_shots_matching(
         sim,
@@ -1744,6 +1767,7 @@ pub fn tick_bow_shot_for_owner(
         sequence_manager,
         Some(owner),
         Some(expected_order_id),
+        sprite_frozen,
     )
 }
 
@@ -1753,6 +1777,7 @@ fn tick_bow_shots_matching(
     sequence_manager: &mut SequenceManager,
     only_owner: Option<EntityId>,
     expected_order_id: Option<std::num::NonZeroU32>,
+    sprite_frozen: bool,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
@@ -1870,7 +1895,9 @@ fn tick_bow_shots_matching(
         // mark an order Impossible while scripts are still loading);
         // here we explicitly opt out and synthesize `Done`.
         let elem = entity.element_data_mut();
-        let motion = if elem.sprite.scripts.is_empty() {
+        let motion = if sprite_frozen {
+            SpriteMotionState::InProgress
+        } else if elem.sprite.scripts.is_empty() {
             if frame_progression == crate::sprite::FrameProgression::FrozenFirstFrame {
                 SpriteMotionState::InProgress
             } else {
@@ -4230,7 +4257,14 @@ mod tests {
 
         CROSS_ACTOR_SHOT_REPLACEMENT.set(Some((other, replacement)));
 
-        tick_bow_shot_for_owner(&sim_context, &mut entities, &mut sm, first, selected_order);
+        tick_bow_shot_for_owner(
+            &sim_context,
+            &mut entities,
+            &mut sm,
+            first,
+            selected_order,
+            false,
+        );
 
         assert_eq!(
             entities
@@ -4241,6 +4275,61 @@ mod tests {
                 .active_shot,
             replacement,
             "single-owner bow execution must preserve a synchronous cross-actor replacement"
+        );
+    }
+
+    #[test]
+    fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
+        let sim = crate::sim_rng::test_context();
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(40.0, 0.0))]);
+        let shooter = EntityId::Pc(crate::entity_id::PcId(0));
+        let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        entities
+            .get_mut(shooter)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::AimingWithBow;
+        let mut sm = SequenceManager::new();
+        let seq = sm.launch_element(build_shoot_bow_element(shooter, target));
+        sm.element_in_progress(seq, 0);
+        let mut next_order_id = 1;
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                shooter,
+                target,
+                seq,
+                0,
+                false,
+                10,
+                None,
+                &mut next_order_id
+            ),
+            BeginShotResult::Started
+        );
+        let order = sm.current_order_for_actor(shooter).unwrap().2.clone();
+        let before_sprite = entities.get(shooter).unwrap().sprite().clone();
+
+        let events =
+            tick_bow_shot_for_owner(&sim, &mut entities, &mut sm, shooter, order.order_id, true);
+
+        assert!(events.fired.is_empty());
+        assert!(events.completed.is_empty());
+        let entity = entities.get(shooter).unwrap();
+        assert_eq!(
+            i16::from(entity.position_iface().get_direction_goal()),
+            crate::position_interface::vector_to_sector_0_to_15_iso(40.0, 0.0)
+        );
+        assert_eq!(
+            entity.sprite().last_processed_order_id,
+            before_sprite.last_processed_order_id
+        );
+        assert_eq!(
+            sm.current_order_for_actor(shooter).unwrap().2.order_id,
+            order.order_id
         );
     }
 

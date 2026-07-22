@@ -21,8 +21,9 @@
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementData,
-    ElementKind, Entity, EntityId, HumanData, NpcData, PcData, Posture, SoldierData,
+    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementBonus,
+    ElementData, ElementKind, Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, PcData,
+    Posture, SoldierData,
 };
 use crate::engine::EngineInner;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -2420,6 +2421,65 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
 }
 
 #[test]
+fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_frame() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_pc(true));
+    let later = engine.add_entity(make_pc(false));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, first, &[OrderType::WaitingUprightBored]);
+    bind_test_actor_animations(&mut engine, later, &[OrderType::Taking]);
+    install_test_action(
+        &mut engine,
+        first,
+        OrderType::WaitingUprightBored,
+        OrderType::WaitingUprightBored,
+    );
+    let sim = crate::sim_rng::test_context();
+    let mut installed = None;
+
+    engine.tick_actor_animation_action_change_slots_with_after_slot(
+        &sim,
+        &assets,
+        |engine, completed_owner| {
+            if completed_owner != first || installed.is_some() {
+                return;
+            }
+            // No antagonist: Original Taking init validity must abort it.
+            let mut element = SequenceElement::new(1, Command::Take, Some(later));
+            element
+                .orders
+                .push_back(Order::test_new(OrderType::Taking, 0.0, 0.0));
+            let sequence = engine.orders.sequence_manager.launch_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+            let _ = engine
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            installed = Some(sequence);
+        },
+    );
+
+    let sequence = installed.expect("earlier callback installed the later PC order");
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("callback-installed element remains inspectable")
+            .state,
+        SequenceState::Impossible,
+        "later PC validity must sample the callback-installed live order at its Execute entry"
+    );
+}
+
+#[test]
 fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
     use crate::order::OrderType;
 
@@ -2593,7 +2653,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
 }
 
 #[test]
-fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
+fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -2617,7 +2677,7 @@ fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
             .expect("frozen timer remains inspectable")
             .state,
         crate::sequence::SequenceState::Terminated,
-        "execution_frozen only suppresses Original Hourglass when no order is installed"
+        "Actor::Hourglass applies WAIT_TIMER after execution_frozen Execute returns InProgress"
     );
     assert_eq!(
         engine
@@ -2626,7 +2686,8 @@ fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
             .element_data()
             .sprite
             .last_action,
-        OrderType::WaitingUprightBored
+        OrderType::NonanimationEnd,
+        "RHElementActor::Execute returns before selecting the installed wait animation"
     );
 }
 
@@ -3065,6 +3126,448 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
         .expect("defender remains human");
     assert_eq!(human.smalltalk_hint, crate::element::SmalltalkHint::None);
     assert_eq!(human.smalltalk_hint_opponent, None);
+}
+
+#[test]
+fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
+    use crate::element::Command;
+
+    let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
+    let before = [attacker, defender].map(|actor| {
+        engine
+            .get_entity(actor)
+            .expect("fighter exists")
+            .element_data()
+            .sprite
+            .last_processed_order_id
+    });
+    engine.set_actors_frozen(true);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
+            )),
+        "FrozenAll suppresses PerformAction, not WaitingSword's synchronous EvaluateSmalltalkHint/EvaluateSwordfight tail"
+    );
+    assert_eq!(
+        [attacker, defender].map(|actor| {
+            engine
+                .get_entity(actor)
+                .expect("fighter remains live")
+                .element_data()
+                .sprite
+                .last_processed_order_id
+        }),
+        before,
+        "FrozenAll must not stamp either selected sprite order identity"
+    );
+}
+
+#[test]
+fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_scripted_soldier(""));
+    let bottle = engine.add_entity(Entity::Bonus(ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectOther,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Ale,
+            ..Default::default()
+        },
+    }));
+    bind_test_actor_animations(&mut engine, soldier, &[OrderType::DrinkingAle]);
+    let mut element =
+        SequenceElement::new_interaction(1, Command::DrinkAle, Some(soldier), Some(bottle));
+    let mut order = Order::test_new(OrderType::DrinkingAle, 0.0, 0.0);
+    order.antagonist = Some(bottle);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine.set_actors_frozen(true);
+    let assets = LevelAssets::new();
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .last_execute_order_id,
+        Some(order_id)
+    );
+    assert_ne!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        order_id.get()
+    );
+
+    engine
+        .get_entity_mut(bottle)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::InProgress,
+        "DrinkingAle's inactive-antagonist IsInitialisation gate must not repeat on a later frozen tick"
+    );
+}
+
+#[test]
+fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let weak = engine.add_entity(make_pc(true));
+    let opponent = engine.add_entity(make_pc(false));
+    bind_test_actor_animations(&mut engine, weak, &[OrderType::BeingWeakSword]);
+    install_test_action(
+        &mut engine,
+        weak,
+        OrderType::BeingWeakSword,
+        OrderType::WaitingSword,
+    );
+    engine
+        .get_entity_mut(weak)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![opponent];
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![weak];
+    engine
+        .get_entity_mut(weak)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .smalltalk_initiative = true;
+    engine.set_actors_frozen(true);
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    assert!(
+        !engine
+            .get_entity(weak)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .smalltalk_initiative
+    );
+    let opponent_human = engine.get_entity(opponent).unwrap().human_data().unwrap();
+    assert!(opponent_human.smalltalk_initiative);
+    assert!(opponent_human.received_smalltalk_initiative);
+    assert_eq!(
+        engine
+            .get_entity(weak)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        u32::MAX,
+        "weak/stunned IsInitialisation is actor-owned and precedes the frozen sprite boundary"
+    );
+}
+
+#[test]
+fn original_actor_execute_arm_ledger_is_exhaustive() {
+    fn strip_comments(source: &str) -> String {
+        let mut out = String::with_capacity(source.len());
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"//") {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            } else if bytes[i..].starts_with(b"/*") {
+                i += 2;
+                while i + 1 < bytes.len() && !bytes[i..].starts_with(b"*/") {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            } else {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    fn outer_cases(source: &str, signature: &str, switch_key: &str) -> Vec<String> {
+        let uncommented = strip_comments(source);
+        let function = uncommented
+            .split_once(signature)
+            .unwrap_or_else(|| panic!("missing Original signature {signature}"))
+            .1;
+        let switch = function
+            .split_once(switch_key)
+            .unwrap_or_else(|| panic!("missing {switch_key} in {signature}"))
+            .1;
+        let mut depth = 0_i32;
+        let mut entered = false;
+        let mut cases = Vec::new();
+        for line in switch.lines() {
+            if entered && depth == 1 {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("case RHANIMATION_")
+                    || trimmed.starts_with("case RHNONANIMATION_")
+                    || trimmed.starts_with("case RHMOVE_")
+                {
+                    cases.push(
+                        trimmed["case ".len()..]
+                            .split(':')
+                            .next()
+                            .unwrap()
+                            .trim()
+                            .to_owned(),
+                    );
+                }
+            }
+            for byte in line.bytes() {
+                match byte {
+                    b'{' => {
+                        entered = true;
+                        depth += 1;
+                    }
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if entered && depth == 0 {
+                break;
+            }
+        }
+        cases
+    }
+
+    fn animation_ordinals(source: &str) -> std::collections::HashMap<String, u32> {
+        let source = strip_comments(source);
+        let body = source
+            .split_once("typedef enum RHanimation")
+            .expect("RHanimation enum")
+            .1
+            .split_once("\n}\nRHanimation")
+            .expect("RHanimation enum end")
+            .0;
+        let mut result = std::collections::HashMap::new();
+        let mut next = 0_u32;
+        for declaration in body.split(',') {
+            let declaration = declaration.trim().trim_start_matches('{').trim();
+            let Some(token) = declaration.split_whitespace().next() else {
+                continue;
+            };
+            if let Some((_, value)) = declaration.split_once('=') {
+                next = value
+                    .trim()
+                    .parse()
+                    .expect("numeric RHanimation assignment");
+            }
+            if token.starts_with("RHANIMATION_") || token.starts_with("RHNONANIMATION_") {
+                assert!(
+                    result.insert(token.to_owned(), next).is_none(),
+                    "duplicate RHanimation token {token}"
+                );
+            }
+            next += 1;
+        }
+        result
+    }
+
+    let actor = include_str!("../../../../original-code/RHelementactor.cpp");
+    let human = include_str!("../../../../original-code/RHelementactorhuman.cpp");
+    let pc = include_str!("../../../../original-code/RHelementactorpc.cpp");
+    let npc = include_str!("../../../../original-code/RHelementactornpc.cpp");
+    let soldier = include_str!("../../../../original-code/RHelementactorsoldier.cpp");
+    let civilian = include_str!("../../../../original-code/rhelementactorcivilian.cpp");
+    use super::tick::{ExecuteOverride, ORIGINAL_ACTOR_EXECUTE_CATALOG};
+    let parsed = [
+        (
+            ExecuteOverride::Actor,
+            outer_cases(actor, "RHElementActor::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Human,
+            outer_cases(human, "RHElementActorHuman::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Pc,
+            outer_cases(pc, "RHElementActorPC::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Npc,
+            outer_cases(npc, "RHElementActorNPC::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Soldier,
+            outer_cases(
+                soldier,
+                "RHElementActorSoldier::Execute(",
+                "switch( animation",
+            ),
+        ),
+        (
+            ExecuteOverride::Civilian,
+            outer_cases(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
+        ),
+    ];
+    let ordinals = animation_ordinals(include_str!("../../../../original-code/RHOrder.h"));
+    let mut actual = std::collections::HashSet::new();
+    let mut count = 0;
+    for (override_kind, arms) in parsed {
+        for arm in arms {
+            let ordinal = *ordinals
+                .get(&arm)
+                .unwrap_or_else(|| panic!("unmapped Original animation token {arm}"));
+            let order = crate::order::OrderType::try_from(ordinal).unwrap_or_else(|_| {
+                panic!("Original animation {arm} ordinal {ordinal} has no Rust OrderType")
+            });
+            assert!(
+                actual.insert((override_kind, order)),
+                "duplicate live arm {override_kind:?}/{arm}"
+            );
+            count += 1;
+        }
+    }
+    let mut expected = std::collections::HashSet::new();
+    for &(override_kind, order, owner) in ORIGINAL_ACTOR_EXECUTE_CATALOG {
+        assert!(
+            expected.insert((override_kind, order)),
+            "duplicate catalog arm {override_kind:?}/{order:?}"
+        );
+        assert_eq!(
+            super::tick::classify_actor_execute_arm(override_kind, order),
+            Some(owner)
+        );
+        super::tick::assert_execute_owner_handler_is_linked(owner);
+    }
+    assert_eq!(count, 308);
+    assert_eq!(
+        actual, expected,
+        "Original Execute switches and typed Rust catalog differ"
+    );
+}
+
+#[test]
+fn every_active_ability_order_routes_to_the_production_ability_owner() {
+    use super::tick::{ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::{CivilianId, PcId};
+    use crate::movement::AbilityKind;
+    use crate::order::OrderType;
+
+    let pc = EntityId::Pc(PcId(0));
+    for kind in AbilityKind::ALL {
+        let assert_route = |actor, order| {
+            assert_eq!(
+                classify_live_actor_execute_arm(actor, order),
+                Some(ExecuteOwnerFamily::Ability),
+                "{kind:?} phase {order:?} is not routed to its production owner"
+            );
+        };
+        match kind {
+            AbilityKind::Listen => {
+                for order in [
+                    OrderType::TransitionWaitingUprightListening,
+                    OrderType::Listening,
+                    OrderType::TransitionListeningWaitingUpright,
+                ] {
+                    assert_route(pc, order);
+                }
+            }
+            AbilityKind::ReceivePurse => {
+                for order in [
+                    OrderType::ReceivingPurse,
+                    OrderType::WaitingWithPurse,
+                    OrderType::TransitionWaitingWithPurseWaitingUpright,
+                ] {
+                    assert_route(EntityId::Civilian(CivilianId(0)), order);
+                }
+            }
+            AbilityKind::Heal => {
+                assert_route(pc, OrderType::Healing);
+                assert_route(pc, OrderType::Eating);
+            }
+            other => assert_route(pc, crate::abilities::ability_order_type(other)),
+        }
+    }
+}
+
+#[test]
+fn every_canonical_active_bow_order_routes_to_the_production_bow_owner() {
+    use super::tick::{ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::{PcId, SoldierId};
+    use crate::order::OrderType;
+
+    for &order in crate::bow_shot::ACTIVE_BOW_ORDERS {
+        let actor = if matches!(
+            order,
+            OrderType::ShootingWithBowLeaningOut
+                | OrderType::TransitionRaisingBowLeaningOut
+                | OrderType::TransitionLoweringBowLeaningOut
+        ) {
+            EntityId::Soldier(SoldierId(0))
+        } else {
+            EntityId::Pc(PcId(0))
+        };
+        assert_eq!(
+            classify_live_actor_execute_arm(actor, order),
+            Some(ExecuteOwnerFamily::Bow),
+            "canonical active bow phase {order:?} is not routed to Bow"
+        );
+    }
+}
+
+#[test]
+fn every_specialized_melee_and_beggar_order_routes_to_its_production_owner() {
+    use super::tick::{ACTIVE_MELEE_ORDERS, ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::PcId;
+    use crate::order::OrderType;
+
+    let pc = EntityId::Pc(PcId(0));
+    for &order in ACTIVE_MELEE_ORDERS {
+        assert_eq!(
+            classify_live_actor_execute_arm(pc, order),
+            Some(ExecuteOwnerFamily::Melee),
+            "active melee order {order:?} is not routed to Melee"
+        );
+    }
+    assert_eq!(
+        classify_live_actor_execute_arm(pc, OrderType::SimulatingBeggar),
+        Some(ExecuteOwnerFamily::Beggar)
+    );
 }
 
 #[test]

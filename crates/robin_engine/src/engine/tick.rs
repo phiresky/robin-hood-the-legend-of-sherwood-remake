@@ -632,6 +632,430 @@ pub(in crate::engine) struct MeleeOwnerSelection {
     pub(in crate::engine) order_id: std::num::NonZeroU32,
 }
 
+pub(super) const ACTIVE_MELEE_ORDERS: &[crate::order::OrderType] = &[
+    crate::order::OrderType::StrikingStraightSword,
+    crate::order::OrderType::StrikingStraightStrongSword,
+    crate::order::OrderType::ExecutingSword,
+    crate::order::OrderType::StrikingLeftSword,
+    crate::order::OrderType::StrikingRightSword,
+    crate::order::OrderType::StrikingSemiroundLeftSword,
+    crate::order::OrderType::StrikingSemiroundRightSword,
+    crate::order::OrderType::StrikingRoundLeftSword,
+    crate::order::OrderType::StrikingRoundRightSword,
+];
+
+/// Concrete Original override whose switch contributes an Execute arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum ExecuteOverride {
+    Actor,
+    Human,
+    Pc,
+    Npc,
+    Soldier,
+    Civilian,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum ExecuteOwnerFamily {
+    GenericAnimation,
+    Movement,
+    Melee,
+    Bow,
+    Ability,
+    Beggar,
+    WaitingSword,
+}
+
+macro_rules! actor_execute_arm_catalog {
+    ($emit:ident) => {
+        $emit! {
+            (Actor, WaitingUpright, GenericAnimation),
+            (Actor, WaitingUprightBored, GenericAnimation),
+            (Actor, WaitingUprightBoredRandom, GenericAnimation),
+            (Actor, TransitionWaitingUprightBoredWaitingUpright, GenericAnimation),
+            (Actor, TransitionWaitingUprightWaitingUprightBored, GenericAnimation),
+            (Actor, TransitionWalkingUprightWaitingUpright, Movement),
+            (Actor, TransitionRunningUprightWaitingUpright, Movement),
+            (Actor, TransitionWaitingUprightWalkingUpright, Movement),
+            (Actor, TransitionWaitingUprightRunningUpright, Movement),
+            (Actor, TransitionWalkingUprightRunningUpright, Movement),
+            (Actor, TransitionRunningUprightWalkingUpright, Movement),
+            (Actor, TransitionWaitingCrouchedWalkingCrouched, Movement),
+            (Actor, TransitionWalkingCrouchedWaitingCrouched, Movement),
+            (Actor, TransitionCrouchingDown, GenericAnimation),
+            (Actor, TransitionCrouchingUp, GenericAnimation),
+            (Actor, TransitionWalkingUprightWalkingCrouched, Movement),
+            (Actor, TransitionWalkingCrouchedWalkingUpright, Movement),
+            (Actor, TransitionRunningUprightWalkingCrouched, Movement),
+            (Actor, TransitionWalkingCrouchedRunningUpright, Movement),
+            (Actor, Turning, GenericAnimation),
+            (Actor, Freezing, GenericAnimation),
+            (Actor, ClimbingLadderUp, Movement),
+            (Actor, ClimbingLadderUpAlerted, Movement),
+            (Actor, ClimbingLadderDown, Movement),
+            (Actor, ClimbingLadderDownAlerted, Movement),
+            (Actor, ClimbingLadderDownFast, Movement),
+            (Actor, ClimbingLadderUpFast, Movement),
+            (Actor, TransitionClimbingLadderUpWaitingCrouched, Movement),
+            (Actor, TransitionClimbingLadderUpWaitingUprightAlerted, Movement),
+            (Actor, TransitionWaitingCrouchedClimbingLadderDown, Movement),
+            (Actor, TransitionWaitingUprightClimbingLadderDownAlerted, Movement),
+            (Actor, TransitionWaitingUprightClimbingLadderUp, Movement),
+            (Actor, TransitionWaitingUprightClimbingLadderUpAlerted, Movement),
+            (Actor, TransitionClimbingLadderDownWaitingUpright, Movement),
+            (Actor, TransitionClimbingLadderDownWaitingUprightAlerted, Movement),
+            (Actor, ClimbingWallUp, Movement),
+            (Actor, ClimbingWallDown, Movement),
+            (Actor, ClimbingWallDownFast, Movement),
+            (Actor, ClimbingWallUpFast, Movement),
+            (Actor, TransitionClimbingWallUpWaitingCrouched, Movement),
+            (Actor, TransitionClimbingWallUpWaitingCrouchedCrenel, Movement),
+            (Actor, TransitionWaitingCrouchedClimbingWallDown, Movement),
+            (Actor, TransitionWaitingCrouchedClimbingWallDownCrenel, Movement),
+            (Actor, TransitionWaitingUprightClimbingWallUp, Movement),
+            (Actor, TransitionClimbingWallDownWaitingUpright, Movement),
+            (Actor, WalkingUpright, Movement),
+            (Actor, RunningUpright, Movement),
+            (Actor, WalkingStairs, Movement),
+            (Actor, RunningStairs, Movement),
+            (Actor, PassingDoor, Movement),
+            (Actor, WaitingFreeLift, GenericAnimation),
+            (Actor, PlayCustom, GenericAnimation),
+            (Actor, PlayCustomFreeze, GenericAnimation),
+            (Actor, PlayCustomFrozen, GenericAnimation),
+            (Actor, PlayCustomLooped, GenericAnimation),
+            (Actor, RefreshingSeek, Movement),
+            (Human, Select, GenericAnimation),
+            (Human, TransitionEquipBow, Bow),
+            (Human, TransitionEquipBowAnonymous, Bow),
+            (Human, TransitionUnequipBow, Bow),
+            (Human, TransitionUnequipBowAnonymous, Bow),
+            (Human, AimingWithBow, GenericAnimation),
+            (Human, AimingWithBowAnonymous, GenericAnimation),
+            (Human, AimingWithBowUp, GenericAnimation),
+            (Human, AimingWithBowUpAnonymous, GenericAnimation),
+            (Human, TransitionLoadingBow, Bow),
+            (Human, TransitionLoadingBowAnonymous, Bow),
+            (Human, TransitionUnloadBow, Bow),
+            (Human, TransitionUnloadBowAnonymous, Bow),
+            (Human, TransitionLoweringBow, Bow),
+            (Human, TransitionLoweringBowAnonymous, Bow),
+            (Human, TransitionRaisingBow, Bow),
+            (Human, TransitionRaisingBowAnonymous, Bow),
+            (Human, ShootingWithBow, Bow),
+            (Human, ShootingWithBowAnonymous, Bow),
+            (Human, ShootingWithBowUp, Bow),
+            (Human, ShootingWithBowUpAnonymous, Bow),
+            (Human, TransitionRaisingSword, GenericAnimation),
+            (Human, TransitionLoweringSword, GenericAnimation),
+            (Human, WaitingSword, WaitingSword),
+            (Human, WalkingWithSword, Movement),
+            (Human, RunningWithSword, Movement),
+            (Human, TransitionWaitingSwordParryingSword, GenericAnimation),
+            (Human, TransitionWaitingSwordParryingSwordLow, GenericAnimation),
+            (Human, TransitionParryingSwordWaitingSword, GenericAnimation),
+            (Human, ParryingLowSword, GenericAnimation),
+            (Human, ParryingSword, GenericAnimation),
+            (Human, DyingSword, GenericAnimation),
+            (Human, DyingBow, GenericAnimation),
+            (Human, BeingDeadSword, GenericAnimation),
+            (Human, BeingDeadBow, GenericAnimation),
+            (Human, BeingDead, GenericAnimation),
+            (Human, FallingBackSword, GenericAnimation),
+            (Human, FallingBackBow, GenericAnimation),
+            (Human, BeingUnconsciousSword, GenericAnimation),
+            (Human, BeingUnconsciousBow, GenericAnimation),
+            (Human, BeingDeadFallenBackSword, GenericAnimation),
+            (Human, BeingDeadFallenBackBow, GenericAnimation),
+            (Human, BeingDeadFallenBack, GenericAnimation),
+            (Human, StrikingLeftSmalltalk, Melee),
+            (Human, StrikingRightSmalltalk, Melee),
+            (Human, StrikingLowRightSmalltalk, Melee),
+            (Human, StrikingLowLeftSmalltalk, Melee),
+            (Human, ParryingLeftSmalltalk, GenericAnimation),
+            (Human, ParryingRightSmalltalk, GenericAnimation),
+            (Human, ParryingLowRightSmalltalk, GenericAnimation),
+            (Human, ParryingLowLeftSmalltalk, GenericAnimation),
+            (Human, StrikingStraightSword, Melee),
+            (Human, StrikingStraightStrongSword, Melee),
+            (Human, ExecutingSword, Melee),
+            (Human, StrikingLeftSword, Melee),
+            (Human, StrikingRightSword, Melee),
+            (Human, StrikingSemiroundRightSword, Melee),
+            (Human, StrikingSemiroundLeftSword, Melee),
+            (Human, StrikingRoundRightSword, Melee),
+            (Human, StrikingRoundLeftSword, Melee),
+            (Human, StrikingDownSword, Melee),
+            (Human, DyingUpright, GenericAnimation),
+            (Human, StandingUpSword, GenericAnimation),
+            (Human, StandingUp, GenericAnimation),
+            (Human, StandingUpBow, GenericAnimation),
+            (Human, FallingLadderWall, GenericAnimation),
+            (Human, FallingBackUpright, GenericAnimation),
+            (Human, FallingBackCrouched, GenericAnimation),
+            (Human, BeingUnconscious, GenericAnimation),
+            (Human, BeingHitSword, GenericAnimation),
+            (Human, BeingWeakSword, GenericAnimation),
+            (Human, ExtractingArrowSword, GenericAnimation),
+            (Human, ExtractingArrowUpright, GenericAnimation),
+            (Human, ExtractingArrowCrouched, GenericAnimation),
+            (Human, ExtractingArrowBow, GenericAnimation),
+            (Human, DyingCrouched, GenericAnimation),
+            (Human, BeingStunnedSword, GenericAnimation),
+            (Human, WakingUp, GenericAnimation),
+            (Human, Provoking, GenericAnimation),
+            (Human, Hitting, Ability),
+            (Human, FallingHitHarderUpright, GenericAnimation),
+            (Human, FallingHitHarderWithBow, GenericAnimation),
+            (Human, FallingHitHarderWithSword, GenericAnimation),
+            (Human, FallingHitHarderCrouched, GenericAnimation),
+            (Human, FallingHitUpright, GenericAnimation),
+            (Human, FallingHitWithBow, GenericAnimation),
+            (Human, FallingHitWithSword, GenericAnimation),
+            (Human, FallingHitCrouched, GenericAnimation),
+            (Human, FallingPushedUpright, GenericAnimation),
+            (Human, FallingPushedWithBow, GenericAnimation),
+            (Human, FallingPushedWithSword, GenericAnimation),
+            (Human, FallingPushedCrouched, GenericAnimation),
+            (Human, BeingCarriedLittleJohn, GenericAnimation),
+            (Human, BeingCarriedPeasantC, GenericAnimation),
+            (Human, RaisingShield, GenericAnimation),
+            (Human, LoweringShield, GenericAnimation),
+            (Human, ParryingShield, GenericAnimation),
+            (Human, WaitingShield, GenericAnimation),
+            (Human, Rolling, GenericAnimation),
+            (Human, LyingStuckUnderNet, GenericAnimation),
+            (Human, WriggleUnderNet, GenericAnimation),
+            (Human, BeingTied, GenericAnimation),
+            (Human, TakingNet, GenericAnimation),
+            (Human, GettingWounded, GenericAnimation),
+            (Human, PassingDoor, Movement),
+            (Human, TransitionWaitingUprightSpecial, GenericAnimation),
+            (Human, TransitionSpecialWaitingUpright, GenericAnimation),
+            (Human, Special, GenericAnimation),
+            (Pc, WalkingWithSword, Movement),
+            (Pc, RunningWithSword, Movement),
+            (Pc, Select, GenericAnimation),
+            (Pc, WalkingCrouched, Movement),
+            (Pc, WaitingCrouched, GenericAnimation),
+            (Pc, WalkingCarryingOnShoulders, Movement),
+            (Pc, ShootingWithBow, Bow),
+            (Pc, ShootingWithBowUp, Bow),
+            (Pc, JumpingUp, Movement),
+            (Pc, JumpingDown, Movement),
+            (Pc, JumpingLong, Movement),
+            (Pc, JumpingLongSword, Movement),
+            (Pc, TransitionWaitingOnShouldersJumpingUp, Movement),
+            (Pc, TransitionWaitingOnShouldersJumpingLong, Movement),
+            (Pc, TransitionWaitingUprightJumpingUp, Movement),
+            (Pc, TransitionJumpingUpWaitingCrouched, Movement),
+            (Pc, WaitingCape, GenericAnimation),
+            (Pc, WaitingCapeAnonymousArcher, GenericAnimation),
+            (Pc, TransitionWaitingCapeWaitingUpright, GenericAnimation),
+            (Pc, WaitingHidden, GenericAnimation),
+            (Pc, TransitionWaitingHiddenWaitingUpright, GenericAnimation),
+            (Pc, TransitionWaitingCrouchedJumpingDown, Movement),
+            (Pc, TransitionJumpingDownWaitingCrouched, Movement),
+            (Pc, TransitionWaitingUprightJumpingLong, Movement),
+            (Pc, TransitionWaitingSwordJumpingLongSword, Movement),
+            (Pc, TransitionJumpingLongWaitingUpright, Movement),
+            (Pc, TransitionJumpingLongSwordWaitingSword, Movement),
+            (Pc, Taking, GenericAnimation),
+            (Pc, TakingCrouched, GenericAnimation),
+            (Pc, Eating, Ability),
+            (Pc, Whistling, Ability),
+            (Pc, Searching, GenericAnimation),
+            (Pc, SearchingCrouched, GenericAnimation),
+            (Pc, Healing, Ability),
+            (Pc, TransitionWaitingUprightHelpingClimbing, Movement),
+            (Pc, TransitionHelpingClimbingWaitingUpright, Movement),
+            (Pc, WaitingHelpingClimbing, Movement),
+            (Pc, WaitingCarryingOnShoulders, GenericAnimation),
+            (Pc, WaitingOnShoulders, GenericAnimation),
+            (Pc, ClimbingUpOnShoulders, Ability),
+            (Pc, ClimbingDownFromShoulders, Ability),
+            (Pc, TransitionHelpingClimbingDown, Movement),
+            (Pc, TransitionWaitingUprightCarryingCorpse, Ability),
+            (Pc, TransitionCarryingCorpseWaitingUpright, Ability),
+            (Pc, WaitingWithCorpse, GenericAnimation),
+            (Pc, WalkingWithCorpse, Movement),
+            (Pc, FallingShoulders, GenericAnimation),
+            (Pc, TransitionWaitingCarryingOnShouldersWaitingUpright, GenericAnimation),
+            (Pc, DroppingAmmo, GenericAnimation),
+            (Pc, DroppingAmmoCrouched, GenericAnimation),
+            (Pc, ThrowingApple, Ability),
+            (Pc, ThrowingStone, Ability),
+            (Pc, ThrowingPurse, Ability),
+            (Pc, ThrowingWaspNest, Ability),
+            (Pc, ThrowingNet, Ability),
+            (Pc, RaisingShield, GenericAnimation),
+            (Pc, LoweringShield, GenericAnimation),
+            (Pc, WalkingWithShield, Movement),
+            (Pc, WaitingShield, GenericAnimation),
+            (Pc, HidingBehindShield, GenericAnimation),
+            (Pc, UsingLever, GenericAnimation),
+            (Pc, DroppingAle, GenericAnimation),
+            (Pc, DroppingAleCrouched, GenericAnimation),
+            (Pc, UnlockingDoor, GenericAnimation),
+            (Pc, UnlockingTrap, GenericAnimation),
+            (Pc, HandlingTarget, GenericAnimation),
+            (Pc, HittingTarget, GenericAnimation),
+            (Pc, TakingTarget, GenericAnimation),
+            (Pc, Paying, Ability),
+            (Pc, Tying, Ability),
+            (Pc, Strangling, Ability),
+            (Pc, TransitionWaitingUprightSimulatingBeggar, Ability),
+            (Pc, TransitionSimulatingBeggarWaitingUpright, Ability),
+            (Pc, SimulatingBeggar, Beggar),
+            (Pc, TransitionWaitingUprightListening, Ability),
+            (Pc, TransitionListeningWaitingUpright, Ability),
+            (Pc, Listening, Ability),
+            (Pc, TransitionRaisingSword, GenericAnimation),
+            (Pc, Provoking, GenericAnimation),
+            (Pc, StrikingLeftSmalltalk, Melee),
+            (Pc, StrikingRightSmalltalk, Melee),
+            (Pc, StrikingLowRightSmalltalk, Melee),
+            (Pc, StrikingLowLeftSmalltalk, Melee),
+            (Pc, StrikingRoundLeftSword, Melee),
+            (Pc, StrikingRoundRightSword, Melee),
+            (Pc, ExecutingSword, Melee),
+            (Pc, ExtractingArrowUpright, GenericAnimation),
+            (Pc, ExtractingArrowBow, GenericAnimation),
+            (Pc, ExtractingArrowSword, GenericAnimation),
+            (Npc, Sitting, GenericAnimation),
+            (Npc, TransitionSittingWaitingUpright, GenericAnimation),
+            (Npc, TransitionWaitingUprightSitting, GenericAnimation),
+            (Npc, BeggarShowingFace, GenericAnimation),
+            (Npc, Pointing, GenericAnimation),
+            (Npc, Searching, GenericAnimation),
+            (Soldier, WaitingAlerted, GenericAnimation),
+            (Soldier, WaitingUpright, GenericAnimation),
+            (Soldier, TransitionWaitingUprightWaitingAlerted, GenericAnimation),
+            (Soldier, LookingLeft, GenericAnimation),
+            (Soldier, LookingLeftAlerted, GenericAnimation),
+            (Soldier, LookingRight, GenericAnimation),
+            (Soldier, LookingRightAlerted, GenericAnimation),
+            (Soldier, TransitionWaitingAlertedWaitingUpright, GenericAnimation),
+            (Soldier, TransitionWaitingAlertedWaitingUprightOfficer, GenericAnimation),
+            (Soldier, TransitionWalkingUprightWaitingUpright, Movement),
+            (Soldier, TransitionRunningUprightWaitingUpright, Movement),
+            (Soldier, TransitionWaitingUprightWalkingUpright, Movement),
+            (Soldier, TransitionWaitingUprightRunningUpright, Movement),
+            (Soldier, TransitionWalkingUprightRunningUpright, Movement),
+            (Soldier, TransitionRunningUprightWalkingUpright, Movement),
+            (Soldier, WalkingUpright, Movement),
+            (Soldier, WalkingStairs, Movement),
+            (Soldier, RunningStairs, Movement),
+            (Soldier, Turning, GenericAnimation),
+            (Soldier, StandingUpSword, GenericAnimation),
+            (Soldier, TransitionRaisingSword, GenericAnimation),
+            (Soldier, TransitionCharging, Melee),
+            (Soldier, GettingFreeFromWasp, GenericAnimation),
+            (Soldier, Taking, GenericAnimation),
+            (Soldier, TransitionWaitingSwordMenacing, GenericAnimation),
+            (Soldier, Menacing, GenericAnimation),
+            (Soldier, SleepingUpright, GenericAnimation),
+            (Soldier, TransitionSleepingWaitingUpright, GenericAnimation),
+            (Soldier, GatheringSoldiers, GenericAnimation),
+            (Soldier, TransitionMenacingWaitingSword, GenericAnimation),
+            (Soldier, LeaningOut, GenericAnimation),
+            (Soldier, TransitionWaitingAlertedLeaningOut, GenericAnimation),
+            (Soldier, TransitionLeaningOutWaitingAlerted, GenericAnimation),
+            (Soldier, DrinkingAle, GenericAnimation),
+            (Soldier, TransitionLoweringBowLeaningOut, Bow),
+            (Soldier, TransitionRaisingBowLeaningOut, Bow),
+            (Soldier, AimingWithBowLeaningOut, GenericAnimation),
+            (Soldier, ShootingWithBowLeaningOut, Bow),
+            (Soldier, RunningUpright, Movement),
+            (Soldier, RiderCharging, Movement),
+            (Soldier, Special, GenericAnimation),
+            (Civilian, WaitingUpright, GenericAnimation),
+            (Civilian, WaitingUprightBored, GenericAnimation),
+            (Civilian, WaitingUprightBoredRandom, GenericAnimation),
+            (Civilian, TransitionWaitingUprightBoredWaitingUpright, GenericAnimation),
+            (Civilian, TransitionWaitingUprightWaitingUprightBored, GenericAnimation),
+            (Civilian, ReceivingPurse, Ability),
+            (Civilian, WaitingWithPurse, Ability),
+            (Civilian, TransitionWaitingWithPurseWaitingUpright, Ability),
+        }
+    };
+}
+
+macro_rules! define_actor_execute_catalog {
+    ($(($override:ident, $order:ident, $owner:ident),)*) => {
+        #[cfg(test)]
+        pub(super) const ORIGINAL_ACTOR_EXECUTE_CATALOG: &[(ExecuteOverride, crate::order::OrderType, ExecuteOwnerFamily)] = &[
+            $((ExecuteOverride::$override, crate::order::OrderType::$order, ExecuteOwnerFamily::$owner),)*
+        ];
+
+        pub(super) fn classify_actor_execute_arm(
+            override_kind: ExecuteOverride,
+            order: crate::order::OrderType,
+        ) -> Option<ExecuteOwnerFamily> {
+            match (override_kind, order) {
+                $((ExecuteOverride::$override, crate::order::OrderType::$order) => Some(ExecuteOwnerFamily::$owner),)*
+                _ => None,
+            }
+        }
+    };
+}
+actor_execute_arm_catalog!(define_actor_execute_catalog);
+
+pub(super) fn classify_live_actor_execute_arm(
+    entity_id: EntityId,
+    order: crate::order::OrderType,
+) -> Option<ExecuteOwnerFamily> {
+    let chain: &[ExecuteOverride] = match entity_id {
+        EntityId::Pc(_) => &[
+            ExecuteOverride::Pc,
+            ExecuteOverride::Human,
+            ExecuteOverride::Actor,
+        ],
+        EntityId::Soldier(_) => &[
+            ExecuteOverride::Soldier,
+            ExecuteOverride::Npc,
+            ExecuteOverride::Human,
+            ExecuteOverride::Actor,
+        ],
+        EntityId::Civilian(_) => &[
+            ExecuteOverride::Civilian,
+            ExecuteOverride::Npc,
+            ExecuteOverride::Human,
+            ExecuteOverride::Actor,
+        ],
+        _ => return None,
+    };
+    chain
+        .iter()
+        .find_map(|override_kind| classify_actor_execute_arm(*override_kind, order))
+}
+
+#[cfg(test)]
+pub(super) fn assert_execute_owner_handler_is_linked(family: ExecuteOwnerFamily) {
+    match family {
+        ExecuteOwnerFamily::GenericAnimation => {
+            let _ = EngineInner::tick_actor_animation_for;
+        }
+        ExecuteOwnerFamily::Movement => {
+            let _ = EngineInner::tick_entity_movement_owner;
+        }
+        ExecuteOwnerFamily::Melee => {
+            let _ = EngineInner::tick_selected_melee_owner;
+        }
+        ExecuteOwnerFamily::Bow => {
+            let _ = EngineInner::tick_bow_shot_for;
+        }
+        ExecuteOwnerFamily::Ability => {
+            let _ = EngineInner::tick_ability_for;
+        }
+        ExecuteOwnerFamily::Beggar => {
+            let _ = EngineInner::tick_beggar_bid_for;
+        }
+        ExecuteOwnerFamily::WaitingSword => {
+            let _ = EngineInner::tick_waiting_sword_execute_for;
+        }
+    }
+}
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -2134,16 +2558,6 @@ impl EngineInner {
         // so the sprite drawn this frame reflects the new position.
         self.tick_active_jumps(assets);
 
-        // ── PC `Execute` per-arm validity pre-tick gate ─────────
-        // Run the init-phase validity guards for TAKING / EATING /
-        // SEARCHING / HEALING / HELPING-CLIMB transitions /
-        // corpse-carry transitions / jump-init arms before the
-        // animation driver so failing init-phase arms are aborted /
-        // terminated synchronously instead of running their first
-        // frame and then being marked Impossible from inside the
-        // entity-iter borrow.
-        self.pre_tick_pc_execute_validity(assets);
-
         // Every supported nonactor virtual Hourglass now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
         // projectile/net dispatch.
@@ -2603,18 +3017,45 @@ impl EngineInner {
                         entity_id,
                     ));
 
+                    // PC validity belongs to the live Execute entry. Earlier
+                    // actor callbacks may replace this PC's selected order in
+                    // the same owner walk, so sampling in a global pre-pass
+                    // would validate stale work.
+                    self.pre_tick_pc_execute_validity_for(assets, entity_id);
+
                     let selected_order = self
                         .orders
                         .sequence_manager
                         .current_order_for_actor(entity_id)
                         .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    let selected_owner_family = self
+                        .orders
+                        .sequence_manager
+                        .current_order_for_actor(entity_id)
+                        .and_then(|(_, _, order)| {
+                            classify_live_actor_execute_arm(entity_id, order.order_type)
+                        });
+                    if let Some((_, _, order_id)) = selected_order {
+                        let actor = self
+                            .world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::actor_data_mut)
+                            .unwrap_or_else(|| {
+                                panic!("selected Execute owner {entity_id:?} lost actor data")
+                            });
+                        actor.execute_order_initialising =
+                            actor.last_execute_order_id != Some(order_id);
+                        actor.last_execute_order_id = Some(order_id);
+                    }
                     let movement_selection =
                         selected_order.and_then(|(seq_id, elem_idx, order_id)| {
                             self.orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .filter(|element| {
-                                    element.data.is_movement()
+                                    selected_owner_family == Some(ExecuteOwnerFamily::Movement)
+                                        && element.data.is_movement()
                                         && !matches!(
                                             element.command,
                                             crate::element::Command::WaitTimer
@@ -2635,7 +3076,15 @@ impl EngineInner {
                                 .get(entity_id)
                                 .and_then(Entity::actor_data)
                                 .map(|actor| actor.active_melee)?;
-                            (melee.is_active()
+                            let order_type = self
+                                .orders
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .and_then(|element| element.current_order())
+                                .map(|order| order.order_type)?;
+                            (selected_owner_family == Some(ExecuteOwnerFamily::Melee)
+                                && ACTIVE_MELEE_ORDERS.contains(&order_type)
+                                && melee.is_active()
                                 && melee.sequence_id == Some(seq_id)
                                 && melee.element_index == elem_idx
                                 && melee.order_id == Some(order_id))
@@ -2650,9 +3099,12 @@ impl EngineInner {
                     // successor order, that successor must wait until the
                     // actor's next Hourglass rather than entering generic
                     // Execute later in this same slot.
-                    let bow_selection = self.selected_bow_order(entity_id);
+                    let bow_selection = (selected_owner_family == Some(ExecuteOwnerFamily::Bow))
+                        .then(|| self.selected_bow_order(entity_id))
+                        .flatten();
                     let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
-                        self.world
+                        selected_owner_family == Some(ExecuteOwnerFamily::Ability)
+                            && self.world
                             .entities
                             .get(entity_id)
                             .and_then(Entity::actor_data)
@@ -2690,6 +3142,9 @@ impl EngineInner {
                             })
                     });
                     let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
+                        if selected_owner_family != Some(ExecuteOwnerFamily::Beggar) {
+                            return None;
+                        }
                         self.orders
                             .sequence_manager
                             .get_element(seq, elem)
@@ -2719,33 +3174,6 @@ impl EngineInner {
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
                         entity_id,
                     ));
-                    let frozen_wait_execute = self
-                        .actors_frozen()
-                        .then(|| {
-                            self.orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id)
-                                .and_then(|(seq_id, elem_idx, order)| {
-                                    let element = self
-                                        .orders
-                                        .sequence_manager
-                                        .get_element(seq_id, elem_idx)?;
-                                    matches!(
-                                        element.command,
-                                        crate::element::Command::WaitTimer
-                                            | crate::element::Command::WaitFreeLift
-                                    )
-                                    .then_some(
-                                        super::animation::ActorExecuteResult {
-                                            order_type: order.order_type,
-                                            entry_seq_id: seq_id,
-                                            entry_elem_idx: elem_idx,
-                                            motion: crate::sprite::MotionState::InProgress,
-                                        },
-                                    )
-                                })
-                        })
-                        .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
                         if movement_selection.is_some()
                             || melee_selection.is_some()
@@ -2754,8 +3182,6 @@ impl EngineInner {
                             || beggar_selection.is_some()
                         {
                             (Vec::new(), Default::default(), None)
-                        } else if frozen_wait_execute.is_some() {
-                            (Vec::new(), Default::default(), frozen_wait_execute)
                         } else {
                             self.tick_actor_animation_for(sim, assets, entity_id)
                         };
@@ -2830,6 +3256,15 @@ impl EngineInner {
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
                     after_slot(self, entity_id);
 
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                    {
+                        actor.execute_order_initialising = false;
+                    }
+
                     let leaked_slot_work = self
                         .orders
                         .sequence_manager
@@ -2848,12 +3283,10 @@ impl EngineInner {
             slot += 1;
         }
 
-        // The exhaustive Original rider-specific Execute arms are both owned
-        // by movement above: RunningUpright's synchronous GALOPP Think and
-        // RiderCharging's Human ExecuteRiderCharge delegation. The production
-        // caller also installs active melee, selected bow, owner-local active
-        // abilities and beggar work, and the human/PC/NPC tail hook before
-        // this loop advances. Other unsupported Execute arms remain separate.
+        // The Original Execute override chain is closed here: generic sprite
+        // arms use tick_actor_animation_for; selected movement, melee, bow,
+        // ability, beggar, and WaitingSword work use their live owner arms;
+        // the human/PC/NPC derived tail hook runs before the slot advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
@@ -2981,6 +3414,13 @@ impl EngineInner {
                 }
             },
             |engine, owner, movement, melee, bow, ability, selected_beggar| {
+                let execution_frozen = engine
+                    .get_entity(owner)
+                    .and_then(Entity::actor_data)
+                    .is_some_and(|actor| actor.execution_frozen);
+                if execution_frozen {
+                    return;
+                }
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
@@ -2988,11 +3428,7 @@ impl EngineInner {
                 if let Some((_, _, order_id)) = bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
-                let execution_frozen = engine
-                    .get_entity(owner)
-                    .and_then(Entity::actor_data)
-                    .is_some_and(|actor| actor.execution_frozen);
-                if ability.is_some() && !execution_frozen {
+                if ability.is_some() {
                     let is_listen = engine
                         .get_entity(owner)
                         .and_then(Entity::actor_data)
@@ -3005,9 +3441,7 @@ impl EngineInner {
                         engine.tick_ability_for(sim, display, assets, owner);
                     }
                 }
-                if let Some(order_id) = selected_beggar
-                    && !execution_frozen
-                {
+                if let Some(order_id) = selected_beggar {
                     engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
             },

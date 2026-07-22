@@ -260,15 +260,21 @@ impl EngineInner {
         expected_order_id: std::num::NonZeroU32,
     ) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
-        if self.actors_frozen() {
+        if self
+            .get_entity(shooter_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
             return spawned_projectiles;
         }
+        let sprite_frozen = self.actors_frozen();
         let events = bow_shot::tick_bow_shot_for_owner(
             sim,
             &mut self.world.entities,
             &mut self.orders.sequence_manager,
             shooter_id,
             expected_order_id,
+            sprite_frozen,
         );
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
