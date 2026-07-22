@@ -94,6 +94,46 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
     )
 }
 
+fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
+    use crate::sector::LiftType;
+
+    match action {
+        OrderType::TransitionWaitingUprightClimbingWallUp
+        | OrderType::ClimbingWallUp
+        | OrderType::ClimbingWallDown
+        | OrderType::TransitionClimbingWallUpWaitingCrouched
+        | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+        | OrderType::TransitionWaitingCrouchedClimbingWallDown
+        | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+        | OrderType::TransitionClimbingWallDownWaitingUpright
+        | OrderType::ClimbingWallUpFast
+        | OrderType::ClimbingWallDownFast => Some(LiftType::Wall),
+        OrderType::TransitionWaitingUprightClimbingLadderUp
+        | OrderType::TransitionWaitingUprightClimbingLadderUpAlerted
+        | OrderType::TransitionClimbingLadderUpWaitingCrouched
+        | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
+        | OrderType::TransitionWaitingCrouchedClimbingLadderDown
+        | OrderType::TransitionWaitingUprightClimbingLadderDownAlerted
+        | OrderType::TransitionClimbingLadderDownWaitingUpright
+        | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
+        | OrderType::ClimbingLadderUp
+        | OrderType::ClimbingLadderDown
+        | OrderType::ClimbingLadderUpFast
+        | OrderType::ClimbingLadderDownFast => Some(LiftType::Ladder),
+        _ => None,
+    }
+}
+
+fn is_fast_climb_action(action: OrderType) -> bool {
+    matches!(
+        action,
+        OrderType::ClimbingWallUpFast
+            | OrderType::ClimbingWallDownFast
+            | OrderType::ClimbingLadderUpFast
+            | OrderType::ClimbingLadderDownFast
+    )
+}
+
 fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     match order {
         // legacy implementation RHNONANIMATION_CLIMBING_*_FAST tokens are dispatch /
@@ -3598,6 +3638,86 @@ impl EngineInner {
     /// its Execute-arm callbacks, completion, and condolence continuation are
     /// applied synchronously before this function returns; no owner result
     /// vectors escape to a later global dispatch pass.
+    fn turn_globally_frozen_climb_owner(
+        &mut self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) {
+        let order_action = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| element.current_order())
+            .filter(|order| order.order_id == selected.order_id)
+            .map(|order| order.order_type)
+            .expect("globally frozen movement owner lost its selected order");
+        let (action, door_index, current_sector) = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| {
+                let actor = entity.actor_data()?;
+                Some((
+                    actor
+                        .active_door_pass
+                        .as_ref()
+                        .map_or(order_action, |pass| pass.current_action),
+                    actor.active_door_pass.as_ref().map(|pass| pass.door_index),
+                    entity.element_data().sector(),
+                ))
+            })
+            .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} is not an actor"));
+        let Some(expected_lift_type) = climb_lift_type(action) else {
+            return;
+        };
+
+        let sector_number = if let Some(door_index) = door_index {
+            self.script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_index))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "globally frozen climb owner {owner:?} references missing door {door_index}"
+                    )
+                })
+                .sector_in
+        } else {
+            let sector = current_sector.unwrap_or_else(|| {
+                panic!("globally frozen climb owner {owner:?} has no lift sector")
+            });
+            crate::sector::SectorNumber::new(i16::from(sector))
+        };
+        let lift = self
+            .grid_sector_by_number(sector_number)
+            .unwrap_or_else(|| {
+                panic!(
+                    "globally frozen climb owner {owner:?} references missing lift sector {sector_number}"
+                )
+            });
+        assert_eq!(
+            lift.lift_type,
+            Some(expected_lift_type),
+            "globally frozen climb owner {owner:?} action {action:?} requires {expected_lift_type:?}, found {:?}",
+            lift.lift_type
+        );
+        let direction = if action == OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel {
+            (lift.lift_direction + 8) & 15
+        } else {
+            lift.lift_direction
+        };
+        let turns = if is_fast_climb_action(action) { 2 } else { 1 };
+        let entity = self
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("globally frozen climb owner disappeared after canonical lookup");
+        entity.element_data_mut().set_direction_goal(direction);
+        for _ in 0..turns {
+            entity.element_data_mut().sprite.position_iface.turn();
+        }
+    }
+
     pub(super) fn tick_entity_movement_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3642,10 +3762,11 @@ impl EngineInner {
             return;
         }
         if self.actors_frozen() {
-            // Both rider-specific Soldier Execute arms remain live under
-            // FrozenAll. PerformMotion reports InProgress without changing
-            // the sprite, then RiderCharging performs its polygon work or
-            // RunningUpright samples that same frozen frame and may Think.
+            self.turn_globally_frozen_climb_owner(owner, selected);
+            // FrozenAll suppresses Sprite::PerformMotion but not the Execute
+            // work before it: climb Turn() above and both rider-specific
+            // Soldier arms remain live. RiderCharging performs its polygon
+            // work or RunningUpright samples that frozen frame and may Think.
             let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true);
             if !consumed_charge && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
@@ -3996,7 +4117,7 @@ impl EngineInner {
         // Pre-computed here so the main loop can borrow `self.world.entities`
         // mutably without touching `self.world.fast_grid` or the door table.
         let mut lift_translations = EntitySlots::filled(self.world.entities.len(), None);
-        let mut door_pass_wall_directions = EntitySlots::filled(self.world.entities.len(), None);
+        let mut door_pass_climb_directions = EntitySlots::filled(self.world.entities.len(), None);
         for (actor_id, entity) in self
             .world
             .entities
@@ -4016,47 +4137,43 @@ impl EngineInner {
             else {
                 continue;
             };
-            if matches!(
-                door_pass_action,
-                Some(
-                    OrderType::TransitionWaitingUprightClimbingWallUp
-                        | OrderType::ClimbingWallUp
-                        | OrderType::ClimbingWallDown
-                        | OrderType::TransitionClimbingWallUpWaitingCrouched
-                        | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
-                        | OrderType::TransitionWaitingCrouchedClimbingWallDown
-                        | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
-                        | OrderType::TransitionClimbingWallDownWaitingUpright
-                        | OrderType::ClimbingWallUpFast
-                        | OrderType::ClimbingWallDownFast
-                )
-            ) {
-                door_pass_wall_directions[actor_id] = entity
+            if let Some(action) = door_pass_action
+                && let Some(expected) = climb_lift_type(action)
+            {
+                door_pass_climb_directions[actor_id] = entity
                     .actor_data()
                     .and_then(|actor| actor.active_door_pass.as_ref())
-                    .and_then(|dp| {
-                        self.scripts
-                            .mission
-                            .as_ref()
-                            .and_then(|_| {
-                                self.script_domains
-                                    .interactables
-                                    .doors
-                                    .get(usize::from(dp.door_index))
+                    .map(|dp| {
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(dp.door_index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "door-pass climb owner {actor_id:?} references missing door {}",
+                                    dp.door_index
+                                )
                             })
-                            .map(|door| door.sector_in)
+                            .sector_in
                     })
-                    .and_then(|sector_in| {
+                    .map(|sector_in| {
                         self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(
                             sector_in,
                         )))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "door-pass climb owner {actor_id:?} references missing lift sector {sector_in}"
+                            )
+                        })
                     })
-                    .and_then(|sector| {
-                        if sector.lift_type == Some(crate::sector::LiftType::Wall) {
-                            Some(sector.lift_direction)
-                        } else {
-                            None
-                        }
+                    .map(|sector| {
+                        assert_eq!(
+                            sector.lift_type,
+                            Some(expected),
+                            "door-pass climb owner {actor_id:?} action {action:?} requires {expected:?}, found {:?}",
+                            sector.lift_type
+                        );
+                        sector.lift_direction
                     });
             }
             let Some(lt) = gs.lift_type else { continue };
@@ -4751,16 +4868,10 @@ impl EngineInner {
             let fast_sword_motion = action_state == crate::element::ActionState::MovingFastSword
                 || order_action == OrderType::RunningWithSword
                 || door_pass_anim == Some(OrderType::RunningWithSword);
-            let fast_climb_motion = matches!(
-                anim,
-                OrderType::ClimbingWallUpFast
-                    | OrderType::ClimbingWallDownFast
-                    | OrderType::ClimbingLadderUpFast
-                    | OrderType::ClimbingLadderDownFast
-            );
+            let fast_climb_motion = is_fast_climb_action(anim);
             let motion_method = if is_transition_anim {
                 MotionMethod::TillLastFrame
-            } else if fast_sword_motion || fast_climb_motion {
+            } else if fast_sword_motion {
                 MotionMethod::Fast
             } else {
                 MotionMethod::Walk
@@ -4785,7 +4896,7 @@ impl EngineInner {
                         | OrderType::ClimbingLadderUpFast
                         | OrderType::ClimbingLadderDownFast,
                         crate::sector::LiftType::Ladder,
-                    ) => elem.set_direction_instantly(lift_direction),
+                    ) => elem.set_direction_goal(lift_direction),
                     _ => {}
                 }
             }
@@ -4824,7 +4935,7 @@ impl EngineInner {
                 }
                 _ => {}
             }
-            if let Some(wall_dir) = door_pass_wall_directions[actor_id] {
+            if let Some(climb_dir) = door_pass_climb_directions[actor_id] {
                 let dir = if matches!(
                     (anim, elem.posture),
                     (
@@ -4832,11 +4943,11 @@ impl EngineInner {
                         crate::element::Posture::Flying
                     )
                 ) {
-                    (wall_dir + 8) & 15
+                    (climb_dir + 8) & 15
                 } else {
-                    wall_dir
+                    climb_dir
                 };
-                elem.set_direction_instantly(dir);
+                elem.set_direction_goal(dir);
             }
 
             let motion_order = order_id.map(|order_id| MotionOrderContext {
@@ -4859,11 +4970,12 @@ impl EngineInner {
                 );
             }
 
-            // Run a one-step rotation of facing toward the goal
-            // direction immediately before `perform_motion`.  If the
-            // facing already matches the goal it is a no-op.
-            let still_turning = elem.sprite.position_iface.turn();
-            let direction = elem.direction() as u16;
+            // Fast ladder/wall Execute is two literal Turn/PerformMotion
+            // pairs in Original. The second pair is skipped when the first
+            // motion terminates; folding it into MotionMethod::Fast would
+            // over-rotate on that terminal tick and cannot expose the first
+            // call's termination barrier.
+            let mut still_turning = elem.sprite.position_iface.turn();
             // The "already at destination" short-circuit needs the
             // predicate routed into `perform_motion`.  Keep a 0.01
             // epsilon to absorb any prior anti-collision jitter that
@@ -4871,16 +4983,31 @@ impl EngineInner {
             // order's recorded destination.
             let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
             let sprite = &mut elem.sprite;
-            let (motion_state, frame_dist_raw) = sprite.perform_motion(
+            let (mut motion_state, mut frame_dist_raw) = sprite.perform_motion(
                 sim,
                 motion_order,
                 sprite_motion_order_for_nonanimation(anim),
-                direction,
+                u16::from(sprite.position_iface.get_direction().as_u8()),
                 FrameProgression::Default,
                 false,
                 motion_method,
                 dest_already_at_pos,
             );
+            if fast_climb_motion && motion_state != MotionState::Terminated {
+                still_turning |= sprite.position_iface.turn();
+                let (second_state, second_distance) = sprite.perform_motion(
+                    sim,
+                    motion_order,
+                    sprite_motion_order_for_nonanimation(anim),
+                    u16::from(sprite.position_iface.get_direction().as_u8()),
+                    FrameProgression::Default,
+                    false,
+                    MotionMethod::Walk,
+                    dest_already_at_pos,
+                );
+                motion_state = second_state;
+                frame_dist_raw += second_distance;
+            }
             executed_sword_movement = is_sword_motion;
             if is_pc {
                 executed_pc_movement_actions.push((entity_id, order_action));

@@ -1635,6 +1635,129 @@ fn install_test_order_queue(
     sequence
 }
 
+#[test]
+fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order() {
+    use crate::element::Command;
+    use crate::gate::{Door, DoorIndex};
+    use crate::order::{Order, OrderCompletion, OrderType};
+    use crate::position_interface::Direction;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    for unlocker_is_earlier in [true, false] {
+        let mut engine = EngineInner::new();
+        let (unlocker, observer) = if unlocker_is_earlier {
+            (
+                engine.add_entity(make_pc(true)),
+                engine.add_entity(make_pc(false)),
+            )
+        } else {
+            let observer = engine.add_entity(make_pc(false));
+            let unlocker = engine.add_entity(make_pc(true));
+            (unlocker, observer)
+        };
+        let assets = LevelAssets::new();
+        bind_test_actor_animations(&mut engine, unlocker, &[OrderType::UnlockingDoor]);
+
+        engine.script_domains.interactables.doors.push(Door {
+            locked_pc: true,
+            locked_npc_villain: true,
+            locked_npc_civilian: true,
+            unlockable: true,
+            ..Door::default()
+        });
+        let order = Order::new(
+            OrderType::UnlockingDoor,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        )
+        .with_completion(OrderCompletion::UnlockDoor {
+            door_id: DoorIndex(0),
+        });
+        let order_id = order.order_id;
+        let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(unlocker));
+        element.orders.push_back(order);
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        let _ = engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions();
+
+        {
+            let entity = engine
+                .get_entity_mut(unlocker)
+                .expect("unlock owner exists for action-point priming");
+            entity
+                .position_iface_mut()
+                .set_direction_instantly(Direction::NORTH);
+            entity.position_iface_mut().set_direction(Direction::EAST);
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite.last_processed_order_id = order_id.get();
+            sprite.last_action = OrderType::UnlockingDoor;
+            sprite.current_row = 0;
+            sprite.current_frame = 0;
+            sprite.frame_count = 0;
+            sprite.action_done_frame = 1;
+            sprite.action_done_counter = 0;
+        }
+
+        let mut observer_saw_locked = None;
+        engine.tick_actor_animation_action_change_slots_with_after_slot(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |engine, owner| {
+                if owner == observer {
+                    observer_saw_locked =
+                        Some(engine.script_domains.interactables.doors[0].locked_pc);
+                }
+            },
+        );
+
+        let door = &engine.script_domains.interactables.doors[0];
+        assert!(!door.locked_pc);
+        assert!(!door.locked_npc_villain);
+        assert!(!door.locked_npc_civilian);
+        assert!(!door.unlockable);
+        assert_eq!(
+            observer_saw_locked,
+            Some(!unlocker_is_earlier),
+            "only a later creation slot may observe the same-frame lockpick action point"
+        );
+        assert_eq!(
+            engine
+                .get_entity(unlocker)
+                .expect("unlock owner survives action point")
+                .element_data()
+                .direction(),
+            1,
+            "UnlockingDoor must execute the original per-tick Turn()"
+        );
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("unlock sequence remains inspectable at Done");
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(element.orders.len(), 1, "Done must not complete the order");
+
+        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("unlock sequence remains inspectable after termination")
+                .state,
+            SequenceState::Terminated,
+            "the later Terminated edge must advance and finish the unlock order"
+        );
+    }
+}
+
 fn bind_action_observer(engine: &mut EngineInner, assets: &LevelAssets, actor: EntityId) {
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine.scripts.mission = Some(

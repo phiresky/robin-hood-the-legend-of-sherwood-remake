@@ -2813,8 +2813,10 @@ pub(super) struct AnimCompletionOutcomes {
     /// counter, then advance the element (popping the just-completed
     /// cycle).
     pub wasp_next_cycle: Vec<(crate::sequence::SequenceId, usize, u16)>,
-    /// `(door_id, seq_id, elem_idx)` — flip `locked_pc` then terminate.
-    pub unlock_door: Vec<(crate::gate::DoorIndex, crate::sequence::SequenceId, usize)>,
+    /// Doors whose lockpick animation reached `MOTION_DONE` this owner slot.
+    /// Original clears every live lock/authorization flag at the action point;
+    /// order advancement remains tied to the later `MOTION_TERMINATED` edge.
+    pub unlock_door_done: Vec<crate::gate::DoorIndex>,
     /// Entities whose door-pass chain should continue.
     pub resume_door_pass: Vec<EntityId>,
     /// Entities whose active jump should advance to the next step.
@@ -3274,16 +3276,17 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .current_order_for_actor(entity_id);
-                let (order_seq_elem, anim_type, order_id, order_antagonist) =
+                let (order_seq_elem, anim_type, order_id, order_antagonist, order_completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
                         (
                             Some((seq_id, elem_idx)),
                             order.order_type,
                             Some(order.order_id),
                             order.antagonist,
+                            Some(order.completion.clone()),
                         )
                     } else {
-                        (None, crate::order::OrderType::Invalid, None, None)
+                        (None, crate::order::OrderType::Invalid, None, None, None)
                     };
                 if let Some((seq_id, elem_idx)) = order_seq_elem
                     && actor.active_shot.is_active()
@@ -3516,6 +3519,8 @@ impl EngineInner {
                                 | OrderType::Taking
                                 | OrderType::DrinkingAle
                                 | OrderType::TakingNet
+                                | OrderType::UnlockingDoor
+                                | OrderType::UnlockingTrap
                                 | OrderType::BeingUnconsciousSword
                                 | OrderType::TransitionCarryingCorpseWaitingUpright
                                 | OrderType::TransitionWaitingUprightClimbingWallUp
@@ -3818,6 +3823,12 @@ impl EngineInner {
                                 .execute_sides
                                 .smalltalk_swipes
                                 .push(entity_id);
+                        }
+                        if matches!(motion_state, MotionState::Done)
+                            && let Some(crate::order::OrderCompletion::UnlockDoor { door_id }) =
+                                order_completion
+                        {
+                            completion_outcomes.unlock_door_done.push(door_id);
                         }
                         // Lift sequence-element priority to
                         // NonInterruptable on initialisation for the

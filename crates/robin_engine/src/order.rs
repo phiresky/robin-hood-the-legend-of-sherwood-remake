@@ -481,9 +481,9 @@ pub enum OrderCompletion {
     #[default]
     AdvanceElement,
 
-    /// Flip `door.locked_pc = false`, then terminate the lockpick
-    /// sequence element.  Used by `Command::UnlockDoor` to free the
-    /// door on animation end.
+    /// Identify the door whose four live lock/authorization flags are cleared
+    /// at the lockpick animation's action point. The same order advances its
+    /// sequence normally at the later termination edge.
     UnlockDoor { door_id: crate::gate::DoorIndex },
 
     /// Resume `advance_door_pass` on the actor — the door-pass chain
