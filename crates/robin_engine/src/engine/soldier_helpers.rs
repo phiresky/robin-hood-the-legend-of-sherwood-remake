@@ -301,6 +301,18 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.dispatch_condolations_in_script_driver(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| panic!("condolation dispatch failed: {error:?}"));
+    }
+
+    /// Close `SetState`'s owner-card/`Ready()` stack without dropping the
+    /// active VM frames that made the state change.
+    pub(super) fn dispatch_condolations_in_script_driver(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+    ) -> Result<(), crate::engine::script::ScriptDriverError> {
         let mut pending: std::collections::VecDeque<_> = self
             .orders
             .sequence_manager
@@ -319,13 +331,7 @@ impl EngineInner {
             // `ExecutedImmediately()` for Timer/LockUser/etc.  Keep that work
             // inside this exact SetState stack frame, before another
             // condolence card or NPC Hourglass slot can run.
-            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "condolation for owner {} failed to drain its synchronous sequence successor: {error:?}",
-                        owner.index()
-                    )
-                });
+            self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
 
             for nested in self
                 .orders
@@ -337,6 +343,7 @@ impl EngineInner {
                 pending.push_front(nested);
             }
         }
+        Ok(())
     }
 
     /// Complete pending condolence stack frames after an NPC Think call.

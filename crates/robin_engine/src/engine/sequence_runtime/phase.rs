@@ -1,6 +1,210 @@
 use super::*;
 
 impl EngineInner {
+    /// Translate one Move/Seek at the exact `RHSequenceManager::Hourglass`
+    /// FIFO position where its `Go()` action was emitted.
+    fn dispatch_ordered_move_seek_instruct(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) {
+        let Some((command, stored_destination, target_element, action, flags, tolerance)) = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Movement {
+                    destination,
+                    element: target,
+                    action,
+                    flags,
+                    tolerance,
+                    ..
+                } if matches!(element.command, Command::Move | Command::Seek) => Some((
+                    element.command,
+                    *destination,
+                    *target,
+                    *action,
+                    *flags,
+                    *tolerance,
+                )),
+                _ => None,
+            })
+        else {
+            tracing::warn!(
+                ?sequence_id,
+                element_index,
+                "Move/Seek action has invalid sequence-element data"
+            );
+            self.orders
+                .sequence_manager
+                .element_impossible(sequence_id, element_index);
+            return;
+        };
+
+        let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
+            entity.is_pc()
+                && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
+        });
+        if is_anonymous_archer_pc {
+            self.hero_speaking(
+                assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            self.orders
+                .sequence_manager
+                .element_impossible(sequence_id, element_index);
+            return;
+        }
+
+        let is_seek = command == Command::Seek;
+        let destination = if is_seek {
+            let post_seek = self
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence_id, element_index)
+                .and_then(|element| match &mut element.data {
+                    crate::sequence::SequenceElementData::Movement {
+                        post_seek_sequence, ..
+                    } => post_seek_sequence.take(),
+                    _ => None,
+                });
+            if let Some(post_seek) = post_seek
+                && let Some(actor) = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+            {
+                actor.post_seek_sequence = Some(post_seek);
+            }
+
+            match target_element {
+                Some(target) => {
+                    if target == owner {
+                        self.orders
+                            .sequence_manager
+                            .element_terminated(sequence_id, element_index);
+                        self.start_post_seek_sequence(owner, None);
+                        return;
+                    }
+                    if self.try_handle_same_sector_actor_seek_wait(
+                        owner,
+                        sequence_id,
+                        element_index,
+                        target,
+                        flags,
+                    ) {
+                        return;
+                    }
+                    let seek_distance = tolerance.max(4.0);
+                    if self.try_dispatch_cross_sector_entity_seek(
+                        sim,
+                        assets,
+                        owner,
+                        sequence_id,
+                        element_index,
+                        target,
+                        action,
+                        flags,
+                        seek_distance,
+                    ) {
+                        return;
+                    }
+                    let Some(resolved) =
+                        self.resolve_entity_seek(owner, target, flags, seek_distance)
+                    else {
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(sequence_id, element_index);
+                        return;
+                    };
+                    if let Some(crate::sequence::SequenceElementData::Movement {
+                        destination,
+                        tolerance,
+                        speed_factor,
+                        ..
+                    }) = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(sequence_id, element_index)
+                        .map(|element| &mut element.data)
+                    {
+                        *destination = resolved.destination;
+                        *tolerance = resolved.tolerance;
+                        *speed_factor = resolved.speed_factor;
+                    }
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(|entity| entity.actor_data_mut())
+                    {
+                        actor.seek_refresh_wait = 25;
+                    }
+                    if resolved.stop_npc {
+                        self.send_seek_stop_to_npc(target);
+                    }
+                    resolved.destination
+                }
+                None => {
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(|entity| entity.actor_data_mut())
+                    {
+                        actor.seek_target = None;
+                        actor.last_seek_target_position = stored_destination;
+                        actor.seek_refresh_wait = 25;
+                    }
+                    stored_destination
+                }
+            }
+        } else {
+            stored_destination
+        };
+
+        let owner_sector = self
+            .get_entity(owner)
+            .and_then(|entity| entity.element_data().sector());
+        let owner_in_building = self.sector_is_building(owner_sector);
+        let is_last_of_sequence = self
+            .orders
+            .sequence_manager
+            .get_sequence(sequence_id)
+            .map(|sequence| element_index + 1 >= sequence.elements.len())
+            .unwrap_or(false);
+        if owner_in_building && (!is_seek || !is_last_of_sequence) {
+            self.finalize_special_move_position(
+                assets,
+                owner,
+                super::special_motion::SpecialMovePosition::Map(destination),
+                None,
+                None,
+                Some(destination),
+                "building interior move",
+            );
+            self.orders
+                .sequence_manager
+                .element_terminated(sequence_id, element_index);
+            return;
+        }
+
+        self.dispatch_prepared_move_instruction(
+            sim,
+            owner,
+            sequence_id,
+            element_index,
+            destination,
+            action,
+        );
+    }
+
     /// Launch and dispatch sequence elements after the ported base entity and
     /// actor-Hourglass work, including inline immediate-action cascades and
     /// message/target callbacks at their exact owner-dispatch positions.
@@ -15,328 +219,12 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         // ── Sequence manager dispatch ────────────────────────────
-        // Process pending sequence elements and dispatch actions.
-        // We collect actions and process them here in two passes.
+        // Process pending sequence elements in the manager's emitted order.
         let mut phase = SequencePhase::begin(&mut self.orders);
 
-        // First pass: extract Move command data (to avoid borrow conflicts).
-        // (owner, seq_id, elem_idx, destination, layer, action_animation)
-        let mut move_instructions: Vec<(
-            EntityId,
-            crate::sequence::SequenceId,
-            usize,
-            crate::coordinates::MapPoint,
-            u16,
-            crate::order::OrderType,
-        )> = Vec::new();
-        // Beggar-command rejections collected during the Move-gather
-        // pass — applied after the loop to avoid `&sequence_manager`
-        // vs `&mut sequence_manager` borrow conflicts.
-        let mut beggar_rejects_pass1: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
-        // Per-actor instruct arbitration.  Runs once per owner so the
-        // set of "current" elements observed is consistent across pass 1
-        // and pass 2 dispatchers.  Element handles that fail arbitration
-        // (Abandon / Postpone) are collected here so we skip them in
-        // both passes below.
-        let mut abandoned_or_postponed: std::collections::HashSet<(
-            crate::sequence::SequenceId,
-            usize,
-        )> = std::collections::HashSet::new();
-        for action in phase.initial_actions() {
-            if let crate::sequence::SequenceAction::InstructOwner {
-                owner,
-                sequence_id,
-                element_index,
-            } = action
-            {
-                if !self.arbitrate_instruct(*sequence_id, *element_index) {
-                    abandoned_or_postponed.insert((*sequence_id, *element_index));
-                    continue;
-                }
-
-                let needs_transition = self
-                    .orders
-                    .sequence_manager
-                    .get_element(*sequence_id, *element_index)
-                    .is_some_and(|elem| {
-                        matches!(
-                            elem.state,
-                            crate::sequence::SequenceState::Todo
-                                | crate::sequence::SequenceState::Postponed
-                        ) && elem.posture_after_transition == crate::element::Posture::Undefined
-                    });
-                if needs_transition
-                    && !self.generate_transition(*owner, *sequence_id, *element_index)
-                {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(*sequence_id, *element_index);
-                    abandoned_or_postponed.insert((*sequence_id, *element_index));
-                }
-            }
-        }
-
-        for action in phase.initial_actions() {
-            if let crate::sequence::SequenceAction::InstructOwner {
-                owner,
-                sequence_id,
-                element_index,
-            } = action
-                && !abandoned_or_postponed.contains(&(*sequence_id, *element_index))
-                && let Some(elem) = self
-                    .orders.sequence_manager
-                    .get_element(*sequence_id, *element_index)
-                // `Command::Seek` shares the pathfinder dispatch with
-                // `Command::Move`.  Without this fall-through, Seek
-                // elements (used by the seek-before-take object
-                // pickup sequence) would be silently terminated by
-                // the default arm in the second pass instead of
-                // walking the PC up to their target.
-                && matches!(
-                    elem.command,
-                    crate::element::Command::Move | crate::element::Command::Seek
-                )
-                && let crate::sequence::SequenceElementData::Movement {
-                    destination,
-                    element,
-                    layer,
-                    sector: _,
-                    action,
-                    flags,
-                    tolerance,
-                    ..
-                } = &elem.data
-            {
-                let stored_destination = *destination;
-                let target_element = *element;
-                let instr_layer = *layer;
-                let instr_action = *action;
-                let instr_flags = *flags;
-                let instr_tolerance = *tolerance;
-                let is_seek = elem.command == crate::element::Command::Seek;
-                // Beggars reject Move (and anything except
-                // RECEIVE_PURSE / BEGGAR_SHOW_FACE / WAIT).  Mark
-                // impossible and skip the pathfind.
-                if self.beggar_rejects_command(*owner, crate::element::Command::Move) {
-                    beggar_rejects_pass1.push((*sequence_id, *element_index));
-                    continue;
-                }
-                // An anonymous-archer PC (archery-contest disguise)
-                // cannot move; play HERO_UNABLE_TO_DO_SOMETHING and
-                // mark the Move element Impossible so any chained
-                // sequence sees the failure rather than falling
-                // through to the pathfinder.  The check covers both
-                // Move and Seek (Seek falls through to Move).
-                let is_anonymous_archer_pc = self.get_entity(*owner).is_some_and(|e| {
-                    e.is_pc()
-                        && e.element_data().posture
-                            == crate::element_kinds::Posture::AnonymousArcher
-                });
-                if is_anonymous_archer_pc {
-                    self.hero_speaking(
-                        assets,
-                        *owner,
-                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                    );
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(*sequence_id, *element_index);
-                    continue;
-                }
-                // Seek resolves the destination from the target
-                // entity's current position at dispatch time.
-                // `InstructOwner` fires once per element launch, so
-                // this is a one-shot snapshot — no per-tick re-read.
-                // Plain Move uses the stored `destination` point.
-                let dest_pt = if is_seek {
-                    let post_seek = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(*sequence_id, *element_index)
-                        .and_then(|elem| match &mut elem.data {
-                            crate::sequence::SequenceElementData::Movement {
-                                post_seek_sequence,
-                                ..
-                            } => post_seek_sequence.take(),
-                            _ => None,
-                        });
-                    if let Some(post_seek) = post_seek
-                        && let Some(entity) = self.world.entities.get_mut(*owner)
-                        && let Some(actor) = entity.actor_data_mut()
-                    {
-                        actor.post_seek_sequence = Some(post_seek);
-                    }
-
-                    match target_element {
-                        Some(target) => {
-                            if target == *owner {
-                                self.orders
-                                    .sequence_manager
-                                    .element_terminated(*sequence_id, *element_index);
-                                self.start_post_seek_sequence(*owner, None);
-                                continue;
-                            }
-                            if self.try_handle_same_sector_actor_seek_wait(
-                                *owner,
-                                *sequence_id,
-                                *element_index,
-                                target,
-                                instr_flags,
-                            ) {
-                                continue;
-                            }
-                            // Entity-target SEEK floors the seek
-                            // distance at 4.0 before stamping it on
-                            // the actor and feeding it to RefreshSeek.
-                            // Without the floor, NPCs chasing a target
-                            // with a small element-tolerance pause
-                            // every refresh because the pathfinder
-                            // thinks they've already arrived.
-                            let floored_seek_distance = instr_tolerance.max(4.0);
-                            if self.try_dispatch_cross_sector_entity_seek(
-                                sim,
-                                assets,
-                                *owner,
-                                *sequence_id,
-                                *element_index,
-                                target,
-                                instr_action,
-                                instr_flags,
-                                floored_seek_distance,
-                            ) {
-                                continue;
-                            }
-                            let Some(resolved) = self.resolve_entity_seek(
-                                *owner,
-                                target,
-                                instr_flags,
-                                floored_seek_distance,
-                            ) else {
-                                beggar_rejects_pass1.push((*sequence_id, *element_index));
-                                continue;
-                            };
-                            if let Some(elem_mut) = self
-                                .orders
-                                .sequence_manager
-                                .get_element_mut(*sequence_id, *element_index)
-                                && let crate::sequence::SequenceElementData::Movement {
-                                    destination,
-                                    tolerance,
-                                    speed_factor,
-                                    ..
-                                } = &mut elem_mut.data
-                            {
-                                *destination = resolved.destination;
-                                *tolerance = resolved.tolerance;
-                                *speed_factor = resolved.speed_factor;
-                            }
-                            // Arm the actor's seek-refresh wait;
-                            // seek-distance / seek-to-point live on
-                            // the movement element.
-                            if let Some(entity) = self.world.entities.get_mut(*owner)
-                                && let Some(actor) = entity.actor_data_mut()
-                            {
-                                actor.seek_refresh_wait = 25;
-                            }
-                            if resolved.stop_npc {
-                                self.send_seek_stop_to_npc(target);
-                            }
-                            resolved.destination
-                        }
-                        None => {
-                            // Point-target SEEK: the layer / sector /
-                            // tolerance live on the movement element;
-                            // keep the actor refresh stamp coherent.
-                            if let Some(entity) = self.world.entities.get_mut(*owner)
-                                && let Some(actor) = entity.actor_data_mut()
-                            {
-                                actor.seek_target = None;
-                                actor.last_seek_target_position = stored_destination;
-                                actor.seek_refresh_wait = 25;
-                            }
-                            stored_destination
-                        }
-                    }
-                } else {
-                    stored_destination
-                };
-                // Move (or Seek that fell through to Move) inside a
-                // building sector skips the pathfinder entirely:
-                // position is snapped to the destination and the
-                // element terminates.  The exception is
-                // `(SEEK && IsLastElementOfSequence)`, which either
-                // launches the post-seek sequence or emits a
-                // REFRESHING_SEEK order — that branch is already
-                // partially covered by the SEEK_IN_BUILDINGS handling
-                // earlier in this loop and stays on the pathfinder
-                // path here so the existing post-seek flow remains in
-                // charge.
-                let owner_sector = self
-                    .get_entity(*owner)
-                    .and_then(|e| e.element_data().sector());
-                let owner_in_building = self.sector_is_building(owner_sector);
-                let is_last_of_seq = self
-                    .orders
-                    .sequence_manager
-                    .get_sequence(*sequence_id)
-                    .map(|s| *element_index + 1 >= s.elements.len())
-                    .unwrap_or(false);
-                if owner_in_building && (!is_seek || !is_last_of_seq) {
-                    self.finalize_special_move_position(
-                        assets,
-                        *owner,
-                        super::special_motion::SpecialMovePosition::Map(dest_pt),
-                        None,
-                        None,
-                        Some(dest_pt),
-                        "building interior move",
-                    );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(*sequence_id, *element_index);
-                    continue;
-                }
-                move_instructions.push((
-                    *owner,
-                    *sequence_id,
-                    *element_index,
-                    dest_pt,
-                    instr_layer,
-                    instr_action,
-                ));
-            }
-        }
-        for (seq_id, elem_idx) in beggar_rejects_pass1 {
-            self.orders
-                .sequence_manager
-                .element_impossible(seq_id, elem_idx);
-        }
-
-        // Process Move instructions: pathfind and set up entity movement.
-        for (owner, seq_id, elem_idx, dest, _layer, move_action) in move_instructions {
-            // NOTE: posture transitions (leave-disguise, stand-up, …)
-            // are handled at launch time by `generate_transition` via
-            // the engine-side `launch_element_for_owner` / stamped
-            // single-order-sequence wrappers.  The older
-            // `auto_leave_disguise_if_needed` dispatch hook that used
-            // to fire here has been superseded.
-            //
-            // Sword-variant override and the pathfind + populate
-            // pipeline both live inside `try_dispatch_move_path` so
-            // the same code path is reused by the failed-path retry
-            // pass.
-
-            self.dispatch_prepared_move_instruction(
-                sim,
-                owner,
-                seq_id,
-                elem_idx,
-                dest,
-                move_action,
-            );
-        }
-
-        // Second pass: handle non-Move actions.
+        // Dispatch each action at its exact FIFO position. In particular,
+        // Move/Seek translation must not leap ahead of an earlier script
+        // callback in this same batch.
         //
         // Pop actions one at a time and drain any synchronous
         // immediate-dispatch follow-ups produced by cascades inside
@@ -346,7 +234,6 @@ impl EngineInner {
         // front of the action queue, so they fire before the next
         // non-immediate action in the batch rather than waiting for
         // the next `Hourglass()`.
-        phase.begin_dispatch();
         while let Some(action) = phase.pop_action() {
             match action {
                 crate::sequence::SequenceAction::InstructOwner {
@@ -354,17 +241,31 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    // Skip elements rejected by the instruct
-                    // arbitration (Abandon or Postpone).
-                    if abandoned_or_postponed.contains(&(seq_id, elem_idx)) {
+                    if !self.arbitrate_instruct(seq_id, elem_idx) {
+                        continue;
+                    }
+                    let needs_transition = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .is_some_and(|element| {
+                            matches!(
+                                element.state,
+                                crate::sequence::SequenceState::Todo
+                                    | crate::sequence::SequenceState::Postponed
+                            ) && element.posture_after_transition
+                                == crate::element::Posture::Undefined
+                        });
+                    if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
                         continue;
                     }
                     // Skip elements whose state moved to terminal /
-                    // interrupted while another action in this batch
-                    // arbitrated against them (e.g. a higher-priority
-                    // element launched later in pass 1a cascaded an
-                    // `InterruptCurrent` onto this one).  Without this,
-                    // pass 2 would try to dispatch a non-live element
+                    // interrupted while an earlier action in this batch
+                    // arbitrated against them. Without this, the loop
+                    // would try to dispatch a non-live element
                     // and hit `set_element_state: Terminated from
                     // illegal state Interrupted`.
                     let cmd = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
@@ -390,8 +291,8 @@ impl EngineInner {
                     // are handled before command dispatch: owned
                     // single-element launches do it in
                     // `launch_element_for_owner`, and prebuilt
-                    // `launch_sequence` elements do it in the
-                    // InstructOwner admission pass above.
+                    // `launch_sequence` elements do it at this ordered
+                    // InstructOwner admission boundary.
                     //
                     // Re-borrow element for data access.
                     let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
@@ -417,9 +318,9 @@ impl EngineInner {
                     }
                     match cmd {
                         Command::Move | Command::Seek => {
-                            // Already handled in the first pass above
-                            // (Seek falls through to the Move
-                            // dispatch — they share the same case).
+                            self.dispatch_ordered_move_seek_instruct(
+                                sim, assets, owner, seq_id, elem_idx,
+                            );
                         }
                         Command::ShootBow | Command::ShootBowOnce => {
                             let shoot_once = cmd == Command::ShootBowOnce;

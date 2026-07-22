@@ -389,12 +389,25 @@ pub(super) fn message_script() -> MissionScript {
         size_of_volatile: 0,
         size_of_temporary: 8,
     };
+    let ordering_next_level = Function {
+        name: "TriggerNextLevel".into(),
+        address: 36,
+        num_parameters: 0,
+        size_of_return_value: 0,
+        size_of_parameters: 0,
+        size_of_volatile: 0,
+        size_of_temporary: 12,
+    };
     let ordering = ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "OrderingReceiver".into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
-        functions: vec![ordering_process_message, ordering_trigger],
+        functions: vec![
+            ordering_process_message,
+            ordering_trigger,
+            ordering_next_level,
+        ],
         quads: vec![
             // The nested callback observes whether the parent's later Unblip
             // has already run, then launches its own immediate LockAI.
@@ -439,6 +452,30 @@ pub(super) fn message_script() -> MissionScript {
             native_call(NativeFn::Thanx),
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
+            // Parent recording: actor SendMessage at level 1, then Unblip at
+            // level 2. Thanx must not resume until SendMessage's SetState has
+            // closed its owner card and Ready() has run the successor.
+            begin_function(3),
+            native_call(NativeFn::ThisActor),
+            native_return(TMP0),
+            native_call(NativeFn::Start),
+            integer_constant(TMP1, 78),
+            native_param(TMP0),
+            native_param(TMP1),
+            native_call(NativeFn::RecordSendMessage),
+            native_call(NativeFn::Then),
+            native_param(TMP0),
+            native_call(NativeFn::RecordUnBlip),
+            native_call(NativeFn::Thanx),
+            native_param(TMP0),
+            native_call(NativeFn::IsUnblipped),
+            native_return(TMP1),
+            integer_constant(TMP2, 908),
+            native_param(TMP2),
+            native_param(TMP1),
+            native_call(NativeFn::SetGlobal),
+            quad(Opcode::Return),
+            quad(Opcode::EndFunction),
         ],
     };
     let target_ordering = ClassEntry {
@@ -460,6 +497,35 @@ pub(super) fn message_script() -> MissionScript {
             integer_constant(TMP0, 1),
             native_param(TMP0),
             native_call(NativeFn::FreezeAll),
+            quad(Opcode::Return),
+            quad(Opcode::EndFunction),
+        ],
+    };
+    let move_ordering = ClassEntry {
+        source_file: "send_message_test.scs".into(),
+        class_name: "MoveOrdering".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "ProcessMessage".into(),
+            address: 0,
+            num_parameters: 3,
+            size_of_return_value: 0,
+            size_of_parameters: 12,
+            size_of_volatile: 0,
+            size_of_temporary: 12,
+        }],
+        quads: vec![
+            begin_function(3),
+            native_call(NativeFn::ThisActor),
+            native_return(TMP0),
+            native_param(TMP0),
+            native_call(NativeFn::GetCurrentAction),
+            native_return(TMP1),
+            integer_constant(TMP2, 909),
+            native_param(TMP2),
+            native_param(TMP1),
+            native_call(NativeFn::SetGlobal),
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
@@ -905,6 +971,7 @@ pub(super) fn message_script() -> MissionScript {
             relay,
             ordering,
             target_ordering,
+            move_ordering,
             scroll_observer,
             self_deactivating_scroll,
             freeze_on_scroll,

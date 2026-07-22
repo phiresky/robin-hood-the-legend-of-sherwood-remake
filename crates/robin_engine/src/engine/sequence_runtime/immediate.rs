@@ -59,7 +59,7 @@ impl EngineInner {
             ),
         }
     }
-    /// Synchronous drain of `SequenceManager::pending_immediate_actions`.
+    /// Synchronous drain of the complete sequence-registration stream.
     ///
     /// External entry points around the manager
     /// (`launch_sequence`, `launch_element`, `element_terminated`,
@@ -70,8 +70,9 @@ impl EngineInner {
     /// turn queues immediate `SequenceAction`s for the
     /// `ExecutedImmediately()` command groups.  Engine-side wrappers
     /// that have access to `&LevelAssets` call this helper after
-    /// invoking such an entry point so the synchronous dispatch
-    /// fires the same frame as the registration.
+    /// invoking such an entry point. Despite the legacy method name, it
+    /// drains immediate commands and direct WAIT `Go()` successors as one
+    /// ordered, depth-first registration stream.
     ///
     /// `SendMessage` invokes `ProcessMessage` at the action's exact position
     /// and terminates only after the callback returns, matching
@@ -82,27 +83,32 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
-        if !self.orders.sequence_manager.has_pending_immediate_actions() {
-            return;
-        }
-        loop {
-            let actions = self
+        while let Some(action) = self.orders.sequence_manager.pop_pending_immediate_action() {
+            // Work that was already registered is the caller's continuation.
+            // Detach it so Ready() successors produced by this action drain
+            // depth-first before an older sibling.
+            let continuation = self
                 .orders
                 .sequence_manager
-                .take_pending_immediate_actions();
-            if actions.is_empty() {
-                break;
-            }
-            for action in actions {
-                self.dispatch_immediate_action(sim, display, assets, action);
-                self.dispatch_condolations(sim, assets);
-                // Termination can synchronously expose an immediate successor.
-                // Finish that child before the next detached sibling, just as
-                // the Original recursively re-enters RegisterSequenceElementToGo.
-                if self.orders.sequence_manager.has_pending_immediate_actions() {
-                    self.drain_pending_immediate_actions_sync(sim, display, assets);
+                .take_pending_synchronous_actions();
+            match action {
+                crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
+                | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
+                    self.dispatch_immediate_action(sim, display, assets, action);
+                }
+                crate::sequence::SequenceAction::InstructOwner { .. }
+                | crate::sequence::SequenceAction::EngineCommand { .. } => {
+                    self.dispatch_script_synchronous_action(sim, assets, action, &mut Vec::new())
+                        .unwrap_or_else(|error| {
+                            panic!("synchronous sequence successor dispatch failed: {error:?}")
+                        });
                 }
             }
+            self.dispatch_condolations(sim, assets);
+            self.drain_pending_immediate_actions_sync(sim, display, assets);
+            self.orders
+                .sequence_manager
+                .restore_pending_synchronous_actions(continuation);
         }
     }
 

@@ -211,6 +211,11 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_terminated(sequence_id, element_index);
+                    // `RHElementActor::ExecuteImmediately` returns from
+                    // ProcessMessage and immediately enters SetState, whose
+                    // owner card and Ready() complete before the parent VM
+                    // resumes. Keep the active call stack while closing it.
+                    self.dispatch_condolations_in_script_driver(sim, assets, active_scripts)?;
                     result?;
                 } else {
                     let message = self.dispatch_execute_immediate_owner(
