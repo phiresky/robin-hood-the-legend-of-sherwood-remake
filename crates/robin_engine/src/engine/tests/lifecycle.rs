@@ -1121,6 +1121,7 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
         target: None,
         order_id: Some(order_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
 
     let mut observed = None;
@@ -1173,6 +1174,7 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
         target: None,
         order_id: Some(std::num::NonZeroU32::new(9).unwrap()),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
     let actor = engine
         .get_entity_mut(owner)
@@ -1241,6 +1243,7 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
         target: None,
         order_id: Some(order_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
     let mut selected = None;
     engine.tick_actor_animation_action_change_slots_with_hooks(
@@ -1314,6 +1317,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         target: None,
         order_id: Some(waiting_id),
         done_effect_applied: false,
+        strangle_initialized: false,
     };
 
     let observed = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -1494,6 +1498,236 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
 }
 
 #[test]
+fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
+    else {
+        unreachable!()
+    };
+    victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(20.0, 0.0));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Moving;
+    engine.dispatch_ai_stimulus(
+        victim,
+        crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+    );
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            1,
+            Command::StrangleCmd,
+            Some(attacker),
+            Some(victim),
+        ));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(seq, 0)
+        .expect("strangle interaction identity must survive synchronous EventStop effects");
+    assert_eq!(element.state, SequenceState::InProgress);
+    let order = element
+        .current_order()
+        .expect("strangle order must remain selected");
+    let active = &engine
+        .get_entity(attacker)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_ability;
+    assert_eq!(active.sequence_id, Some(seq));
+    assert_eq!(active.element_index, 0);
+    assert_eq!(active.target, Some(victim));
+    assert_eq!(active.order_id, Some(order.order_id));
+
+    let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
+    assert!(
+        !victim_ai
+            .locks_flag_field
+            .contains(crate::ai::AiLockFlags::FREEZE)
+    );
+    assert_eq!(
+        victim_ai
+            .ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == crate::ai::LogLineType::Event
+                    && line.info == crate::ai::StimulusType::EventStop as u16
+            })
+            .count(),
+        1,
+        "EventStop Think must complete while FREEZE is still absent",
+    );
+    assert_eq!(victim_ai.current_state, crate::ai::AiState::Seeking);
+    assert_eq!(
+        victim_ai.current_substate,
+        crate::ai::Substate::SeekingGotStopEvent,
+        "EventStop's re-entrant state/timer effects must be applied before FREEZE",
+    );
+    assert!(victim_ai.timer_is_running);
+    assert_eq!(
+        victim_ai
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![crate::ai::StimulusType::EventTimer],
+        "synchronous EventStop and its re-entrant effects must preserve the older FIFO",
+    );
+    assert_eq!(
+        engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .direction(),
+        8,
+        "translation must not change the attacker direction",
+    );
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .direction(),
+        8,
+        "translation must not change the victim direction",
+    );
+    assert_eq!(
+        i16::from(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+        ),
+        8,
+        "translation must not eagerly set the attacker goal",
+    );
+    assert_eq!(
+        i16::from(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+        ),
+        8,
+        "translation must not eagerly set the victim goal",
+    );
+
+    let mut invalid = engine.clone();
+    invalid
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+    invalid.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, attacker);
+    assert_eq!(
+        invalid
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Impossible,
+        "first owner Execute must recheck live Strangle validity",
+    );
+    assert!(
+        !invalid
+            .get_entity(victim)
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .locks_flag_field
+            .contains(crate::ai::AiLockFlags::FREEZE)
+    );
+    assert!(
+        !invalid
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+    );
+
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
+    let live_facing = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 20.0);
+    engine.tick_ability_for(&sim, &mut display, &assets, attacker);
+
+    let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
+    assert!(
+        victim_ai
+            .locks_flag_field
+            .contains(crate::ai::AiLockFlags::FREEZE)
+    );
+    assert_eq!(
+        i16::from(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+        ),
+        live_facing,
+        "first owner Execute must compute the attacker goal from live positions",
+    );
+    assert_eq!(
+        i16::from(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+        ),
+        live_facing,
+        "first owner Execute must compute the victim goal from live positions",
+    );
+}
+
+#[test]
 fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
 {
     use crate::element::{Command, Posture};
@@ -1585,6 +1819,13 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         ),
         crate::abilities::BeginResult::Started
     );
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_ability
+        .strangle_initialized = true;
     engine.orders.sequence_manager.element_in_progress(seq, 0);
     let mut display = HostDisplayState::default();
 
@@ -1845,6 +2086,13 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         ),
         crate::abilities::BeginResult::Started
     );
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_ability
+        .strangle_initialized = true;
     let attacker_topology = {
         let element = engine.get_entity(attacker).unwrap().element_data();
         (
@@ -2038,6 +2286,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         target: None,
         order_id: Some(ability_id),
         done_effect_applied: true,
+        strangle_initialized: false,
     };
     let initial = engine
         .get_entity(owner)

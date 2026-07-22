@@ -1196,12 +1196,79 @@ impl EngineInner {
                                 }
                             }
                         }
+                        Command::StrangleCmd => {
+                            let Some(target) = self
+                                .orders
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .and_then(|element| match &element.data {
+                                    crate::sequence::SequenceElementData::Interaction {
+                                        antagonist,
+                                        ..
+                                    } => *antagonist,
+                                    _ => None,
+                                })
+                            else {
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
+                                continue;
+                            };
+                            match abilities::begin_strangle(
+                                &mut self.world.entities,
+                                &mut self.orders.sequence_manager,
+                                owner,
+                                target,
+                                seq_id,
+                                elem_idx,
+                                &mut self.orders.next_order_id,
+                            ) {
+                                AbilityBeginResult::Impossible => self
+                                    .orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx),
+                                AbilityBeginResult::Started => {
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
+
+                                    // Translate inserts the Strangling order before calling
+                                    // a moving antagonist's Think(EVENT_STOP). Think and all
+                                    // of its re-entrant effects finish in this stack frame,
+                                    // before Perform's initialization acquires AILOCK_FREEZE.
+                                    let moving = self
+                                        .get_entity(target)
+                                        .unwrap_or_else(|| {
+                                            panic!(
+                                                "strangle victim {target:?} vanished after translation for {seq_id:?}/{elem_idx}"
+                                            )
+                                        })
+                                        .actor_data()
+                                        .unwrap_or_else(|| {
+                                            panic!(
+                                                "strangle victim {target:?} lost actor state after translation"
+                                            )
+                                        })
+                                        .action_state
+                                        .is_moving();
+                                    if moving {
+                                        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                                            sim,
+                                            target,
+                                            assets,
+                                            crate::ai::Stimulus::new(
+                                                crate::ai::StimulusType::EventStop,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         Command::TieCmd
                         | Command::HealCmd
                         | Command::WhistleCmd
                         | Command::EatCmd
                         | Command::HitCmd
-                        | Command::StrangleCmd
                         | Command::ReceivePurse
                         | Command::EnterListen
                         | Command::LeaveListen
