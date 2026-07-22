@@ -2421,6 +2421,65 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
 }
 
 #[test]
+fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_frame() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_pc(true));
+    let later = engine.add_entity(make_pc(false));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, first, &[OrderType::WaitingUprightBored]);
+    bind_test_actor_animations(&mut engine, later, &[OrderType::Taking]);
+    install_test_action(
+        &mut engine,
+        first,
+        OrderType::WaitingUprightBored,
+        OrderType::WaitingUprightBored,
+    );
+    let sim = crate::sim_rng::test_context();
+    let mut installed = None;
+
+    engine.tick_actor_animation_action_change_slots_with_after_slot(
+        &sim,
+        &assets,
+        |engine, completed_owner| {
+            if completed_owner != first || installed.is_some() {
+                return;
+            }
+            // No antagonist: Original Taking init validity must abort it.
+            let mut element = SequenceElement::new(1, Command::Take, Some(later));
+            element
+                .orders
+                .push_back(Order::test_new(OrderType::Taking, 0.0, 0.0));
+            let sequence = engine.orders.sequence_manager.launch_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+            let _ = engine
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            installed = Some(sequence);
+        },
+    );
+
+    let sequence = installed.expect("earlier callback installed the later PC order");
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("callback-installed element remains inspectable")
+            .state,
+        SequenceState::Impossible,
+        "later PC validity must sample the callback-installed live order at its Execute entry"
+    );
+}
+
+#[test]
 fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
     use crate::order::OrderType;
 
@@ -3315,52 +3374,37 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
         cases
     }
 
-    fn owner_for_arm(class: &str, arm: &str) -> super::tick::ExecuteOwnerFamily {
-        use super::tick::ExecuteOwnerFamily as Owner;
-        if arm == "RHANIMATION_WAITING_SWORD" {
-            return Owner::WaitingSword;
-        }
-        if arm.contains("SHOOTING_WITH_BOW") {
-            return Owner::Bow;
-        }
-        if arm.contains("STRIKING_")
-            || arm == "RHANIMATION_EXECUTING_SWORD"
-            || arm == "RHANIMATION_TRANSITION_CHARGING"
-        {
-            return Owner::Melee;
-        }
-        if arm.contains("WALKING")
-            || arm.contains("RUNNING")
-            || arm.contains("CLIMBING")
-            || arm.contains("JUMPING")
-            || arm.contains("PASSING_DOOR")
-            || arm.contains("RIDER_CHARGING")
-            || arm.contains("REFRESHING_SEEK")
-        {
-            return Owner::Movement;
-        }
-        if class == "RHElementActorPC::Execute"
-            && (arm.contains("LISTENING")
-                || arm.contains("SIMULATING_BEGGAR")
-                || matches!(
-                    arm,
-                    "RHANIMATION_EATING"
-                        | "RHANIMATION_HEALING"
-                        | "RHANIMATION_WHISTLING"
-                        | "RHANIMATION_TYING"
-                        | "RHANIMATION_STRANGLING"
-                ))
-        {
-            return if arm == "RHANIMATION_SIMULATING_BEGGAR" {
-                Owner::Beggar
-            } else {
-                Owner::Ability
+    fn animation_ordinals(source: &str) -> std::collections::HashMap<String, u32> {
+        let source = strip_comments(source);
+        let body = source
+            .split_once("typedef enum RHanimation")
+            .expect("RHanimation enum")
+            .1
+            .split_once("\n}\nRHanimation")
+            .expect("RHanimation enum end")
+            .0;
+        let mut result = std::collections::HashMap::new();
+        let mut next = 0_u32;
+        for declaration in body.split(',') {
+            let declaration = declaration.trim().trim_start_matches('{').trim();
+            let Some(token) = declaration.split_whitespace().next() else {
+                continue;
             };
+            if let Some((_, value)) = declaration.split_once('=') {
+                next = value
+                    .trim()
+                    .parse()
+                    .expect("numeric RHanimation assignment");
+            }
+            if token.starts_with("RHANIMATION_") || token.starts_with("RHNONANIMATION_") {
+                assert!(
+                    result.insert(token.to_owned(), next).is_none(),
+                    "duplicate RHanimation token {token}"
+                );
+            }
+            next += 1;
         }
-        if class == "RHElementActorCivilian::Execute" && arm.contains("PURSE") {
-            return Owner::Ability;
-        }
-        Owner::GenericAnimation
+        result
     }
 
     let actor = include_str!("../../../../original-code/RHelementactor.cpp");
@@ -3369,35 +3413,72 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
     let npc = include_str!("../../../../original-code/RHelementactornpc.cpp");
     let soldier = include_str!("../../../../original-code/RHelementactorsoldier.cpp");
     let civilian = include_str!("../../../../original-code/rhelementactorcivilian.cpp");
+    use super::tick::{ExecuteOverride, ORIGINAL_ACTOR_EXECUTE_CATALOG};
     let parsed = [
-        outer_cases(actor, "RHElementActor::Execute(", "switch( animation"),
-        outer_cases(human, "RHElementActorHuman::Execute(", "switch( animation"),
-        outer_cases(pc, "RHElementActorPC::Execute(", "switch( animation"),
-        outer_cases(npc, "RHElementActorNPC::Execute(", "switch( animation"),
-        outer_cases(
-            soldier,
-            "RHElementActorSoldier::Execute(",
-            "switch( animation",
+        (
+            ExecuteOverride::Actor,
+            outer_cases(actor, "RHElementActor::Execute(", "switch( animation"),
         ),
-        outer_cases(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
+        (
+            ExecuteOverride::Human,
+            outer_cases(human, "RHElementActorHuman::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Pc,
+            outer_cases(pc, "RHElementActorPC::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Npc,
+            outer_cases(npc, "RHElementActorNPC::Execute(", "switch( animation"),
+        ),
+        (
+            ExecuteOverride::Soldier,
+            outer_cases(
+                soldier,
+                "RHElementActorSoldier::Execute(",
+                "switch( animation",
+            ),
+        ),
+        (
+            ExecuteOverride::Civilian,
+            outer_cases(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
+        ),
     ];
-    for ((class, expected_count, allowed), arms) in super::tick::ORIGINAL_ACTOR_EXECUTE_LEDGER
-        .iter()
-        .zip(parsed)
-    {
-        assert_eq!(
-            arms.len(),
-            *expected_count,
-            "{class} source arm ledger changed"
-        );
+    let ordinals = animation_ordinals(include_str!("../../../../original-code/RHOrder.h"));
+    let mut actual = std::collections::HashSet::new();
+    let mut count = 0;
+    for (override_kind, arms) in parsed {
         for arm in arms {
-            let owner = owner_for_arm(class, &arm);
+            let ordinal = *ordinals
+                .get(&arm)
+                .unwrap_or_else(|| panic!("unmapped Original animation token {arm}"));
+            let order = crate::order::OrderType::try_from(ordinal).unwrap_or_else(|_| {
+                panic!("Original animation {arm} ordinal {ordinal} has no Rust OrderType")
+            });
             assert!(
-                allowed.contains(&owner),
-                "{class} arm {arm} maps to disallowed/uninstalled owner {owner:?}"
+                actual.insert((override_kind, order)),
+                "duplicate live arm {override_kind:?}/{arm}"
             );
+            count += 1;
         }
     }
+    let mut expected = std::collections::HashSet::new();
+    for &(override_kind, order, owner) in ORIGINAL_ACTOR_EXECUTE_CATALOG {
+        assert!(
+            expected.insert((override_kind, order)),
+            "duplicate catalog arm {override_kind:?}/{order:?}"
+        );
+        assert_eq!(
+            super::tick::classify_actor_execute_arm(override_kind, order),
+            Some(owner)
+        );
+        super::tick::assert_execute_owner_handler_is_linked(owner);
+    }
+    assert_eq!(count, 308);
+    assert_eq!(
+        actual, expected,
+        "Original Execute switches and typed Rust catalog differ"
+    );
 }
 
 #[test]

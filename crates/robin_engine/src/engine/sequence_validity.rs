@@ -977,128 +977,111 @@ impl EngineInner {
     ///   a silent no-op via the priority guard at
     ///   `sequence.rs::element_impossible` — matching shipping
     ///   behaviour where the same NI guard blocks the cascade.
-    pub(super) fn pre_tick_pc_execute_validity(&mut self, assets: &LevelAssets) {
-        // Snapshot (entity_id, seq_id, elem_idx, terminal, fresh-order)
-        // tuples for PCs whose front order is in init phase and whose
-        // current arm has a validity rule.  Snapshotting is necessary
-        // because `check_sequence_element_validity` takes `&self` and
-        // calling it inside the entity loop would conflict with the
-        // sequence-manager mutations below.
-        struct Pending {
-            entity_id: EntityId,
-            seq_id: crate::sequence::SequenceId,
-            elem_idx: usize,
-            terminal: ValidityArmTerminal,
+    pub(super) fn pre_tick_pc_execute_validity_for(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        let Some(entity) = self.world.entities.get(entity_id) else {
+            return;
+        };
+        if entity.pc_data().is_none() {
+            return;
         }
-        let mut pending: Vec<Pending> = Vec::new();
-
-        for (entity_id, entity) in self.world.entities.pcs() {
-            if entity.element.posture.is_dead() {
-                continue;
-            }
-            if !entity.element.active {
-                continue;
-            }
-            // PC override `Execute` opens with
-            // `if (execution_frozen) return InProgress;` — frozen PCs
-            // never reach the validity guards.
-            if entity.actor.execution_frozen {
-                continue;
-            }
-
-            let snapshot = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(entity_id)
-                .map(|(s, i, o)| (s, i, o.order_type, o.order_id.get()));
-            let Some((seq_id, elem_idx, order_type, order_id)) = snapshot else {
-                continue;
-            };
-
-            let Some((check_position, terminal)) = pc_init_validity_arm(order_type) else {
-                continue;
-            };
-
-            if entity
-                .actor
-                .last_execute_order_id
-                .is_some_and(|id| id.get() == order_id)
-            {
-                continue;
-            }
-
-            // Look up the element so we can run the per-command
-            // validity rule.
-            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-                continue;
-            };
-            if self.check_sequence_element_validity(assets, entity_id.into(), elem, check_position)
-            {
-                continue;
-            }
-
-            // Resolve the special `TransitionCarryingCorpseWaitingUpright`
-            // drop-on-fail case here while we still have `elem` in scope.
-            let terminal = match terminal {
-                ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
-                    let needs_drop = !matches!(elem.command, Command::DropCorpse);
-                    ValidityArmTerminal::TerminatedWithDrop { needs_drop }
-                }
-                other => other,
-            };
-
-            pending.push(Pending {
-                entity_id: entity_id.into(),
-                seq_id,
-                elem_idx,
-                terminal,
-            });
+        let actor = entity
+            .actor_data()
+            .expect("PC Execute validity owner must retain actor data");
+        if entity.element_data().posture.is_dead() || !entity.is_active() {
+            return;
         }
+        // PC override `Execute` opens with
+        // `if (execution_frozen) return InProgress;` — frozen PCs
+        // never reach the validity guards.
+        if actor.execution_frozen {
+            return;
+        }
+
+        let snapshot = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+            .map(|(s, i, o)| (s, i, o.order_type, o.order_id.get()));
+        let Some((seq_id, elem_idx, order_type, order_id)) = snapshot else {
+            return;
+        };
+
+        let Some((check_position, terminal)) = pc_init_validity_arm(order_type) else {
+            return;
+        };
+
+        if actor
+            .last_execute_order_id
+            .is_some_and(|id| id.get() == order_id)
+        {
+            return;
+        }
+
+        // Look up the element so we can run the per-command
+        // validity rule.
+        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
+            return;
+        };
+        if self.check_sequence_element_validity(assets, entity_id, elem, check_position) {
+            return;
+        }
+
+        // Resolve the special `TransitionCarryingCorpseWaitingUpright`
+        // drop-on-fail case here while we still have `elem` in scope.
+        let terminal = match terminal {
+            ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
+                let needs_drop = !matches!(elem.command, Command::DropCorpse);
+                ValidityArmTerminal::TerminatedWithDrop { needs_drop }
+            }
+            other => other,
+        };
 
         // Apply.  `force_drop_carried_corpse_instant` and the
         // sequence-state mutators all need `&mut self`; we drained the
         // entity-iter borrow above so the mutable calls are clean.
-        for p in pending {
-            tracing::debug!(
-                entity = ?p.entity_id,
-                seq_id = ?p.seq_id,
-                elem_idx = p.elem_idx,
-                terminal = ?p.terminal,
-                "pc_execute_validity: PC init-arm validity failed — aborting/terminating"
-            );
-            match p.terminal {
-                ValidityArmTerminal::Aborted => {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(p.seq_id, p.elem_idx);
+        tracing::debug!(
+            entity = ?entity_id,
+            seq_id = ?seq_id,
+            elem_idx,
+            terminal = ?terminal,
+            "pc_execute_validity: PC init-arm validity failed — aborting/terminating"
+        );
+        match terminal {
+            ValidityArmTerminal::Aborted => {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+            }
+            ValidityArmTerminal::Terminated => {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+            }
+            ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
+                if needs_drop {
+                    // Instant drop.
+                    self.force_drop_carried_corpse_instant(entity_id);
                 }
-                ValidityArmTerminal::Terminated => {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(p.seq_id, p.elem_idx);
-                }
-                ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
-                    if needs_drop {
-                        // Instant drop.
-                        self.force_drop_carried_corpse_instant(p.entity_id);
-                    }
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(p.seq_id, p.elem_idx);
-                }
-                // Unresolved variant — should never reach apply phase
-                // because the snapshot loop converts it to
-                // `TerminatedWithDrop`.  Defensive log + treat as plain
-                // Terminated.
-                ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
-                    tracing::warn!(
-                        ?p.entity_id,
-                        "pc_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
-                    );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(p.seq_id, p.elem_idx);
-                }
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+            }
+            // Unresolved variant — should never reach apply phase
+            // because the snapshot loop converts it to
+            // `TerminatedWithDrop`.  Defensive log + treat as plain
+            // Terminated.
+            ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
+                tracing::warn!(
+                    ?entity_id,
+                    "pc_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
+                );
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
         }
     }

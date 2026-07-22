@@ -531,7 +531,11 @@ impl EngineInner {
 
         let direction = direction_to(&self.world.entities, attacker_id, target_id);
         if let Some(entity) = self.get_entity_mut(attacker_id) {
-            entity.element_data_mut().set_direction_instantly(direction);
+            let position = entity.position_iface_mut();
+            position.set_direction(crate::position_interface::Direction::from_raw(i32::from(
+                direction,
+            )));
+            position.turn();
         }
         if self.actors_frozen() {
             return;

@@ -1354,7 +1354,8 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     assert_eq!(actor.listen_phase, crate::element::ListenPhase::Inactive);
     assert_eq!(actor.listen_wait_time, 0);
 
-    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
+    // This is an owner-selection fixture, not an Eat validity fixture.
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
     let order = Order::test_new(OrderType::Eating, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
@@ -2394,7 +2395,9 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
+    // Keep the focused fixture valid at PC Execute entry; Eat validity is
+    // covered separately and would require campaign ammo state here.
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
     let ability_order = Order::test_new(OrderType::Eating, 0.0, 0.0);
     let ability_id = ability_order.order_id;
     element.orders.push_back(ability_order);
