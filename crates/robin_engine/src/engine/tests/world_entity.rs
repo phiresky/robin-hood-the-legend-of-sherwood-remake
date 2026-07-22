@@ -3062,6 +3062,66 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
 }
 
 #[test]
+fn closure_review_alert_soldiers_keeps_inactive_soldier_in_both_camp_snapshots() {
+    use crate::ai::{AlertSoldiersFailureContinuation, CrossNpcAction, Position};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("inactive help recipient exists")
+    else {
+        panic!("inactive help recipient changed kind")
+    };
+    soldier.element.active = false;
+
+    let (snapshot_able_to_fight, snapshot_able_to_help) =
+        engine.test_soldier_snapshot_abilities(&assets, soldier_id);
+    assert!(!snapshot_able_to_fight);
+    assert!(
+        snapshot_able_to_help,
+        "full-tick camp population must use Original IsAbleToHelp's alive/conscious gate"
+    );
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    let candidate = tick
+        .camp_soldiers
+        .iter()
+        .find(|candidate| candidate.handle == soldier_id.index())
+        .expect("inactive soldier remains in the direct-owner camp population");
+    assert!(!candidate.is_able_to_fight);
+    assert!(candidate.is_able_to_help);
+
+    let global = engine.ai.global.clone();
+    assert!(
+        engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("inactive-help officer has EnemyAi")
+            .alert_soldiers(
+                Position::default(),
+                0,
+                &global,
+                None,
+                &ctx,
+                &tick,
+                AlertSoldiersFailureContinuation::None,
+            )
+    );
+    assert!(matches!(
+        engine
+            .get_entity(officer_id)
+            .and_then(Entity::ai_controller)
+            .expect("inactive-help officer retains AI")
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .as_slice(),
+        [CrossNpcAction::RequestThinkResult { target, .. }] if *target == soldier_id.index()
+    ));
+}
+
+#[test]
 fn closure_review_final_alert_report_boundary_precedes_formation() {
     use crate::ai::{
         AlertSoldiersFailureContinuation, CrossNpcAction, ReportType, Substate,

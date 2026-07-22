@@ -1673,7 +1673,7 @@ impl EngineInner {
             if other_id == npc_id {
                 continue;
             }
-            if s.soldier.cached_camp != my_camp || !s.element.active || s.human.unconscious {
+            if s.soldier.cached_camp != my_camp || s.human.unconscious {
                 continue;
             }
             let able_to_fight = crate::element::Human::is_able_to_fight(s);

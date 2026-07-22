@@ -144,6 +144,10 @@ pub(super) struct PcSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SoldierSnapshot {
     pub(super) id: EntityId,
+    /// Raw element activity. Inactive soldiers remain in this snapshot for
+    /// AlertSoldiers/IsAbleToHelp parity, while combat and visibility users
+    /// retain their original active gates through `able_to_fight`.
+    pub(super) active: bool,
     pub(super) position: MapPoint,
     pub(super) layer: u16,
     pub(super) camp: Camp,
@@ -640,7 +644,7 @@ impl EngineInner {
         npc_jump_lines
     }
 
-    /// P2c — snapshot every alive soldier's combat-relevant state.
+    /// P2c — snapshot every conscious soldier's AI-relevant state.
     ///
     /// `battle_decisions` iterates all fighters to build the us-list;
     /// the snapshot lets each per-NPC inner loop walk this immutable
@@ -656,17 +660,17 @@ impl EngineInner {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.world.entities.soldiers().count());
         for (npc_id, s) in self.world.entities.soldiers() {
-            if !s.element.active || s.human.unconscious {
+            if s.human.unconscious {
                 continue;
             }
             let able_to_fight = s.is_able_to_fight();
             // Original: every `RHElementActorSoldier` owns
             // `RHArtificialMalignity`; its Hourglass calls soldier-only AI
-            // methods unconditionally. A live soldier without EnemyAi is an
+            // methods unconditionally. A soldier without EnemyAi is an
             // invalid partially-initialized entity.
             let enemy_ai = s.npc.ai_brain.enemy().unwrap_or_else(|| {
                 panic!(
-                    "active soldier {} has no EnemyAi brain",
+                    "soldier {} has no EnemyAi brain while building AI snapshots",
                     EntityId::from(npc_id).index()
                 )
             });
@@ -835,6 +839,7 @@ impl EngineInner {
 
             soldier_snapshots.push(SoldierSnapshot {
                 id: npc_id.into(),
+                active: s.element.active,
                 position: owner_boundary
                     .map(|(owner, positions)| {
                         self.position_at_owner_boundary(npc_id.into(), owner, positions, true)
@@ -917,20 +922,20 @@ impl EngineInner {
             pairs.extend(
                 soldier_snapshots
                     .iter()
-                    .filter(|s| s.shield_bearer_before_me != 0)
+                    .filter(|s| s.active && s.shield_bearer_before_me != 0)
                     .map(|s| (s.id.index(), s.shield_bearer_before_me)),
             );
             for (archer_handle, sb_handle) in &pairs {
                 if let Some(sb) = soldier_snapshots
                     .iter_mut()
-                    .find(|s| s.id.index() == *sb_handle)
+                    .find(|s| s.active && s.id.index() == *sb_handle)
                 {
                     sb.archer_behind_me = *archer_handle;
                 }
             }
             // Write back to stored EnemyAi fields so direct self-reads
             // (outside snapshots) stay fresh.
-            for snap in &soldier_snapshots {
+            for snap in soldier_snapshots.iter().filter(|snap| snap.active) {
                 let npc_id = snap.id;
                 if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                     && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
@@ -1082,9 +1087,9 @@ impl EngineInner {
 
             // Soldier `is_able_to_help`.
             let able_to_help = if let Entity::Soldier(s) = entity {
-                // Original IsAbleToHelp intentionally does not inherit
-                // IsAbleToFight's tied/carried/inactive gates; it only
-                // rejects dead/unconscious before its own state switch.
+                // This HumanTarget is a detection/visibility projection, not
+                // AlertSoldiers' camp population. Preserve its independent
+                // active visibility gate here.
                 let able_to_fight = active && !s.human.unconscious && s.npc.life_points > 0;
                 crate::ai_enemy::soldier_is_able_to_help_state(
                     able_to_fight,
