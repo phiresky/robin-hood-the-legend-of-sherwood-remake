@@ -5588,7 +5588,13 @@ impl EngineInner {
             // short waypoint and leave later zero-distance frames walking
             // in place forever.  Mirror the original dot-product test so
             // an already-crossed waypoint still retires.
-            let movement_goal_reached = elem.sprite.position_iface.is_increment_map_computed()
+            // A deviated actor must run UpdatePositionAntiCollision first:
+            // that step can recover the old trajectory and rebuild the
+            // increment before Original PerformMotion asks IsGoalReached.
+            // Its blocked-count proximity shortcut is therefore not a valid
+            // pre-movement arrival test.
+            let movement_goal_reached = !elem.sprite.position_iface.is_deviated()
+                && elem.sprite.position_iface.is_increment_map_computed()
                 && elem
                     .sprite
                     .position_iface
