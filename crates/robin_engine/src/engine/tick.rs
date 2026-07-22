@@ -632,6 +632,18 @@ pub(in crate::engine) struct MeleeOwnerSelection {
     pub(in crate::engine) order_id: std::num::NonZeroU32,
 }
 
+pub(super) const ACTIVE_MELEE_ORDERS: &[crate::order::OrderType] = &[
+    crate::order::OrderType::StrikingStraightSword,
+    crate::order::OrderType::StrikingStraightStrongSword,
+    crate::order::OrderType::ExecutingSword,
+    crate::order::OrderType::StrikingLeftSword,
+    crate::order::OrderType::StrikingRightSword,
+    crate::order::OrderType::StrikingSemiroundLeftSword,
+    crate::order::OrderType::StrikingSemiroundRightSword,
+    crate::order::OrderType::StrikingRoundLeftSword,
+    crate::order::OrderType::StrikingRoundRightSword,
+];
+
 /// Concrete Original override whose switch contributes an Execute arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum ExecuteOverride {
@@ -714,22 +726,22 @@ macro_rules! actor_execute_arm_catalog {
             (Actor, PlayCustomLooped, GenericAnimation),
             (Actor, RefreshingSeek, Movement),
             (Human, Select, GenericAnimation),
-            (Human, TransitionEquipBow, GenericAnimation),
-            (Human, TransitionEquipBowAnonymous, GenericAnimation),
-            (Human, TransitionUnequipBow, GenericAnimation),
-            (Human, TransitionUnequipBowAnonymous, GenericAnimation),
+            (Human, TransitionEquipBow, Bow),
+            (Human, TransitionEquipBowAnonymous, Bow),
+            (Human, TransitionUnequipBow, Bow),
+            (Human, TransitionUnequipBowAnonymous, Bow),
             (Human, AimingWithBow, GenericAnimation),
             (Human, AimingWithBowAnonymous, GenericAnimation),
             (Human, AimingWithBowUp, GenericAnimation),
             (Human, AimingWithBowUpAnonymous, GenericAnimation),
-            (Human, TransitionLoadingBow, GenericAnimation),
-            (Human, TransitionLoadingBowAnonymous, GenericAnimation),
-            (Human, TransitionUnloadBow, GenericAnimation),
-            (Human, TransitionUnloadBowAnonymous, GenericAnimation),
-            (Human, TransitionLoweringBow, GenericAnimation),
-            (Human, TransitionLoweringBowAnonymous, GenericAnimation),
-            (Human, TransitionRaisingBow, GenericAnimation),
-            (Human, TransitionRaisingBowAnonymous, GenericAnimation),
+            (Human, TransitionLoadingBow, Bow),
+            (Human, TransitionLoadingBowAnonymous, Bow),
+            (Human, TransitionUnloadBow, Bow),
+            (Human, TransitionUnloadBowAnonymous, Bow),
+            (Human, TransitionLoweringBow, Bow),
+            (Human, TransitionLoweringBowAnonymous, Bow),
+            (Human, TransitionRaisingBow, Bow),
+            (Human, TransitionRaisingBowAnonymous, Bow),
             (Human, ShootingWithBow, Bow),
             (Human, ShootingWithBowAnonymous, Bow),
             (Human, ShootingWithBowUp, Bow),
@@ -950,8 +962,8 @@ macro_rules! actor_execute_arm_catalog {
             (Soldier, TransitionWaitingAlertedLeaningOut, GenericAnimation),
             (Soldier, TransitionLeaningOutWaitingAlerted, GenericAnimation),
             (Soldier, DrinkingAle, GenericAnimation),
-            (Soldier, TransitionLoweringBowLeaningOut, GenericAnimation),
-            (Soldier, TransitionRaisingBowLeaningOut, GenericAnimation),
+            (Soldier, TransitionLoweringBowLeaningOut, Bow),
+            (Soldier, TransitionRaisingBowLeaningOut, Bow),
             (Soldier, AimingWithBowLeaningOut, GenericAnimation),
             (Soldier, ShootingWithBowLeaningOut, Bow),
             (Soldier, RunningUpright, Movement),
@@ -3064,7 +3076,14 @@ impl EngineInner {
                                 .get(entity_id)
                                 .and_then(Entity::actor_data)
                                 .map(|actor| actor.active_melee)?;
+                            let order_type = self
+                                .orders
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .and_then(|element| element.current_order())
+                                .map(|order| order.order_type)?;
                             (selected_owner_family == Some(ExecuteOwnerFamily::Melee)
+                                && ACTIVE_MELEE_ORDERS.contains(&order_type)
                                 && melee.is_active()
                                 && melee.sequence_id == Some(seq_id)
                                 && melee.element_index == elem_idx

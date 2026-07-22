@@ -3526,6 +3526,51 @@ fn every_active_ability_order_routes_to_the_production_ability_owner() {
 }
 
 #[test]
+fn every_canonical_active_bow_order_routes_to_the_production_bow_owner() {
+    use super::tick::{ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::{PcId, SoldierId};
+    use crate::order::OrderType;
+
+    for &order in crate::bow_shot::ACTIVE_BOW_ORDERS {
+        let actor = if matches!(
+            order,
+            OrderType::ShootingWithBowLeaningOut
+                | OrderType::TransitionRaisingBowLeaningOut
+                | OrderType::TransitionLoweringBowLeaningOut
+        ) {
+            EntityId::Soldier(SoldierId(0))
+        } else {
+            EntityId::Pc(PcId(0))
+        };
+        assert_eq!(
+            classify_live_actor_execute_arm(actor, order),
+            Some(ExecuteOwnerFamily::Bow),
+            "canonical active bow phase {order:?} is not routed to Bow"
+        );
+    }
+}
+
+#[test]
+fn every_specialized_melee_and_beggar_order_routes_to_its_production_owner() {
+    use super::tick::{ACTIVE_MELEE_ORDERS, ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::PcId;
+    use crate::order::OrderType;
+
+    let pc = EntityId::Pc(PcId(0));
+    for &order in ACTIVE_MELEE_ORDERS {
+        assert_eq!(
+            classify_live_actor_execute_arm(pc, order),
+            Some(ExecuteOwnerFamily::Melee),
+            "active melee order {order:?} is not routed to Melee"
+        );
+    }
+    assert_eq!(
+        classify_live_actor_execute_arm(pc, OrderType::SimulatingBeggar),
+        Some(ExecuteOwnerFamily::Beggar)
+    );
+}
+
+#[test]
 fn later_smalltalk_hint_defers_for_already_visited_defender() {
     use crate::element::Command;
 

@@ -364,7 +364,29 @@ pub(crate) fn bow_sprite_hand_point(
     ))
 }
 
-/// Whether this order type is a bow shoot animation.
+/// Canonical order set accepted by the selected active-bow owner.
+pub(crate) const ACTIVE_BOW_ORDERS: &[OrderType] = &[
+    OrderType::ShootingWithBow,
+    OrderType::ShootingWithBowUp,
+    OrderType::ShootingWithBowLeaningOut,
+    OrderType::ShootingWithBowAnonymous,
+    OrderType::ShootingWithBowUpAnonymous,
+    OrderType::TransitionEquipBow,
+    OrderType::TransitionRaisingBow,
+    OrderType::TransitionLoweringBow,
+    OrderType::TransitionRaisingBowLeaningOut,
+    OrderType::TransitionLoweringBowLeaningOut,
+    OrderType::TransitionLoadingBow,
+    OrderType::TransitionUnloadBow,
+    OrderType::TransitionUnequipBow,
+    OrderType::TransitionEquipBowAnonymous,
+    OrderType::TransitionRaisingBowAnonymous,
+    OrderType::TransitionLoweringBowAnonymous,
+    OrderType::TransitionLoadingBowAnonymous,
+    OrderType::TransitionUnloadBowAnonymous,
+    OrderType::TransitionUnequipBowAnonymous,
+];
+
 fn is_shoot_order(ot: OrderType) -> bool {
     matches!(
         ot,
@@ -398,7 +420,7 @@ fn is_bow_transition_order(ot: OrderType) -> bool {
 }
 
 pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
-    is_shoot_order(ot) || is_bow_transition_order(ot)
+    ACTIVE_BOW_ORDERS.contains(&ot)
 }
 
 fn has_active_bow_order(element: &crate::sequence::SequenceElement) -> bool {
