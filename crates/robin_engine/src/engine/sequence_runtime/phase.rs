@@ -3,7 +3,7 @@ use super::*;
 impl EngineInner {
     /// Launch and dispatch sequence elements after the ported base entity and
     /// actor-Hourglass work, including inline immediate-action cascades and
-    /// the message/target callbacks they defer.
+    /// message/target callbacks at their exact owner-dispatch positions.
     ///
     /// Original provenance: `original-code/RHengine.cpp:3726-3727` calls
     /// `RHSequenceManager::Hourglass` after the entity loop; its FIFO `Go()`
@@ -335,17 +335,6 @@ impl EngineInner {
                 move_action,
             );
         }
-
-        // Deferred script ProcessMessage calls — collected during the action
-        // loop below and dispatched after iteration to avoid borrow conflicts.
-        let mut deferred_process_messages: Vec<(i32, i32, i32, i32)> = Vec::new(); // (handle, msg, arg1, arg2)
-        let mut deferred_engine_messages: Vec<(i32, i32, i32)> = Vec::new(); // (msg, arg1, arg2)
-        // Deferred `IElementTargetScript::ActivatedBy*(pPC)` calls
-        // collected from `Command::Activate*` sequence elements.
-        // Entries are `(target_handle, pc_handle, method_name)`;
-        // dispatched after the action loop via
-        // `dispatch_target_activations`.
-        let mut pending_target_activations: Vec<(i32, i32, &'static str)> = Vec::new();
 
         // Second pass: handle non-Move actions.
         //
@@ -2175,12 +2164,31 @@ impl EngineInner {
                                 } => *antagonist,
                                 _ => None,
                             };
-                            TargetActivationContext {
+                            let (target_handle, pc_handle, method) = TargetActivationContext {
                                 entities: &self.world.entities,
-                                sequence_manager: &mut self.orders.sequence_manager,
-                                pending_activations: &mut pending_target_activations,
                             }
-                            .dispatch(owner, cmd, antagonist, seq_id, elem_idx);
+                            .dispatch(owner, cmd, antagonist);
+                            let key = crate::engine::ScriptVmKey::Target(target_handle);
+                            let is_instantiated = self
+                                .scripts
+                                .mission
+                                .as_ref()
+                                .is_some_and(|script| script.has_script_vm(key));
+                            if is_instantiated
+                                && let Err(error) = self.call_script_vm(
+                                    sim,
+                                    assets,
+                                    key,
+                                    method,
+                                    &[pc_handle],
+                                    crate::natives::ScriptCallFrame::actor(target_handle),
+                                )
+                            {
+                                tracing::warn!("{method} (target {target_handle}): {error}");
+                            }
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
 
                         // Script-recorded PlayAnim / PlayAnimLoop /
@@ -2301,14 +2309,19 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    self.dispatch_execute_immediate_owner(
-                        sim,
-                        assets,
-                        owner,
-                        seq_id,
-                        elem_idx,
-                        &mut deferred_process_messages,
-                    );
+                    if let Some((handle, msg, arg1, arg2)) =
+                        self.dispatch_execute_immediate_owner(sim, assets, owner, seq_id, elem_idx)
+                    {
+                        self.dispatch_sequence_messages(
+                            sim,
+                            assets,
+                            &[(handle, msg, arg1, arg2)],
+                            &[],
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_terminated(seq_id, elem_idx);
+                    }
                 }
                 crate::sequence::SequenceAction::EngineCommand {
                     sequence_id: seq_id,
@@ -2318,16 +2331,22 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    self.dispatch_engine_or_execute_immediate(
-                        sim,
-                        display,
-                        assets,
-                        seq_id,
-                        elem_idx,
-                        &mut deferred_engine_messages,
-                    );
+                    if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
+                        sim, display, assets, seq_id, elem_idx,
+                    ) {
+                        self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
+                        self.orders
+                            .sequence_manager
+                            .element_terminated(seq_id, elem_idx);
+                    }
                 }
             }
+
+            // `SetState` calls the owner's SendCondolationCard and resumes at
+            // `Ready()` before returning to this action loop. Closing that
+            // boundary here lets an immediate next-level successor preempt
+            // older actions already detached into `SequencePhase`.
+            self.dispatch_condolations(sim, assets);
 
             // After-action drain: callbacks can synchronously register an
             // immediate command or complete a level whose successor is WAIT.
@@ -2335,23 +2354,5 @@ impl EngineInner {
             // re-entrant work fires before the next older action in the batch.
             phase.splice_synchronous_actions(&mut self.orders);
         }
-
-        // ── Dispatch deferred ProcessMessage from sequence SendMessage ──
-        if !deferred_process_messages.is_empty() || !deferred_engine_messages.is_empty() {
-            self.dispatch_sequence_messages(
-                sim,
-                assets,
-                &deferred_process_messages,
-                &deferred_engine_messages,
-            );
-        }
-
-        // ── Dispatch deferred FX-target IElementTargetScript::ActivatedBy*
-        // calls collected from Command::Activate* sequence elements.
-        self.dispatch_target_activations(sim, assets, &pending_target_activations);
-
-        // TODO(original-parity): confirm whether callbacks queued by
-        // SendMessage/ActivatedBy are observable before the first post-sequence
-        // movement refresh in every shipped build.
     }
 }

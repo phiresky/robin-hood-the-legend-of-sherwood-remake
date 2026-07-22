@@ -1,9 +1,8 @@
 //! Integration tests for `IElementTargetScript::ActivatedBy*` dispatch.
 //!
 //! `ACTIVATE_*` commands on a target dispatch to per-method callbacks
-//! on the target's bound script class.  These activations are collected
-//! in `pending_target_activations` during the action loop and invoked
-//! through `dispatch_target_activations` after the loop.
+//! on the target's bound script class. These activations are invoked inline
+//! at the target `Instruct` boundary.
 
 use crate::element::{
     Command, ElementData, ElementKind, ElementTarget, Entity, FxData, Posture, TargetData,

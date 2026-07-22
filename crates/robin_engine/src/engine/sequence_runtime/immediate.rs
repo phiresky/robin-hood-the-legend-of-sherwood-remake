@@ -16,33 +16,43 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
-        deferred_process_messages: &mut Vec<(i32, i32, i32, i32)>,
-        deferred_engine_messages: &mut Vec<(i32, i32, i32)>,
     ) {
         match action {
             crate::sequence::SequenceAction::ExecuteImmediateOwner {
                 owner,
                 sequence_id,
                 element_index,
-            } => self.dispatch_execute_immediate_owner(
-                sim,
-                assets,
-                owner,
-                sequence_id,
-                element_index,
-                deferred_process_messages,
-            ),
+            } => {
+                if let Some((handle, msg, arg1, arg2)) = self.dispatch_execute_immediate_owner(
+                    sim,
+                    assets,
+                    owner,
+                    sequence_id,
+                    element_index,
+                ) {
+                    self.dispatch_sequence_messages(sim, assets, &[(handle, msg, arg1, arg2)], &[]);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(sequence_id, element_index);
+                }
+            }
             crate::sequence::SequenceAction::ExecuteImmediateEngine {
                 sequence_id,
                 element_index,
-            } => self.dispatch_engine_or_execute_immediate(
-                sim,
-                display,
-                assets,
-                sequence_id,
-                element_index,
-                deferred_engine_messages,
-            ),
+            } => {
+                if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
+                    sim,
+                    display,
+                    assets,
+                    sequence_id,
+                    element_index,
+                ) {
+                    self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(sequence_id, element_index);
+                }
+            }
             other => panic!(
                 "dispatch_immediate_action called with non-immediate variant: {:?}",
                 other
@@ -63,11 +73,9 @@ impl EngineInner {
     /// invoking such an entry point so the synchronous dispatch
     /// fires the same frame as the registration.
     ///
-    /// `SendMessage` immediates produce `ProcessMessage` script calls
-    /// that need to run after the sequence-manager state settles; we
-    /// buffer them in a local `(handle, msg, arg1, arg2)` queue and
-    /// flush via `dispatch_sequence_messages` once the action loop
-    /// drains, mirroring the in-hourglass deferral.
+    /// `SendMessage` invokes `ProcessMessage` at the action's exact position
+    /// and terminates only after the callback returns, matching
+    /// `RHElementActor::ExecuteImmediately` / `RHEngine::PerformExecuteCommand`.
     pub(crate) fn drain_pending_immediate_actions_sync(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -77,8 +85,6 @@ impl EngineInner {
         if !self.orders.sequence_manager.has_pending_immediate_actions() {
             return;
         }
-        let mut deferred_process_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
-        let mut deferred_engine_messages: Vec<(i32, i32, i32)> = Vec::new();
         loop {
             let actions = self
                 .orders
@@ -88,23 +94,15 @@ impl EngineInner {
                 break;
             }
             for action in actions {
-                self.dispatch_immediate_action(
-                    sim,
-                    display,
-                    assets,
-                    action,
-                    &mut deferred_process_messages,
-                    &mut deferred_engine_messages,
-                );
+                self.dispatch_immediate_action(sim, display, assets, action);
+                self.dispatch_condolations(sim, assets);
+                // Termination can synchronously expose an immediate successor.
+                // Finish that child before the next detached sibling, just as
+                // the Original recursively re-enters RegisterSequenceElementToGo.
+                if self.orders.sequence_manager.has_pending_immediate_actions() {
+                    self.drain_pending_immediate_actions_sync(sim, display, assets);
+                }
             }
-        }
-        if !deferred_process_messages.is_empty() || !deferred_engine_messages.is_empty() {
-            self.dispatch_sequence_messages(
-                sim,
-                assets,
-                &deferred_process_messages,
-                &deferred_engine_messages,
-            );
         }
     }
 
@@ -120,11 +118,10 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-        deferred_process_messages: &mut Vec<(i32, i32, i32, i32)>,
-    ) {
+    ) -> Option<(i32, i32, i32, i32)> {
         let cmd = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
             Some(e) => e.command,
-            None => return,
+            None => return None,
         };
         match cmd {
             Command::StartMobile
@@ -143,10 +140,7 @@ impl EngineInner {
                 // script.
                 let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
                 let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
-                deferred_process_messages.push((handle, msg, arg1, arg2));
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                return Some((handle, msg, arg1, arg2));
             }
             Command::Unblip | Command::ReplaceAnim | Command::RestoreAnim => {
                 SpriteImmediateContext {
@@ -185,7 +179,7 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_terminated(seq_id, elem_idx);
-                    return;
+                    return None;
                 };
                 let owner_is_pc = self.get_entity(owner).is_some_and(|e| e.is_pc());
                 if owner_is_pc {
@@ -255,7 +249,7 @@ impl EngineInner {
                                 self.orders
                                     .sequence_manager
                                     .element_terminated(seq_id, elem_idx);
-                                return;
+                                return None;
                             }
                         };
                         let ed = entity.element_data();
@@ -555,6 +549,7 @@ impl EngineInner {
                     .element_terminated(seq_id, elem_idx);
             }
         }
+        None
     }
 
     /// Stage A — extracted from the combined
@@ -573,8 +568,7 @@ impl EngineInner {
         assets: &LevelAssets,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-        deferred_engine_messages: &mut Vec<(i32, i32, i32)>,
-    ) {
+    ) -> Option<(i32, i32, i32)> {
         // Check for SendMessage targeting the global script.
         let cmd = self
             .orders
@@ -586,10 +580,7 @@ impl EngineInner {
                 // Ownerless SendMessage dispatches
                 // `IEngineScript::ProcessMessage` (global).
                 let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
-                deferred_engine_messages.push((msg, arg1, arg2));
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
+                return Some((msg, arg1, arg2));
             }
             Some(command @ (Command::LockUser | Command::UnlockUser)) => {
                 self.apply_script_user_lock(assets, command);
@@ -804,5 +795,6 @@ impl EngineInner {
                 // terminated.
             }
         }
+        None
     }
 }
