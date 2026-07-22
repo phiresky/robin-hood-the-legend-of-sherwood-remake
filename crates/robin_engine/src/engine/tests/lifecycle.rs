@@ -606,7 +606,7 @@ fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
 }
 
 #[test]
-#[should_panic(expected = "unsupported ObjectType::None")]
+#[should_panic(expected = "no Original concrete-class mapping for ObjectType::None")]
 fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
@@ -629,7 +629,7 @@ fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
 }
 
 #[test]
-#[should_panic(expected = "net entity Net(NetId(0)) has unsupported ObjectType::None")]
+#[should_panic(expected = "Entity::Net has invalid ObjectType::None")]
 fn inactive_unsupported_net_mapping_panics_before_owner_slot_removal() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Net(crate::element::ElementNet {

@@ -31,6 +31,10 @@ fn animated_scroll() -> Entity {
             sprite: animated_sprite(),
             ..Default::default()
         },
+        object: crate::element::ObjectData {
+            object_type: crate::element::ObjectType::Scroll,
+            ..Default::default()
+        },
         script_hourglass_timeout: 24,
         ..Default::default()
     })
@@ -55,7 +59,11 @@ fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
 fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Entity {
     Entity::Bonus(crate::element::ElementBonus {
         element: ElementData {
-            kind: ElementKind::ObjectBonus,
+            kind: if object_type == crate::element::ObjectType::Ale {
+                ElementKind::ObjectOther
+            } else {
+                ElementKind::ObjectBonus
+            },
             active,
             sprite: animated_sprite(),
             ..Default::default()

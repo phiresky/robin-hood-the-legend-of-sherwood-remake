@@ -2908,20 +2908,44 @@ impl EngineInner {
             sim,
             assets,
             |engine, owner| {
+                use crate::element::OriginalHourglassClass as Class;
+
                 // Original-derived nonactor nesting: the mobile master/child
                 // boundary runs before the independent static owner, followed
                 // by projectile/net virtual dispatch.
-                if engine.tick_mobile_child_owner_boundary(sim, assets, owner) {
-                    return;
+                let class = engine
+                    .get_entity(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Hourglass owner {owner:?} disappeared immediately after live legacy-slot resolution"
+                        )
+                    })
+                    .original_hourglass_class();
+                match class {
+                    Class::FxMasked => assert!(
+                        engine.tick_mobile_child_owner_boundary(sim, assets, owner),
+                        "mapped FXMasked owner {owner:?} lost its mobile boundary"
+                    ),
+                    Class::Fx
+                    | Class::Target
+                    | Class::Bonus
+                    | Class::Ale
+                    | Class::Cape
+                    | Class::Scroll => {
+                        engine.tick_static_entity_hourglass_for(sim, assets, owner)
+                    }
+                    Class::Arrow
+                    | Class::Apple
+                    | Class::Stone
+                    | Class::Purse
+                    | Class::Coin
+                    | Class::Net
+                    | Class::WaspNest
+                    | Class::Wasp => {
+                        engine.tick_projectile_or_net_hourglass(sim, assets, owner)
+                    }
+                    Class::ActorPc | Class::ActorSoldier | Class::ActorCivilian => {}
                 }
-                engine.tick_static_entity_hourglass_for(sim, assets, owner);
-                if matches!(
-                    engine.get_entity(owner),
-                    Some(Entity::Fx(_) | Entity::Target(_) | Entity::Bonus(_) | Entity::Scroll(_))
-                ) {
-                    return;
-                }
-                engine.tick_projectile_or_net_hourglass(sim, assets, owner);
             },
             |engine, owner| {
                 if matches!(owner, EntityId::Soldier(_)) {
@@ -5953,7 +5977,11 @@ mod soldier_take_drink_parity_tests {
 
     fn make_bonus_object_at(object_type: ObjectType, x: f32, y: f32) -> Entity {
         let mut element = ElementData {
-            kind: ElementKind::ObjectBonus,
+            kind: if object_type == ObjectType::Ale {
+                ElementKind::ObjectOther
+            } else {
+                ElementKind::ObjectBonus
+            },
             active: true,
             ..ElementData::default()
         };
@@ -6139,6 +6167,47 @@ mod drop_ammo_merge_tests {
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
         engine.perform_hourglass(&mut display, assets, &mut dev);
+    }
+
+    #[test]
+    fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
+        let (mut engine, pc_id, assets) = build_engine_with_pc(0);
+        engine.mission_domain.campaign.characters[0]
+            .status
+            .set_ammo(Action::Ale, 1);
+        engine.launch_element(SequenceElement::new(
+            1,
+            crate::element::Command::DropAle,
+            Some(pc_id),
+        ));
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        // DropAle executes in the sequence phase after this frame's owner
+        // walk, appending the bottle as a new legacy creation slot.
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        let ale_id = engine
+            .world
+            .entities
+            .occupied()
+            .find_map(|(id, entity)| {
+                (entity
+                    .object_data()
+                    .is_some_and(|object| object.object_type == crate::element::ObjectType::Ale))
+                .then_some(id)
+            })
+            .expect("DropAle must append its RHElementAle-equivalent");
+        let ale = engine.get_entity(ale_id).unwrap();
+        assert_eq!(ale.kind(), ElementKind::ObjectOther);
+        assert_eq!(
+            ale.original_hourglass_class(),
+            crate::element::OriginalHourglassClass::Ale
+        );
+
+        // The next frame resolves the appended slot through the real live
+        // owner coordinator. A stale ObjectBonus label would panic here.
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        assert!(engine.get_entity(ale_id).is_some_and(Entity::is_active));
     }
 
     #[test]

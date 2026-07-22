@@ -1867,16 +1867,13 @@ impl EngineInner {
                                 }
                             };
 
-                            // Spawn an ale bottle at the resolved
-                            // position.  We reuse the `ObjectBonus`
-                            // kind because `Entity::Bonus` is the
-                            // generic visible-object container; the
-                            // rendering / detection payload is
-                            // equivalent — `ObjectType::Ale` flags
-                            // the sprite as an ale bottle (not a
-                            // takable bonus).
+                            // Spawn the concrete RHElementAle-equivalent at
+                            // the resolved position. Rust shares the
+                            // `Entity::Bonus` payload, but the Original Ale
+                            // constructor inherits RHElementObject's
+                            // OBJECT_OTHERS category, not OBJECT_BONUS.
                             let mut ale_element = crate::element::ElementData {
-                                kind: crate::element::ElementKind::ObjectBonus,
+                                kind: crate::element::ElementKind::ObjectOther,
                                 active: true,
                                 blipped: !self.world.weather.is_forest_level,
                                 ..Default::default()
