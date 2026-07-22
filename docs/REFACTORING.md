@@ -16,6 +16,12 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
+- Script and sequence callbacks drain at their exact registered position with
+  depth-first `Ready` closure. Door/lift callbacks use live owner, occupancy
+  and reservation state at the Original motion, action, `Done` and
+  `Terminated` boundaries. Specialized AI state callbacks close through their
+  owner-local FIFO, while cross-NPC `Think` calls suspend and resume through
+  live result-bearing continuations instead of predicted recipient state.
 - Ordinary actor movement, both Original rider Execute arms, and the exhaustive static
   virtual Hourglasses run inside the live legacy-slot owner coordinator, while
   mobile masters execute at their first adjacent masked-child slot.
@@ -52,7 +58,7 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   into focused modules.
 - Rendering debug, HUD and minimap code is separated from normal entity/frame
   rendering.
-- Save version 51, replay version 8 and network version 14 are the only current
+- Save version 52, replay version 9 and network version 15 are the only current
   schemas. Historical save/replay compatibility is intentionally unsupported.
 
 ## Required invariants
@@ -103,12 +109,10 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Audit specialized AI-state parity | High risk. Preserve the owner-local Hourglass/Execute ordering landed under PA-013 while comparing each specialized state with its Original handler. |
-| 2 | Audit door/lift animation callbacks | Compare action/done callback timing, owner boundaries and synchronous effects with the Original door, gate and lift implementations. |
-| 3 | Audit remaining script-native callbacks | Verify every remaining native callback's timing, result propagation and failure behavior against `RHScript` and sequence dispatch. |
-| 4 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
-| 5 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
-| 6 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
+| 1 | Continue action-specific gameplay parity | PA-040 through PA-042 close script/sequence, door/lift and specialized-AI callback scheduling. Remaining high-risk work is natural-wake/base-Human interleaving, audio completion, and non-callback movement/AI semantics. |
+| 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
+| 3 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
+| 4 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
 
 True-headless multiplayer admission is complete. `TimelineRuntime` owns the
 snapshot → ready → begin → wall-clock release state machine, the shared

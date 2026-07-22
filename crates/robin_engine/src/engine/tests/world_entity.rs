@@ -1212,6 +1212,96 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
     );
 }
 
+#[test]
+fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier() {
+    use crate::ai::{
+        AlertContinuation, AlertSoldiersFailureContinuation, CrossNpcAction, Position,
+        StimulusInfo, StimulusType, ThinkResultContinuation,
+    };
+
+    let mut engine = EngineInner::new();
+    let caller = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    engine
+        .get_entity_mut(caller)
+        .and_then(Entity::ai_controller_mut)
+        .expect("snapshot caller has AI")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .extend([
+            CrossNpcAction::RequestAlert {
+                target: target.index(),
+                caller: caller.index(),
+                continuation: AlertContinuation::SoldierSawOfficer,
+            },
+            CrossNpcAction::RequestThinkResult {
+                target: target.index(),
+                caller: caller.index(),
+                stimulus_type: StimulusType::CallAlert,
+                info: StimulusInfo::Human(target.index()),
+                continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                    last: true,
+                    use_formation: true,
+                    failure: AlertSoldiersFailureContinuation::SeekBody {
+                        center: Position {
+                            x: 8.0,
+                            y: 16.0,
+                            ..Default::default()
+                        },
+                        radius: 160,
+                    },
+                },
+            },
+            CrossNpcAction::FinalizeAlertSoldiers {
+                caller: caller.index(),
+                use_formation: true,
+                failure: AlertSoldiersFailureContinuation::SeekBody {
+                    center: Position {
+                        x: target.index() as f32 + 12.5,
+                        y: -7.0,
+                        ..Default::default()
+                    },
+                    radius: 320,
+                },
+            },
+        ]);
+
+    let json = serde_json::to_string(&engine).expect("serialize AI continuation snapshot");
+    let restored: EngineInner =
+        serde_json::from_str(&json).expect("deserialize AI continuation snapshot");
+    assert_eq!(
+        serde_json::to_value(&restored).unwrap(),
+        serde_json::to_value(&engine).unwrap()
+    );
+    assert_eq!(
+        robin_util::state_hash::compute(&restored),
+        robin_util::state_hash::compute(&engine)
+    );
+
+    let mut changed_continuation_payload = engine.clone();
+    let actions = &mut changed_continuation_payload
+        .get_entity_mut(caller)
+        .and_then(Entity::ai_controller_mut)
+        .expect("snapshot caller retains AI")
+        .outbox
+        .reentrant
+        .cross_npc_actions;
+    let CrossNpcAction::RequestThinkResult {
+        continuation: ThinkResultContinuation::OfficerAlertedSoldier { last, .. },
+        ..
+    } = &mut actions[1]
+    else {
+        panic!("snapshot test lost its result-bearing continuation")
+    };
+    *last = false;
+    assert_ne!(
+        robin_util::state_hash::compute(&changed_continuation_payload),
+        robin_util::state_hash::compute(&engine),
+        "the nested continuation payload must participate in the deterministic hash"
+    );
+}
+
 /// Build a minimal civilian entity for NPC-translate tests.
 pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     Entity::Civilian(crate::element::ActorCivilian {

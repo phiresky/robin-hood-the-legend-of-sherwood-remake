@@ -380,7 +380,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v51** (2026-07-22, Execute owner identity): actor state records the
 ///   selected Execute order identity and one-shot initialization latch matching
 ///   Original `mulLastOrderID` / `mbNewOrder` semantics.
-pub const SAVE_FORMAT_VERSION: u32 = 51;
+/// - **v52** (2026-07-22, specialized AI continuations): AI state records
+///   result-bearing cross-NPC callback continuations, alert scan progress and
+///   the final report-before-formation barrier.
+pub const SAVE_FORMAT_VERSION: u32 = 52;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -738,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn current_v51_requires_every_persistent_game_flag() {
+    fn current_v52_requires_every_persistent_game_flag() {
         let (engine, _assets) = fresh_engine();
         let host = Host::scratch(800.0, 600.0);
         let required_fields = [
@@ -761,7 +764,7 @@ mod tests {
                 .remove(field);
             assert!(
                 serde_json::from_value::<GameSaveFile>(value).is_err(),
-                "v49 payload missing {field} must be rejected"
+                "current v52 payload missing {field} must be rejected"
             );
         }
     }
@@ -859,7 +862,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 51, got 46"
+            "unsupported save file version: expected 52, got 46"
         );
     }
 
