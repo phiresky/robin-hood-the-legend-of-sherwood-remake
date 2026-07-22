@@ -601,33 +601,27 @@ impl<'a> PassDoorLaunchContext<'a> {
                 "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} is not movement data"
             )
         });
-        let Some(door_index) = gate_id else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
-        };
-        let Some(door) = self.doors.get(usize::from(door_index)) else {
-            tracing::warn!(
-                entity = ?entity_id,
-                door = %door_index,
-                "PassDoor: missing canonical door"
-            );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
-        };
+        let door_index = gate_id.unwrap_or_else(|| {
+            panic!("PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} has no gate")
+        });
+        let door = self
+            .doors
+            .get(usize::from(door_index))
+            .unwrap_or_else(|| {
+                panic!(
+                    "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} references missing door {door_index}"
+                )
+            });
 
-        let Some((actor_sector, auth_info)) = self
+        let (actor_sector, auth_info) = self
             .entities
             .get(entity_id)
             .map(|entity| (entity.element_data().sector(), entity.actor_auth_info()))
-        else {
-            tracing::warn!(
-                entity = ?entity_id,
-                door = %door_index,
-                "PassDoor: owner entity is missing"
-            );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
-        };
+            .unwrap_or_else(|| {
+                panic!(
+                    "PassDoor sequence element {seq_id:?}/{elem_idx} references missing owner {entity_id:?}"
+                )
+            });
 
         // `RHelementactor.cpp:3493+` disables anti-collision before the
         // direction/authorization switch. Denied and otherwise-impossible
@@ -638,16 +632,21 @@ impl<'a> PassDoorLaunchContext<'a> {
             .position_iface_mut()
             .set_anti_collision_on(false);
 
-        let Some(actor_sector) = actor_sector else {
-            tracing::warn!(
-                entity = ?entity_id,
-                door = %door_index,
-                "PassDoor: owner has no sector for direction resolution"
-            );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
+        let actor_sector = actor_sector.unwrap_or_else(|| {
+            panic!(
+                "PassDoor owner {entity_id:?} has no sector for door {door_index} direction resolution at {seq_id:?}/{elem_idx}"
+            )
+        });
+        let direct = if u16::from(actor_sector) == u16::from(door.sector_out) {
+            true
+        } else if u16::from(actor_sector) == u16::from(door.sector_in) {
+            false
+        } else {
+            panic!(
+                "PassDoor owner {entity_id:?} sector {actor_sector} is on neither side of door {door_index} (out {}, in {}) at {seq_id:?}/{elem_idx}",
+                door.sector_out, door.sector_in
+            )
         };
-        let direct = u16::from(actor_sector) == u16::from(door.sector_out);
         let allow_leave_map = flags.contains(crate::sequence::MoveFlags::MAP);
         // Building capacity is always effectively unlimited in the loaded
         // game data; this preserves the previous dispatcher contract.
@@ -678,15 +677,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             return PassDoorLaunchBarrier::SkipSplice;
         }
 
-        let Some(mut built) = self.build_door_pass(entity_id, door_index, direct, flags) else {
-            tracing::warn!(
-                entity = ?entity_id,
-                door = %door_index,
-                "PassDoor: failed to build step chain"
-            );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
-        };
+        let mut built = self.build_door_pass(entity_id, door_index, direct, flags);
         if let Some(override_action) = built.post_chain_action_recursive {
             self.sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
@@ -699,9 +690,9 @@ impl<'a> PassDoorLaunchContext<'a> {
             tolerance,
         }) = built.pass.steps.pop_front()
         else {
-            tracing::warn!(entity = ?entity_id, "PassDoor: no Walk step in chain");
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
+            panic!(
+                "PassDoor translation for owner {entity_id:?}, door {door_index} did not start with a Walk step"
+            );
         };
         built.pass.current_action = action;
         built.pass.current_reverse = reverse;
@@ -739,7 +730,10 @@ impl<'a> PassDoorLaunchContext<'a> {
 
     fn sector_forces_crouch(&self, sector_number: crate::sector::SectorNumber) -> bool {
         self.grid_sector_by_number(sector_number)
-            .is_some_and(|sector| sector.force_crouched)
+            .unwrap_or_else(|| {
+                panic!("PassDoor references missing canonical sector {sector_number}")
+            })
+            .force_crouched
     }
 }
 
@@ -804,15 +798,19 @@ pub(super) fn apply_door_pass_continue_state(
             _ => None,
         });
 
-    let Some(entity) = entities.get_mut(entity_id) else {
-        return;
-    };
-    if entity.actor_data().is_none() {
-        return;
-    }
+    let entity = entities
+        .get_mut(entity_id)
+        .unwrap_or_else(|| panic!("door-pass continuation owner {entity_id:?} is missing"));
+    assert!(
+        entity.actor_data().is_some(),
+        "door-pass continuation owner {entity_id:?} is not an actor"
+    );
     entity.set_posture(posture);
     if let Some(direction) = lift_direction {
-        entity.element_data_mut().set_direction_instantly(direction);
+        // Original Actor::Execute calls Turn() throughout ladder/wall orders;
+        // selecting the lift facing here must therefore preserve the gradual
+        // turn instead of snapping before the first production movement tick.
+        entity.element_data_mut().set_direction_goal(direction);
     }
     let action_state = match action {
         OT::RunningUpright
@@ -841,10 +839,12 @@ impl PassDoorLaunchContext<'_> {
         door_index: crate::gate::DoorIndex,
         direct: bool,
         flags: crate::sequence::MoveFlags,
-    ) -> Option<BuiltDoorPass> {
+    ) -> BuiltDoorPass {
         // Snapshot canonical door geometry and type.
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let door = self.doors.get(usize::from(door_index))?;
+            let door = self.doors.get(usize::from(door_index)).unwrap_or_else(|| {
+                panic!("PassDoor build for {entity_id:?} references missing door {door_index}")
+            });
             (
                 door.door_type,
                 door.point_mid,
@@ -856,11 +856,19 @@ impl PassDoorLaunchContext<'_> {
         };
 
         // Read actor properties.
-        let entity = self.entities.get(entity_id)?;
+        let entity = self
+            .entities
+            .get(entity_id)
+            .unwrap_or_else(|| panic!("PassDoor build references missing owner {entity_id:?}"));
         let is_pc = entity.is_pc();
         let is_soldier = entity.is_soldier();
         let posture = entity.element_data().posture;
-        let action_state = entity.actor_data().map(|a| a.action_state);
+        let action_state = Some(
+            entity
+                .actor_data()
+                .unwrap_or_else(|| panic!("PassDoor owner {entity_id:?} is not an actor"))
+                .action_state,
+        );
         let is_carrying = posture == Posture::CarryingOnShoulders;
 
         // Soldier attentive state: true while in a sword/shield action
@@ -928,12 +936,8 @@ impl PassDoorLaunchContext<'_> {
         // The high/direct ladder sums are wrapped in `abs(...)` because
         // the climb-down transition distance is negative; the wall and
         // low/direct ladder tolerances are used raw.
-        let sprite = self.entities.get(entity_id).map(|entity| entity.sprite());
-        let dist = |anim: OrderType| -> f32 {
-            sprite
-                .map(|s| f32::from(s.distance_for_animation(anim)))
-                .unwrap_or(0.0)
-        };
+        let sprite = entity.sprite();
+        let dist = |anim: OrderType| -> f32 { f32::from(sprite.distance_for_animation(anim)) };
         let tol_ladder_high_direct = if is_attentive {
             // Soldier + attentive
             dist(OrderType::TransitionWaitingUprightClimbingLadderDownAlerted).abs()
@@ -988,7 +992,9 @@ impl PassDoorLaunchContext<'_> {
                 Some(LiftType::Ladder) => translate_ladder(&ctx),
                 Some(LiftType::Wall) => translate_wall(&ctx),
                 Some(LiftType::Stairs) | Some(LiftType::Normal) => translate_stairs(&ctx),
-                None => translate_stairs(&ctx),
+                None => panic!(
+                    "PassDoor owner {entity_id:?} door {door_index} is a lift door but sector {sector_in} has no lift type"
+                ),
             },
             _ => translate_default(&ctx),
         };
@@ -1007,7 +1013,7 @@ impl PassDoorLaunchContext<'_> {
             None
         };
 
-        Some(BuiltDoorPass {
+        BuiltDoorPass {
             pass: ActiveDoorPass {
                 door_index,
                 direct,
@@ -1018,7 +1024,7 @@ impl PassDoorLaunchContext<'_> {
                 saved_action_state: None,
             },
             post_chain_action_recursive,
-        })
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1042,29 +1048,25 @@ impl PassDoorLaunchContext<'_> {
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
 
         apply_door_pass_continue_state(self.entities, self.fast_grid, entity_id, action);
-        if let Some(actor) = self
+        let actor = self
             .entities
             .get_mut(entity_id)
             .and_then(crate::element::Entity::actor_data_mut)
-        {
-            actor.action_state = match action {
-                OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
-                OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
-                OrderType::RunningUpright => crate::element::ActionState::MovingFast,
-                _ => crate::element::ActionState::Moving,
-            };
-            actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
-            actor.passing_door_directly = active_door_pass.direct;
-            actor.active_door_pass = Some(active_door_pass);
-            actor.sequence_element_started = true;
-        } else {
-            tracing::warn!(
-                ?entity_id,
-                ?seq_id,
-                elem_idx,
-                "PassDoor initial walk installed for missing actor"
-            );
-        }
+            .unwrap_or_else(|| {
+                panic!(
+                    "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
+                )
+            });
+        actor.action_state = match action {
+            OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
+            OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
+            OrderType::RunningUpright => crate::element::ActionState::MovingFast,
+            _ => crate::element::ActionState::Moving,
+        };
+        actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
+        actor.passing_door_directly = active_door_pass.direct;
+        actor.active_door_pass = Some(active_door_pass);
+        actor.sequence_element_started = true;
     }
 }
 
@@ -1083,16 +1085,21 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
-        _direct: bool,
+        direct: bool,
         trigger_number: u8,
     ) {
         if trigger_number > 0 {
             // Second (and later) trigger:
             // RHNONANIMATION_PASSING_DOOR calls SetAntiCollisionOn(true)
             // once PassDoor() has already consumed the gate.
-            if let Some(entity) = self.get_entity_mut(entity_id) {
-                entity.position_iface_mut().set_anti_collision_on(true);
-            }
+            self.get_entity_mut(entity_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PassDoor anti-collision callback for door {door_index} lost owner {entity_id:?}"
+                    )
+                })
+                .position_iface_mut()
+                .set_anti_collision_on(true);
             return;
         }
 
@@ -1100,16 +1107,17 @@ impl EngineInner {
 
         // Snapshot door data before mutable borrows.
         let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
-            let door = match self
+            let door = self
                 .script_domains
                 .interactables
                 .doors
                 .get(usize::from(door_index))
-            {
-                Some(d) => d,
-                None => return,
-            };
-            let (tl, ts) = if _direct {
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PassDoor callback for {entity_id:?} references missing door {door_index}"
+                    )
+                });
+            let (tl, ts) = if direct {
                 (door.layer_in, door.sector_in)
             } else {
                 (door.layer_out, door.sector_out)
@@ -1123,11 +1131,32 @@ impl EngineInner {
         };
 
         // Read entity's current sector and type before the change.
-        let (current_sector, is_pc) = match self.get_entity(entity_id) {
-            Some(e) => (e.element_data().sector(), e.is_pc()),
-            None => return,
-        };
+        let (current_sector, is_pc) = self
+            .get_entity(entity_id)
+            .map(|entity| {
+                (
+                    entity.element_data().sector().unwrap_or_else(|| {
+                        panic!(
+                            "PassDoor callback for {entity_id:?}, door {door_index} has no source sector"
+                        )
+                    }),
+                    entity.is_pc(),
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!("PassDoor callback for door {door_index} lost owner {entity_id:?}")
+            });
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
+        let expected_source = if direct {
+            self.script_domains.interactables.doors[usize::from(door_index)].sector_out
+        } else {
+            self.script_domains.interactables.doors[usize::from(door_index)].sector_in
+        };
+        assert_eq!(
+            u16::from(current_sector),
+            u16::from(expected_source),
+            "PassDoor callback for {entity_id:?}, door {door_index} ran from sector {current_sector}, expected {expected_source}"
+        );
 
         // ── Leave callbacks ──
         // Track whether we're leaving a building so we can refresh the
@@ -1136,24 +1165,42 @@ impl EngineInner {
         // onto the projection area at the door's outside point so the
         // next footstep sounds use the correct material.
         let mut left_building = false;
-        if let Some(cur_sector_handle) = current_sector {
-            let cur_sector_num: u16 = cur_sector_handle.into();
-            let gs =
-                self.grid_sector_by_number(crate::sector::SectorNumber::new(cur_sector_num as i16));
+        {
+            let cur_sector_num: u16 = current_sector.into();
+            let gs = self
+                .grid_sector_by_number(crate::sector::SectorNumber::new(cur_sector_num as i16))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PassDoor callback for {entity_id:?}, door {door_index} references missing source sector {cur_sector_num}"
+                    )
+                });
 
-            if gs.map(|s| s.sector_type.is_building()).unwrap_or(false) {
+            if gs.sector_type.is_building() {
                 left_building = true;
                 // Leaving a building — remove from occupant list.
-                let bld_idx = gs.and_then(|s| s.building_index);
+                let bld_idx = Some(gs.building_index.unwrap_or_else(|| {
+                    panic!(
+                        "PassDoor owner {entity_id:?} left building sector {cur_sector_num} without a building index"
+                    )
+                }));
                 if let Some(bi) = bld_idx {
-                    if let Some(occupants) = self
+                    let occupants = self
                         .script_domains
                         .buildings
                         .occupants
                         .get_mut(usize::from(bi))
-                    {
-                        occupants.retain(|&a| a != actor_handle);
-                    }
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "PassDoor owner {entity_id:?} left building {bi} without an occupant list"
+                            )
+                        });
+                    let old_len = occupants.len();
+                    occupants.retain(|&a| a != actor_handle);
+                    assert_ne!(
+                        occupants.len(),
+                        old_len,
+                        "PassDoor owner {entity_id:?} was absent from building {bi} occupants on leave"
+                    );
                     self.script_domains
                         .buildings
                         .actor_building
@@ -1246,7 +1293,7 @@ impl EngineInner {
                     ai.pass_house_door(false);
                 }
                 tracing::debug!(entity = ?entity_id, sector = cur_sector_num, "PassDoor: left building");
-            } else if gs.map(|s| s.sector_type.is_lift()).unwrap_or(false) {
+            } else if gs.sector_type.is_lift() {
                 // Leaving a lift — clear occupancy direction.
                 if let Some(grid_idx) = self
                     .world
@@ -1266,7 +1313,11 @@ impl EngineInner {
                         .unwrap_or(false)
                 {
                     let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
-                    st.occupants = st.occupants.saturating_sub(1);
+                    st.occupants = st.occupants.checked_sub(1).unwrap_or_else(|| {
+                        panic!(
+                            "PassDoor owner {entity_id:?} left unoccupied lift sector {cur_sector_num} through door {door_index}"
+                        )
+                    });
                     if st.occupants == 0 {
                         st.occupied_upwards = false;
                         st.occupied_downwards = false;
@@ -1286,31 +1337,26 @@ impl EngineInner {
         }
 
         // ── Change layer/sector on entity ──
-        // Look up the destination sector's stored facing once so we can
-        // apply it after the layer/sector change for lift sectors:
-        // every climbing-ladder / climbing-wall animation starts by
-        // snapping the actor's direction to the sector's stored
-        // direction.
-        let lift_facing = self
-            .grid_sector_by_number(target_sector_num)
-            .filter(|gs| gs.sector_type.is_lift())
-            .map(|gs| gs.lift_direction);
-        if let Some(entity) = self.get_entity_mut(entity_id) {
-            let elem = entity.element_data_mut();
-            elem.set_layer(target_layer);
-            elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
-                target_sector_num,
-            )));
-            if let Some(dir) = lift_facing {
-                elem.set_direction_instantly(dir);
-            }
-            tracing::debug!(
-                entity_id = ?entity_id,
-                layer = target_layer,
-                sector = %target_sector_num,
-                "PassDoor: changed layer/sector"
-            );
-        }
+        self.grid_sector_by_number(target_sector_num)
+            .unwrap_or_else(|| {
+                panic!(
+                    "PassDoor callback for {entity_id:?}, door {door_index} references missing target sector {target_sector_num}"
+                )
+            });
+        let entity = self
+            .get_entity_mut(entity_id)
+            .expect("PassDoor owner disappeared after canonical callback lookup");
+        let elem = entity.element_data_mut();
+        elem.set_layer(target_layer);
+        elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
+            target_sector_num,
+        )));
+        tracing::debug!(
+            entity_id = ?entity_id,
+            layer = target_layer,
+            sector = %target_sector_num,
+            "PassDoor: changed layer/sector"
+        );
 
         // Refresh paired jump lines unconditionally on every sector
         // swap so swordfighters across a jump line re-evaluate their
@@ -1335,28 +1381,32 @@ impl EngineInner {
         }
 
         // ── Enter callbacks ──
-        let enter_gs = self.grid_sector_by_number(target_sector_num);
-        if enter_gs
-            .map(|s| s.sector_type.is_building())
-            .unwrap_or(false)
-        {
+        let enter_gs = self
+            .grid_sector_by_number(target_sector_num)
+            .expect("PassDoor target sector disappeared after canonical lookup");
+        if enter_gs.sector_type.is_building() {
             // Entering a building — add to occupant list.
-            let bld_idx = enter_gs.and_then(|s| s.building_index);
-            if let Some(bi) = bld_idx {
-                let bld_handle =
-                    crate::natives::ScriptHandleCodec::building_handle_from_index(usize::from(bi));
-                if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
-                    self.script_domains
-                        .buildings
-                        .occupants
-                        .resize(usize::from(bi) + 1, Vec::new());
-                }
-                self.script_domains.buildings.occupants[usize::from(bi)].push(actor_handle);
-                self.script_domains
-                    .buildings
-                    .actor_building
-                    .insert(actor_handle, bld_handle);
-            }
+            let bld_idx = enter_gs.building_index.unwrap_or_else(|| {
+                panic!(
+                    "PassDoor owner {entity_id:?} entered building sector {target_sector_num} without a building index"
+                )
+            });
+            let bld_handle =
+                crate::natives::ScriptHandleCodec::building_handle_from_index(usize::from(bld_idx));
+            self.script_domains
+                .buildings
+                .occupants
+                .get_mut(usize::from(bld_idx))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PassDoor owner {entity_id:?} entered building {bld_idx} without an occupant list"
+                    )
+                })
+                .push(actor_handle);
+            self.script_domains
+                .buildings
+                .actor_building
+                .insert(actor_handle, bld_handle);
             // Add this entity to the matching `AiGlobalState` house's
             // live occupant list.  If no house exists for this
             // sector — either because the building has no plain
@@ -1391,19 +1441,13 @@ impl EngineInner {
             // unconscious and not being carried so their corpses render
             // to the freshly-arrived PC.  Matches the script-side
             // `PutActorInBuilding` helper.
-            if is_pc && let Some(bi) = bld_idx {
+            if is_pc {
                 if let Some(carried_id) = carried_to_hide {
                     let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
                     let bld_handle = crate::natives::ScriptHandleCodec::building_handle_from_index(
-                        usize::from(bi),
+                        usize::from(bld_idx),
                     );
-                    if usize::from(bi) >= self.script_domains.buildings.occupants.len() {
-                        self.script_domains
-                            .buildings
-                            .occupants
-                            .resize(usize::from(bi) + 1, Vec::new());
-                    }
-                    self.script_domains.buildings.occupants[usize::from(bi)].push(carried_h);
+                    self.script_domains.buildings.occupants[usize::from(bld_idx)].push(carried_h);
                     self.script_domains
                         .buildings
                         .actor_building
@@ -1416,9 +1460,9 @@ impl EngineInner {
                     .script_domains
                     .buildings
                     .occupants
-                    .get(usize::from(bi))
+                    .get(usize::from(bld_idx))
                     .cloned()
-                    .unwrap_or_default();
+                    .expect("building occupant list was required above");
                 for occ_h in occupants {
                     let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                         continue;
@@ -1468,24 +1512,36 @@ impl EngineInner {
         door_index: crate::gate::DoorIndex,
         direct: bool,
     ) {
-        let Some((target_sector, lift_type, lift_direction)) = (|| {
-            let door = self
-                .script_domains
-                .interactables
-                .doors
-                .get(usize::from(door_index))?;
-            let target_sector = if direct {
-                door.sector_in
-            } else {
-                door.sector_out
-            };
-            let sector = self.grid_sector_by_number(crate::sector::SectorNumber::new(
-                i16::from(target_sector),
-            ))?;
-            Some((target_sector, sector.lift_type?, sector.lift_direction))
-        })() else {
+        let door = self
+            .script_domains
+            .interactables
+            .doors
+            .get(usize::from(door_index))
+            .unwrap_or_else(|| {
+                panic!("completed PassDoor for {entity_id:?} references missing door {door_index}")
+            });
+        if !direct
+            || !matches!(
+                door.door_type,
+                DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow
+            )
+        {
             return;
-        };
+        }
+        let target_sector = door.sector_in;
+        let sector = self
+            .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(target_sector)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "completed PassDoor for {entity_id:?}, door {door_index} references missing lift sector {target_sector}"
+                )
+            });
+        let lift_type = sector.lift_type.unwrap_or_else(|| {
+            panic!(
+                "completed PassDoor for {entity_id:?}, door {door_index} targets non-lift sector {target_sector}"
+            )
+        });
+        let lift_direction = sector.lift_direction;
 
         let posture = match lift_type {
             LiftType::Wall => crate::element::Posture::OnWall,
@@ -1493,16 +1549,15 @@ impl EngineInner {
             _ => return,
         };
 
-        let Some(entity) = self.get_entity_mut(entity_id) else {
-            return;
-        };
+        let entity = self.get_entity_mut(entity_id).unwrap_or_else(|| {
+            panic!("completed PassDoor for door {door_index} lost owner {entity_id:?}")
+        });
         entity.set_posture(posture);
+        entity.element_data_mut().set_direction_goal(lift_direction);
         entity
-            .element_data_mut()
-            .set_direction_instantly(lift_direction);
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.action_state = crate::element::ActionState::Moving;
-        }
+            .actor_data_mut()
+            .unwrap_or_else(|| panic!("completed PassDoor owner {entity_id:?} is not an actor"))
+            .action_state = crate::element::ActionState::Moving;
         tracing::debug!(
             entity = ?entity_id,
             sector = %target_sector,
@@ -1793,6 +1848,41 @@ mod tests {
         doors: &[crate::gate::Door],
         owner: EntityId,
     ) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+        for sector_number in doors
+            .iter()
+            .flat_map(|door| [door.sector_out, door.sector_in])
+        {
+            if engine
+                .world
+                .fast_grid
+                .level
+                .sector_number_map
+                .contains_key(&sector_number)
+            {
+                continue;
+            }
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            let index = level.sectors.len();
+            level.sector_number_map.insert(sector_number, index);
+            level.sectors.push(crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer: 0,
+                sector_number,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
         let mut element = SequenceElement::new_movement(
             1,
             crate::element::Command::PassDoor,
@@ -1829,7 +1919,8 @@ mod tests {
     fn install_lift_sector(engine: &mut EngineInner, lift_type: LiftType) {
         let lift_sector = crate::sector::SectorNumber::new(42);
         let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
-        level.sector_number_map.insert(lift_sector, 0);
+        let index = level.sectors.len();
+        level.sector_number_map.insert(lift_sector, index);
         level.sectors.push(crate::fast_find_grid::GridSector {
             points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
@@ -1848,6 +1939,107 @@ mod tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         });
+    }
+
+    fn bind_single_animation(engine: &mut EngineInner, owner: EntityId, action: OrderType) {
+        let mut conversion = vec![
+            crate::sprite_script::UNMAPPED;
+            crate::sprite_script::NONANIMATION_END.max(action as usize + 1)
+        ];
+        conversion[action as usize] = 0;
+        let played_action = match action {
+            OrderType::ClimbingWallUpFast => OrderType::ClimbingWallUp,
+            OrderType::ClimbingWallDownFast => OrderType::ClimbingWallDown,
+            OrderType::ClimbingLadderUpFast => OrderType::ClimbingLadderUp,
+            OrderType::ClimbingLadderDownFast => OrderType::ClimbingLadderDown,
+            other => other,
+        };
+        if played_action as usize >= conversion.len() {
+            conversion.resize(played_action as usize + 1, crate::sprite_script::UNMAPPED);
+        }
+        conversion[played_action as usize] = 0;
+        let script = crate::sprite_script::SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![10, 10, 10],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+        };
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(std::iter::repeat_n(script, 16).collect()),
+            std::sync::Arc::new(conversion),
+        );
+    }
+
+    fn install_production_climb_fixture(
+        engine: &mut EngineInner,
+        owner: EntityId,
+        lift_type: LiftType,
+        action: OrderType,
+    ) -> (crate::sequence::SequenceId, std::num::NonZeroU32) {
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .has_climb = true;
+        install_lift_sector(engine, lift_type);
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftLow,
+            sector_in: crate::sector::SectorNumber::new(42),
+            ..default_door()
+        };
+        engine.script_domains.interactables.doors.push(door.clone());
+        let (_, seq_id) = dispatch_pass(engine, &[door], owner);
+        bind_single_animation(engine, owner, action);
+
+        let order_id = {
+            let order = engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, 0)
+                .unwrap()
+                .orders
+                .front_mut()
+                .unwrap();
+            order.order_type = action;
+            order.compute_direction = false;
+            order.target_x = 20.0;
+            order.target_y = 30.0;
+            order.order_id
+        };
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            entity.element_data_mut().set_direction_instantly(0);
+            entity
+                .element_data_mut()
+                .set_sector(crate::position_interface::SectorHandle::new(7));
+            let actor = entity.actor_data_mut().unwrap();
+            actor.action_state = crate::element::ActionState::Waiting;
+            actor.active_door_pass.as_mut().unwrap().current_action = action;
+        }
+        engine.execute_pass_door(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            crate::gate::DoorIndex(0),
+            true,
+            0,
+        );
+        (seq_id, order_id)
     }
 
     #[test]
@@ -2006,31 +2198,300 @@ mod tests {
     }
 
     #[test]
-    fn missing_actor_sector_is_impossible_instead_of_assuming_direct() {
+    #[should_panic(expected = "has no sector for door 0 direction resolution")]
+    fn missing_actor_sector_is_an_invariant_failure() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_soldier(None));
 
-        let (barrier, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
+        let _ = dispatch_pass(&mut engine, &[default_door()], owner);
+    }
 
-        assert_eq!(barrier, PassDoorLaunchBarrier::SkipSplice);
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(seq_id, 0)
-                .unwrap()
-                .state,
-            SequenceState::Impossible
-        );
-        assert!(
-            !engine
-                .world
-                .entities
-                .get(owner)
-                .unwrap()
-                .position_iface()
-                .is_anti_collision_on()
-        );
+    #[test]
+    #[should_panic(expected = "is on neither side of door 0")]
+    fn actor_sector_must_match_one_side_of_the_door() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(Some(99)));
+
+        let _ = dispatch_pass(&mut engine, &[default_door()], owner);
+    }
+
+    #[test]
+    #[should_panic(expected = "is a lift door but sector 8 has no lift type")]
+    fn lift_door_requires_canonical_lift_type() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(Some(7)));
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftHigh,
+            ..default_door()
+        };
+
+        let _ = dispatch_pass(&mut engine, &[door], owner);
+    }
+
+    #[test]
+    fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_creation_order() {
+        for (lift_type, action, expected_direction) in [
+            (
+                LiftType::Ladder,
+                OrderType::TransitionWaitingUprightClimbingLadderUp,
+                1,
+            ),
+            (LiftType::Ladder, OrderType::ClimbingLadderUpFast, 2),
+            (
+                LiftType::Wall,
+                OrderType::TransitionWaitingUprightClimbingWallUp,
+                1,
+            ),
+            (LiftType::Wall, OrderType::ClimbingWallUpFast, 2),
+        ] {
+            for owner_is_earlier in [true, false] {
+                let mut engine = EngineInner::new();
+                let owner = if owner_is_earlier {
+                    let owner = engine.add_entity(make_pc(7));
+                    let _observer = engine.add_entity(make_soldier(Some(7)));
+                    owner
+                } else {
+                    let _observer = engine.add_entity(make_soldier(Some(7)));
+                    engine.add_entity(make_pc(7))
+                };
+                engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .pc_data_mut()
+                    .unwrap()
+                    .has_climb = true;
+                install_lift_sector(&mut engine, lift_type);
+                let door = crate::gate::Door {
+                    door_type: DoorType::LiftLow,
+                    sector_in: crate::sector::SectorNumber::new(42),
+                    ..default_door()
+                };
+                engine.script_domains.interactables.doors.push(door.clone());
+                let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+                bind_single_animation(&mut engine, owner, action);
+
+                let elem_idx = 0;
+                let order_id = {
+                    let order = engine
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(seq_id, elem_idx)
+                        .unwrap()
+                        .orders
+                        .front_mut()
+                        .unwrap();
+                    order.order_type = action;
+                    order.compute_direction = false;
+                    order.target_x = 20.0;
+                    order.target_y = 30.0;
+                    order.order_id
+                };
+                {
+                    let entity = engine.world.entities.get_mut(owner).unwrap();
+                    entity.element_data_mut().set_direction_instantly(i16::from(
+                        crate::position_interface::Direction::NORTH,
+                    ));
+                    entity
+                        .element_data_mut()
+                        .set_sector(crate::position_interface::SectorHandle::new(7));
+                    let actor = entity.actor_data_mut().unwrap();
+                    actor.action_state = crate::element::ActionState::Waiting;
+                    actor.active_door_pass.as_mut().unwrap().current_action = action;
+                }
+
+                engine.execute_pass_door(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    owner,
+                    crate::gate::DoorIndex(0),
+                    true,
+                    0,
+                );
+                assert_eq!(
+                    engine
+                        .world
+                        .entities
+                        .get(owner)
+                        .unwrap()
+                        .element_data()
+                        .direction(),
+                    0,
+                    "the PassingDoor action point changes sector but must not snap lift facing"
+                );
+
+                engine.tick_entity_movement_owner(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    owner,
+                    Some(crate::engine::movement::MovementOwnerSelection {
+                        seq_id,
+                        elem_idx,
+                        order_id,
+                    }),
+                );
+
+                let entity = engine.world.entities.get(owner).unwrap();
+                assert_eq!(
+                    entity.element_data().direction(),
+                    expected_direction,
+                    "fast climb Execute must run its two original Turn() iterations"
+                );
+                assert_eq!(
+                    entity.position_iface().get_direction_goal().as_u8(),
+                    5,
+                    "{lift_type:?} transition must use the inside lift sector's direction goal"
+                );
+                engine.apply_completed_door_pass_lift_entry_state(
+                    owner,
+                    crate::gate::DoorIndex(0),
+                    true,
+                );
+                assert_eq!(
+                    engine
+                        .world
+                        .entities
+                        .get(owner)
+                        .unwrap()
+                        .element_data()
+                        .direction(),
+                    expected_direction,
+                    "door-pass completion must preserve the gradual Turn() result"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frozen_all_climbs_turn_in_owner_slot_with_real_swapped_owner_visibility() {
+        for (action, expected_direction) in [
+            (OrderType::TransitionWaitingUprightClimbingLadderUp, 1),
+            (OrderType::ClimbingLadderUpFast, 2),
+        ] {
+            for climber_is_earlier in [true, false] {
+                let mut engine = EngineInner::new();
+                let (climber, observer) = if climber_is_earlier {
+                    (engine.add_entity(make_pc(7)), engine.add_entity(make_pc(7)))
+                } else {
+                    let observer = engine.add_entity(make_pc(7));
+                    let climber = engine.add_entity(make_pc(7));
+                    (climber, observer)
+                };
+                let _ = install_production_climb_fixture(
+                    &mut engine,
+                    climber,
+                    LiftType::Ladder,
+                    action,
+                );
+                engine.set_actors_frozen(true);
+
+                let positions =
+                    crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+                let mut direction_seen_by_observer = None;
+                engine.tick_actor_owner_envelopes_with_test_owner_hook(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    &positions,
+                    |engine, completed_owner| {
+                        if completed_owner == observer {
+                            direction_seen_by_observer = Some(
+                                engine
+                                    .world
+                                    .entities
+                                    .get(climber)
+                                    .unwrap()
+                                    .element_data()
+                                    .direction(),
+                            );
+                        }
+                    },
+                );
+
+                assert_eq!(
+                    engine
+                        .world
+                        .entities
+                        .get(climber)
+                        .unwrap()
+                        .element_data()
+                        .direction(),
+                    expected_direction,
+                    "FrozenAll suppresses sprite motion, not climb Execute Turn()"
+                );
+                assert_eq!(
+                    direction_seen_by_observer,
+                    Some(if climber_is_earlier {
+                        expected_direction
+                    } else {
+                        0
+                    }),
+                    "only the genuinely later owner slot may see the frozen climb turn"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fast_climb_first_iteration_termination_prevents_second_turn_in_swapped_creation_order() {
+        for owner_is_earlier in [true, false] {
+            let mut engine = EngineInner::new();
+            let owner = if owner_is_earlier {
+                let owner = engine.add_entity(make_pc(7));
+                let _observer = engine.add_entity(make_pc(7));
+                owner
+            } else {
+                let _observer = engine.add_entity(make_pc(7));
+                engine.add_entity(make_pc(7))
+            };
+            let (seq_id, order_id) = install_production_climb_fixture(
+                &mut engine,
+                owner,
+                LiftType::Wall,
+                OrderType::ClimbingWallUpFast,
+            );
+            {
+                let sprite = &mut engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite;
+                sprite.last_processed_order_id = order_id.get();
+                sprite.last_action = OrderType::ClimbingWallUp;
+                sprite.current_row = 0;
+                sprite.current_frame = 2;
+                sprite.frame_count = 9;
+                sprite
+                    .position_iface
+                    .set_map_goal(crate::coordinates::MapPoint::new(20.0, 30.0));
+                sprite.position_iface.compute_increment_all(false);
+            }
+
+            engine.tick_entity_movement_owner(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                owner,
+                Some(crate::engine::movement::MovementOwnerSelection {
+                    seq_id,
+                    elem_idx: 0,
+                    order_id,
+                }),
+            );
+
+            assert_eq!(
+                engine
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap()
+                    .element_data()
+                    .direction(),
+                1,
+                "first fast PerformMotion termination must skip the second Turn/PerformMotion pair"
+            );
+        }
     }
 
     #[test]

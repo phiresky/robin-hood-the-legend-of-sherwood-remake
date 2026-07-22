@@ -797,7 +797,10 @@ impl LiftRuntimeState {
             self.occupied_downwards = true;
             self.wait_time = 100;
         } else {
-            self.occupants = self.occupants.saturating_sub(1);
+            self.occupants = self
+                .occupants
+                .checked_sub(1)
+                .expect("cannot release an unoccupied downward lift");
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -813,7 +816,10 @@ impl LiftRuntimeState {
             self.occupied_upwards = true;
             self.wait_time = 80;
         } else {
-            self.occupants = self.occupants.saturating_sub(1);
+            self.occupants = self
+                .occupants
+                .checked_sub(1)
+                .expect("cannot release an unoccupied upward lift");
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -3353,6 +3359,18 @@ impl ThickMoveCorridor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "cannot release an unoccupied downward lift")]
+    fn downward_lift_release_requires_a_live_reservation() {
+        LiftRuntimeState::default().set_occupied_downwards(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot release an unoccupied upward lift")]
+    fn upward_lift_release_requires_a_live_reservation() {
+        LiftRuntimeState::default().set_occupied_upwards(false);
+    }
 
     fn make_grid_with_line() -> FastFindGrid {
         let mut grid = FastFindGrid::new();

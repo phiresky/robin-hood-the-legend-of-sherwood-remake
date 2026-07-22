@@ -3725,7 +3725,8 @@ impl EngineInner {
                         outcomes.seq_advance.push((seq_id, elem_idx));
                     }
                     crate::order::OrderCompletion::UnlockDoor { door_id } => {
-                        outcomes.unlock_door.push((door_id, seq_id, elem_idx));
+                        let _ = door_id;
+                        outcomes.seq_advance.push((seq_id, elem_idx));
                     }
                     crate::order::OrderCompletion::ResumeDoorPass => {
                         outcomes.resume_door_pass.push(owner);
@@ -4552,9 +4553,9 @@ impl EngineInner {
     ///
     /// - `seq_terminate`: terminate the associated sequence element
     ///   (Turn / any plain `SequenceElement` booking).
-    /// - `unlock_door`:   flip `door.locked_pc = false`, then terminate
-    ///   the lockpick sequence element.  The lock release is tied
-    ///   to the end of the `UnlockingDoor` order.
+    /// - `unlock_door_done`: clear all live door lock/authorization flags at
+    ///   the lockpick action point. The later termination edge advances the
+    ///   sequence through the ordinary `seq_advance` path.
     /// - `resume_door_pass`: re-enter `advance_door_pass` for the actor
     ///   so the next step in the door-pass chain (PassingDoor trigger,
     ///   next Walk step, or Done) can fire.
@@ -4625,20 +4626,20 @@ impl EngineInner {
                 .element_impossible(seq_id, elem_idx);
         }
 
-        for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
+        for door_id in outcomes.unlock_door_done {
             let door = required_canonical_door_mut(
                 &mut self.script_domains.interactables.doors,
                 door_id,
-                "UnlockDoor completion",
+                "UnlockDoor action-point callback",
             );
             door.locked_pc = false;
+            door.locked_npc_civilian = false;
+            door.locked_npc_villain = false;
+            door.unlockable = false;
             tracing::debug!(
                 door_id = %door_id,
-                "UnlockDoor: lockpick animation complete, door unlocked"
+                "UnlockDoor: action point cleared all live door locks"
             );
-            self.orders
-                .sequence_manager
-                .element_terminated(seq_id, elem_idx);
         }
 
         for entity_id in outcomes.next_jump_step {
@@ -6243,6 +6244,113 @@ mod bow_command_body_parity_tests {
             .expect("authorized actor records its active lift");
         assert_eq!(active_lift.sector_number, 42);
         assert!(!active_lift.upwards);
+    }
+
+    #[test]
+    fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let sector_number = crate::sector::SectorNumber::new(42);
+        install_test_lift_sector(&mut engine, owner, sector_number);
+        {
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            let outside = crate::sector::SectorNumber::new(0);
+            let outside_index = level.sectors.len();
+            level.sector_number_map.insert(outside, outside_index);
+            level.sectors.push(crate::fast_find_grid::GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+                layer: 0,
+                sector_number: outside,
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+        let door = crate::gate::Door {
+            door_type: crate::gate::DoorType::LiftHigh,
+            sector_in: sector_number,
+            sector_out: crate::sector::SectorNumber::new(0),
+            ..crate::gate::Door::default()
+        };
+        engine.script_domains.interactables.doors.push(door.clone());
+        let mut wait = SequenceElement::new_movement(
+            1,
+            Command::WaitFreeLift,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            gate_id, sector, ..
+        } = &mut wait.data
+        {
+            *gate_id = Some(crate::gate::DoorIndex(0));
+            *sector = crate::position_interface::SectorHandle::new(42);
+        }
+        let seq_id = engine.orders.sequence_manager.launch_element(wait);
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
+
+        assert!(
+            LiftWaitCommandContext {
+                entities: &mut engine.world.entities,
+                fast_grid: &mut engine.world.fast_grid,
+                doors: std::slice::from_ref(&door),
+                sequence_manager: &mut engine.orders.sequence_manager,
+            }
+            .authorize_and_reserve(owner, seq_id, 0)
+        );
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).occupants, 1);
+
+        engine.execute_pass_door(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            crate::gate::DoorIndex(0),
+            true,
+            0,
+        );
+        assert_eq!(engine.world.fast_grid.lift_state_mut(0).occupants, 1);
+        engine.execute_pass_door(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            crate::gate::DoorIndex(0),
+            false,
+            0,
+        );
+
+        let lift = engine.world.fast_grid.lift_state_mut(0);
+        assert_eq!(lift.occupants, 0);
+        assert!(!lift.occupied_downwards);
+        assert!(!lift.occupied_upwards);
+        assert_eq!(lift.wait_time, 0);
+        assert!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_lift
+                .is_none()
+        );
     }
 
     #[test]
