@@ -183,9 +183,9 @@ pub struct CampSoldierInfo {
     /// report-to-officer seeking substates can.
     pub is_able_to_help: bool,
     pub script_locked: bool,
-    /// Dynamic `AILOCK_FREEZE` gate. Direct `Think` retains the stimulus and
-    /// returns false while this is set, so result-bearing broadcasts must not
-    /// pre-count the recipient as having accepted.
+    /// Dynamic `AILOCK_FREEZE` snapshot used by non-result-bearing candidate
+    /// checks. Original direct `Think` retains a locked stimulus and returns
+    /// true, so bool-consuming call sites must dispatch instead of predicting.
     pub ai_lock_frozen: bool,
     pub layer: u16,
     /// Reconnaissance report type (for `GetReportFromSoldier` checks).
@@ -271,48 +271,6 @@ pub struct CampSoldierInfo {
     /// reads the cached flag instead of redoing the geometry per
     /// brawler/officer pair.
     pub is_detecting_cone: bool,
-}
-
-/// Predicts whether a same-camp rank-Soldier candidate would react
-/// to `CALL_ALERT` from an officer. The soldier-rank arm:
-///
-/// 1. State filter — `STATE_DEFAULT`, `STATE_WONDERING`, or specific
-///    `_REPORT_TO_OFFICER` Seeking substates.
-/// 2. `Q_HAS_THE_NEW_TASK_PRIORITY`:
-///    - if `new >= current`, true;
-///    - else, in Seeking/Wondering, false;
-///    - else, true only when `minimal_task_priority == NONE`.
-///
-/// Used by the officer-side `AlertSoldiers` candidate gate before the direct
-/// synchronous call is emitted.
-pub fn soldier_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
-    if cs.script_locked || cs.ai_lock_frozen {
-        return false;
-    }
-    // State-set filter for the soldier rank.
-    let state_ok = match cs.ai_state {
-        AiState::Default | AiState::Wondering => true,
-        AiState::Seeking => matches!(
-            cs.ai_substate,
-            Substate::SeekingSoldierGiveReportToOfficer
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
-        ),
-        _ => false,
-    };
-    if !state_ok {
-        return false;
-    }
-    // Q_HAS_THE_NEW_TASK_PRIORITY with new_priority = TASK_PRIORITY_ALERT.
-    let new_priority = task_priority::ALERT;
-    if new_priority >= cs.current_task_priority {
-        return true;
-    }
-    match cs.ai_state {
-        AiState::Seeking | AiState::Wondering => false,
-        _ => cs.minimal_task_priority == task_priority::NONE,
-    }
 }
 
 pub fn soldier_is_able_to_help_state(

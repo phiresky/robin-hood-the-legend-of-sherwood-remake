@@ -1795,6 +1795,7 @@ impl EnemyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         accepted: bool,
+        target: NpcHandle,
         continuation: ThinkResultContinuation,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1816,6 +1817,47 @@ impl EnemyAi {
                     self.base
                         .say_with_flags(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
                     self.base.point_to(self.officers_position);
+                }
+            }
+            ThinkResultContinuation::OfficerInstructedGroupSoldier { last } => {
+                if !accepted {
+                    self.alerted_us.retain(|&handle| handle != target);
+                }
+                if last {
+                    if self.alerted_us.is_empty() {
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.set_state(
+                            AiState::Seeking,
+                            Substate::SeekingOfficerWaitForInstructedGroup,
+                        );
+                        self.base.launch_timer(30, ctx.frame);
+                    }
+                }
+            }
+            ThinkResultContinuation::OfficerAlertedSoldier { last } => {
+                if accepted {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::ConsiderReport {
+                            target,
+                            report: self.base.my_reconnaissance_report.clone(),
+                            flags: ReportUpdateFlags::UPDATE_CHARLY.bits()
+                                | ReportUpdateFlags::UPDATE_TYPE.bits(),
+                        },
+                    );
+                } else {
+                    self.alerted_us.retain(|&handle| handle != target);
+                }
+                if last && self.alerted_us.is_empty() {
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                }
+            }
+            ThinkResultContinuation::OfficerCombatAlertedSoldier { last } => {
+                if !accepted {
+                    self.alerted_us.retain(|&handle| handle != target);
+                }
+                if last && self.alerted_us.is_empty() {
+                    self.get_battle_overview(0, ctx, tick);
                 }
             }
         }

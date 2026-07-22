@@ -411,6 +411,65 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     );
 }
 
+#[test]
+fn review2_result_continuation_consumes_live_script_filter_refusal() {
+    use crate::ai::{
+        CrossNpcAction, Position, StimulusInfo, StimulusType, ThinkResultContinuation,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, _, sensitive_handle, caller_handle) = build_engine();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let target = crate::natives::ScriptHandleCodec::actor_handle_index(sensitive_handle)
+        .expect("sensitive actor has an entity index") as u32;
+    let caller = crate::natives::ScriptHandleCodec::actor_handle_index(caller_handle)
+        .expect("caller actor has an entity index") as u32;
+    let caller_id = engine
+        .entity_id_for_index(caller)
+        .expect("script-filter caller exists");
+    let target_id = engine
+        .entity_id_for_index(target)
+        .expect("script-filter target exists");
+    engine
+        .get_entity_mut(target_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("script-filter target has EnemyAi")
+        .base
+        .me = target;
+    let caller_ai = engine
+        .get_entity_mut(caller_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("script-filter caller has EnemyAi");
+    caller_ai.base.me = caller;
+    caller_ai.alerted_us = vec![target];
+    caller_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target,
+            caller,
+            stimulus_type: StimulusType::CallCombatAlert,
+            // No Human source makes SourceSensitive::FilterAIEvent return 0.
+            info: StimulusInfo::Position(Position::default()),
+            continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier { last: true },
+        });
+
+    engine.drain_direct_ai_owner_boundary(&sim, caller_id, &assets);
+
+    assert!(
+        engine
+            .get_entity(caller_id)
+            .and_then(Entity::enemy_ai)
+            .expect("script-filter caller retains EnemyAi")
+            .alerted_us
+            .is_empty(),
+        "a script-authored zero result must prune the candidate"
+    );
+}
+
 // ───────── Nested-native VM dispatch ─────────
 //
 // Tests for the `PrototypeFilterEvent` native re-entering the script

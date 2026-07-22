@@ -1001,6 +1001,8 @@ impl AiController {
                     | CrossNpcAction::RequestAlert { .. }
                     | CrossNpcAction::RequestThinkResult { .. }
                     | CrossNpcAction::ReportBackToOfficer { .. }
+                    | CrossNpcAction::ConsiderReport { .. }
+                    | CrossNpcAction::InstructGatherPosition { .. }
             ) {
                 synchronous.push(action);
             } else {
@@ -1023,6 +1025,8 @@ impl AiController {
                         | CrossNpcAction::RequestAlert { .. }
                         | CrossNpcAction::RequestThinkResult { .. }
                         | CrossNpcAction::ReportBackToOfficer { .. }
+                        | CrossNpcAction::ConsiderReport { .. }
+                        | CrossNpcAction::InstructGatherPosition { .. }
                 )
             })
     }

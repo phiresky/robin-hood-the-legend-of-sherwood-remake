@@ -1532,6 +1532,9 @@ pub enum AlertContinuation {
 pub enum ThinkResultContinuation {
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
+    OfficerInstructedGroupSoldier { last: bool },
+    OfficerAlertedSoldier { last: bool },
+    OfficerCombatAlertedSoldier { last: bool },
 }
 
 // ---------------------------------------------------------------------------

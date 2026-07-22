@@ -2930,31 +2930,28 @@ impl EnemyAi {
                         seek_flags |= SeekFlags::CHARLY_SEEK | SeekFlags::LOCATION_FIRST;
                     }
 
-                    // Instruct each soldier via CALL_INSTRUCTION
-                    self.alerted_us.retain(|&handle| {
+                    // Instruct each soldier via direct CALL_INSTRUCTION and
+                    // prune refusals from the live list before finalising.
+                    let instructed = self.alerted_us.clone();
+                    for (index, handle) in instructed.iter().copied().enumerate() {
                         self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::SendStimulus {
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
+                            CrossNpcAction::RequestThinkResult {
                                 target: handle,
+                                caller: self.base.me,
                                 stimulus_type: StimulusType::CallInstruction,
                                 info: StimulusInfo::Hint(Hint {
                                     seek_point: seek_pos,
                                     seek_flags: seek_flags.bits(),
                                     who_tells_me: self.base.me,
                                 }),
+                                continuation:
+                                    ThinkResultContinuation::OfficerInstructedGroupSoldier {
+                                        last: index + 1 == instructed.len(),
+                                    },
                             },
                         );
-                        true // keep all in list for WaitForInstructedGroup
-                    });
-
-                    if !self.alerted_us.is_empty() {
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingOfficerWaitForInstructedGroup,
-                        );
-                        self.base.launch_timer(30, ctx.frame);
-                    } else {
+                    }
+                    if instructed.is_empty() {
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     }
                 }

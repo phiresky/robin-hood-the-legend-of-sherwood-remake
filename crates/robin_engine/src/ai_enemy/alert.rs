@@ -138,18 +138,12 @@ impl EnemyAi {
         // average helper direction.
         let mut avg_dir_vec_x: f32 = 0.0;
         let mut avg_dir_vec_y: f32 = 0.0;
+        let mut last_result_request = None;
 
         for cs in &tick.camp_soldiers {
-            // Must be rank SOLDIER, able to help.
-            if cs.rank != ProfileRank::Soldier
-                || !cs.is_able_to_help
-                || cs.script_locked
-                || cs.ai_lock_frozen
-                || !matches!(
-                    cs.ai_state,
-                    AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
-                )
-            {
+            // Original eligibility is rank soldier + IsAbleToFight; the
+            // recipient's live Think handles script/AI locks and state gates.
+            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight {
                 continue;
             }
             // MaxNorm distance check
@@ -164,16 +158,19 @@ impl EnemyAi {
             }
 
             // Send CALL_COMBAT_ALERT with the target position
+            last_result_request = Some(self.base.outbox.reentrant.cross_npc_actions.len());
             self.base
                 .outbox
                 .reentrant
                 .cross_npc_actions
-                .push(CrossNpcAction::SendStimulus {
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
+                .push(CrossNpcAction::RequestThinkResult {
                     target: cs.handle,
+                    caller: self.base.me,
                     stimulus_type: StimulusType::CallCombatAlert,
                     info: StimulusInfo::Position(center),
+                    continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                        last: false,
+                    },
                 });
             self.alerted_us.push(cs.handle);
             alerted_positions.push(cs.position);
@@ -188,6 +185,13 @@ impl EnemyAi {
                 avg_dir_vec_x += fdx / len;
                 avg_dir_vec_y += fdy / len;
             }
+        }
+
+        if let Some(index) = last_result_request
+            && let CrossNpcAction::RequestThinkResult { continuation, .. } =
+                &mut self.base.outbox.reentrant.cross_npc_actions[index]
+        {
+            *continuation = ThinkResultContinuation::OfficerCombatAlertedSoldier { last: true };
         }
 
         if alerted_count > 0 {
@@ -363,11 +367,6 @@ impl EnemyAi {
         let alert_radius = combat::ALERT_RADIUS as f32;
         let alert_radius_sq = alert_radius * alert_radius;
 
-        // Officer's cached reconnaissance report — snapshot once so we
-        // can broadcast a stable copy to each soldier via
-        // `ConsiderReport{UPDATE_CHARLY | UPDATE_TYPE}`.
-        let my_report = self.base.my_reconnaissance_report.clone();
-
         let my_handle = self.base.me;
         // Whether the officer is currently inside a building.
         let officer_in_building = ctx.in_building;
@@ -380,6 +379,7 @@ impl EnemyAi {
         // To pick the group-gather direction.
         let mut avg_dir_vec_x: f32 = 0.0;
         let mut avg_dir_vec_y: f32 = 0.0;
+        let mut last_result_request = None;
 
         for cs in &tick.camp_soldiers {
             // Hard cap of 20 alerted friends.
@@ -431,26 +431,19 @@ impl EnemyAi {
                 continue;
             }
 
-            // friend.Think(stimulus) — deliver CALL_ALERT.
-            // Predict the soldier's Think return value on this side so
-            // the cross-NPC dispatch result matches the reference's synchronous
-            // gate.  Soldiers whose state / task-priority would refuse
-            // the alert are not added to `mlistAlertedUs`, do not get
-            // `InstructGatherPosition`, and don't trigger
-            // `ConsiderReport`.
-            if !crate::ai_enemy::soldier_would_react_to_call_alert(cs) {
-                continue;
-            }
+            // Deliver the direct call; the typed continuation consumes the
+            // live bool and prunes refusals before the next soldier.
+            last_result_request = Some(self.base.outbox.reentrant.cross_npc_actions.len());
             self.base
                 .outbox
                 .reentrant
                 .cross_npc_actions
-                .push(CrossNpcAction::SendStimulus {
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
+                .push(CrossNpcAction::RequestThinkResult {
                     target: cs.handle,
+                    caller: self.base.me,
                     stimulus_type: StimulusType::CallAlert,
                     info: StimulusInfo::Human(self.base.me),
+                    continuation: ThinkResultContinuation::OfficerAlertedSoldier { last: false },
                 });
 
             // Distance-sorted insertion: soldiers
@@ -460,19 +453,6 @@ impl EnemyAi {
                 .position(|&(_, d)| sqr_dist < d)
                 .unwrap_or(alerted.len());
             alerted.insert(pos, (cs.handle, sqr_dist));
-
-            // Broadcast the officer's report back so each
-            // soldier picks up charly / report type.
-            self.base
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(CrossNpcAction::ConsiderReport {
-                    target: cs.handle,
-                    report: my_report.clone(),
-                    flags: crate::ai_enemy::ReportUpdateFlags::UPDATE_CHARLY.bits()
-                        | crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),
-                });
 
             // Outdoor gather-direction accumulator.
             if !officer_in_building {
@@ -484,6 +464,13 @@ impl EnemyAi {
                     avg_dir_vec_y += fdy / len;
                 }
             }
+        }
+
+        if let Some(index) = last_result_request
+            && let CrossNpcAction::RequestThinkResult { continuation, .. } =
+                &mut self.base.outbox.reentrant.cross_npc_actions[index]
+        {
+            *continuation = ThinkResultContinuation::OfficerAlertedSoldier { last: true };
         }
 
         // Publish the alerted-soldier list.

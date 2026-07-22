@@ -8085,6 +8085,7 @@ impl EngineInner {
                     target,
                     position,
                     direction,
+                    ..
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let ctx = {
@@ -8758,35 +8759,81 @@ impl EngineInner {
                     });
                 std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)
             };
-            let mut generated = Vec::new();
+            let mut deferred = deferred;
+            let mut alert_formation_targets = Vec::new();
             for action in actions {
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "synchronous action source {} lost its AI controller",
-                            source_id.index()
-                        )
-                    });
-                ai.outbox.reentrant.cross_npc_actions.push(action.clone());
+                if let crate::ai::CrossNpcAction::RequestThinkResult {
+                    target,
+                    continuation:
+                        crate::ai::ThinkResultContinuation::OfficerAlertedSoldier { .. }
+                        | crate::ai::ThinkResultContinuation::OfficerCombatAlertedSoldier { .. },
+                    ..
+                } = &action
+                {
+                    alert_formation_targets.push(*target);
+                }
                 match action {
+                    crate::ai::CrossNpcAction::InstructGatherPosition {
+                        target,
+                        position,
+                        direction,
+                    } => {
+                        // Alert formations queue their result requests before
+                        // the sibling gather instructions. Remember those
+                        // exact targets while draining this saved batch, then
+                        // suppress an instruction if its direct Think result
+                        // pruned it. Phalanx instructions have no preceding
+                        // alert-result request and remain unconditional.
+                        let alert_formation = alert_formation_targets.contains(&target);
+                        let still_alerted = !alert_formation
+                            || self
+                                .world
+                                .entities
+                                .get(source_id)
+                                .and_then(Entity::enemy_ai)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "alert InstructGatherPosition source {source_id:?} is not an enemy soldier"
+                                    )
+                                })
+                                .alerted_us
+                                .contains(&target);
+                        if still_alerted {
+                            self.process_synchronous_gather_instruction(
+                                sim, target, position, direction, assets,
+                            );
+                        }
+                    }
+                    crate::ai::CrossNpcAction::ConsiderReport {
+                        target,
+                        report,
+                        flags,
+                    } => {
+                        self.process_synchronous_consider_report(sim, target, report, flags, assets)
+                    }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_alert_requests_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::RequestThinkResult { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_think_results_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_officer_reports_for(sim, source_id, assets)
                     }
                     _ => unreachable!("ordered synchronous drain received deferred action"),
                 }
+
+                // Direct C++ calls are depth-first: if A emits C while B was
+                // already queued, C closes before B. Isolate A's generated
+                // work, recursively drain it, then continue the saved batch.
+                self.process_synchronous_reentrant_actions_for(sim, source_id, assets);
                 let ai = self
                     .world
                     .entities
@@ -8798,7 +8845,7 @@ impl EngineInner {
                             source_id.index()
                         )
                     });
-                generated.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
+                deferred.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
             }
             let ai = self
                 .world
@@ -8812,8 +8859,104 @@ impl EngineInner {
                     )
                 });
             ai.outbox.reentrant.cross_npc_actions = deferred;
-            ai.outbox.reentrant.cross_npc_actions.extend(generated);
         }
+    }
+
+    fn requeue_isolated_synchronous_action(
+        &mut self,
+        source_id: crate::element::EntityId,
+        action: crate::ai::CrossNpcAction,
+    ) {
+        self.world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous action source {} lost its AI controller",
+                    source_id.index()
+                )
+            })
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(action);
+    }
+
+    fn process_synchronous_consider_report(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        target: u32,
+        report: crate::ai::ReconnaissanceReport,
+        flags: u16,
+        assets: &LevelAssets,
+    ) {
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let target_id = EntityId::Soldier(SoldierId(target));
+        self.world
+            .entities
+            .get_mut(target_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("ConsiderReport target {target} is not an enemy soldier"))
+            .base
+            .consider_report_merged(&report, flags, scratch.ai_entity_views.as_ref());
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, target_id, assets);
+    }
+
+    fn process_synchronous_gather_instruction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        target: u32,
+        position: crate::ai::Position,
+        direction: u16,
+        assets: &LevelAssets,
+    ) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let enemy = self
+            .world
+            .entities
+            .get_mut(target_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!("InstructGatherPosition target {target} is not an enemy soldier")
+            });
+        enemy.gather_position = position;
+        enemy.gather_direction = direction;
+        enemy.gather_position_instructed = true;
+
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let building_sector = self
+            .world
+            .entities
+            .get(target_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared"));
+        let ctx = build_ai_context_from_entity(
+            self.world
+                .entities
+                .get(target_id)
+                .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared")),
+            self.control.frame_counter,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        let tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+        self.dispatch_think_with_drain_without_forecast(
+            sim,
+            target_id,
+            &crate::ai::Stimulus::new(crate::ai::StimulusType::CallInstruction),
+            &ctx,
+            &tick,
+            assets,
+        );
     }
 
     fn process_synchronous_stimuli_for(
@@ -8989,6 +9132,12 @@ impl EngineInner {
                     "synchronous {stimulus_type:?} from NPC {caller} references missing target {target}"
                 )
             });
+            if !matches!(self.world.entities.get(target_id), Some(Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some())
+            {
+                panic!(
+                    "synchronous {stimulus_type:?} from enemy NPC {caller} requires enemy-soldier target {target}"
+                );
+            }
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let target_building_sector = self
                 .world
@@ -9063,7 +9212,14 @@ impl EngineInner {
                 .get_mut(source_id)
                 .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("Think-result caller {caller} lost its EnemyAi"))
-                .resolve_think_result(sim, accepted, continuation, &source_ctx, &source_tick);
+                .resolve_think_result(
+                    sim,
+                    accepted,
+                    target,
+                    continuation,
+                    &source_ctx,
+                    &source_tick,
+                );
         }
     }
 
