@@ -576,9 +576,17 @@ pub(super) fn build_ai_context_from_entity(
         })
         .map(|lst| lst.len() as u16)
         .unwrap_or(0);
-    // The live animation/order currently playing on the actor.  Stored
-    // as `actor.old_action` (`pub type Animation = OrderType`).
-    let self_animation = actor.map(|a| a.old_action).unwrap_or_default();
+    // The live animation/order currently displayed by the actor. Do not use
+    // `ActorData::old_action`: that is the previous value retained solely for
+    // the next script `ActionChange(new, old)` callback and is still Invalid
+    // during AI initialization. `Sprite::last_action` is updated when the
+    // initial Wait element is translated, matching the original
+    // `RHElementActor::GetAnimation()` observed by `InitOneAI`.
+    let self_animation = if actor.is_some() {
+        elem.sprite.last_action
+    } else {
+        crate::order::OrderType::default()
+    };
     // Only soldiers can be forced-attentive; civilians always read
     // `false`.  Threaded into AiContext so
     // `set_alert_status_with_flags` can apply the view-override from
@@ -2869,6 +2877,15 @@ impl EngineInner {
                 human.unconscious = true;
             }
         }
+
+        if init_fx.launch_wait {
+            // RHArtificialIntelligence::InitState calls mpMe->Wait() only
+            // after SetStates for authored sleeping/sitting/dead/etc. poses.
+            // This must be a new launch, not ensure_wait_element: mission
+            // script initialization may already have installed an Upright
+            // wait whose translated orders are stale for the new posture.
+            self.actor_wait(npc_id);
+        }
     }
 
     /// Populate `AiGlobalState::houses` and `door_rally_points` from
@@ -3182,6 +3199,9 @@ impl EngineInner {
                 continue;
             };
             if front.order_type != OrderType::Turning {
+                continue;
+            }
+            if !front.compute_direction {
                 continue;
             }
             let pos = entity.element_data().position_map();
@@ -7801,6 +7821,12 @@ impl EngineInner {
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
             self.dispatch_think_with_drain(sim, minion_id, &stimulus, &ctx, &tick_data, assets);
+            // `CoordinatePatrol` constructs its Move element inline in the
+            // original, making `GetCommand()` report MOVE_OK immediately.
+            // Owner instruction still belongs to the sequence-manager phase
+            // later this hourglass, so promote the request to an element but
+            // deliberately leave its deferred InstructOwner action queued.
+            self.drain_pending_move_requests_for_owner(minion_id);
 
             // Original applies the instructed direction only after the
             // member's synchronous CALL_PATROL_COORDINATE Think returns.

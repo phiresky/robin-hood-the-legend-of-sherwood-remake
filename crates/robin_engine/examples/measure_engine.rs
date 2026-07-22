@@ -304,6 +304,7 @@ fn main() {
         ground_mark_sprite: None,
         titbit_row_frame_counts: Vec::new(),
         rng_seed: 0,
+        original_rng_replay: None,
         sim_config: robin_engine::engine::SimConfig::default(),
     })
     .expect("load level");

@@ -456,6 +456,7 @@ impl AiController {
                 fx.set_eye_status = Some(EyeStatus::Closed);
                 fx.set_posture = Some(Posture::Upright);
                 fx.set_action_state = Some(ActionState::Sleeping);
+                fx.launch_wait = true;
             }
 
             // Authored sitting. OnPost + bored timer, posture Sitting,
@@ -469,6 +470,7 @@ impl AiController {
                 self.likes_to_sit_around = true;
                 fx.set_posture = Some(Posture::Sitting);
                 fx.set_action_state = Some(ActionState::Waiting);
+                fx.launch_wait = true;
             }
 
             // Dead-fallen-back — zero life points, posture DeadBack,
@@ -480,6 +482,7 @@ impl AiController {
                 fx.zero_life_points = true;
                 fx.set_posture = Some(Posture::DeadBack);
                 fx.set_action_state = Some(ActionState::Waiting);
+                fx.launch_wait = true;
             }
 
             // Dead — same shape but posture Dead.
@@ -489,6 +492,7 @@ impl AiController {
                 fx.zero_life_points = true;
                 fx.set_posture = Some(Posture::Dead);
                 fx.set_action_state = Some(ActionState::Waiting);
+                fx.launch_wait = true;
             }
 
             // Unconscious — max concussion + `unconscious = true`,
@@ -502,6 +506,7 @@ impl AiController {
                 fx.concussion_max_and_unconscious = true;
                 fx.set_posture = Some(Posture::Lying);
                 fx.set_action_state = Some(ActionState::Waiting);
+                fx.launch_wait = true;
             }
 
             // Special leisure — OnPost, posture Leisure,
@@ -513,6 +518,7 @@ impl AiController {
                 self.special_action = true;
                 fx.set_posture = Some(Posture::Leisure);
                 fx.set_action_state = Some(ActionState::Waiting);
+                fx.launch_wait = true;
             }
 
             // Unknown initial action — log a warning and default to
@@ -2567,6 +2573,14 @@ impl AiController {
         if flags.contains(GotoFlags::SWORD) {
             order.move_flags |= MoveFlags::FORCE_SWORD_MOVEMENT.bits() as u16;
         }
+        // RHArtificialIntelligence::GoTo maps GOTO_DONTSTOP to
+        // RHMOVE_NO_TRANSITIONS.  Route legs that flow through their next
+        // waypoint must not splice in a walk/run-to-wait end transition;
+        // doing so delays EventReachPoint and advances the patrol AI one
+        // frame late.
+        if flags.contains(GotoFlags::DONT_STOP) {
+            order.move_flags |= MoveFlags::NO_TRANSITIONS.bits() as u16;
+        }
 
         // Forward `GOTO_FINDACCESSIBLE` and `GOTO_ASKOBSTACLE` to the
         // engine drain. The drain has the FastFindGrid in hand and
@@ -2742,7 +2756,20 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
-        if self.check_already_on_point(&destination, 5.0, ctx) {
+        // This is the same Original GoTo overload as the default-speed
+        // wrapper. Its close-point shortcut is legal only from one of the
+        // idle animations; a running patrol member may pass within five
+        // units of a newly coordinated formation point and must still book
+        // the replacement walk rather than synthesize EventReachPoint.
+        let idle_for_goto_short_circuit = matches!(
+            ctx.self_animation,
+            crate::order::OrderType::WaitingUpright
+                | crate::order::OrderType::WaitingAlerted
+                | crate::order::OrderType::NonanimationEnd
+        );
+        let may_short_circuit =
+            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
+        if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.already_on_point = true;
             return;
         }
@@ -2896,10 +2923,6 @@ impl AiController {
 
     /// Turn to face a direction (0–15 sector).
     ///
-    /// Convert the sector into a target position offset and delegate
-    /// to `face_position`, which the movement/order system already
-    /// handles.
-    ///
     /// Honours the same-direction short-circuit: if the actor is
     /// already facing the requested sector **and** WAITING or BORED,
     /// set `already_turned` so `end_think` fires a same-frame
@@ -2909,13 +2932,13 @@ impl AiController {
             self.already_turned = true;
             return;
         }
-        let dir = crate::shadow_polygon::sector_to_direction(direction as i16);
-        let target = Position {
-            x: ctx.position.x + dir[0] * 100.0,
-            y: ctx.position.y + dir[1] * 100.0,
-            ..ctx.position
-        };
-        self.face_position_impl(target, ctx, 0.0);
+        // Original `FaceTo(UWORD)` stores the authored sector directly in
+        // RHFIELD_DIRECTION. Keep it discrete rather than round-tripping it
+        // through a synthetic point and a later vector-to-sector conversion.
+        self.outbox
+            .actor
+            .orders
+            .push(AiOrderIntent::face_direction(direction as i16));
     }
 
     fn face_to_same_direction_can_short_circuit(ctx: &AiContext) -> bool {
@@ -3607,9 +3630,21 @@ impl AiController {
                     // Phase 3 picks it up next pass.
                     self.needs_patrol_reinit = true;
 
-                    // Turn to face the direction from previous waypoint.
+                    // Turn to face the direction from the previous waypoint,
+                    // but only at a waypoint that carries command data.  The
+                    // Original checks both `path.Size() > 1` and
+                    // `currentWaypoint->uwSizeOfData > 0`; simple waypoints
+                    // synchronously feed EVENT_DONE back into the AI without
+                    // launching a Turn element.
                     if let Some(ref path) = self.patrol_path {
-                        if path.size > 1 {
+                        let current_has_command =
+                            path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
+                                !matches!(
+                                    waypoint.command,
+                                    crate::level_data::WaypointCommand::None
+                                )
+                            });
+                        if path.size > 1 && current_has_command {
                             // Get previous waypoint to compute turn direction.
                             let mut tmp = path.clone();
                             tmp.retreat();

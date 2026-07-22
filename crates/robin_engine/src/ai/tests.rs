@@ -197,6 +197,22 @@ fn goto_sword_sets_force_sword_movement_flag() {
 }
 
 #[test]
+fn goto_dont_stop_suppresses_movement_transitions() {
+    let order = AiController::make_move_order(
+        &Position {
+            x: 100.0,
+            y: 200.0,
+            sector: None,
+            level: 0,
+        },
+        GotoFlags::DONT_STOP,
+    );
+
+    let flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(order.move_flags));
+    assert!(flags.contains(crate::sequence::MoveFlags::NO_TRANSITIONS));
+}
+
+#[test]
 fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
     let order = AiController::make_move_order(
         &Position {
@@ -241,6 +257,11 @@ fn goto_already_on_point_uses_original_animation_gate() {
 
         assert!(ai.already_on_point);
         assert!(ai.take_pending_orders().is_empty());
+
+        let mut speed_ai = AiController::new(1);
+        speed_ai.go_to_speed(ctx.position, GotoFlags::empty(), 1.5, &ctx);
+        assert!(speed_ai.already_on_point);
+        assert!(speed_ai.take_pending_orders().is_empty());
     }
 
     let ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUprightBored);
@@ -250,6 +271,12 @@ fn goto_already_on_point_uses_original_animation_gate() {
 
     assert!(!ai.already_on_point);
     assert_eq!(ai.take_pending_orders().len(), 1);
+
+    let running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+    let mut speed_ai = AiController::new(1);
+    speed_ai.go_to_speed(running_ctx.position, GotoFlags::empty(), 1.5, &running_ctx);
+    assert!(!speed_ai.already_on_point);
+    assert_eq!(speed_ai.take_pending_orders().len(), 1);
 }
 
 #[test]
@@ -354,6 +381,20 @@ fn face_to_same_direction_upright_non_waiting_states_launch_halting_turn() {
     }
 }
 
+#[test]
+fn face_direction_preserves_all_authored_isometric_sectors() {
+    for direction in 0..16 {
+        let mut ai = AiController::new(1);
+        let mut ctx = face_to_ctx(crate::element::ActionState::Moving);
+        ctx.direction = (direction + 8) & 15;
+
+        ai.face_direction(direction, &ctx);
+        let order = ai.take_pending_orders().pop().expect("queued Turn order");
+        assert_eq!(order.explicit_direction, Some(direction as i16));
+        assert!(!order.compute_direction);
+    }
+}
+
 // ──────────────────────────────────────────────────────────
 // init_state — initial-action gate
 // ──────────────────────────────────────────────────────────
@@ -369,6 +410,7 @@ fn init_state_waiting_upright_returns_go_to_duty() {
         let fx = ai.init_state(sim, &AiContext::default());
 
         assert!(fx.go_to_duty);
+        assert!(!fx.launch_wait);
         assert_eq!(ai.current_state, AiState::Default);
         assert_eq!(ai.current_substate, Substate::DefaultOnPost);
         assert!(fx.set_posture.is_none());
@@ -398,6 +440,7 @@ fn init_state_sleeping_upright_closes_eyes_and_emoticon() {
     assert_eq!(fx.set_eye_status, Some(EyeStatus::Closed));
     assert_eq!(fx.set_posture, Some(Posture::Upright));
     assert_eq!(fx.set_action_state, Some(ActionState::Sleeping));
+    assert!(fx.launch_wait);
 }
 
 #[test]
@@ -416,6 +459,7 @@ fn init_state_sitting_flags_likes_to_sit_around() {
         assert_eq!(ai.current_substate, Substate::DefaultOnPost);
         assert!(ai.likes_to_sit_around);
         assert_eq!(fx.set_posture, Some(crate::element::Posture::Sitting));
+        assert!(fx.launch_wait);
     });
 }
 
@@ -433,6 +477,7 @@ fn init_state_special_flags_special_action() {
     assert!(!fx.go_to_duty);
     assert!(ai.special_action);
     assert_eq!(fx.set_posture, Some(crate::element::Posture::Leisure));
+    assert!(fx.launch_wait);
 }
 
 #[test]

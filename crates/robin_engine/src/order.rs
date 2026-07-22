@@ -521,6 +521,11 @@ pub struct Order {
     pub target_actor: Option<u32>,
     /// Whether to compute facing direction from movement.
     pub compute_direction: bool,
+    /// Compatibility tag for AI turns queued during mission construction.
+    /// Those orders are already visible before Rust's first Hourglass, while
+    /// the original queues them during that first frame, so their first
+    /// visible Execute must not advance the body yet.
+    pub defer_initial_turn_step: bool,
     /// Tolerance for reaching the destination.
     pub tolerance: f32,
     /// Lock the AI while this order is being executed.
@@ -566,6 +571,7 @@ impl Order {
             target_y: y,
             target_actor: None,
             compute_direction: true,
+            defer_initial_turn_step: false,
             tolerance: 0.0,
             lock_ai: false,
             reverse: false,
@@ -660,6 +666,10 @@ pub struct AiOrderIntent {
     pub target_y: f32,
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
+    pub defer_initial_turn_step: bool,
+    /// Authored sector for `FaceTo(UWORD)`. Positional facing leaves this
+    /// unset and derives the sector from `target_x/y` instead.
+    pub explicit_direction: Option<i16>,
     pub tolerance: f32,
     pub lock_ai: bool,
     pub reverse: bool,
@@ -691,6 +701,8 @@ impl AiOrderIntent {
             target_y: y,
             target_actor: None,
             compute_direction: true,
+            defer_initial_turn_step: false,
+            explicit_direction: None,
             tolerance: 0.0,
             lock_ai: false,
             reverse: false,
@@ -708,6 +720,13 @@ impl AiOrderIntent {
         Self::new(OrderType::Turning, x, y)
     }
 
+    pub fn face_direction(direction: i16) -> Self {
+        let mut intent = Self::new(OrderType::Turning, 0.0, 0.0);
+        intent.compute_direction = false;
+        intent.explicit_direction = Some(direction);
+        intent
+    }
+
     /// Stamp an allocated `order_id` onto this intent to produce a
     /// real [`Order`].  Called by the AI drain site in
     /// `process_pending_ai_orders`.
@@ -718,6 +737,7 @@ impl AiOrderIntent {
             target_y: self.target_y,
             target_actor: self.target_actor,
             compute_direction: self.compute_direction,
+            defer_initial_turn_step: self.defer_initial_turn_step,
             tolerance: self.tolerance,
             lock_ai: self.lock_ai,
             reverse: self.reverse,

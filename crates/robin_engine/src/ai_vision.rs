@@ -319,7 +319,10 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
     }
 
     // Cone + LOS test.
-    if !is_detecting(q, dx, sy, sqr_distance_3d, fx, fy, false) {
+    // IsDetecting uses the stretched 3D norm to choose its close-range
+    // branch, but its cone determinants consume the raw world-space XY
+    // vector.  Do not leak the distance-only Y stretch into that geometry.
+    if !is_detecting(q, dx, dy, sqr_distance_3d, fx, fy, false) {
         return 0.0;
     }
 
@@ -447,7 +450,7 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
         q.target_los,
         None,
         dx,
-        sy,
+        dy,
         sqr_distance,
         fx,
         fy,
@@ -545,10 +548,9 @@ fn is_detecting_cone_and_los(
         // direction rotated by ±real_half_aperture.  Sides include
         // stare, drunk, and lean-out modifiers from `refresh_view`.
         //
-        // Coordinate-frame note: the sides are computed raw, while
-        // we feed the stretched `sy = dy * INVERSE_ASPECT_RATIO` for
-        // the view vector.  The two factors cancel, leaving the
-        // determinant signs (`< 0` / `> 0`) unchanged.
+        // The original constructs `viewVector` directly from the raw
+        // world-space X/Y delta for these determinants.  Its separately
+        // stretched 3D norm is used only to select this branch.
         let ha = real_half_aperture;
         let (lx, ly) = rotate_unit(fx, fy, -ha);
         let (rx, ry) = rotate_unit(fx, fy, ha);
@@ -566,10 +568,8 @@ fn is_detecting_cone_and_los(
         //     if diff in {12..4} (with wrap): LOS
         //     else:                           false
         //
-        // Subtlety: the sector lookup runs on the *stretched* view
-        // vector (Y already multiplied by INVERSE_ASPECT_RATIO).
-        // Since the iso helper re-applies that stretch a second
-        // time, feed the already-stretched `view_y` straight in.
+        // The sector lookup applies ASPECT_RATIO to the raw view vector,
+        // matching `viewVector.GetSector0to15(ASPECT_RATIO)`.
         let view_sector = crate::position_interface::vector_to_sector_0_to_15_iso(view_x, view_y);
         let diff = (view_sector - viewer_direction).rem_euclid(16);
         if matches!(diff, 0 | 1 | 2 | 3 | 4 | 12 | 13 | 14 | 15) {

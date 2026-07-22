@@ -23,7 +23,7 @@ use std::ops::Deref;
 use super::SimConfig;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, InputState, LevelAssets, LevelLoadStaging,
-    SideEffects,
+    SideEffects, SimulationRng,
 };
 use crate::campaign::Campaign;
 use crate::element::EntityId;
@@ -175,6 +175,9 @@ pub struct EngineArgs<'a> {
     /// SP↔MP-host divergence from RNG-consuming work between the
     /// two restore points.
     pub rng_seed: u64,
+    /// Optional raw libc `rand()` prefix for original-game parity tooling.
+    /// Normal game, replay, save, and multiplayer construction must use `None`.
+    pub original_rng_replay: Option<Vec<u32>>,
     /// Complete deterministic configuration captured before level setup.
     /// Keeping the existing [`SimConfig`] intact prevents construction,
     /// rollback, replay, and network adoption from rebuilding only a subset
@@ -235,6 +238,24 @@ impl Engine {
         Self::new_preserving_campaign(args).map_err(|(error, _campaign)| error)
     }
 
+    /// Append one original frame's raw RNG values to an active parity replay.
+    pub fn append_original_rng_replay(&mut self, draws: Vec<u32>) {
+        self.inner.control.rng.append_original_replay(draws);
+    }
+
+    /// Number of original raw RNG values consumed so far, when parity replay is active.
+    pub fn original_rng_replay_cursor(&self) -> Option<usize> {
+        self.inner.control.rng.original_replay_cursor()
+    }
+
+    /// Rust RNG sites which consumed a selected interval of original draws.
+    pub fn original_rng_replay_sites(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<Vec<crate::sim_rng::RngSite>> {
+        self.inner.control.rng.original_replay_sites(range)
+    }
+
     /// Create a fully-initialised engine while preserving ownership of the
     /// supplied campaign if mission ingestion fails.
     ///
@@ -255,6 +276,9 @@ impl Engine {
         // the cheat flag.  See `EngineArgs::rng_seed` /
         // `EngineArgs::sim_config` docs for the rationale.
         inner.restore_rng_from_seed(args.rng_seed);
+        if let Some(draws) = args.original_rng_replay {
+            inner.control.rng = SimulationRng::with_original_replay(draws);
+        }
         inner.set_golden_eye_mode(args.sim_config.golden_eye);
         if let Some(gm) = args.ground_mark_sprite {
             inner.set_ground_mark_sprite_data(
@@ -461,6 +485,7 @@ impl Engine {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed,
+            original_rng_replay: None,
             sim_config,
         })
     }
@@ -1260,6 +1285,7 @@ mod tests {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed: 0,
+            original_rng_replay: None,
             sim_config: SimConfig::default(),
         });
 

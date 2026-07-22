@@ -92,6 +92,14 @@ A list of which additional features we have added, which ones we might still wan
   and a separately typed seed-derived authoritative peasant-name generator,
   plus a structural source test, reject unreviewed gameplay RNG additions.
 
+- **Original-game parity traces**
+  (`crates/robin_rs/examples/original_parity_replay.rs`). A diagnostic runner
+  streams the neutral JSONL trace emitted by the instrumented C++ game,
+  applies its resolved player commands on the recorded frames, and compares
+  typed entity state using exact floating-point bits. Unsupported legacy
+  command values and malformed/non-contiguous traces fail loudly; the first
+  divergent frame is reported field-by-field.
+
 - **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
   seat IDs, input delay, rollback for late inputs, mission seed sync,
   state-hash desync detection, mid-mission state snapshots for joiners, and

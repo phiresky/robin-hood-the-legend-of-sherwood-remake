@@ -42,6 +42,22 @@ fn alerted_variant(anim: OrderType) -> Option<OrderType> {
     }
 }
 
+/// A non-movement sequence may begin by playing the exit transition for the
+/// actor's still-current moving action state. Original explicitly distinguishes
+/// this from the same order inside `RHSequenceElementMovement`: the former is
+/// driven by ordinary `Execute`/`PerformAction`, even though the actor remains
+/// `MOVING` until the transition completes.
+fn is_nonmovement_exit_from_moving(anim: OrderType) -> bool {
+    matches!(
+        anim,
+        OrderType::TransitionWalkingUprightWaitingUpright
+            | OrderType::TransitionRunningUprightWaitingUpright
+            | OrderType::TransitionWalkingAlertedWaitingAlerted
+            | OrderType::TransitionRunningAlertedWaitingAlerted
+            | OrderType::TransitionWalkingCrouchedWaitingCrouched
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,6 +65,20 @@ mod tests {
         ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementFx, ElementKind, Entity, FxData,
     };
     use crate::engine::EngineInner;
+
+    #[test]
+    fn generic_execute_accepts_nonmovement_exit_from_moving_state() {
+        assert!(is_nonmovement_exit_from_moving(
+            OrderType::TransitionWalkingUprightWaitingUpright
+        ));
+        assert!(is_nonmovement_exit_from_moving(
+            OrderType::TransitionRunningAlertedWaitingAlerted
+        ));
+        assert!(!is_nonmovement_exit_from_moving(
+            OrderType::TransitionWaitingUprightWalkingUpright
+        ));
+        assert!(!is_nonmovement_exit_from_moving(OrderType::Turning));
+    }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
         let mut entity = Entity::Soldier(ActorSoldier {
@@ -338,6 +368,32 @@ mod tests {
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::AimingWithBow
+        );
+    }
+
+    #[test]
+    fn bored_exit_completion_changes_pc_to_waiting() {
+        let mut entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        entity.actor_data_mut().unwrap().action_state = ActionState::Bored;
+
+        apply_active_animation_start_state_side_effect(
+            &mut entity,
+            OrderType::TransitionWaitingUprightBoredWaitingUpright,
+            MotionState::Done,
+        );
+
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::Waiting
         );
     }
 
@@ -1439,46 +1495,10 @@ pub(super) fn apply_npc_execute_side_effects(
             set_states(entity, Posture::Upright, ActionState::Waiting);
         }
 
-        // WAITING_UPRIGHT: START → (Upright, Waiting).
-        (OT::WaitingUpright, MS::Start) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
-        }
-
-        // WAITING_UPRIGHT_BORED: START → (Upright, Bored).
-        // The BORED ↔ BORED_RANDOM cycle is handled at do_next_order
-        // time (engine/mod.rs).
-        (OT::WaitingUprightBored, MS::Start) => {
-            set_states(entity, Posture::Upright, ActionState::Bored);
-        }
-
-        // TRANSITION_WAITING_UPRIGHT_BORED_WAITING_UPRIGHT:
-        // DONE / TERMINATED → (Upright, Waiting).
-        // This fires the moment a bored NPC gets interrupted
-        // (an attentive-mode trigger arrives) so the subsequent WAIT
-        // translate sees `action_state=Waiting` and picks
-        // `WAITING_ALERTED`.  Without this, the actor stayed in
-        // `action_state=Bored`, so the attentive-idle check in
-        // tick.rs Command::Wait fell through to
-        // `WAITING_UPRIGHT_BORED` — the soldier played the normal
-        // idle pose during reactiontime instead of the alerted
-        // lean-forward pose.
-        (OT::TransitionWaitingUprightBoredWaitingUpright, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
-        }
-
-        // TRANSITION_WAITING_UPRIGHT_WAITING_UPRIGHT_BORED:
-        // DONE / TERMINATED → (Upright, Bored).
-        // Symmetrical to the arm above, but usually reached via the
-        // idle random-bored-cycle path rather than an external
-        // interrupt.
-        (OT::TransitionWaitingUprightWaitingUprightBored, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Bored);
-        }
-
-        // WAITING_UPRIGHT_BORED_RANDOM: START → (Upright, Bored),
-        // plus officer-only eye-status.
+        // Base actor idle-state changes are applied by
+        // `apply_active_animation_start_state_side_effect`. The NPC override
+        // only adds the officer eye-status behavior here.
         (OT::WaitingUprightBoredRandom, MS::Start) => {
-            set_states(entity, Posture::Upright, ActionState::Bored);
             // Officer-only: LookToTheRight on START, LookForward on DONE.
             if entity
                 .enemy_ai()
@@ -1595,6 +1615,43 @@ fn apply_active_animation_start_state_side_effect(
     motion: MotionState,
 ) {
     match (anim_type, motion) {
+        (OrderType::WaitingUpright, MotionState::Start) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (
+            OrderType::WaitingUprightBored | OrderType::WaitingUprightBoredRandom,
+            MotionState::Start,
+        ) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Bored;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionWaitingUprightBoredWaitingUpright,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionWaitingUprightWaitingUprightBored,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Bored;
+            }
+            return;
+        }
         (
             OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous,
             MotionState::Start,
@@ -2970,6 +3027,20 @@ impl EngineInner {
         // `self.orders.sequence_manager` while iterating `self.world.entities`.
         let mut completion_outcomes = AnimCompletionOutcomes::default();
         let mut execute_result = None;
+        let nonmovement_exit_from_moving = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+            .and_then(|(seq_id, elem_idx, order)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .map(|element| {
+                        !element.data.is_movement()
+                            && is_nonmovement_exit_from_moving(order.order_type)
+                    })
+            })
+            .unwrap_or(false);
         let (
             principal_frames_from_now,
             drinking_ale_antagonist_active,
@@ -2990,7 +3061,7 @@ impl EngineInner {
                 )
             });
             if !entity.is_active()
-                || actor.action_state.is_moving()
+                || (actor.action_state.is_moving() && !nonmovement_exit_from_moving)
                 || matches!(
                     actor.action_state,
                     crate::element::ActionState::MovingSword
@@ -3053,13 +3124,6 @@ impl EngineInner {
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
-            if matches!(
-                cur_command,
-                Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor
-            ) {
-                return (Vec::new(), AnimCompletionOutcomes::default(), None);
-            }
-
             let principal_frames = if anim_type == OrderType::TransitionWaitingSwordParryingSwordLow
             {
                 entity
@@ -3247,7 +3311,7 @@ impl EngineInner {
                 // Keep this gate aligned with tick_entity_movement's
                 // own is_moving / sword / shield guard
                 // (movement.rs:2210).
-                if actor.action_state.is_moving()
+                if (actor.action_state.is_moving() && !nonmovement_exit_from_moving)
                     || matches!(
                         actor.action_state,
                         crate::element::ActionState::MovingSword
@@ -3276,18 +3340,32 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .current_order_for_actor(entity_id);
-                let (order_seq_elem, anim_type, order_id, order_antagonist, order_completion) =
-                    if let Some((seq_id, elem_idx, order)) = order_snapshot {
-                        (
-                            Some((seq_id, elem_idx)),
-                            order.order_type,
-                            Some(order.order_id),
-                            order.antagonist,
-                            Some(order.completion.clone()),
-                        )
-                    } else {
-                        (None, crate::order::OrderType::Invalid, None, None, None)
-                    };
+                let (
+                    order_seq_elem,
+                    anim_type,
+                    order_id,
+                    order_antagonist,
+                    order_completion,
+                    defer_initial_turn_step,
+                ) = if let Some((seq_id, elem_idx, order)) = order_snapshot {
+                    (
+                        Some((seq_id, elem_idx)),
+                        order.order_type,
+                        Some(order.order_id),
+                        order.antagonist,
+                        Some(order.completion.clone()),
+                        order.defer_initial_turn_step,
+                    )
+                } else {
+                    (
+                        None,
+                        crate::order::OrderType::Invalid,
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
+                };
                 if let Some((seq_id, elem_idx)) = order_seq_elem
                     && actor.active_shot.is_active()
                     && actor.active_shot.sequence_id == Some(seq_id)
@@ -3366,19 +3444,6 @@ impl EngineInner {
                 // perform_action; on completion, run side-effect
                 // helpers and fire the bound `OrderCompletion`.
                 if let Some((seq_id, elem_idx)) = order_seq_elem {
-                    if matches!(
-                        cur_command,
-                        Some(Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor)
-                    ) {
-                        // Movement elements are owned by
-                        // tick_entity_movement from their first order,
-                        // including startup transitions. The original
-                        // RHElementActor::Execute routes these orders to
-                        // PerformMotion; sending one through this generic
-                        // PerformAction path would stamp its order ID without
-                        // seeding the destination-backed motion state.
-                        break 'actor;
-                    }
                     tracing::trace!(
                         entity = entity_id.index(),
                         ?anim_type,
@@ -3459,7 +3524,16 @@ impl EngineInner {
                                 false,
                             );
                         }
-                        let still_turning = entity.position_iface_mut().turn_fast();
+                        // `RHElementActor::Execute(RHANIMATION_TURNING)` calls
+                        // Turn/TurnFast before PerformAction even on the first
+                        // execution of a newly initialized order.
+                        let still_turning = if order_is_initialising && defer_initial_turn_step {
+                            true
+                        } else if cur_command == Some(Command::TurnFast) {
+                            entity.position_iface_mut().turn_fast()
+                        } else {
+                            entity.position_iface_mut().turn()
+                        };
                         // PI is the single source of truth for direction —
                         // no sync needed now that `ElementData.direction`
                         // is gone.

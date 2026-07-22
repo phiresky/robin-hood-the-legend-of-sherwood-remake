@@ -266,6 +266,47 @@ fn soldier_upright_move_skips_auto_leave() {
     );
 }
 
+#[test]
+fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
+    use crate::element::{ActionState, Posture};
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut display = HostDisplayState::default();
+    let assets = LevelAssets::default();
+
+    // Mission/script initialization can make the actor execute an upright
+    // wait before AI InitState evaluates its authored initial animation.
+    engine.actor_wait(owner);
+    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+
+    {
+        let actor = engine.get_entity_mut(owner).expect("soldier present");
+        actor.set_posture(Posture::Sitting);
+        actor.actor_data_mut().expect("actor data").action_state = ActionState::Waiting;
+    }
+
+    // RHArtificialIntelligence::InitState calls Wait again after SetStates.
+    engine.actor_wait(owner);
+    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+
+    let order = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(owner)
+        .map(|(_, _, order)| order.order_type);
+    assert_eq!(order, Some(OrderType::Sitting));
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .expect("soldier present")
+            .element_data()
+            .posture,
+        Posture::Sitting
+    );
+}
+
 /// An attentive-mode transition on an idle soldier queues
 /// `TransitionWaitingUprightWaitingAlerted` as an order on the
 /// sequence element.

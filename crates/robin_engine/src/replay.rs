@@ -700,6 +700,7 @@ mod tests {
             ground_mark_sprite: None,
             titbit_row_frame_counts: Vec::new(),
             rng_seed,
+            original_rng_replay: None,
             sim_config,
         })
         .unwrap();

@@ -31,16 +31,29 @@ use super::{
 /// process-wide C RNG, and gameplay consumers call that shared `rand()`
 /// stream. Rust keeps ownership explicit so replay/save snapshots can carry
 /// the exact corresponding state.
-#[derive(Serialize, Deserialize)]
-#[serde(transparent)]
 pub(crate) struct SimulationRng {
-    #[serde(with = "simulation_rng_serde")]
     state: Arc<Mutex<fastrand::Rng>>,
+    original_replay: Option<Arc<Mutex<crate::sim_rng::OriginalRngReplay>>>,
 }
 
 impl Clone for SimulationRng {
     fn clone(&self) -> Self {
-        Self::with_seed(self.seed())
+        Self {
+            state: Arc::new(Mutex::new(
+                self.state
+                    .lock()
+                    .expect("simulation RNG mutex poisoned")
+                    .clone(),
+            )),
+            original_replay: self.original_replay.as_ref().map(|replay| {
+                Arc::new(Mutex::new(
+                    replay
+                        .lock()
+                        .expect("original RNG replay mutex poisoned")
+                        .clone(),
+                ))
+            }),
+        }
     }
 }
 
@@ -49,14 +62,27 @@ impl SimulationRng {
     pub(crate) fn with_seed(seed: u64) -> Self {
         Self {
             state: Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))),
+            original_replay: None,
         }
+    }
+
+    pub(crate) fn with_original_replay(draws: Vec<u32>) -> Self {
+        let mut rng = Self::with_seed(0);
+        rng.original_replay = Some(Arc::new(Mutex::new(
+            crate::sim_rng::OriginalRngReplay::new(draws),
+        )));
+        rng
     }
 
     pub(crate) fn context(
         &self,
         config: crate::engine::SimConfig,
     ) -> crate::sim_rng::SimulationContext {
-        crate::sim_rng::SimulationContext::new(Arc::clone(&self.state), config)
+        crate::sim_rng::SimulationContext::new(
+            Arc::clone(&self.state),
+            self.original_replay.as_ref().map(Arc::clone),
+            config,
+        )
     }
 
     pub(crate) fn seed(&self) -> u64 {
@@ -69,6 +95,54 @@ impl SimulationRng {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn reseed(&mut self, seed: u64) {
         *self.state.lock().expect("simulation RNG mutex poisoned") = fastrand::Rng::with_seed(seed);
+        self.original_replay = None;
+    }
+
+    pub(crate) fn append_original_replay(&mut self, draws: Vec<u32>) {
+        self.original_replay
+            .as_ref()
+            .expect("original RNG replay is not active")
+            .lock()
+            .expect("original RNG replay mutex poisoned")
+            .append(draws);
+    }
+
+    pub(crate) fn original_replay_cursor(&self) -> Option<usize> {
+        self.original_replay.as_ref().map(|replay| {
+            replay
+                .lock()
+                .expect("original RNG replay mutex poisoned")
+                .cursor()
+        })
+    }
+
+    pub(crate) fn original_replay_sites(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<Vec<crate::sim_rng::RngSite>> {
+        self.original_replay.as_ref().map(|replay| {
+            replay
+                .lock()
+                .expect("original RNG replay mutex poisoned")
+                .sites(range)
+        })
+    }
+}
+
+impl Serialize for SimulationRng {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.original_replay.is_some() {
+            return Err(serde::ser::Error::custom(
+                "original RNG parity replay cannot be serialized",
+            ));
+        }
+        self.seed().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SimulationRng {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        u64::deserialize(deserializer).map(Self::with_seed)
     }
 }
 
@@ -78,30 +152,12 @@ impl robin_util::state_hash::StateHash for SimulationRng {
             &*self.state.lock().expect("simulation RNG mutex poisoned"),
             hasher,
         );
-    }
-}
-
-mod simulation_rng_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::{Arc, Mutex};
-
-    pub(super) fn serialize<S: Serializer>(
-        state: &Arc<Mutex<fastrand::Rng>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        state
-            .lock()
-            .map_err(|_| serde::ser::Error::custom("simulation RNG mutex poisoned"))?
-            .get_seed()
-            .serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Arc<Mutex<fastrand::Rng>>, D::Error> {
-        let seed = u64::deserialize(deserializer)?;
-        #[allow(clippy::disallowed_methods)]
-        Ok(Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))))
+        if let Some(replay) = &self.original_replay {
+            replay
+                .lock()
+                .expect("original RNG replay mutex poisoned")
+                .state_hash(hasher);
+        }
     }
 }
 

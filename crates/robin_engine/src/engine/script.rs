@@ -3681,7 +3681,7 @@ impl EngineInner {
     }
 
     /// Apply the positioning side of `PutActorInBuilding`:
-    /// SetActive(false) (we use `hidden_in_building`), move to the
+    /// SetActive(false), mark hidden-in-building, move to the
     /// building's special layer + sector, teleport onto the first gate's
     /// `point_in`, and DisableAllActionsTemp for PCs.
     fn put_actor_in_building(&mut self, actor: i32, building: i32) {
@@ -3739,6 +3739,7 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(actor_id) {
             let elem = entity.element_data_mut();
             elem.hidden_in_building = true;
+            elem.active = false;
             elem.set_layer(special_layer);
             elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                 sector_num,
@@ -3792,6 +3793,7 @@ impl EngineInner {
                 {
                     let elem = carried_entity.element_data_mut();
                     elem.hidden_in_building = true;
+                    elem.active = false;
                     elem.set_layer(special_layer);
                     elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                         sector_num,
@@ -3838,7 +3840,9 @@ impl EngineInner {
                 let is_dead_or_ko = occ.is_dead() || hd.unconscious;
                 let has_carrier = hd.carrier.is_some();
                 if is_dead_or_ko && !has_carrier {
-                    occ.element_data_mut().hidden_in_building = false;
+                    let elem = occ.element_data_mut();
+                    elem.hidden_in_building = false;
+                    elem.active = true;
                 }
             }
         }

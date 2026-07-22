@@ -1733,7 +1733,29 @@ impl Sprite {
             self.initialize_motion_order(ctx);
         }
 
-        let state = self.perform_action(sim, order_id, anim, direction, progression, force_init);
+        let mut state =
+            self.perform_action(sim, order_id, anim, direction, progression, force_init);
+
+        // `PerformAction` reports a natural animation loop as Terminated.
+        // `RHSprite::PerformMotion` only observes that loop for
+        // TILL_LAST_FRAME orders; ordinary WALK/RUN motion keeps the order
+        // alive until its map destination is reached. Arrival is evaluated by
+        // the movement owner after applying this tick's distance.
+        if state == MotionState::Terminated && motion_method != MotionMethod::TillLastFrame {
+            state = MotionState::InProgress;
+        }
+
+        // PerformAction deliberately leaves a new order on frame_count
+        // 0xFFFF for its START tick. PerformMotion does not: the original
+        // initializes the order and then unconditionally calls
+        // IncrementFrame in the same invocation, making frame-zero distance
+        // available immediately. Keep the two entry points distinct.
+        if state == MotionState::Start {
+            let animation_finished = self.increment_frame(sim, progression);
+            if motion_method == MotionMethod::TillLastFrame && animation_finished {
+                state = MotionState::Terminated;
+            }
+        }
 
         let mut distance = self.current_frame_distance();
 
@@ -2468,6 +2490,80 @@ mod tests {
             "C++ RHSprite::PerformAction reports START without incrementing the new order"
         );
         assert_eq!(s.frame_count, 0xFFFF);
+    }
+
+    #[test]
+    fn perform_motion_start_tick_advances_and_emits_frame_zero_distance() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut sprite = make_test_sprite();
+        let order_id = std::num::NonZeroU32::new(1).unwrap();
+        let motion_order = MotionOrderContext {
+            order_id,
+            destination: MapPoint::new(100.0, 0.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+        };
+
+        let (state, distance) = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(state, MotionState::Start);
+        assert_eq!(sprite.current_frame, 0);
+        assert_eq!(sprite.frame_count, 0);
+        assert_eq!(distance, 3.0);
+    }
+
+    #[test]
+    fn perform_motion_walk_does_not_terminate_when_animation_loops() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut sprite = make_test_sprite();
+        let order_id = std::num::NonZeroU32::new(1).unwrap();
+        let motion_order = MotionOrderContext {
+            order_id,
+            destination: MapPoint::new(100.0, 0.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+        };
+
+        let _ = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+        sprite.current_frame = sprite.num_frames_for_row(sprite.current_row) - 1;
+        sprite.frame_count = sprite.wait_time(sprite.current_row, sprite.current_frame);
+
+        let (state, _) = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(state, MotionState::InProgress);
     }
 
     #[test]

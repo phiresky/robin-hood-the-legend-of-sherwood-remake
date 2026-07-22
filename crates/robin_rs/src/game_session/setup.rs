@@ -1470,6 +1470,7 @@ pub(super) fn load_level_and_sprite_bank(
             ground_mark_sprite,
             titbit_row_frame_counts,
             rng_seed,
+            original_rng_replay: None,
             sim_config,
         }) {
             Ok(engine) => engine,

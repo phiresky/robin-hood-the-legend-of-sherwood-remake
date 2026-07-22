@@ -24,15 +24,15 @@ pub struct SoundSimState {
     /// the audio backend's wall-clock playback completion is no longer
     /// what drives `finished_exclamations`.
     pub playing_exclamations: Vec<PlayingExclamation>,
-    /// Single/Volatile sound sources currently playing, with the (sim)
+    /// Single/Volatile/Delayed sound sources currently playing, with the (sim)
     /// frame on which the engine will apply their finish transition
     /// (`active = false` for Single, `sources.delete` for Volatile).
     /// Populated at activation time using the host-supplied
     /// `source_durations` table so rollback replay produces identical
     /// `sources` state without depending on the audio backend's wall-clock
-    /// playback-completion events. Looped and Delayed sources are
-    /// never scheduled here (Looped never finishes on its own; Delayed
-    /// re-rolls its timer sim-side in `perform_hourglass`).
+    /// playback-completion events. Looped sources are never scheduled;
+    /// Delayed sources use completion to re-roll their next timer, matching
+    /// the original `StopSoundSource` ordering.
     pub playing_sources: Vec<PlayingSource>,
     /// Source indices that were `active` at the last
     /// `SuspendAllSoundSources` call.  Populated by the

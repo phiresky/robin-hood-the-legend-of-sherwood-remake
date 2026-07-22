@@ -1647,15 +1647,34 @@ pub fn vector_to_sector_0_to_15(x: f32, y: f32) -> i16 {
     if x == 0.0 && y == 0.0 {
         return 0;
     }
-    // atan2 gives angle from positive X axis, counter-clockwise.
-    // We want 0 = north (neg Y), clockwise.
-    let angle = y.atan2(x); // radians, range (-π, π]
-    // Rotate so 0 = north: subtract π/2, then negate for CW
-    // sector = (angle + π/2) / (2π/16) = (angle + π/2) * 8/π
-    let sector =
-        ((angle + std::f32::consts::FRAC_PI_2) * 8.0 / std::f32::consts::PI).round() as i16;
-    // Wrap to 0..15
-    ((sector % 16) + 16) % 16
+    // Preserve `SBGeoVector2D::GetSector0to15`'s literal half-plane
+    // classifier. An atan/round implementation is mathematically similar but
+    // disagrees on f32 boundary vectors produced by anti-collision.
+    const SIN_PI_SIXTEENTH: f32 = 0.195_090_32;
+    const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
+    const TAN_PI_EIGHTH: f32 = 0.414_213_57;
+
+    let mut rotated_x = x * COS_PI_SIXTEENTH - y * SIN_PI_SIXTEENTH;
+    let mut rotated_y = x * SIN_PI_SIXTEENTH + y * COS_PI_SIXTEENTH;
+    let west = rotated_x < 0.0;
+    if west {
+        rotated_x = -rotated_x;
+    }
+    let south = rotated_y > 0.0;
+    if !south {
+        rotated_y = -rotated_y;
+    }
+    let east_west_quarter = rotated_y < rotated_x;
+    let skew_eighth = if east_west_quarter {
+        rotated_y > rotated_x * TAN_PI_EIGHTH
+    } else {
+        rotated_x > rotated_y * TAN_PI_EIGHTH
+    };
+
+    ((u8::from(west) << 3)
+        | (u8::from(west ^ south) << 2)
+        | (u8::from(west ^ south ^ east_west_quarter) << 1)
+        | u8::from(west ^ south ^ east_west_quarter ^ skew_eighth)) as i16
 }
 
 /// Convert a 2D vector `(x, y)` to a 16-sector [`Direction`].

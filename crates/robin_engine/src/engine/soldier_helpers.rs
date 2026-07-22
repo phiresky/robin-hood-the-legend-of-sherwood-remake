@@ -391,6 +391,36 @@ impl EngineInner {
         self.send_condolation_card(sim, dispatch.card, assets);
         self.drain_self_stimuli_for_npc(sim, card_owner, assets);
 
+        // A condolence Think can issue GoTo for the next patrol leg. C++
+        // LaunchSequenceElement immediately reaches the owner's Instruct
+        // path inside SendCondolationCard, before the terminating element's
+        // Ready() continuation resumes. Promote only this owner's newly
+        // queued move and drive its exact deferred InstructOwner action at
+        // the same boundary. Other owners' FIFO positions remain untouched.
+        let launched_moves = self.drain_pending_move_requests_for_owner(card_owner);
+        let mut active_scripts = Vec::new();
+        for sequence_id in launched_moves {
+            let action = self
+                .orders
+                .sequence_manager
+                .take_deferred_owner_action(card_owner, sequence_id, 0)
+                .unwrap_or_else(|detail| {
+                    panic!(
+                        "condolation owner {} Move dispatch failed: {detail}",
+                        card_owner.index()
+                    )
+                });
+            if let Some(action) = action {
+                self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "condolation owner {} synchronous Move dispatch failed: {error:?}",
+                            card_owner.index()
+                        )
+                    });
+            }
+        }
+
         // A SetState reached re-entrantly from SendCondolationCard belongs
         // inside that call. Close those cards before resuming this outer
         // SetState at Ready()/cascade.

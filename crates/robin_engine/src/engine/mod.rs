@@ -1075,6 +1075,14 @@ impl EngineInner {
         }
     }
 
+    /// Current animation/order type for parity diagnostics.
+    pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
+        self.orders
+            .sequence_manager
+            .current_order_for_actor(actor)
+            .map(|(_, _, order)| order.order_type)
+    }
+
     /// Render-time gate for the unconscious-stars titbit.
     ///
     /// Invoked from the titbit renderer to decide whether the stars
@@ -2451,6 +2459,15 @@ impl EngineInner {
         self.world.entities.occupied().map(|(_, entity)| entity)
     }
 
+    /// Iterate over all live entities together with their typed table IDs.
+    ///
+    /// Diagnostic tools that compare two independently-built simulations use
+    /// this to construct an isomorphism between entity tables; callers must
+    /// not assume that the returned IDs have meaning outside this engine.
+    pub fn entities_with_ids_iter(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
+        self.world.entities.occupied()
+    }
+
     /// Active entity positions for debug overlays.
     pub fn active_entity_positions(
         &self,
@@ -2999,10 +3016,9 @@ impl EngineInner {
     ///
     /// This runs whenever an order's animation completes with the
     /// default [`OrderCompletion::AdvanceElement`] hook.  When the
-    /// queue drains for a non-wait element, we terminate it and ensure
-    /// the owner has a fresh wait element running — matching the
-    /// Instruct cascade that `Wait()` performs on the next tick of an
-    /// actor with no current order.
+    /// queue drains for a non-wait element, we terminate it. The actor
+    /// Hourglass installs a fresh wait element at its next entry only when no
+    /// synchronous condolence/AI callback instructed a real successor.
     ///
     /// The BORED ↔ BORED_RANDOM idle cycle does NOT route through here
     /// — its Execute arm consumes the event in
@@ -3068,14 +3084,32 @@ impl EngineInner {
             return;
         }
 
-        // Queue exhausted.  Terminate the element + ensure the owner
-        // has a live wait element.
+        // Queue exhausted. RHElementActor::SendCondolationCard clears the
+        // current element's map goal before dropping mpSequenceElement and
+        // mpOrder. `do_next_order` is only called for the actor's selected
+        // current order, so perform that owner-side cleanup at the same
+        // terminal boundary before the Rust sequence registry removes it.
+        if let Some(owner) = owner {
+            self.world
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| {
+                    panic!("current order owner {owner:?} disappeared before terminal goal cleanup")
+                })
+                .element_data_mut()
+                .sprite
+                .position_iface
+                .set_map_goal(crate::coordinates::MapPoint::new(0.0, 0.0));
+        }
+
+        // Terminate the element. Do not eagerly install Wait here:
+        // RHElementActor::DoNextOrder calls SetState(TERMINATED), whose
+        // SendCondolationCard callback can synchronously instruct a real
+        // successor. The actor's next Hourglass entry supplies Wait only if
+        // that stack unwinds without one.
         self.orders
             .sequence_manager
             .element_terminated(seq_id, elem_idx);
-        if let Some(owner) = owner {
-            self.ensure_wait_element(owner);
-        }
     }
 
     /// Guarantee that `entity_id` has a live `Command::Wait` sequence
@@ -3137,25 +3171,15 @@ impl EngineInner {
             );
         }
 
-        // Snapshot posture + action_state into `after_transition` so
-        // the existing WAIT translate handler picks the posture-
-        // appropriate starting order (WAITING_UPRIGHT_BORED, SITTING,
-        // BEING_DEAD, …) — see tick.rs Command::Wait arm and
-        // soldier-override.
-        let (posture, action_state) = self
-            .get_entity(entity_id)
-            .map(|e| {
-                let posture = e.element_data().posture;
-                let action_state = e.actor_data().map(|a| a.action_state).unwrap_or_default();
-                (posture, action_state)
-            })
-            .unwrap_or_default();
-
         let mut elem = SequenceElement::new(1, crate::element::Command::Wait, Some(entity_id));
         elem.priority = SequencePriority::Wait;
-        elem.posture_after_transition = posture;
-        elem.action_state_after_transition = action_state;
-        self.orders.sequence_manager.launch_element(elem);
+        // RHElementActor::Wait launches this through the normal owned-element
+        // Instruct path.  That path stamps the current posture/action state
+        // and, crucially, prepends the Waiting -> Bored transition orders.
+        // Bypassing it made a freshly loaded upright NPC jump straight from
+        // its authored WAITING_UPRIGHT pose to WAITING_UPRIGHT_BORED on the
+        // first frame.
+        self.launch_element(elem);
     }
 
     /// Consume the typed motion-stage input and feed it into

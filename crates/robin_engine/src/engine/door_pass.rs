@@ -1218,7 +1218,9 @@ impl EngineInner {
                 }
                 // Re-show the actor sprite now that they've left the building.
                 let carried_to_unhide = if let Some(entity) = self.get_entity_mut(entity_id) {
-                    entity.element_data_mut().hidden_in_building = false;
+                    let elem = entity.element_data_mut();
+                    elem.hidden_in_building = false;
+                    elem.active = true;
                     // Carried corpse follows the carrier in/out of
                     // buildings — when the carrier becomes visible
                     // again, the carried entity must too.
@@ -1229,7 +1231,9 @@ impl EngineInner {
                 if let Some(carried_id) = carried_to_unhide
                     && let Some(carried) = self.get_entity_mut(carried_id)
                 {
-                    carried.element_data_mut().hidden_in_building = false;
+                    let elem = carried.element_data_mut();
+                    elem.hidden_in_building = false;
+                    elem.active = true;
                 }
                 // When the leaving actor is a PC, (a) recursively
                 // remove its carried actor (mirrors the Enter-side
@@ -1281,6 +1285,7 @@ impl EngineInner {
                             if !elem.hidden_in_building {
                                 elem.hidden_in_building = true;
                             }
+                            elem.active = false;
                         }
                     }
                 }
@@ -1423,7 +1428,9 @@ impl EngineInner {
             }
             // Hide the actor sprite inside the building.
             let carried_to_hide = if let Some(entity) = self.get_entity_mut(entity_id) {
-                entity.element_data_mut().hidden_in_building = true;
+                let elem = entity.element_data_mut();
+                elem.hidden_in_building = true;
+                elem.active = false;
                 // Special case: a PC carrying a corpse drags the body
                 // into the building too — also hidden.
                 entity.pc_data().and_then(|pc| pc.carried)
@@ -1433,7 +1440,9 @@ impl EngineInner {
             if let Some(carried_id) = carried_to_hide
                 && let Some(carried) = self.get_entity_mut(carried_id)
             {
-                carried.element_data_mut().hidden_in_building = true;
+                let elem = carried.element_data_mut();
+                elem.hidden_in_building = true;
+                elem.active = false;
             }
             // When the entering actor is a PC, (a) recursively enter
             // its carried actor — which adds it to the occupant list —
@@ -1474,7 +1483,9 @@ impl EngineInner {
                     let is_dead_or_ko = occ.is_dead() || hd.unconscious;
                     let has_carrier = hd.carrier.is_some();
                     if is_dead_or_ko && !has_carrier {
-                        occ.element_data_mut().hidden_in_building = false;
+                        let elem = occ.element_data_mut();
+                        elem.hidden_in_building = false;
+                        elem.active = true;
                     }
                 }
             }

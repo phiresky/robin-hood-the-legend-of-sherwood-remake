@@ -54,13 +54,14 @@ impl EngineInner {
     fn dispatch_prepared_move_instruction(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
     ) {
-        match self.try_dispatch_move_path(sim, owner, seq_id, elem_idx, dest, move_action) {
+        match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => {}
             MovePathOutcome::ActorGone => {
                 self.orders
@@ -1065,6 +1066,15 @@ impl WaitCommandContext<'_> {
             wait_element.command, command,
             "Wait translation owner {owner:?} dispatched {command:?} for {:?} at {seq_id:?}/{elem_idx}",
             wait_element.command
+        );
+        tracing::trace!(
+            ?owner,
+            ?command,
+            ?posture,
+            posture_after_transition = ?wait_element.posture_after_transition,
+            ?action_state,
+            action_state_after_transition = ?wait_element.action_state_after_transition,
+            "translating actor wait"
         );
         let after_state = wait_element.action_state_after_transition;
         let pc_posture_animation = if is_pc {

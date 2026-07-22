@@ -3239,7 +3239,9 @@ impl EngineInner {
                         let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
                         if is_dead || is_unconscious {
                             crate::engine::door_pass::start_hulk_on(target, 1.0);
-                            target.element_data_mut().hidden_in_building = false;
+                            let elem = target.element_data_mut();
+                            elem.hidden_in_building = false;
+                            elem.active = true;
                         }
                     }
                     tracing::debug!(

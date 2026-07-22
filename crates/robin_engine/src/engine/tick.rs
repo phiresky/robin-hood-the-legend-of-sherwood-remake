@@ -1327,13 +1327,10 @@ impl EngineInner {
                 frame_counter,
             );
         }
-        // Sound-source delay state machine — fully sim-side now: engine
-        // ticks the timer down, fires a `PlayDelayedSource` side-effect
-        // when it hits zero, and re-rolls the next delay using
-        // `sim_rng`. The host just consumes the command to kick off
-        // audio playback. Previously the timer reset lived host-side
-        // (driven by audio-backend completion + a host RNG), which
-        // broke rollback determinism.
+        // Sound-source delay state machine. Original queues playback at zero
+        // and re-rolls only when that playback finishes (`RHSound::StopSoundSource`),
+        // so keep a deterministic sim-side finish deadline rather than
+        // consuming gameplay RNG immediately when playback starts.
         let num_sources = self.feedback.sound_sim.sources.num_sources();
         for i in 0..num_sources {
             let Some(src) = self.feedback.sound_sim.sources.get_mut(i) else {
@@ -1346,21 +1343,23 @@ impl EngineInner {
                 src.timer -= 1;
             }
             if src.timer == 0 {
-                // Re-roll the next play delay before queueing the
-                // play command — the per-source delay is always reset
-                // immediately after a play decision.
-                if src.delay_stepping > 0 && src.max_delay > src.min_delay {
-                    let step = crate::sim_rng::u32(
-                        sim,
-                        crate::sim_rng::RngSite::DelayedSoundTimer,
-                        0..src.delay_stepping as u32,
-                    ) as u16;
-                    let range = src.max_delay - src.min_delay;
-                    src.timer = (step as u32 * range as u32 / src.delay_stepping as u32) as u16
-                        + src.min_delay;
-                } else {
-                    src.timer = src.min_delay;
+                if self
+                    .feedback
+                    .sound_sim
+                    .playing_sources
+                    .iter()
+                    .any(|playing| playing.source_index as usize == i)
+                {
+                    continue;
                 }
+                let duration = assets.source_durations.get(&src.id).copied().unwrap_or(0);
+                self.feedback
+                    .sound_sim
+                    .playing_sources
+                    .push(crate::sound::PlayingSource {
+                        source_index: i as u32,
+                        finish_frame: self.control.frame_counter + duration,
+                    });
                 self.feedback
                     .pending_side_effects
                     .sounds
@@ -1546,6 +1545,7 @@ impl EngineInner {
         let mut still_playing_sources = Vec::new();
         let mut source_deactivations: Vec<usize> = Vec::new();
         let mut source_deletions: Vec<usize> = Vec::new();
+        let mut delayed_restarts: Vec<usize> = Vec::new();
         for p in self.feedback.sound_sim.playing_sources.drain(..) {
             if p.finish_frame > cur_frame {
                 still_playing_sources.push(p);
@@ -1563,8 +1563,10 @@ impl EngineInner {
                 crate::sound_source::SoundSourceKind::Volatile => {
                     source_deletions.push(p.source_index as usize);
                 }
-                crate::sound_source::SoundSourceKind::Looped
-                | crate::sound_source::SoundSourceKind::Delayed => {
+                crate::sound_source::SoundSourceKind::Delayed => {
+                    delayed_restarts.push(p.source_index as usize);
+                }
+                crate::sound_source::SoundSourceKind::Looped => {
                     tracing::warn!(
                         source_index = p.source_index,
                         kind = ?src.source_kind,
@@ -1582,6 +1584,25 @@ impl EngineInner {
         }
         for idx in source_deletions {
             self.feedback.sound_sim.sources.delete(idx);
+        }
+        for idx in delayed_restarts {
+            let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) else {
+                continue;
+            };
+            if src.delay_stepping > 0 && src.max_delay > src.min_delay {
+                let seed = (u64::from(cur_frame) << 32) ^ (u64::from(src.id) << 8) ^ idx as u64;
+                let step = crate::sim_rng::with_auxiliary_seed(
+                    crate::sim_rng::AuxiliaryRngSite::DelayedSoundTimer,
+                    seed,
+                    |rng| rng.u32(0..u32::from(src.delay_stepping)),
+                ) as u16;
+                let range = src.max_delay - src.min_delay;
+                src.timer = (u32::from(step) * u32::from(range) / u32::from(src.delay_stepping))
+                    as u16
+                    + src.min_delay;
+            } else {
+                src.timer = src.min_delay;
+            }
         }
 
         // PC-guarded state drives start/quit mission widget enable and
@@ -2381,41 +2402,7 @@ impl EngineInner {
             &mut self.orders,
         )
         .take_completed();
-        match completed {
-            Some(CompletedPathWork::Ready { request, waypoints }) => {
-                if let Some(element) = self
-                    .orders
-                    .sequence_manager
-                    .get_element_mut(request.seq_id, request.elem_idx)
-                {
-                    element.command = crate::element::Command::MoveOk;
-                }
-                let _ = self.finish_move_path(sim, request, waypoints);
-            }
-            Some(CompletedPathWork::Failed(request)) => {
-                tracing::warn!(
-                    actor = ?request.owner,
-                    seq_id = ?request.seq_id,
-                    elem_idx = request.elem_idx,
-                    src_x = request.source.x,
-                    src_y = request.source.y,
-                    dst_x = request.dest.x,
-                    dst_y = request.dest.y,
-                    layer = request.layer,
-                    sector = request.sector,
-                    "path scheduling barrier: pathfind FAILED",
-                );
-                self.orders
-                    .failed_path_requests
-                    .push(super::movement::FailedPathRequest {
-                        owner: request.owner,
-                        seq_id: request.seq_id,
-                        elem_idx: request.elem_idx,
-                        first_fail_frame: self.control.frame_counter,
-                    });
-            }
-            None => {}
-        }
+        self.apply_completed_path_work(sim, completed);
 
         MovementContext::new(
             self.control.frame_counter,
@@ -2423,6 +2410,21 @@ impl EngineInner {
             &mut self.orders,
         )
         .start_next(assets);
+
+        // Deterministic synchronous pathfinding still observes the Original
+        // scheduling barrier: a request instructed at the sequence-manager
+        // tail is first visible here on the following frame. At this barrier
+        // its A* result is delivered immediately instead of being parked for
+        // another frame as an asynchronous worker result would be.
+        if sim.config().synchronous_pathfinding {
+            let completed = MovementContext::new(
+                self.control.frame_counter,
+                &mut self.world,
+                &mut self.orders,
+            )
+            .take_completed();
+            self.apply_completed_path_work(sim, completed);
+        }
 
         // ── Failed-path retry ────────────────────────────────────
         // Move / Seek elements whose pathfind failed on a previous
@@ -2496,6 +2498,48 @@ impl EngineInner {
                 amount,
                 amount,
             ));
+        }
+    }
+
+    fn apply_completed_path_work(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        completed: Option<CompletedPathWork>,
+    ) {
+        match completed {
+            Some(CompletedPathWork::Ready { request, waypoints }) => {
+                if let Some(element) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(request.seq_id, request.elem_idx)
+                {
+                    element.command = crate::element::Command::MoveOk;
+                }
+                let _ = self.finish_move_path(sim, request, waypoints);
+            }
+            Some(CompletedPathWork::Failed(request)) => {
+                tracing::warn!(
+                    actor = ?request.owner,
+                    seq_id = ?request.seq_id,
+                    elem_idx = request.elem_idx,
+                    src_x = request.source.x,
+                    src_y = request.source.y,
+                    dst_x = request.dest.x,
+                    dst_y = request.dest.y,
+                    layer = request.layer,
+                    sector = request.sector,
+                    "path scheduling barrier: pathfind FAILED",
+                );
+                self.orders
+                    .failed_path_requests
+                    .push(super::movement::FailedPathRequest {
+                        owner: request.owner,
+                        seq_id: request.seq_id,
+                        elem_idx: request.elem_idx,
+                        first_fail_frame: self.control.frame_counter,
+                    });
+            }
+            None => {}
         }
     }
 

@@ -19,6 +19,11 @@ pub struct InitStateSideEffects {
     /// `!ai_is_locked() && !ai_is_script_locked()` before actually
     /// calling `ReturnToDuty`.
     pub go_to_duty: bool,
+    /// Launch a fresh low-priority actor wait after applying the authored
+    /// posture/action state.  The original `InitState` does this for every
+    /// non-duty pose; replacing any pre-init idle element is required so its
+    /// translated animation uses the new posture.
+    pub launch_wait: bool,
     /// New posture — applied via
     /// `PositionInterface::set_posture` (+ a sync write-back to
     /// `ElementData::posture`).

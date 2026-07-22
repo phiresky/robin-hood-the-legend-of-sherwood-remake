@@ -292,6 +292,24 @@ fn queued_human_detection_stimuli(
 }
 
 impl EngineInner {
+    /// Reconstruct `RHElement::mulCreationOrder` for the static mission
+    /// entities stored in `marrayElements`.
+    ///
+    /// The Original constructs its projectile-trajectory helper and thirty
+    /// object masters before loading the first level entity. Those helpers
+    /// consume `gulCreationCounter` values but are never inserted into
+    /// `marrayElements`. Consequently a static mission NPC's creation order is
+    /// its table slot plus 31. Detection cadence is one of the places where
+    /// that hidden prefix, rather than the table index, is gameplay-visible.
+    fn original_static_creation_order(&self, entity_id: EntityId) -> u32 {
+        const PRE_LEVEL_ELEMENT_COUNT: u32 = 31;
+
+        entity_id
+            .index()
+            .checked_add(PRE_LEVEL_ELEMENT_COUNT)
+            .expect("original static creation order overflow")
+    }
+
     /// Original: `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest`.
     ///
     /// `RHElementActorSoldier::Hourglass` calls this before the NPC detection
@@ -842,7 +860,8 @@ impl EngineInner {
         if matches!(current_state, AiState::Attacking) {
             return;
         }
-        let modified_frame = universal_frame.wrapping_add(npc_id.index());
+        let modified_frame =
+            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
         if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
             return;
         }
@@ -1485,11 +1504,11 @@ impl EngineInner {
             self.sight_obstacles(assets),
             None,
         );
-        // Per-NPC frame-counter phase offset so not every NPC
-        // re-runs detection on the same tick.  EntityId (monotonic
-        // slot index, never reused) stands in for the creation
-        // counter directly.
-        let modified_frame = universal_frame.wrapping_add(npc_id.index());
+        // Per-NPC frame-counter phase offset so not every NPC re-runs
+        // detection on the same tick. The Original keys this with the
+        // entity's creation order, not its current marrayElements slot.
+        let modified_frame =
+            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
         // Lacklandist ComputeVisibility lets Stare / Follow and non-Green
         // alert status bypass the per-entry cadence. Original's Royalist arm
         // never consults this flag and remains strictly modulo-16.
@@ -3202,7 +3221,8 @@ impl EngineInner {
                 .collect()
         };
         // Per-NPC frame phase offset.
-        let modified_frame = universal_frame.wrapping_add(npc_id.index());
+        let modified_frame =
+            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
 
         // refresh-always gate: Stare / Follow eye status and alert
         // levels above Green force the per-type frequency gate open

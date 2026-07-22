@@ -28,7 +28,7 @@
 //! - Focused tests and tools construct a standalone [`SimulationContext`] with
 //!   [`SimulationContext::with_seed`].
 
-use std::ops::RangeBounds;
+use std::ops::{Bound, RangeBounds};
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
@@ -42,12 +42,21 @@ use std::cell::RefCell;
 /// owner, never on the capability.
 pub struct SimulationContext {
     rng: Arc<Mutex<fastrand::Rng>>,
+    original_replay: Option<Arc<Mutex<OriginalRngReplay>>>,
     config: crate::engine::SimConfig,
 }
 
 impl SimulationContext {
-    pub(crate) fn new(rng: Arc<Mutex<fastrand::Rng>>, config: crate::engine::SimConfig) -> Self {
-        Self { rng, config }
+    pub(crate) fn new(
+        rng: Arc<Mutex<fastrand::Rng>>,
+        original_replay: Option<Arc<Mutex<OriginalRngReplay>>>,
+        config: crate::engine::SimConfig,
+    ) -> Self {
+        Self {
+            rng,
+            original_replay,
+            config,
+        }
     }
 
     #[allow(clippy::disallowed_methods)]
@@ -59,6 +68,7 @@ impl SimulationContext {
     pub fn with_seed_and_config(seed: u64, config: crate::engine::SimConfig) -> Self {
         Self {
             rng: Arc::new(Mutex::new(fastrand::Rng::with_seed(seed))),
+            original_replay: None,
             config,
         }
     }
@@ -72,6 +82,61 @@ impl SimulationContext {
             .lock()
             .expect("simulation RNG mutex poisoned")
             .get_seed()
+    }
+}
+
+/// Raw libc `rand()` values supplied by an original-game parity trace.
+///
+/// This is a diagnostic execution mode, not a replacement saved-game RNG.
+/// Every Rust authoritative draw consumes exactly one value in global order;
+/// the parity runner checks the cursor at every original frame boundary.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OriginalRngReplay {
+    draws: Vec<u32>,
+    cursor: usize,
+    sites: Vec<RngSite>,
+}
+
+impl OriginalRngReplay {
+    pub fn new(draws: Vec<u32>) -> Self {
+        Self {
+            draws,
+            cursor: 0,
+            sites: Vec::new(),
+        }
+    }
+
+    pub fn append(&mut self, draws: impl IntoIterator<Item = u32>) {
+        self.draws.extend(draws);
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn sites(&self, range: std::ops::Range<usize>) -> Vec<RngSite> {
+        self.sites
+            .get(range.clone())
+            .unwrap_or_else(|| panic!("RNG site history does not contain {range:?}"))
+            .to_vec()
+    }
+
+    fn draw(&mut self, site: RngSite) -> u32 {
+        let index = self.cursor;
+        let value = *self.draws.get(index).unwrap_or_else(|| {
+            panic!("original RNG replay exhausted at draw {index} requested by {site:?}")
+        });
+        self.cursor += 1;
+        self.sites.push(site);
+        value
+    }
+
+    pub(crate) fn state_hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
+        std::hash::Hash::hash(&self.draws, hasher);
+        std::hash::Hash::hash(&self.cursor, hasher);
+        for site in &self.sites {
+            std::hash::Hash::hash(&std::mem::discriminant(site), hasher);
+        }
     }
 }
 
@@ -93,7 +158,9 @@ pub(crate) fn test_context() -> SimulationContext {
 /// test at the bottom of this module compares their structural use against
 /// `docs/RNG_AUDIT.md`, so adding or moving gameplay randomness requires an
 /// explicit review rather than an unlabelled call to a generic RNG helper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum_macros::EnumIter,
+)]
 pub enum RngSite {
     LuaMathRandom,
     SwordDamageProtection,
@@ -177,7 +244,6 @@ pub enum RngSite {
     WriggleDirection,
     BoredAnimationChoice,
     NetWriggleGate,
-    DelayedSoundTimer,
     DrunkenPathDeviation,
     TitbitUpdate,
 }
@@ -191,6 +257,7 @@ pub enum RngSite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::EnumIter)]
 pub enum AuxiliaryRngSite {
     PeasantNames,
+    DelayedSoundTimer,
 }
 
 #[cfg(test)]
@@ -236,42 +303,140 @@ fn with_rng<R>(
     f(&mut context.rng.lock().expect("simulation RNG mutex poisoned"))
 }
 
+fn original_draw(context: &SimulationContext, site: RngSite) -> Option<u32> {
+    context.original_replay.as_ref().map(|replay| {
+        replay
+            .lock()
+            .expect("original RNG replay mutex poisoned")
+            .draw(site)
+    })
+}
+
+fn unsigned_bounds<T>(range: &impl RangeBounds<T>, max: u64) -> (u64, u64)
+where
+    T: Copy + Into<u64>,
+{
+    let start = match range.start_bound() {
+        Bound::Included(value) => (*value).into(),
+        Bound::Excluded(value) => (*value).into() + 1,
+        Bound::Unbounded => 0,
+    };
+    let end = match range.end_bound() {
+        Bound::Included(value) => (*value).into() + 1,
+        Bound::Excluded(value) => (*value).into(),
+        Bound::Unbounded => max + 1,
+    };
+    assert!(start < end, "empty RNG range {start}..{end}");
+    (start, end)
+}
+
+fn replay_unsigned(raw: u32, start: u64, end: u64) -> u64 {
+    start + u64::from(raw) % (end - start)
+}
+
 // ─── Range helpers (mirror fastrand's API) ───────────────────────────
 
 pub fn u32(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u32>) -> u32 {
+    if let Some(raw) = original_draw(context, site) {
+        let (start, end) = unsigned_bounds(&range, u64::from(u32::MAX));
+        return replay_unsigned(raw, start, end) as u32;
+    }
     with_rng(context, site, |rng| rng.u32(range))
 }
 
 pub fn i32(context: &SimulationContext, site: RngSite, range: impl RangeBounds<i32>) -> i32 {
+    if let Some(raw) = original_draw(context, site) {
+        let start = match range.start_bound() {
+            Bound::Included(value) => i64::from(*value),
+            Bound::Excluded(value) => i64::from(*value) + 1,
+            Bound::Unbounded => i64::from(i32::MIN),
+        };
+        let end = match range.end_bound() {
+            Bound::Included(value) => i64::from(*value) + 1,
+            Bound::Excluded(value) => i64::from(*value),
+            Bound::Unbounded => i64::from(i32::MAX) + 1,
+        };
+        assert!(start < end, "empty RNG range {start}..{end}");
+        return (start + i64::from(raw) % (end - start)) as i32;
+    }
     with_rng(context, site, |rng| rng.i32(range))
 }
 
 pub fn u16(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u16>) -> u16 {
+    if let Some(raw) = original_draw(context, site) {
+        let (start, end) = unsigned_bounds(&range, u64::from(u16::MAX));
+        return replay_unsigned(raw, start, end) as u16;
+    }
     with_rng(context, site, |rng| rng.u16(range))
 }
 
 pub fn u8(context: &SimulationContext, site: RngSite, range: impl RangeBounds<u8>) -> u8 {
+    if let Some(raw) = original_draw(context, site) {
+        let (start, end) = unsigned_bounds(&range, u64::from(u8::MAX));
+        return replay_unsigned(raw, start, end) as u8;
+    }
     with_rng(context, site, |rng| rng.u8(range))
 }
 
 pub fn i16(context: &SimulationContext, site: RngSite, range: impl RangeBounds<i16>) -> i16 {
+    if let Some(raw) = original_draw(context, site) {
+        let start = match range.start_bound() {
+            Bound::Included(value) => i32::from(*value),
+            Bound::Excluded(value) => i32::from(*value) + 1,
+            Bound::Unbounded => i32::from(i16::MIN),
+        };
+        let end = match range.end_bound() {
+            Bound::Included(value) => i32::from(*value) + 1,
+            Bound::Excluded(value) => i32::from(*value),
+            Bound::Unbounded => i32::from(i16::MAX) + 1,
+        };
+        assert!(start < end, "empty RNG range {start}..{end}");
+        return (start + (raw % (end - start) as u32) as i32) as i16;
+    }
     with_rng(context, site, |rng| rng.i16(range))
 }
 
 pub fn usize(context: &SimulationContext, site: RngSite, range: impl RangeBounds<usize>) -> usize {
+    if let Some(raw) = original_draw(context, site) {
+        let start = match range.start_bound() {
+            Bound::Included(value) => *value,
+            Bound::Excluded(value) => value.checked_add(1).expect("RNG range start overflow"),
+            Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            Bound::Included(value) => value.checked_add(1).expect("RNG range end overflow"),
+            Bound::Excluded(value) => *value,
+            Bound::Unbounded => usize::MAX,
+        };
+        assert!(start < end, "empty RNG range {start}..{end}");
+        return start + raw as usize % (end - start);
+    }
     with_rng(context, site, |rng| rng.usize(range))
 }
 
 pub fn bool(context: &SimulationContext, site: RngSite) -> bool {
+    if let Some(raw) = original_draw(context, site) {
+        return raw % 2 != 0;
+    }
     with_rng(context, site, |rng| rng.bool())
 }
 
 pub fn f32(context: &SimulationContext, site: RngSite) -> f32 {
+    if let Some(raw) = original_draw(context, site) {
+        return raw as f32 / 2_147_483_647.0;
+    }
     with_rng(context, site, |rng| rng.f32())
 }
 
 /// Shuffle a slice in-place using the simulation RNG.
 pub fn shuffle<T>(context: &SimulationContext, site: RngSite, slice: &mut [T]) {
+    if context.original_replay.is_some() {
+        for upper in (1..slice.len()).rev() {
+            let selected = usize(context, site, 0..=upper);
+            slice.swap(upper, selected);
+        }
+        return;
+    }
     with_rng(context, site, |rng| rng.shuffle(slice));
 }
 
@@ -281,6 +446,9 @@ pub fn shuffle<T>(context: &SimulationContext, site: RngSite, slice: &mut [T]) {
 /// floating-point call sites.  We retain those range semantics without
 /// attempting to reproduce the libc output sequence.
 pub fn c_rand_unit_inclusive(context: &SimulationContext, site: RngSite) -> f32 {
+    if let Some(raw) = original_draw(context, site) {
+        return raw as f32 / 2_147_483_647.0;
+    }
     u16(context, site, 0..=32767) as f32 / 32767.0
 }
 
@@ -365,7 +533,6 @@ mod tests {
         ("CombatObserveSideStep", 1),
         ("CombatReposition", 1),
         ("DefaultPostLook", 1),
-        ("DelayedSoundTimer", 1),
         ("DoorFightDispersion", 2),
         ("DoorFightTarget", 1),
         ("DrunkCombatFreeze", 2),

@@ -393,18 +393,11 @@ pub enum Substate {
     AttackingChargingEnemy,
     AttackingOverviewLookLeft,
     AttackingOverviewLookRight,
-    // NOTE: a `SUBSTATE_ATTACKING_SWORDFIGHT_SPECIAL_STRIKE` variant
-    // intentionally does NOT exist between `AttackingSwordfight` and
-    // `AttackingSwordfightParade`. Such a substate would duplicate
-    // information already owned by the sequence manager (the pending
-    // strike sequence), leaving two sources of truth that could wedge out
-    // of sync when the sequence was interrupted before firing EVENT_DONE.
-    // The "in the middle of a special strike" condition is derived from
-    // `EnemyAi::pending_special_strike`, which is tied to the sequence's
-    // lifetime via per-tick reconciliation in
-    // `engine/melee.rs::tick_enemy_sword_attacks`. The NPC stays in
-    // `AttackingSwordfight` for the whole strike.
     AttackingSwordfight,
+    /// Original numeric substate retained even though the current combat
+    /// implementation also tracks the pending strike sequence explicitly.
+    /// Omitting it shifts every subsequent legacy substate discriminant.
+    AttackingSwordfightSpecialStrike,
     AttackingSwordfightParade,
     AttackingQuittingSwordfight,
     AttackingReserve,
@@ -616,6 +609,9 @@ impl Substate {
             WonderingBrawlGotHit => "SUBSTATE-WONDERING-BRAWL-GOTHIT".to_string(),
             SeekingBodyAwakeningSleeperr => "SUBSTATE-SEEKING-BODY-AWAKENING-SLEEPER".to_string(),
             AttackingSwordfight => "SUBSTATE-ATTACKING-SWORDFIGHT".to_string(),
+            AttackingSwordfightSpecialStrike => {
+                "SUBSTATE-ATTACKING-SWORDFIGHT-SPECIAL-STRIKE".to_string()
+            }
             AttackingSwordfightParade => "SUBSTATE-ATTACKING-SWORDFIGHT-PARADE".to_string(),
             AttackingQuittingSwordfight => "SUBSTATE-ATTACKING-QUITTING-SWORDFIGHT".to_string(),
             AttackingSwordfightStepBack => "SUBSTATE-ATTACKING-SWORDFIGHT-STEP-BACK".to_string(),
@@ -655,6 +651,7 @@ impl Substate {
                 | Self::AttackingWalkingToEnemy
                 | Self::AttackingChargingEnemy
                 | Self::AttackingSwordfight
+                | Self::AttackingSwordfightSpecialStrike
                 | Self::AttackingSwordfightParade
                 | Self::AttackingApproachingNewEnemy
                 | Self::AttackingSwordfightStepBack
@@ -667,6 +664,7 @@ impl Substate {
         matches!(
             self,
             Self::AttackingSwordfight
+                | Self::AttackingSwordfightSpecialStrike
                 | Self::AttackingSwordfightParade
                 | Self::AttackingApproachingNewEnemy
                 | Self::AttackingSwordfightStepBack

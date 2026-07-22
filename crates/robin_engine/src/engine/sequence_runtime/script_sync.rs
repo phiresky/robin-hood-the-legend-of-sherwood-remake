@@ -344,6 +344,7 @@ impl EngineInner {
 
         self.dispatch_prepared_move_instruction(
             sim,
+            assets,
             owner,
             sequence_id,
             element_index,

@@ -3564,10 +3564,14 @@ impl EngineInner {
             *speed_factor = intent.speed_factor;
         }
 
-        // Use the engine wrapper so posture stamping + synchronous
-        // arbitrate_instruct + generate_transition fire on the
-        // standard Instruct path.
-        let sequence_id = self.launch_element(elem);
+        // Promotion creates the Original sequence-manager work item but does
+        // not run the owner's Instruct yet. Normal frame and patrol drains
+        // leave it queued until SequenceManager::Hourglass; script-native and
+        // condolence call sites that require re-entrant dispatch explicitly
+        // take this exact deferred action immediately after this returns.
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(elem);
+        let sequence_id = self.launch_sequence(sequence);
 
         tracing::trace!(
             entity = ?entity_id,
@@ -4541,7 +4545,6 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .map(|e| e.orders.len() <= 1)
                     .unwrap_or(true);
-
                 // Use the animation from the active door-pass Walk step.
                 let door_pass_anim: Option<OrderType> =
                     actor.active_door_pass.as_ref().map(|dp| dp.current_action);
@@ -4573,6 +4576,8 @@ impl EngineInner {
             }
 
             let elem = entity.element_data_mut();
+            let motion_order_is_new = order_id
+                .is_some_and(|order_id| elem.sprite.last_processed_order_id != order_id.get());
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
             let dist = (dx * dx + dy * dy).sqrt();
@@ -4611,8 +4616,17 @@ impl EngineInner {
                         elem.set_direction_goal(vector_to_sector_0_to_15(fdx, fdy));
                     }
                 }
-            } else if dist > 0.01 && order_compute_direction {
-                // Normal movement: face movement direction.  Use
+            } else if dist > 0.01
+                && order_compute_direction
+                && !motion_order_is_new
+                && !elem.sprite.position_iface.is_deviated()
+            {
+                // Normal movement: face movement direction. On a new order,
+                // leave the previous goal intact until PerformMotion's
+                // InitializeMotionOrder/ComputeIncrementAll step below: the
+                // Original calls Turn() before that initialization, so its
+                // first START tick cannot rotate toward the new destination.
+                // On subsequent ticks, use
                 // `set_direction_goal` (not instant) so the per-frame
                 // turn rotates one sector per tick toward the movement
                 // vector.  Paired with the 0.6× turn-slowdown in
@@ -4975,7 +4989,7 @@ impl EngineInner {
             // motion terminates; folding it into MotionMethod::Fast would
             // over-rotate on that terminal tick and cannot expose the first
             // call's termination barrier.
-            let mut still_turning = elem.sprite.position_iface.turn();
+            let _ = elem.sprite.position_iface.turn();
             // The "already at destination" short-circuit needs the
             // predicate routed into `perform_motion`.  Keep a 0.01
             // epsilon to absorb any prior anti-collision jitter that
@@ -4994,7 +5008,7 @@ impl EngineInner {
                 dest_already_at_pos,
             );
             if fast_climb_motion && motion_state != MotionState::Terminated {
-                still_turning |= sprite.position_iface.turn();
+                let _ = sprite.position_iface.turn();
                 let (second_state, second_distance) = sprite.perform_motion(
                     sim,
                     motion_order,
@@ -5011,11 +5025,6 @@ impl EngineInner {
             executed_sword_movement = is_sword_motion;
             if is_pc {
                 executed_pc_movement_actions.push((entity_id, order_action));
-            }
-            if let Some((posture, action_state)) =
-                movement_execute_state_effect(order_action, motion_state)
-            {
-                movement_state_effects.push((entity_id, posture, action_state));
             }
             if matches!(motion_state, MotionState::Start) && is_sword_motion {
                 sword_movement_starts.push(entity_id);
@@ -5058,13 +5067,58 @@ impl EngineInner {
             // omitted here — this walking loop doesn't run
             // `MotionMethod::Drunken`.
             let mut frame_dist = frame_dist_raw;
-            if still_turning && frame_dist > 0.0 {
+            // PerformMotion initializes a new order's direction goal after
+            // the caller's Turn() above. The slowdown test in the Original
+            // happens later and reads the now-live direction/goal pair, so
+            // it applies even though the pre-initialization Turn was a no-op.
+            let direction_differs_from_goal =
+                sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
+            if direction_differs_from_goal && frame_dist > 0.0 {
                 frame_dist *= 0.6;
                 if frame_dist < 0.7 {
                     frame_dist = 0.7;
                 }
             }
-            let speed = frame_dist * speed_factor;
+            // Transition Execute arms call `PerformMotion(...,
+            // RHMOTIONMETHOD_TILL_LAST_FRAME)` without passing the movement
+            // element's speed factor, so C++ uses the default 1.0. Patrol
+            // formation factors only scale the subsequent Walk/Run orders.
+            let speed = frame_dist
+                * if is_transition_anim {
+                    1.0
+                } else {
+                    speed_factor
+                };
+            // PerformMotion applies the distance before returning its motion
+            // state. A fresh walking order that reaches its goal on that same
+            // invocation returns TERMINATED, not START, so the walking
+            // Execute arm does not enter the Moving action state. Our
+            // position update is staged below; fold that imminent arrival
+            // into the state-effect result now.
+            let state_effect_motion = if !is_transition_anim
+                && matches!(motion_state, MotionState::Start)
+                && dist <= speed
+            {
+                MotionState::Terminated
+            } else {
+                motion_state
+            };
+            tracing::trace!(
+                entity = ?entity_id,
+                frame = self.control.frame_counter,
+                ?order_action,
+                ?motion_state,
+                ?state_effect_motion,
+                action_state = ?action_state,
+                sprite_frame = sprite.current_frame,
+                sprite_counter = sprite.frame_count,
+                "movement Execute result"
+            );
+            if let Some((posture, action_state)) =
+                movement_execute_state_effect(order_action, state_effect_motion)
+            {
+                movement_state_effects.push((entity_id, posture, action_state));
+            }
 
             if door_pass_anim.is_some()
                 && matches!(
@@ -5137,6 +5191,51 @@ impl EngineInner {
                     elem.update_grid_cell();
                 }
                 if matches!(motion_state, MotionState::Terminated) {
+                    // TillLastFrame can exhaust its animation before its
+                    // distance target is reached (notably the short
+                    // Waiting→Walking startup transition). The Original does
+                    // not discard that remaining distance: it copies the
+                    // current order at the first following animation change,
+                    // changes the copy to that next animation, then retires
+                    // the exhausted transition. This keeps the copied order's
+                    // old target as a one-tick continuation.
+                    let transition_goal_reached = entity
+                        .element_data()
+                        .sprite
+                        .position_iface
+                        .is_goal_reached(&self.world.fast_grid, None);
+                    if !transition_goal_reached {
+                        let next_order_id = &mut self.orders.next_order_id;
+                        if let Some(element) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(move_seq_id, move_elem_idx)
+                        {
+                            let current_action = element
+                                .orders
+                                .front()
+                                .expect("terminated movement transition lost its current order")
+                                .order_type;
+                            let next_animation = element
+                                .orders
+                                .iter()
+                                .enumerate()
+                                .skip(1)
+                                .find(|(_, order)| {
+                                    order.order_type != current_action
+                                        && (order.target_x != 0.0 || order.target_y != 0.0)
+                                })
+                                .map(|(index, order)| (index, order.order_type));
+                            if let Some((insertion, animation)) = next_animation {
+                                let mut continuation = element.orders.front().unwrap().clone();
+                                continuation.order_type = animation;
+                                continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
+                                element.insert_order(insertion, continuation);
+                            } else {
+                                element.orders.truncate(1);
+                            }
+                        }
+                    }
                     let eid = entity_id;
                     if is_final_waypoint
                         && is_sword_motion
@@ -5735,18 +5834,13 @@ impl EngineInner {
                             // new current, which the animation driver
                             // will play next tick.
                             actor.clear_path();
-                            // Flip action_state to Waiting so any
-                            // pending end-transition order on the
-                            // Move element gets picked up by the
-                            // animation driver (gated on
-                            // `!is_moving()`).  Preserves sword state
-                            // for combat exits.
-                            actor.action_state =
-                                if is_swordfighting || actor.action_state.is_sword() {
-                                    crate::element::ActionState::WaitingSword
-                                } else {
-                                    crate::element::ActionState::Waiting
-                                };
+                            // Keep the movement action state until an
+                            // optional end transition actually finishes.
+                            // RHElementActor's walking Execute arm leaves
+                            // MOVING unchanged on RHMOTION_TERMINATED; the
+                            // transition-to-waiting arm performs the state
+                            // change itself.  With NO_TRANSITIONS there is
+                            // deliberately no waiting-state rewrite here.
                             actor.active_movement.clear();
                             actor.active_door_pass = None;
                             if is_sword_motion && let Some(human) = entity.human_data_mut() {
@@ -5784,53 +5878,80 @@ impl EngineInner {
                     (*pi.get_move_box(), pi.get_half_diagonal())
                 };
 
-                let (dx_step, dy_step) = if let Some(mover_snap) =
-                    anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
-                {
-                    let pi = entity.position_iface_mut();
-                    let mut state = super::anti_collision::AntiCollisionState {
-                        pi,
-                        move_box,
-                        half_diagonal,
-                        goal_map,
+                let (dx_step, dy_step, deviated, recovered_from_deviation) =
+                    if let Some(mover_snap) =
+                        anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                    {
+                        let pi = entity.position_iface_mut();
+                        let was_deviated = pi.is_deviated();
+                        let mut state = super::anti_collision::AntiCollisionState {
+                            pi,
+                            move_box,
+                            half_diagonal,
+                            goal_map,
+                        };
+                        let (dx_step, dy_step) = super::anti_collision::apply_anti_collision_step(
+                            mover_snap,
+                            anti_snapshots.as_slice(),
+                            &self.ai.global.repulsive_points,
+                            prepared
+                                .mobile_points_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            prepared
+                                .mobile_lines_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            prepared
+                                .mobile_polygons_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            Some(&self.world.fast_grid),
+                            Some(&mut state),
+                            nx,
+                            ny,
+                            speed,
+                            anti_on,
+                        );
+                        (
+                            dx_step,
+                            dy_step,
+                            state.pi.is_deviated(),
+                            was_deviated && !state.pi.is_deviated(),
+                        )
+                    } else {
+                        (nx * speed, ny * speed, false, false)
                     };
-                    super::anti_collision::apply_anti_collision_step(
-                        mover_snap,
-                        anti_snapshots.as_slice(),
-                        &self.ai.global.repulsive_points,
-                        prepared
-                            .mobile_points_by_layer
-                            .get(&mover_snap.layer)
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]),
-                        prepared
-                            .mobile_lines_by_layer
-                            .get(&mover_snap.layer)
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]),
-                        prepared
-                            .mobile_polygons_by_layer
-                            .get(&mover_snap.layer)
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]),
-                        Some(&self.world.fast_grid),
-                        Some(&mut state),
-                        nx,
-                        ny,
-                        speed,
-                        anti_on,
-                    )
-                } else {
-                    (nx * speed, ny * speed)
-                };
                 let new_pos_x;
                 let new_pos_y;
                 {
                     let elem = entity.element_data_mut();
+                    if deviated && (dx_step != 0.0 || dy_step != 0.0) {
+                        // `UpdatePositionAntiCollision` faces along the
+                        // committed deviation, then invalidates and
+                        // reconstructs the cached increment from the new
+                        // position to the original goal.  The direction is
+                        // deliberately retained by ComputeIncrementAll(false).
+                        let raw = vector_to_sector_0_to_15(dx_step, dy_step);
+                        elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
+                    }
                     let mut pm = elem.position_map();
                     pm.x += dx_step;
                     pm.y += dy_step;
                     elem.set_position_map(pm);
+                    if deviated && (dx_step != 0.0 || dy_step != 0.0) {
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(false);
+                    } else if recovered_from_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                        // Original's no-new-deviation recovery branch commits
+                        // the step, clears `IsDeviated`, and rebuilds the
+                        // increment with direction computation enabled.
+                        elem.sprite.position_iface.reset_increment_computed();
+                        elem.sprite.position_iface.compute_increment_all(true);
+                    }
                     new_pos_x = pm.x;
                     new_pos_y = pm.y;
                 }
@@ -6547,23 +6668,72 @@ impl EngineInner {
                     self.launch_ai_move(entity_id, &intent);
                 }
                 OrderType::Turning => {
-                    if !intent.no_halt {
+                    let current_is_movement = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
+                        .is_some_and(|element| element.data.is_movement());
+                    if current_is_movement {
+                        // FaceTo interrupts the movement and installs its
+                        // transition early enough for this actor slot, while
+                        // retaining the movement goal cached by the sprite.
+                        let retained_goal = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .map(|entity| entity.position_iface().map_goal());
+                        if let Some(entity) = self.world.entities.get_mut(entity_id) {
+                            entity.position_iface_mut().turn();
+                        }
                         self.halt_actor(entity_id);
+                        let direction = intent.explicit_direction.or_else(|| {
+                            self.world.entities.get(entity_id).map(|entity| {
+                                let position = entity.element_data().position_map();
+                                crate::position_interface::vector_to_sector_0_to_15_iso(
+                                    intent.target_x - position.x,
+                                    intent.target_y - position.y,
+                                )
+                            })
+                        });
+                        if let (Some(direction), Some(entity)) =
+                            (direction, self.world.entities.get_mut(entity_id))
+                        {
+                            entity.element_data_mut().set_direction_goal(direction);
+                        }
+                        let mut intent = intent;
+                        intent.defer_initial_turn_step = self.control.frame_counter == 0;
+                        let order = intent.stamp(self.orders.allocate_order_id());
+                        self.launch_single_order_sequence_stamped_ex(
+                            entity_id,
+                            crate::element::Command::Turn,
+                            order,
+                            true,
+                        );
+                        if let (Some(goal), Some(entity)) =
+                            (retained_goal, self.world.entities.get_mut(entity_id))
+                        {
+                            entity.position_iface_mut().set_map_goal(goal);
+                        }
+                    } else {
+                        let mut intent = intent;
+                        intent.defer_initial_turn_step = self.control.frame_counter == 0;
+                        if !intent.no_halt {
+                            self.halt_actor(entity_id);
+                        }
+                        if let Some(direction) = intent.explicit_direction
+                            && let Some(entity) = self.world.entities.get_mut(entity_id)
+                        {
+                            entity.element_data_mut().set_direction_goal(direction);
+                        }
+                        let order = intent.stamp(self.orders.allocate_order_id());
+                        self.launch_single_order_sequence_stamped_ex(
+                            entity_id,
+                            crate::element::Command::Turn,
+                            order,
+                            true,
+                        );
                     }
-                    // Face toward a position — launch a Turn sequence
-                    // through the normal `Instruct → GenerateTransition`
-                    // pipeline.  The Turn command's exit flags
-                    // prepend a
-                    // `TransitionWaitingUprightBoredWaitingUpright` at
-                    // `EventSeesShadow` (yellow `?`) time so the
-                    // guard is already in Waiting by EventView.
-                    let order = intent.stamp(self.orders.allocate_order_id());
-                    self.launch_single_order_sequence_stamped_ex(
-                        entity_id,
-                        crate::element::Command::Turn,
-                        order,
-                        true,
-                    );
                 }
                 _ => {
                     // Other order types go on their own single-order
@@ -7222,6 +7392,7 @@ impl EngineInner {
     pub(crate) fn try_dispatch_move_path(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -7836,6 +8007,13 @@ impl EngineInner {
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
             {
+                // ProcessPathRequests marks a resolved movement element as
+                // MOVE_OK before installing its path orders. The command is
+                // observable by actor execution and condolation logic; it is
+                // not merely a pathfinder implementation detail.
+                if !is_pass_door {
+                    elem.command = crate::element::Command::MoveOk;
+                }
                 crate::movement::build_orders_from_path(
                     elem,
                     &waypoints,

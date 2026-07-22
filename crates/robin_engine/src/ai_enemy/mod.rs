@@ -3210,7 +3210,31 @@ impl EnemyAi {
         }
 
         self.initialize_patrol();
+        let outgoing_state = self.base.current_state;
+        let outgoing_substate = self.base.current_substate;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
+
+        // `ReturnToDutyCommonStuff` calls the virtual Enemy `SetState` in
+        // C++. The shared Rust base performs the state assignment directly,
+        // so preserve the corresponding callback item explicitly. Without
+        // this final FIFO entry, an older queued transition (notably the
+        // init-time Default/Enroute transition) is restored after the common
+        // code has already advanced the live state to Default/GotoRoute.
+        let incoming_state = self.base.current_state;
+        let incoming_substate = self.base.current_substate;
+        if outgoing_substate != incoming_substate {
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                    outgoing_state,
+                    outgoing_substate,
+                    incoming_state,
+                    incoming_substate,
+                    source: AiStateChangeSource::SelfActor,
+                }));
+        }
     }
 
     // -----------------------------------------------------------------------

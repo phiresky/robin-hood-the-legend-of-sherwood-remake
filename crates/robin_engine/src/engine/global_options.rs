@@ -26,6 +26,10 @@ pub struct SimConfig {
     /// Active player-profile speech density. This affects authoritative
     /// chorus suppression and deterministic speech timing.
     pub amount_of_speaking: u16,
+    /// Resolve A* requests inline with sequence translation. Used by the
+    /// original-game parity harness so path-result timing is independent of
+    /// worker/scheduler cadence.
+    pub synchronous_pathfinding: bool,
 }
 
 impl SimConfig {
@@ -38,6 +42,7 @@ impl SimConfig {
             ignore_default_loose: options.ignore_default_loose,
             bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
             amount_of_speaking: 5,
+            synchronous_pathfinding: false,
         }
     }
 }
