@@ -6032,6 +6032,24 @@ impl EngineInner {
                     new_pos_y = pm.y;
                 }
 
+                // PerformMotion tests IsGoalReached after committing the
+                // anti-collision step. This is observably different from the
+                // pre-step guard above: a deviated actor can enter the
+                // blocked-count proximity radius during this move and must
+                // retire the intermediate waypoint in the same owner slot.
+                let post_step_intermediate_arrival = !is_final_waypoint
+                    && final_tolerances[actor_id].tol == 0.0
+                    && order_tolerance == 0.0
+                    && entity
+                        .position_iface()
+                        .is_goal_reached(&self.world.fast_grid, None);
+                if post_step_intermediate_arrival {
+                    order_pops.push((move_seq_id, move_elem_idx));
+                }
+                // TODO(original-parity): factor the large arrival tail above
+                // so post-step final, seek-tolerance, and door-pass arrivals
+                // can share it instead of remaining on their existing paths.
+
                 // Water splash titbit emission.  Every walk tick
                 // where `speed > 2` and the actor's cached material
                 // is water, the sprite's splatter counter ticks up;
@@ -6674,6 +6692,14 @@ impl EngineInner {
     /// etc. take effect inside the same call stack as the handler that
     /// issued them — `Face` / `GoTo` launch the sequence inline.
     pub(super) fn launch_pending_orders_for_npc(&mut self, entity_id: EntityId) {
+        self.launch_pending_orders_for_npc_mode(entity_id, false);
+    }
+
+    pub(super) fn launch_pending_orders_for_npc_mode(
+        &mut self,
+        entity_id: EntityId,
+        defer_turn_instruction: bool,
+    ) {
         // `StopAll` halts the actor inline before subsequent work,
         // and `FaceTo` / `GoTo` do the same on their own.  The Halt
         // is deferred to this drain (via `pending_halt`) so it runs
@@ -6712,6 +6738,27 @@ impl EngineInner {
             };
             ai.take_pending_orders()
         };
+        // CoordinatePatrol may emit a Move and a Turn together; that compound
+        // owner boundary was already synchronous and its relative arbitration
+        // must remain intact. The deferred case is the standalone FaceTo used
+        // to rotate a moving formation member whose entity slot is still due.
+        let defer_standalone_turn = defer_turn_instruction
+            && self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(|entity| entity.actor_data())
+                .is_some_and(|actor| actor.action_state == crate::element::ActionState::MovingFast)
+            && !intents.iter().any(|intent| {
+                matches!(
+                    intent.order_type,
+                    OrderType::WalkingUpright
+                        | OrderType::RunningUpright
+                        | OrderType::WalkingCrouched
+                        | OrderType::WalkingAlerted
+                        | OrderType::RiderCharging
+                )
+            });
 
         for intent in intents {
             match intent.order_type {
@@ -6772,20 +6819,30 @@ impl EngineInner {
                                 )
                             })
                         });
-                        if let (Some(direction), Some(entity)) =
-                            (direction, self.world.entities.get_mut(entity_id))
-                        {
-                            entity.element_data_mut().set_direction_goal(direction);
+                        if defer_standalone_turn {
+                            self.launch_turn_sequence_deferred_no_transitions(
+                                entity_id,
+                                direction,
+                                intent.target_x,
+                                intent.target_y,
+                                retained_goal,
+                            );
+                        } else {
+                            if let (Some(direction), Some(entity)) =
+                                (direction, self.world.entities.get_mut(entity_id))
+                            {
+                                entity.element_data_mut().set_direction_goal(direction);
+                            }
+                            let mut intent = intent;
+                            intent.defer_initial_turn_step = self.control.frame_counter == 0;
+                            let order = intent.stamp(self.orders.allocate_order_id());
+                            self.launch_single_order_sequence_stamped_ex(
+                                entity_id,
+                                crate::element::Command::Turn,
+                                order,
+                                true,
+                            );
                         }
-                        let mut intent = intent;
-                        intent.defer_initial_turn_step = self.control.frame_counter == 0;
-                        let order = intent.stamp(self.orders.allocate_order_id());
-                        self.launch_single_order_sequence_stamped_ex(
-                            entity_id,
-                            crate::element::Command::Turn,
-                            order,
-                            true,
-                        );
                         if let (Some(goal), Some(entity)) =
                             (retained_goal, self.world.entities.get_mut(entity_id))
                         {
@@ -6797,18 +6854,28 @@ impl EngineInner {
                         if !intent.no_halt {
                             self.halt_actor(entity_id);
                         }
-                        if let Some(direction) = intent.explicit_direction
-                            && let Some(entity) = self.world.entities.get_mut(entity_id)
-                        {
-                            entity.element_data_mut().set_direction_goal(direction);
+                        if defer_standalone_turn {
+                            self.launch_turn_sequence_deferred_no_transitions(
+                                entity_id,
+                                intent.explicit_direction,
+                                intent.target_x,
+                                intent.target_y,
+                                None,
+                            );
+                        } else {
+                            if let Some(direction) = intent.explicit_direction
+                                && let Some(entity) = self.world.entities.get_mut(entity_id)
+                            {
+                                entity.element_data_mut().set_direction_goal(direction);
+                            }
+                            let order = intent.stamp(self.orders.allocate_order_id());
+                            self.launch_single_order_sequence_stamped_ex(
+                                entity_id,
+                                crate::element::Command::Turn,
+                                order,
+                                true,
+                            );
                         }
-                        let order = intent.stamp(self.orders.allocate_order_id());
-                        self.launch_single_order_sequence_stamped_ex(
-                            entity_id,
-                            crate::element::Command::Turn,
-                            order,
-                            true,
-                        );
                     }
                 }
                 _ => {

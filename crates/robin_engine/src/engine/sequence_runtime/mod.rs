@@ -892,6 +892,14 @@ impl TurnCommandContext<'_> {
                         crate::sequence::FieldValue::Integer(direction) => Some(*direction as i16),
                         _ => None,
                     });
+                let retained_movement_goal = element
+                    .and_then(|element| {
+                        element.get_property(crate::sequence::Field::RetainedMovementGoal)
+                    })
+                    .and_then(|value| match value {
+                        crate::sequence::FieldValue::GeoPoint2D { x, y } => Some((*x, *y)),
+                        _ => None,
+                    });
                 if let Some(entity) = self.entities.get_mut(owner) {
                     if let Some(direction) = explicit_direction {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -903,8 +911,18 @@ impl TurnCommandContext<'_> {
                         );
                         entity.element_data_mut().set_direction_goal(direction);
                     }
+                    if let Some((x, y)) = retained_movement_goal {
+                        entity
+                            .position_iface_mut()
+                            .set_map_goal(crate::coordinates::MapPoint::new(x, y));
+                    }
                 }
-                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, true);
+                self.push_order(
+                    seq_id,
+                    elem_idx,
+                    crate::order::OrderType::Turning,
+                    explicit_direction.is_none(),
+                );
             }
             Command::TurnElement => {
                 let antagonist = self

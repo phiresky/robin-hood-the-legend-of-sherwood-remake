@@ -501,6 +501,7 @@ impl RecordingSession {
 )]
 pub enum Field {
     Direction,
+    RetainedMovementGoal,
     Timer,
     Message,
     MessageArgument,

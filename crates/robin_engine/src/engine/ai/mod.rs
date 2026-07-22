@@ -5059,7 +5059,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_pending_for_npc_mode(sim, npc_id, assets, false);
+        self.drain_pending_for_npc_mode(sim, npc_id, assets, false, false);
     }
 
     fn drain_pending_for_npc_mode(
@@ -5068,6 +5068,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
@@ -5369,7 +5370,7 @@ impl EngineInner {
         // re-entrantly, advancing
         // `AttackingReactiontimeTurning → AttackingReactiontime` the
         // same frame as `EVENT_VIEW`.
-        self.launch_pending_orders_for_npc(npc_id);
+        self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
 
         // Process pending `set_attentive_mode(target, fast_officer)`:
         //   * Flip `will_be_attentive = target`.
@@ -7820,7 +7821,9 @@ impl EngineInner {
 
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
-            self.dispatch_think_with_drain(sim, minion_id, &stimulus, &ctx, &tick_data, assets);
+            self.dispatch_think_with_drain_mode(
+                sim, minion_id, &stimulus, &ctx, &tick_data, assets, false, true,
+            );
             // `CoordinatePatrol` constructs its Move element inline in the
             // original, making `GetCommand()` report MOVE_OK immediately.
             // Owner instruction still belongs to the sequence-manager phase
@@ -8566,7 +8569,9 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
     ) -> bool {
-        self.dispatch_think_with_drain_mode(sim, npc_id, stimulus, ctx, tick_data, assets, false)
+        self.dispatch_think_with_drain_mode(
+            sim, npc_id, stimulus, ctx, tick_data, assets, false, false,
+        )
     }
 
     pub(super) fn dispatch_think_with_drain_without_forecast(
@@ -8578,7 +8583,9 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
     ) -> bool {
-        self.dispatch_think_with_drain_mode(sim, npc_id, stimulus, ctx, tick_data, assets, true)
+        self.dispatch_think_with_drain_mode(
+            sim, npc_id, stimulus, ctx, tick_data, assets, true, false,
+        )
     }
 
     fn dispatch_think_with_drain_mode(
@@ -8590,6 +8597,7 @@ impl EngineInner {
         tick_data: &crate::ai::AiPerTickData,
         assets: &LevelAssets,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) -> bool {
         let had_ai_at_entry = self
             .world
@@ -8654,14 +8662,20 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             // Drain the per-NPC pending-flags pass (launches sequences,
             // commands, turn orders, attentive-mode transitions, etc.).
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
+            self.drain_pending_for_npc_mode(
+                sim,
+                npc_id,
+                assets,
+                owner_local_no_forecast,
+                defer_turn_instruction,
+            );
             // `drain_pending_for_npc` launches the first order barrier in its
             // original position. Close the boundary again because later
             // effect application and civilian handlers share the same base
             // order outbox. Owner-local SetState notifications are also part
             // of this fixed point, so late script-seek callbacks cannot leak
             // into a global batch or strand in the outbox.
-            self.launch_pending_orders_for_npc(npc_id);
+            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
 
             // EventViewStandardProcedure calls HeyFolksLookThere directly in
             // the original. Deliver only that synchronous cross-NPC family at
@@ -9055,7 +9069,7 @@ impl EngineInner {
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast, false);
             self.launch_pending_orders_for_npc(npc_id);
             self.process_synchronous_look_there_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
@@ -9190,7 +9204,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, false);
+        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, false, false);
     }
 
     pub(super) fn drain_direct_ai_owner_boundary_without_forecast(
@@ -9199,7 +9213,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true);
+        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true, false);
     }
 
     fn drain_direct_ai_owner_boundary_mode(
@@ -9208,11 +9222,18 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) {
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
-            self.launch_pending_orders_for_npc(npc_id);
+            self.drain_pending_for_npc_mode(
+                sim,
+                npc_id,
+                assets,
+                owner_local_no_forecast,
+                defer_turn_instruction,
+            );
+            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
             self.process_synchronous_look_there_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {

@@ -1413,6 +1413,55 @@ impl EngineInner {
         seq_id
     }
 
+    /// Register a direct FaceTo-style Turn without instructing its owner yet.
+    /// Cross-owner patrol coordination runs before the member's entity slot;
+    /// Original SequenceManager::Hourglass arbitrates the Turn only after that
+    /// slot, allowing Halt's retained movement exit transition to execute once.
+    pub(crate) fn launch_turn_sequence_deferred_no_transitions(
+        &mut self,
+        owner: EntityId,
+        explicit_direction: Option<i16>,
+        target_x: f32,
+        target_y: f32,
+        retained_movement_goal: Option<crate::coordinates::MapPoint>,
+    ) -> crate::sequence::SequenceId {
+        let seq_id = self
+            .orders
+            .sequence_manager
+            .launch_single_order_sequence_unchecked(owner, crate::element::Command::Turn);
+        if let Some(element) = self.orders.sequence_manager.get_element_mut(seq_id, 0) {
+            let resolver = Self::priority_resolver(&self.world.entities);
+            if element.priority == crate::sequence::SequencePriority::NotYetSet {
+                element.priority = resolver(element);
+            }
+            if let Some(direction) = explicit_direction {
+                element.set_property(
+                    crate::sequence::Field::Direction,
+                    crate::sequence::FieldValue::Integer(direction as u32),
+                );
+            } else {
+                element.set_property(
+                    crate::sequence::Field::CameraPoint,
+                    crate::sequence::FieldValue::GeoPoint2D {
+                        x: target_x,
+                        y: target_y,
+                    },
+                );
+            }
+            if let Some(goal) = retained_movement_goal {
+                element.set_property(
+                    crate::sequence::Field::RetainedMovementGoal,
+                    crate::sequence::FieldValue::GeoPoint2D {
+                        x: goal.x,
+                        y: goal.y,
+                    },
+                );
+            }
+        }
+        self.stamp_element_transition_state(owner, seq_id, 0);
+        seq_id
+    }
+
     /// Stamp the actor's current posture / action-state onto the new
     /// sequence element as `posture_after_transition` /
     /// `action_state_after_transition`.  Downstream Translate arms read
