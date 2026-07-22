@@ -54,11 +54,12 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 6 requires the complete campaign and
+/// On-disk replay schema version. Version 7 requires the complete campaign and
 /// [`crate::engine::SimConfig`] used for frame-0 construction, stores typed
 /// script effects in one global emission order, includes synchronous sequence
-/// continuation state, and records fully-resolved minimap command inputs.
-pub const REPLAY_SCHEMA_VERSION: u32 = 6;
+/// continuation state, records fully-resolved minimap command inputs, and
+/// snapshots first-owner active-ability initialization.
+pub const REPLAY_SCHEMA_VERSION: u32 = 7;
 
 /// One JSONL line.  Carries per-frame commands and/or a periodic
 /// engine-state hash used for desync detection on replay.

@@ -3,7 +3,7 @@
 Updated 2026-07-19. Multiplayer uses a server-ordered input stream with a
 small scheduling delay, predictive simulation, rollback for late inputs,
 periodic state-hash verification, and authoritative snapshots for joins. The
-wire protocol is version 12; older protocol compatibility is unsupported.
+wire protocol is version 13; older protocol compatibility is unsupported.
 
 ## Seat model
 

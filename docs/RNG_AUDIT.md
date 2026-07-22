@@ -32,8 +32,8 @@ seed and existing `SimConfig` to `EngineArgs`. A finished mission returns its
 next RNG seed and `SimConfig` with the campaign for the following selection.
 Save loads preflight the serialized mission-construction seed/config, while
 the existing campaign restart snapshot carries its paired pre-selection
-seed/config. Replays require campaign, seed, and config in their version-6
-header; network version 12 announces mission identity with the same seed and
+seed/config. Replays require campaign, seed, and config in their version-7
+header; network version 13 announces mission identity with the same seed and
 config before Engine construction. This preserves the original
 single process-wide sequence (`launcher.cpp:763-765`, `RHCampaign.cpp`) rather
 than creating identically seeded campaign and mission streams.

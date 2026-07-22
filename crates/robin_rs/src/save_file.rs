@@ -375,7 +375,9 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   `SimConfig` plus mission construction/restart RNG checkpoints serialize.
 /// - **v49** (2026-07-19, snapshot-input ownership): shared-camera transition
 ///   inputs that affect a later tick are required snapshot fields.
-pub const SAVE_FORMAT_VERSION: u32 = 49;
+/// - **v50** (2026-07-21, Strangle owner initialization): active ability state
+///   records whether first-owner Strangle setup has completed.
+pub const SAVE_FORMAT_VERSION: u32 = 50;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -733,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn current_v49_requires_every_persistent_game_flag() {
+    fn current_v50_requires_every_persistent_game_flag() {
         let (engine, _assets) = fresh_engine();
         let host = Host::scratch(800.0, 600.0);
         let required_fields = [
@@ -854,7 +856,7 @@ mod tests {
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 49, got 46"
+            "unsupported save file version: expected 50, got 46"
         );
     }
 
