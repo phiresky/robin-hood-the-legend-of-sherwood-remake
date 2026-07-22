@@ -377,7 +377,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   inputs that affect a later tick are required snapshot fields.
 /// - **v50** (2026-07-21, Strangle owner initialization): active ability state
 ///   records whether first-owner Strangle setup has completed.
-pub const SAVE_FORMAT_VERSION: u32 = 50;
+/// - **v51** (2026-07-22, Execute owner identity): actor state records the
+///   selected Execute order identity and one-shot initialization latch matching
+///   Original `mulLastOrderID` / `mbNewOrder` semantics.
+pub const SAVE_FORMAT_VERSION: u32 = 51;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -735,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn current_v50_requires_every_persistent_game_flag() {
+    fn current_v51_requires_every_persistent_game_flag() {
         let (engine, _assets) = fresh_engine();
         let host = Host::scratch(800.0, 600.0);
         let required_fields = [
@@ -852,11 +855,11 @@ mod tests {
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("v45 saves must be rejected");
+            .expect("v46 saves must be rejected");
         let message = format!("{error:#}");
         assert_eq!(
             message,
-            "unsupported save file version: expected 50, got 46"
+            "unsupported save file version: expected 51, got 46"
         );
     }
 

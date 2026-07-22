@@ -1,6 +1,6 @@
 # Gameplay runtime refactoring roadmap
 
-Updated 2026-07-21. This document describes the current architecture and the
+Updated 2026-07-22. This document describes the current architecture and the
 remaining behavior-sensitive work. Completed migration plans are summarized in
 [`plans/`](plans/); their old future-tense PR sequences have been removed.
 
@@ -16,7 +16,7 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   frontend, frame and consuming-finish owners.
 - `HourglassPhase` records the coarse tick order. Sequence dispatch, immediate
   commands and synchronous script driving live in `engine/sequence_runtime/`.
-- Ordinary actor movement, evidenced rider movement arms, and supported static
+- Ordinary actor movement, both Original rider Execute arms, and the exhaustive static
   virtual Hourglasses run inside the live legacy-slot owner coordinator, while
   mobile masters execute at their first adjacent masked-child slot.
   Static FX/Target/Scroll and proven Bonus/Ale/Cape classes are no longer
@@ -43,14 +43,16 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
   state cannot suppress the real selected generic arm. Strike-start state and
   warning callbacks are owned by the first live sprite `MotionState::Start` and
   use the Original principal/range straight collector plus its looser lateral
-  predicate. FrozenAll leaves every melee/sprite/order field untouched.
+  predicate. FrozenAll preserves the Original pre-sprite direction-goal and
+  one-step `Turn` work while leaving sprite, damage, completion, order and RNG
+  state untouched.
 - Mission ingestion is split into ordered entity, environment, PC and finish
   stages under `engine/level_loading/`.
 - AI model/context/effect/controller code and the giant Engine tests are split
   into focused modules.
 - Rendering debug, HUD and minimap code is separated from normal entity/frame
   rendering.
-- Save version 50, replay version 7 and network version 13 are the only current
+- Save version 51, replay version 8 and network version 14 are the only current
   schemas. Historical save/replay compatibility is intentionally unsupported.
 
 ## Required invariants
@@ -101,11 +103,12 @@ Do not split a coherent state machine merely to make a file smaller.
 
 | Priority | Work | Status and constraint |
 | --- | --- | --- |
-| 1 | Complete PA-013 per-entity Hourglass parity | High risk. Ordinary movement, active melee, active abilities, PC Listen/Target Heard, selected beggar simulation, mobile master/children, static FX/Target/Scroll/Bonus-class Hourglasses, selected bow, and projectile/net families are owner-local. Preserve the landed phase trace and creation-order regressions. Unsupported rider arms, zone occupancy, and remaining entity owners remain. |
-| 2 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
-| 3 | Finish AI transaction boundaries | Live Enemy-list reconstruction, FIFO edge ordering, civilian/Royalist optical detection, lift approach geometry, and contextual stale-ID failures are landed. Remaining specialized AI states and coordinate-space policy need exact Original evidence. |
-| 4 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
-| 5 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
+| 1 | Audit specialized AI-state parity | High risk. Preserve the owner-local Hourglass/Execute ordering landed under PA-013 while comparing each specialized state with its Original handler. |
+| 2 | Audit door/lift animation callbacks | Compare action/done callback timing, owner boundaries and synchronous effects with the Original door, gate and lift implementations. |
+| 3 | Audit remaining script-native callbacks | Verify every remaining native callback's timing, result propagation and failure behavior against `RHScript` and sequence dispatch. |
+| 4 | Keep the snapshot-input audit closed under new inputs | New simulation inputs must be snapshotted or command-derived. Remaining viewport and producer questions require explicit policy decisions; they are not a broad unaudited read sweep. |
+| 5 | Decide Spellforge Lua persistence | Deterministic/network modes correctly reject Lua today. A versioned event surface and serializable VM/state policy are prerequisites to relaxing that gate. |
+| 6 | Continue local owner/API cleanup | Make `MissionWorld` fields private as frame operations move to focused owners; narrow command-family borrows when behavior work touches them. Avoid new mega-contexts. |
 
 True-headless multiplayer admission is complete. `TimelineRuntime` owns the
 snapshot → ready → begin → wall-clock release state machine, the shared
@@ -139,9 +142,10 @@ missing source or unresolved coordinate/ordering boundary.
 `tick_zone_occupants` remains a documented Rust reconciliation boundary after
 the owner walk. The cited Original Actor/Human/PC/Soldier Execute arms do not
 establish it as actor-owned work; moving it per owner requires separate source
-evidence. Unsupported action arms remain PA-013 debt. Active abilities,
-Listen/Heard, and selected beggar simulation now execute in the selected
-actor owner's live slot.
+evidence. It is not unresolved PA-013 owner debt. All 308 live arms across the
+six Original Execute overrides have an explicit typed owner catalog; active
+abilities, bow transitions, melee, both rider arms, Listen/Heard, and selected
+beggar simulation execute in the selected actor owner's live slot.
 
 `WorldState::mobile_elements` remains the only mobile-master representation.
 Because the Original master and its first `RHElementFXMasked` child are

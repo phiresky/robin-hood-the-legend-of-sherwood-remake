@@ -829,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn persistent_state_rejects_missing_current_v50_fields() {
+    fn persistent_state_rejects_missing_current_v51_fields() {
         let json = r#"{
             "campaign_map_active": false,
             "campaign_map_displayed": false,
