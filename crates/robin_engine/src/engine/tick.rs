@@ -2848,10 +2848,12 @@ impl EngineInner {
             slot += 1;
         }
 
-        // Unsupported rider arms remain separate. The production caller
-        // installs movement, active melee, selected bow, owner-local active
+        // The exhaustive Original rider-specific Execute arms are both owned
+        // by movement above: RunningUpright's synchronous GALOPP Think and
+        // RiderCharging's Human ExecuteRiderCharge delegation. The production
+        // caller also installs active melee, selected bow, owner-local active
         // abilities and beggar work, and the human/PC/NPC tail hook before
-        // this loop advances.
+        // this loop advances. Other unsupported Execute arms remain separate.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one

@@ -123,6 +123,14 @@ fn rider_charge_point_in_quad(point: MapPoint, quad: [(f32, f32); 4]) -> bool {
     !(positive && negative)
 }
 
+fn is_galopp_decision_frame(current_frame: u16, frame_count: u16) -> bool {
+    assert!(
+        frame_count > 0,
+        "selected RunningUpright rider-charge animation has no frames"
+    );
+    current_frame == frame_count - 1 || (frame_count >= 2 && current_frame == frame_count / 2 - 1)
+}
+
 fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
     doors
         .iter()
@@ -3634,11 +3642,14 @@ impl EngineInner {
             return;
         }
         if self.actors_frozen() {
-            // ExecuteRiderCharge is reached even under the Original's
-            // FrozenAll switch. PerformMotion reports InProgress on the
-            // frozen sprite frame, but initialization and polygon damage
-            // still run in creation order.
-            self.tick_rider_charge_owner(sim, assets, owner, true);
+            // Both rider-specific Soldier Execute arms remain live under
+            // FrozenAll. PerformMotion reports InProgress without changing
+            // the sprite, then RiderCharging performs its polygon work or
+            // RunningUpright samples that same frozen frame and may Think.
+            let consumed_charge = self.tick_rider_charge_owner(sim, assets, owner, true);
+            if !consumed_charge && self.selected_galopp_decision_frame(owner, selected) {
+                self.dispatch_galopp_loop_event(sim, assets, owner);
+            }
             return;
         }
 
@@ -4141,7 +4152,7 @@ impl EngineInner {
         let mut completed_door_passes: Vec<(EntityId, crate::gate::DoorIndex, bool)> = Vec::new();
         // Rider entities whose running animation hit the charge
         // decision frames while carrying RIDER_CHARGE.
-        let mut galopp_events: Vec<EntityId> = Vec::new();
+        let mut galopp_event = false;
         // Movement elements whose sprite motion returned the blocked-
         // abort signal and must be marked Impossible after the entity
         // borrow ends.
@@ -4904,8 +4915,12 @@ impl EngineInner {
             {
                 let frame_count = sprite.num_frames_for_anim(OrderType::RunningUpright);
                 let cur = sprite.current_frame;
-                if frame_count >= 2 && (cur == frame_count / 2 - 1 || cur == frame_count - 1) {
-                    galopp_events.push(entity_id);
+                if is_galopp_decision_frame(cur, frame_count) {
+                    assert_eq!(
+                        entity_id, owner,
+                        "owner-local rider Execute collected a gallop callback for another actor"
+                    );
+                    galopp_event = true;
                 }
             }
             // Turn-slowdown: when the sprite is still rotating toward
@@ -5993,8 +6008,8 @@ impl EngineInner {
         // These are derived Execute-arm tails in Original, so they close
         // after PerformMotion but before base Actor completion/DoNextOrder.
         self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
-        if !galopp_events.is_empty() {
-            self.dispatch_galopp_loop_events(sim, assets, &galopp_events);
+        if galopp_event {
+            self.dispatch_galopp_loop_event(sim, assets, owner);
         }
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
             .unwrap_or_else(|error| {
@@ -6062,6 +6077,46 @@ impl EngineInner {
                     "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
                 )
             });
+    }
+
+    fn selected_galopp_decision_frame(
+        &self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) -> bool {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .unwrap_or_else(|| {
+                panic!("selected gallop movement element disappeared for {owner:?}")
+            });
+        let order = element
+            .current_order()
+            .unwrap_or_else(|| panic!("selected gallop movement order disappeared for {owner:?}"));
+        if element.owner != Some(owner)
+            || order.order_id != selected.order_id
+            || order.order_type != OrderType::RunningUpright
+        {
+            return false;
+        }
+        let flags = match element.data {
+            crate::sequence::SequenceElementData::Movement { flags, .. } => flags,
+            _ => panic!("selected gallop owner {owner:?} no longer has a movement element"),
+        };
+        if !flags.contains(crate::sequence::MoveFlags::RIDER_CHARGE) {
+            return false;
+        }
+        let sprite = self
+            .world
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("selected gallop owner {owner:?} disappeared"))
+            .sprite();
+        is_galopp_decision_frame(
+            sprite.current_frame,
+            sprite.num_frames_for_anim(OrderType::RunningUpright),
+        )
     }
 
     /// Test-only compatibility wrapper. Production movement is owned by the
