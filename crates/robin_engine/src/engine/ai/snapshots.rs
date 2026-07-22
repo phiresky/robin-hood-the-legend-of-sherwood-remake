@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{Camp, Entity, EntityId};
+use crate::element::{Camp, Entity, EntityId, Human};
 use serde::{Deserialize, Serialize};
 
 /// `RHArtificialMalignity::IsArcher` is exactly `GetBow() != NULL`.
@@ -640,7 +640,7 @@ impl EngineInner {
             if !s.element.active || s.human.unconscious {
                 continue;
             }
-            let able_to_fight = !s.human.unconscious && s.element.active && s.npc.life_points > 0;
+            let able_to_fight = s.is_able_to_fight();
             // Original: every `RHElementActorSoldier` owns
             // `RHArtificialMalignity`; its Hourglass calls soldier-only AI
             // methods unconditionally. A live soldier without EnemyAi is an
@@ -1059,6 +1059,9 @@ impl EngineInner {
 
             // Soldier `is_able_to_help`.
             let able_to_help = if let Entity::Soldier(s) = entity {
+                // Original IsAbleToHelp intentionally does not inherit
+                // IsAbleToFight's tied/carried/inactive gates; it only
+                // rejects dead/unconscious before its own state switch.
                 let able_to_fight = active && !s.human.unconscious && s.npc.life_points > 0;
                 crate::ai_enemy::soldier_is_able_to_help_state(
                     able_to_fight,

@@ -133,6 +133,7 @@ impl EnemyAi {
         let alert_radius_sq = alert_radius * alert_radius;
 
         self.alerted_us.clear();
+        self.pending_alert_soldier_candidates.clear();
         let mut last_result_request = None;
 
         for cs in &tick.camp_soldiers {
@@ -391,6 +392,7 @@ impl EnemyAi {
 
         // Reset the alerted / staying / us lists.
         self.alerted_us.clear();
+        self.pending_alert_soldier_candidates.clear();
         self.base.list_alerted_us.clear();
         self.base.list_staying_us.clear();
         self.base.list_us.clear();
@@ -401,14 +403,9 @@ impl EnemyAi {
         let alert_radius_sq = alert_radius * alert_radius;
 
         let my_handle = self.base.me;
-        let mut candidate_count = 0usize;
-        let mut last_result_request = None;
+        let mut candidates = Vec::new();
 
         for cs in &tick.camp_soldiers {
-            // Hard cap of 20 alerted friends.
-            if candidate_count >= 20 {
-                break;
-            }
             // Rank SOLDIER.
             if cs.rank != ProfileRank::Soldier {
                 continue;
@@ -454,39 +451,31 @@ impl EnemyAi {
                 continue;
             }
 
-            // Deliver the direct call; the typed continuation consumes the
-            // live bool and prunes refusals before the next soldier.
-            last_result_request = Some(self.base.outbox.reentrant.cross_npc_actions.len());
-            self.base
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(CrossNpcAction::RequestThinkResult {
-                    target: cs.handle,
-                    caller: self.base.me,
-                    stimulus_type: StimulusType::CallAlert,
-                    info: StimulusInfo::Human(self.base.me),
-                    continuation: ThinkResultContinuation::OfficerAlertedSoldier {
-                        last: false,
-                        use_formation: grid.is_some(),
-                        failure,
-                    },
-                });
-            candidate_count += 1;
+            candidates.push(cs.handle);
         }
 
-        if let Some(index) = last_result_request
-            && let CrossNpcAction::RequestThinkResult { continuation, .. } =
-                &mut self.base.outbox.reentrant.cross_npc_actions[index]
-        {
-            *continuation = ThinkResultContinuation::OfficerAlertedSoldier {
-                last: true,
-                use_formation: grid.is_some(),
-                failure,
-            };
+        if candidates.is_empty() {
+            return false;
         }
-
-        last_result_request.is_some()
+        let first = candidates.remove(0);
+        let first_is_last = candidates.is_empty();
+        self.pending_alert_soldier_candidates = candidates;
+        self.base
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::RequestThinkResult {
+                target: first,
+                caller: self.base.me,
+                stimulus_type: StimulusType::CallAlert,
+                info: StimulusInfo::Human(self.base.me),
+                continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                    last: first_is_last,
+                    use_formation: grid.is_some(),
+                    failure,
+                },
+            });
+        true
     }
 
     pub(super) fn finish_alert_soldiers(

@@ -2297,6 +2297,36 @@ fn review2_context_and_tick(
     (ctx, tick)
 }
 
+fn start_review_command_soldiers(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    officer_id: EntityId,
+) -> (
+    crate::ai_enemy::CommandSoldiersStart,
+    crate::ai::AiPerTickData,
+) {
+    use crate::ai::Position;
+
+    let (ctx, tick) = review2_context_and_tick(engine, sim, assets, officer_id);
+    let global = engine.ai.global.clone();
+    let start = engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("review command caller has EnemyAi")
+        .command_soldiers_to_attack(
+            Position {
+                x: 300.0,
+                ..Default::default()
+            },
+            &global,
+            None,
+            &ctx,
+            &tick,
+        );
+    (start, tick)
+}
+
 #[test]
 fn review2_call_instruction_uses_refusal_to_prune_group_synchronously() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
@@ -2803,6 +2833,165 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
             .reentrant
             .cross_npc_actions
             .is_empty()
+    );
+}
+
+#[test]
+fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock() {
+    use crate::ai::{AiLockFlags, AiState, Substate};
+    use crate::element::Posture;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Ineligible {
+        Fleeing,
+        Menacing,
+        Tied,
+        Carried,
+        GotHit,
+        GotHitStandingUp,
+        Hitting,
+    }
+
+    let sim = crate::sim_rng::test_context();
+    for case in [
+        Ineligible::Fleeing,
+        Ineligible::Menacing,
+        Ineligible::Tied,
+        Ineligible::Carried,
+        Ineligible::GotHit,
+        Ineligible::GotHitStandingUp,
+        Ineligible::Hitting,
+    ] {
+        let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("eligibility recipient exists")
+        else {
+            panic!("eligibility recipient changed kind")
+        };
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("eligibility recipient has EnemyAi")
+            .base
+            .locks_flag_field = AiLockFlags::BUSY | AiLockFlags::FREEZE;
+        match case {
+            Ineligible::Fleeing => soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("eligibility recipient has EnemyAi")
+                .set_state(AiState::Fleeing, Substate::FleeingRunToDoor),
+            Ineligible::Menacing => soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("eligibility recipient has EnemyAi")
+                .set_state(AiState::Menacing, Substate::MenacingPcInComa),
+            Ineligible::Tied => soldier.element.posture = Posture::Tied,
+            Ineligible::Carried => soldier.human.carrier = Some(officer_id),
+            Ineligible::GotHit => soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("eligibility recipient has EnemyAi")
+                .set_state(AiState::Attacking, Substate::AttackingGotHit),
+            Ineligible::GotHitStandingUp => soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("eligibility recipient has EnemyAi")
+                .set_state(AiState::Attacking, Substate::AttackingGotHitStandingUp),
+            Ineligible::Hitting => soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("eligibility recipient has EnemyAi")
+                .set_state(AiState::Attacking, Substate::AttackingHitting),
+        }
+
+        let (start, tick) = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
+        let candidate = tick
+            .camp_soldiers
+            .iter()
+            .find(|candidate| candidate.handle == soldier_id.index())
+            .expect("ineligible active recipient remains represented in camp snapshot");
+        assert!(!candidate.is_able_to_fight, "case {case:?}");
+        assert_eq!(
+            start,
+            crate::ai_enemy::CommandSoldiersStart::Rejected,
+            "case {case:?} must be rejected before retained-lock Think"
+        );
+        assert!(
+            engine
+                .get_entity(officer_id)
+                .and_then(Entity::ai_controller)
+                .expect("eligibility caller retains AI")
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .is_empty(),
+            "case {case:?} must not be called"
+        );
+    }
+}
+
+#[test]
+fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
+    use crate::ai::{AiLockFlags, StimulusType};
+    use crate::element::EyeStatus;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("closed-eye recipient exists")
+    else {
+        panic!("closed-eye recipient changed kind")
+    };
+    soldier.npc.eye_status = EyeStatus::Closed;
+    soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("closed-eye recipient has EnemyAi")
+        .base
+        .locks_flag_field = AiLockFlags::BUSY;
+
+    let (start, tick) = start_review_command_soldiers(&mut engine, &sim, &assets, officer_id);
+    let candidate = tick
+        .camp_soldiers
+        .iter()
+        .find(|candidate| candidate.handle == soldier_id.index())
+        .expect("closed-eye recipient is in camp snapshot");
+    assert!(candidate.eye_blind);
+    assert!(candidate.is_able_to_fight);
+    assert!(
+        candidate.is_detecting_360,
+        "Original IsDetecting360Degrees ignores the eye-status cone gate"
+    );
+    assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Pending);
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+    assert_eq!(
+        engine
+            .get_entity(officer_id)
+            .and_then(Entity::enemy_ai)
+            .expect("closed-eye caller retains EnemyAi")
+            .alerted_us,
+        vec![soldier_id.index()]
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(Entity::ai_controller)
+            .expect("closed-eye recipient retains AI")
+            .stimulus_queue
+            .last()
+            .map(|stimulus| stimulus.stimulus_type),
+        Some(StimulusType::CallCombatAlert),
+        "BUSY retains and accepts the stimulus after eligibility"
     );
 }
 

@@ -2421,9 +2421,7 @@ impl EngineInner {
                         ss.ground_z,
                         ss.is_rider,
                         ss.view_radius,
-                        ss.eye_blind,
                         ss.in_building,
-                        ss.able_to_fight,
                         crate::ai::Position {
                             x: me_pos_map.x,
                             y: me_pos_map.y,

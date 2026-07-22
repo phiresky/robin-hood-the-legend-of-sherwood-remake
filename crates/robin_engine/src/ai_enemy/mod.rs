@@ -119,6 +119,10 @@ pub struct EnemyAi {
     /// Soldiers this officer has called to a group.
     /// Populated by `alert_soldiers`, read by group coordination substates.
     pub alerted_us: Vec<HumanHandle>,
+    /// AlertSoldiers candidates not yet called. The Original stops scanning
+    /// at 20 successful Think returns, not 20 attempts, so calls advance one
+    /// result at a time through this live continuation queue.
+    pub pending_alert_soldier_candidates: Vec<HumanHandle>,
 
     // Archery
     /// This NPC's reserved shooting point, as `(archery_sector_idx,
@@ -297,6 +301,7 @@ impl Default for EnemyAi {
             changed_to_alert_path: false,
             already_seen_bodies: Vec::new(),
             alerted_us: Vec::new(),
+            pending_alert_soldier_candidates: Vec::new(),
             my_shooting_point: None,
             my_archery_sector: None,
             my_archery_sector_index: 0,
@@ -1855,15 +1860,39 @@ impl EnemyAi {
                         },
                     );
                 }
-                if last
-                    && !self.finish_alert_soldiers(
+                let finished = if self.alerted_us.len() >= 20 {
+                    self.pending_alert_soldier_candidates.clear();
+                    true
+                } else if !self.pending_alert_soldier_candidates.is_empty() {
+                    let next = self.pending_alert_soldier_candidates.remove(0);
+                    let next_is_last = self.pending_alert_soldier_candidates.is_empty();
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::RequestThinkResult {
+                            target: next,
+                            caller: self.base.me,
+                            stimulus_type: StimulusType::CallAlert,
+                            info: StimulusInfo::Human(self.base.me),
+                            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                                last: next_is_last,
+                                use_formation,
+                                failure,
+                            },
+                        },
+                    );
+                    false
+                } else {
+                    last
+                };
+                if finished {
+                    self.pending_alert_soldier_candidates.clear();
+                    if !self.finish_alert_soldiers(
                         global,
                         grid.filter(|_| use_formation),
                         ctx,
                         tick,
-                    )
-                {
-                    self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+                    ) {
+                        self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+                    }
                 }
             }
             ThinkResultContinuation::OfficerCombatAlertedSoldier {

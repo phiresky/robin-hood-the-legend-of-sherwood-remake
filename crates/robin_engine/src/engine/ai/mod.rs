@@ -1676,7 +1676,7 @@ impl EngineInner {
             if s.soldier.cached_camp != my_camp || !s.element.active || s.human.unconscious {
                 continue;
             }
-            let able_to_fight = s.element.active && !s.human.unconscious && s.npc.life_points > 0;
+            let able_to_fight = crate::element::Human::is_able_to_fight(s);
             let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
                 continue;
             };
@@ -1779,9 +1779,7 @@ impl EngineInner {
                         s.element.position().z,
                         s.soldier.rider,
                         s.npc.view_radius,
-                        eye_blind,
                         in_building,
-                        able_to_fight,
                         crate::ai::Position {
                             x: me_pos.x,
                             y: me_pos.y,

@@ -282,9 +282,7 @@ pub(crate) fn soldier_detects_target_360(
     viewer_ground_z: f32,
     viewer_is_rider: bool,
     viewer_radius: u16,
-    viewer_blind: bool,
     viewer_in_building: bool,
-    viewer_able_to_fight: bool,
     target_position: Position,
     target_ground_z: f32,
     target_posture: crate::element::Posture,
@@ -293,7 +291,7 @@ pub(crate) fn soldier_detects_target_360(
     target_in_building: bool,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
-    if viewer_blind || viewer_in_building || !viewer_able_to_fight || target_in_building {
+    if viewer_in_building || target_in_building {
         return false;
     }
     let target_xy = crate::stealth::detection_point_xy(
