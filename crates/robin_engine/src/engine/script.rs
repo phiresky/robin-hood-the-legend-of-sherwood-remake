@@ -2351,44 +2351,6 @@ impl EngineInner {
         }
     }
 
-    /// Dispatch deferred `IElementTargetScript::ActivatedBy*(pPC)` calls.
-    ///
-    /// Each entry is `(target_handle, pc_handle, method_name)`. Binds
-    /// `ThisActor` to the target then calls the relevant
-    /// `IElementTargetScript::ActivatedBy*` method pointer on the
-    /// target's own VM.  Missing methods on the bound class are silent
-    /// no-ops, matching script-runtime behaviour for classes that
-    /// don't override every callback.
-    ///
-    /// The original gates dispatch on a global script-enabled flag
-    /// (`--NOSCRIPT` CLI option).  We don't plumb that flag through
-    /// to the runtime (same situation as `ActivatedByListenable` in
-    /// `engine/ai.rs`), so script dispatch is effectively always on.
-    /// The shared driver distinguishes an absent optional method from a
-    /// missing required target VM.
-    pub(super) fn dispatch_target_activations(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        calls: &[(i32, i32, &str)],
-    ) {
-        if calls.is_empty() {
-            return;
-        }
-        for &(target_handle, pc_handle, fn_name) in calls {
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Target(target_handle),
-                fn_name,
-                &[pc_handle],
-                crate::natives::ScriptCallFrame::actor(target_handle),
-            ) {
-                tracing::warn!("{fn_name} (target {target_handle}): {error}");
-            }
-        }
-    }
-
     /// Send a one-shot engine-level `ProcessMessage` to the global
     /// StartUp script.
     ///

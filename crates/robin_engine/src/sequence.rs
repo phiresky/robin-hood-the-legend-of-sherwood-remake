@@ -2840,8 +2840,7 @@ impl SequenceManager {
     }
 
     /// `true` iff there is at least one immediate-dispatch action awaiting
-    /// drain. Used by the engine's immediate-only drain loop to know when
-    /// to stop calling [`Self::take_pending_immediate_actions`].
+    /// drain, ignoring direct WAIT `Go()` actions in the same stream.
     pub fn has_pending_immediate_actions(&self) -> bool {
         self.pending_synchronous_actions.iter().any(|action| {
             matches!(

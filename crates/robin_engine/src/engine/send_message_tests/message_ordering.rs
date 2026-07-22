@@ -1,5 +1,17 @@
 use super::*;
 
+fn send_message_element(
+    level: u16,
+    owner: Option<crate::element::EntityId>,
+    message: i32,
+) -> SequenceElement {
+    let mut element = SequenceElement::new_generic(level, Command::SendMessage, owner);
+    element.set_property(Field::Message, FieldValue::Integer(message as u32));
+    element.set_property(Field::MessageArgument, FieldValue::Integer(0));
+    element.set_property(Field::MessageExtendedArgument, FieldValue::Integer(0));
+    element
+}
+
 #[test]
 fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let sim_context = crate::sim_rng::test_context();
@@ -148,5 +160,328 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
         states,
         vec![SequenceState::Terminated, SequenceState::Terminated],
         "both callbacks and terminations complete without advancing a frame"
+    );
+}
+
+#[test]
+fn registered_send_message_callback_precedes_later_immediate_sibling() {
+    let (mut engine, _, _) = engine_with_receiver();
+    let receiver = engine.add_entity(scripted_soldier("OrderingReceiver"));
+    let handle = bind_script_actor(&mut engine, receiver, "OrderingReceiver");
+    engine
+        .get_entity_mut(receiver)
+        .expect("receiver")
+        .element_data_mut()
+        .blipped = true;
+
+    let mut sequence = Sequence::new();
+    sequence.append_element(send_message_element(1, Some(receiver), 77));
+    sequence.append_element(SequenceElement::new_generic(
+        1,
+        Command::Unblip,
+        Some(receiver),
+    ));
+    engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.drain_pending_immediate_actions_sync(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::new(),
+    );
+
+    assert_eq!(
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .expect("script installed")
+            .state
+            .globals
+            .get(&904),
+        Some(&0),
+        "ProcessMessage must observe state before the later Unblip sibling"
+    );
+    assert_eq!(
+        engine
+            .get_entity(receiver)
+            .expect("receiver")
+            .element_data()
+            .blipped,
+        false
+    );
+    assert_eq!(ScriptHandleCodec::actor_handle(receiver), handle);
+}
+
+#[test]
+fn target_activation_callback_precedes_later_engine_sibling() {
+    let (mut engine, reader, _) = engine_with_receiver();
+    let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            active: true,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let target_handle = ScriptHandleCodec::actor_handle(target);
+    let target_instance = engine
+        .scripts
+        .mission
+        .as_ref()
+        .expect("script installed")
+        .manager
+        .create_instance("TargetOrdering")
+        .expect("target callback class");
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .target_instances
+        .insert(target_handle, target_instance);
+
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new_interaction(
+        1,
+        Command::ActivateArrow,
+        Some(target),
+        Some(reader),
+    ));
+    let mut unfreeze = SequenceElement::new_generic(1, Command::FreezeAll, None);
+    unfreeze.set_property(Field::Freeze, FieldValue::Bool(false));
+    sequence.append_element(unfreeze);
+    engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::new(),
+    );
+
+    assert!(
+        !engine.actors_frozen(),
+        "ActivatedByArrow's callback must run before the later unfreeze sibling"
+    );
+}
+
+#[test]
+fn send_message_callback_precedes_later_move_translation() {
+    let (mut engine, _, _) = engine_with_receiver();
+    let mover = engine.add_entity(scripted_soldier("MoveOrdering"));
+    let mover_handle = bind_script_actor(&mut engine, mover, "MoveOrdering");
+    engine
+        .get_entity_mut(mover)
+        .expect("mover")
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
+    engine
+        .get_entity_mut(mover)
+        .expect("mover")
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -4.0, -4.0, 4.0, 4.0,
+        ));
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(mover), OrderType::WalkingUpright);
+    if let crate::sequence::SequenceElementData::Movement { destination, .. } = &mut movement.data {
+        *destination = crate::coordinates::MapPoint::new(20.0, 0.0);
+    }
+    let mut sequence = Sequence::new();
+    sequence.append_element(send_message_element(1, Some(mover), 79));
+    sequence.append_element(movement);
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut crate::engine::HostDisplayState::default(),
+        &assets,
+    );
+
+    assert_eq!(
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .expect("script installed")
+            .state
+            .globals
+            .get(&909),
+        Some(&0),
+        "ProcessMessage must observe no current movement before the later FIFO Move is translated"
+    );
+    assert_ne!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .expect("Move element")
+            .state,
+        SequenceState::Todo,
+        "the later Move still dispatches in the same hourglass"
+    );
+    assert_eq!(ScriptHandleCodec::actor_handle(mover), mover_handle);
+}
+
+#[test]
+fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
+    let (mut engine, receiver, _) = engine_with_receiver();
+    engine
+        .get_entity_mut(receiver)
+        .expect("receiver")
+        .element_data_mut()
+        .blipped = true;
+
+    let mut message_then_wait = Sequence::new();
+    message_then_wait.append_element(send_message_element(1, None, 80));
+    let mut wait = SequenceElement::new(2, Command::Wait, Some(receiver));
+    wait.priority = crate::sequence::SequencePriority::Wait;
+    message_then_wait.append_element(wait);
+    let sequence_id = engine
+        .orders
+        .sequence_manager
+        .launch_sequence(message_then_wait);
+
+    let mut older_sibling = Sequence::new();
+    older_sibling.append_element(SequenceElement::new_generic(
+        1,
+        Command::Unblip,
+        Some(receiver),
+    ));
+    engine
+        .orders
+        .sequence_manager
+        .launch_sequence(older_sibling);
+
+    engine.drain_pending_immediate_actions_sync(
+        &crate::sim_rng::test_context(),
+        &mut crate::engine::HostDisplayState::default(),
+        &LevelAssets::new(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .expect("WAIT successor")
+            .state,
+        SequenceState::InProgress,
+        "Ready() must run the WAIT successor before returning to the detached sibling"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .next_pending_immediate_action()
+            .is_none(),
+        "the complete synchronous stream must be drained"
+    );
+    assert!(
+        !engine
+            .get_entity(receiver)
+            .expect("receiver")
+            .element_data()
+            .blipped,
+        "the older immediate sibling runs after the WAIT successor"
+    );
+}
+
+#[test]
+fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
+    let (mut engine, _, _) = engine_with_receiver();
+    let actor = engine.add_entity(scripted_soldier("OrderingReceiver"));
+    let handle = bind_script_actor(&mut engine, actor, "OrderingReceiver");
+    engine
+        .get_entity_mut(actor)
+        .expect("actor")
+        .element_data_mut()
+        .blipped = true;
+
+    engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            super::ScriptVmKey::Actor(handle),
+            "TriggerNextLevel",
+            &[],
+            crate::natives::ScriptCallFrame::actor(handle),
+        )
+        .expect("recorded SendMessage successor should finish before Thanx resumes");
+
+    assert_eq!(
+        engine
+            .scripts
+            .mission
+            .as_ref()
+            .expect("script installed")
+            .state
+            .globals
+            .get(&908),
+        Some(&1),
+        "the parent VM must observe the next-level Unblip successor"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .next_pending_immediate_action()
+            .is_none()
+    );
+}
+
+#[test]
+fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
+    let (mut engine, _, _) = engine_with_receiver();
+    let receiver = engine.add_entity(scripted_soldier(""));
+    engine
+        .get_entity_mut(receiver)
+        .expect("receiver")
+        .element_data_mut()
+        .blipped = true;
+
+    let mut sequence = Sequence::new();
+    sequence.append_element(send_message_element(1, Some(receiver), 77));
+    sequence.append_element(SequenceElement::new_generic(
+        2,
+        Command::Unblip,
+        Some(receiver),
+    ));
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.drain_pending_immediate_actions_sync(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::new(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("message element")
+            .state,
+        SequenceState::Terminated
+    );
+    let successor_state = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence_id, 1)
+        .expect("successor element")
+        .state;
+    assert!(
+        !engine
+            .get_entity(receiver)
+            .expect("receiver")
+            .element_data()
+            .blipped,
+        "the successor must still execute after the required receiver VM is absent; state={successor_state:?}"
     );
 }

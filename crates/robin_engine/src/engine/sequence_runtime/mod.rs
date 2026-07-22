@@ -23,25 +23,14 @@ use crate::element::{Command, Entity, EntityId};
 /// Keeping those operations here makes the same-call front-of-queue rule
 /// explicit without inventing a deferred gameplay queue.
 struct SequencePhase {
-    initial_actions: Vec<crate::sequence::SequenceAction>,
     actions: std::collections::VecDeque<crate::sequence::SequenceAction>,
 }
 
 impl SequencePhase {
     fn begin(orders: &mut OrderRuntime) -> Self {
         Self {
-            initial_actions: orders.sequence_manager.hourglass(),
-            actions: std::collections::VecDeque::new(),
+            actions: orders.sequence_manager.hourglass().into(),
         }
-    }
-
-    fn initial_actions(&self) -> &[crate::sequence::SequenceAction] {
-        &self.initial_actions
-    }
-
-    fn begin_dispatch(&mut self) {
-        debug_assert!(self.actions.is_empty());
-        self.actions = std::mem::take(&mut self.initial_actions).into();
     }
 
     fn pop_action(&mut self) -> Option<crate::sequence::SequenceAction> {
@@ -711,11 +700,9 @@ impl BowTransitionContext<'_> {
     }
 }
 
-/// Script-target activation collection with no mutable world access.
+/// Script-target activation resolution with no mutable world access.
 struct TargetActivationContext<'a> {
     entities: &'a crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pending_activations: &'a mut Vec<(i32, i32, &'static str)>,
 }
 
 impl TargetActivationContext<'_> {
@@ -724,9 +711,7 @@ impl TargetActivationContext<'_> {
         owner: EntityId,
         command: Command,
         antagonist: Option<EntityId>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    ) -> (i32, i32, &'static str) {
         let method = match command {
             Command::ActivateApple => "ActivatedByApple",
             Command::ActivateArrow => "ActivatedByArrow",
@@ -749,9 +734,7 @@ impl TargetActivationContext<'_> {
         let pc_handle = antagonist
             .map(crate::natives::ScriptHandleCodec::actor_handle)
             .unwrap_or(0);
-        self.pending_activations
-            .push((target_handle, pc_handle, method));
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        (target_handle, pc_handle, method)
     }
 }
 
@@ -2566,10 +2549,8 @@ mod sequence_phase_context_tests {
             element_index: 0,
         };
         let mut phase = SequencePhase {
-            initial_actions: vec![older],
-            actions: std::collections::VecDeque::new(),
+            actions: [older].into(),
         };
-        phase.begin_dispatch();
 
         let mut orders = OrderRuntime::new();
         let mut sequence = crate::sequence::Sequence::new();
@@ -2606,10 +2587,8 @@ mod sequence_phase_context_tests {
             element_index: 0,
         };
         let mut phase = SequencePhase {
-            initial_actions: vec![older],
-            actions: std::collections::VecDeque::new(),
+            actions: [older].into(),
         };
-        phase.begin_dispatch();
 
         let mut orders = OrderRuntime::new();
         let mut sequence = Sequence::new();
@@ -2879,7 +2858,6 @@ mod sequence_phase_context_tests {
         let raise_seq = engine.orders.sequence_manager.launch_element(raise);
 
         let mut phase = SequencePhase::begin(&mut engine.orders);
-        phase.begin_dispatch();
         assert!(matches!(
             phase.pop_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
