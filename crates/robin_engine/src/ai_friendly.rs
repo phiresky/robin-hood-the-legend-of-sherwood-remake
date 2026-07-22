@@ -385,6 +385,62 @@ impl FriendlyAi {
         return_value
     }
 
+    pub(crate) fn resolve_alert_request(
+        &mut self,
+        accepted: bool,
+        continuation: AlertContinuation,
+        target: NpcHandle,
+        ctx: &AiContext,
+    ) {
+        assert_eq!(self.base.antagonist, target);
+        assert!(matches!(
+            self.base.current_substate,
+            Substate::SeekingCivilianRunningToSoldier
+        ));
+
+        if !accepted {
+            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
+            return;
+        }
+
+        self.base
+            .outbox
+            .actor
+            .delete_detectables
+            .push(crate::element::DetectableType::Friend);
+        self.set_state(
+            AiState::Seeking,
+            Substate::SeekingCivilianRunningToSoldierSeen,
+        );
+
+        match continuation {
+            AlertContinuation::CivilianReachedSoldier => self
+                .base
+                .outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventReachPoint),
+            AlertContinuation::CivilianSawSoldier => {
+                self.base.say(Remark::CivCallsSoldier);
+                let target_pos = ctx
+                    .entity_view(target)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "accepted civilian alert from {} requires target soldier {} view",
+                            self.base.me, target
+                        )
+                    })
+                    .forecasted_destination;
+                self.base
+                    .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
+                self.base.launch_timer(20, ctx.frame);
+            }
+            AlertContinuation::SoldierSawOfficer => {
+                panic!("civilian alert resolver received soldier continuation")
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Think sub-methods
     // -----------------------------------------------------------------------
@@ -801,83 +857,14 @@ impl FriendlyAi {
                                     ctx,
                                 );
                             } else {
-                                // Deliver the alert to the officer
-                                // via the deferred inter-NPC Think
-                                // queue.  We already verified the
-                                // officer is in `STATE_DEFAULT` in
-                                // the outer match arm, so the
-                                // soldier's `CALL_ALERT` handler
-                                // will accept and transition to
-                                // `SEEKING_WAIT_FOR_ALERTING_CIVILIAN`.
-                                //
-                                // ACCEPTED DIVERGENCE: the reference
-                                // runs `Think(CALL_ALERT)` on the
-                                // soldier synchronously, then
-                                // synchronously re-enters its own
-                                // `Think(EVENT_REACHPOINT)` against
-                                // the new substate so the alert
-                                // hand-off completes in one tick.
-                                // Rust queues the `CallAlert` cross-
-                                // NPC action (drained globally in
-                                // `process_pending_cross_npc_actions`,
-                                // which runs *after* all per-NPC
-                                // `dispatch_think_with_drain` passes)
-                                // and pushes `EventReachPoint` onto
-                                // `pending_self_stimuli`.  The self-
-                                // stimulus drain inside this NPC's
-                                // own `dispatch_think_with_drain`
-                                // then re-fires `EventReachPoint`
-                                // *before* the soldier has processed
-                                // `CallAlert`, so the new substate's
-                                // handler reads a stale
-                                // `entity_view(antagonist)` (still
-                                // `STATE_DEFAULT`, not
-                                // `SeekingWaitForAlertingCivilian`)
-                                // and falls through to
-                                // `ReturnToDuty`.  Practical
-                                // symptom: when the civilian happens
-                                // to start within `AI_TALK_DISTANCE`
-                                // of the officer (close branch, not
-                                // post-`go_near`), the alert
-                                // silently drops and the civilian
-                                // wanders off.
-                                //
-                                // Fixing this end-to-end requires a
-                                // synchronous CallAlert dispatch +
-                                // mid-think `build_sim_scratch`
-                                // helper (~200 LOC, new re-entrancy
-                                // guard, new flag).  The cosmetic
-                                // blast radius (rare path,
-                                // indistinguishable from civilian
-                                // RTD wander) doesn't justify the
-                                // engine plumbing standalone.
-                                // Revisit if cross-NPC drain
-                                // ordering is ever refactored —
-                                // folding in costs ~50 LOC then.
-                                // See parity-audit divergence (2).
                                 self.base.outbox.reentrant.cross_npc_actions.push(
-                                    CrossNpcAction::SendStimulus {
+                                    CrossNpcAction::RequestAlert {
                                         target: antagonist_handle,
-                                        stimulus_type: StimulusType::CallAlert,
-                                        info: StimulusInfo::Human(self.base.me),
-                                        fallback_to_sender: None,
-                                        to_whole_patrol: false,
+                                        caller: self.base.me,
+                                        continuation:
+                                            crate::ai::AlertContinuation::CivilianReachedSoldier,
                                     },
                                 );
-                                self.base
-                                    .outbox
-                                    .actor
-                                    .delete_detectables
-                                    .push(crate::element::DetectableType::Friend);
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingCivilianRunningToSoldierSeen,
-                                );
-                                self.base
-                                    .outbox
-                                    .reentrant
-                                    .self_stimuli
-                                    .push(StimulusType::EventReachPoint);
                             }
                         }
                         _ => {
@@ -940,7 +927,7 @@ impl FriendlyAi {
                         Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
                     );
                     // Hand the officer our recon report via the
-                    // deferred inter-NPC Think queue.  We pass a
+                    // synchronous inter-NPC Think boundary. We pass a
                     // Hint carrying our seek point so the soldier's
                     // CALL_REPORT handler can update its own report
                     // without needing to reach back into the
@@ -1149,58 +1136,13 @@ impl FriendlyAi {
             {
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
                     self.base.antagonist = soldier_handle;
-                    // Clear friend detection list — we've reached the soldier.
-                    self.base
-                        .outbox
-                        .actor
-                        .delete_detectables
-                        .push(crate::element::DetectableType::Friend);
-
-                    // The soldier's CALL_ALERT handler accepts iff
-                    // its state is STATE_DEFAULT.  We check up-front
-                    // via the per-tick entity view snapshot, then
-                    // queue the actual stimulus for deferred
-                    // delivery so the soldier's state-machine
-                    // transition happens on the cross-NPC action
-                    // pass.
-                    let alert_accepted = ctx
-                        .entity_view(soldier_handle)
-                        .is_some_and(|v| v.ai_state == AiState::Default);
-
-                    if alert_accepted {
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::SendStimulus {
-                                target: soldier_handle,
-                                stimulus_type: StimulusType::CallAlert,
-                                info: StimulusInfo::Human(self.base.me),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            },
-                        );
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingCivilianRunningToSoldierSeen,
-                        );
-                        self.base.say(Remark::CivCallsSoldier);
-
-                        // Run to the forecasted destination of the
-                        // newly spotted soldier.  STATE_DEFAULT
-                        // covers patrol-walking soldiers (not just
-                        // standing-still ones), and those routinely
-                        // traverse doors / lifts where the forecast
-                        // diverges from the live position.  The 20-
-                        // frame re-evaluation timer below catches up
-                        // if the prediction misses.
-                        let target_pos = ctx
-                            .entity_view(soldier_handle)
-                            .map(|v| v.forecasted_destination)
-                            .expect("soldier entity_view must exist — alert_accepted check resolved it above");
-                        self.base
-                            .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
-                        self.base.launch_timer(20, ctx.frame);
-                    } else {
-                        self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
-                    }
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::RequestAlert {
+                            target: soldier_handle,
+                            caller: self.base.me,
+                            continuation: crate::ai::AlertContinuation::CivilianSawSoldier,
+                        },
+                    );
                 }
             }
 
@@ -1319,18 +1261,13 @@ impl FriendlyAi {
                             ctx,
                         );
                     } else {
-                        // Fire a *directed* panic centred on the
-                        // chaser so the flee vector biases away
-                        // from them.  If our entity view is missing
-                        // we fall through to undirected as the
-                        // closest legal analogue (the original
-                        // would null-deref if the antagonist is
-                        // gone).
-                        if let Some(antag) = ctx.entity_view(soldier_handle) {
-                            self.panic_from_point_at(antag.position, AI_STANDARD_PANIC_RUNS as u8);
-                        } else {
-                            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
-                        }
+                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                            panic!(
+                                "CALL_YOU_JUST_WAIT civilian {} requires chaser {} entity view",
+                                self.base.me, soldier_handle
+                            )
+                        });
+                        self.panic_from_point_at(antag.position, AI_STANDARD_PANIC_RUNS as u8);
                     }
                 }
             }
@@ -1354,11 +1291,13 @@ impl FriendlyAi {
                         // Directed panic from the chaser's live
                         // position, same as the CallYouJustWait
                         // fallback above.
-                        if let Some(antag) = ctx.entity_view(soldier_handle) {
-                            self.panic_from_point_at(antag.position, AI_STANDARD_PANIC_RUNS as u8);
-                        } else {
-                            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
-                        }
+                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                            panic!(
+                                "EVENT_APPLE_CHASE_NEAR civilian {} requires chaser {} entity view",
+                                self.base.me, soldier_handle
+                            )
+                        });
+                        self.panic_from_point_at(antag.position, AI_STANDARD_PANIC_RUNS as u8);
                     }
                 }
             }
@@ -2404,6 +2343,21 @@ mod tests {
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
         assert_eq!(ai.base.lasting_panic_runs, 4);
         assert!(!ai.base.directed_panic);
+    }
+
+    #[test]
+    #[should_panic(expected = "CALL_YOU_JUST_WAIT civilian 1 requires chaser 42 entity view")]
+    fn apple_chase_does_not_replace_a_missing_chaser_with_undirected_panic() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = FriendlyAi::new(1);
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallYouJustWait, 42),
+            &AiContext::default(),
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
+        );
     }
 
     #[test]

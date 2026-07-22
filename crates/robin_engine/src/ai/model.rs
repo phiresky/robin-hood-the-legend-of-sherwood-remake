@@ -1394,6 +1394,16 @@ impl Decision {
 /// delivering `CALL_INSTRUCTION`, and recursive `BreakPhalanx`.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum CrossNpcAction {
+    /// Synchronously deliver `CALL_ALERT` and resume the caller with the
+    /// recipient's actual `Think` result. The original uses the returned bool
+    /// to decide whether the reporting NPC may enter its approach/report
+    /// handshake; predicting from a recipient snapshot loses script-filter and
+    /// re-entrant callback effects.
+    RequestAlert {
+        target: NpcHandle,
+        caller: NpcHandle,
+        continuation: AlertContinuation,
+    },
     /// Set gather position on target NPC, then deliver `CALL_INSTRUCTION`.
     InstructGatherPosition {
         target: NpcHandle,
@@ -1499,6 +1509,13 @@ pub enum CrossNpcAction {
         officer: NpcHandle,
         charly: NpcHandle,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlertContinuation {
+    CivilianReachedSoldier,
+    CivilianSawSoldier,
+    SoldierSawOfficer,
 }
 
 // ---------------------------------------------------------------------------

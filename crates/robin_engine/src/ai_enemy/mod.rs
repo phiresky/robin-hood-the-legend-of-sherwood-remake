@@ -1757,6 +1757,47 @@ impl EnemyAi {
         }
     }
 
+    pub(crate) fn resolve_alert_request(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        accepted: bool,
+        continuation: crate::ai::AlertContinuation,
+        target: NpcHandle,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        assert!(matches!(
+            continuation,
+            crate::ai::AlertContinuation::SoldierSawOfficer
+        ));
+        assert_eq!(self.base.antagonist, target);
+
+        if !accepted {
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            return;
+        }
+
+        self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
+        self.base
+            .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
+        let officer_target_pos = ctx
+            .entity_view(target)
+            .unwrap_or_else(|| {
+                panic!(
+                    "accepted soldier alert from {} requires target officer {} view",
+                    self.base.me, target
+                )
+            })
+            .forecasted_destination;
+        self.base.go_near(
+            officer_target_pos,
+            parameters_ai::AI_TALK_DISTANCE,
+            crate::ai::GotoFlags::RUN,
+            ctx,
+        );
+        self.base.launch_timer(20, ctx.frame);
+    }
+
     /// 180°-detection (the simple-geometry half that can be answered
     /// from AI context alone).
     ///
@@ -4626,6 +4667,13 @@ mod tests {
         assert_eq!(ai.base.interesting_object, 77);
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingNet);
+    }
+
+    #[test]
+    #[should_panic(expected = "soldier 1 cannot examine missing body 77")]
+    fn run_to_examine_body_rejects_a_missing_required_body() {
+        let mut ai = EnemyAi::new(1);
+        ai.run_to_examine_body(77, &AiContext::default(), &AiPerTickData::stub(), None);
     }
 
     #[test]

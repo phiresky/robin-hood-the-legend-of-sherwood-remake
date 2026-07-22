@@ -8060,6 +8060,11 @@ impl EngineInner {
 
         for action in all_actions {
             match action {
+                crate::ai::CrossNpcAction::RequestAlert { caller, target, .. } => {
+                    panic!(
+                        "result-bearing CALL_ALERT {caller}->{target} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::InstructGatherPosition {
                     target,
                     position,
@@ -8622,6 +8627,7 @@ impl EngineInner {
         // branches on its bool before returning. Drain this result-bearing
         // cross-NPC call here, inside the originating dispatch, rather than
         // letting it fall into the end-of-frame cross-action batch.
+        self.process_synchronous_alert_requests_for(sim, npc_id, assets);
         self.process_synchronous_officer_reports_for(sim, npc_id, assets);
 
         const MAX_ITERS: u32 = 8;
@@ -8637,11 +8643,7 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(npc_id);
 
-            // EventViewStandardProcedure calls HeyFolksLookThere directly in
-            // the original. Deliver only that synchronous cross-NPC family at
-            // this Think boundary; phalanx and other coordination actions keep
-            // their existing batch until their own ordering is audited.
-            self.process_synchronous_look_there_for(sim, npc_id, assets);
+            self.process_synchronous_stimuli_for(sim, npc_id, assets);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -8673,6 +8675,14 @@ impl EngineInner {
                 }
             }
 
+            // A re-entrant self stimulus can itself call another NPC. Close
+            // those direct C++ call boundaries before deciding this owner has
+            // stabilised; otherwise the result-bearing request can escape to
+            // the global cross-action batch.
+            self.process_synchronous_alert_requests_for(sim, npc_id, assets);
+            self.process_synchronous_officer_reports_for(sim, npc_id, assets);
+            self.process_synchronous_stimuli_for(sim, npc_id, assets);
+
             let still_pending = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                     panic!(
@@ -8703,7 +8713,7 @@ impl EngineInner {
         handled
     }
 
-    pub(super) fn process_synchronous_look_there_for(
+    pub(super) fn process_synchronous_stimuli_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
@@ -8714,31 +8724,29 @@ impl EngineInner {
             .entities
             .get_mut(source_id)
             .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_look_there_actions)
+            .map(crate::ai::AiController::take_pending_synchronous_stimuli)
             .unwrap_or_default();
 
         for action in actions {
             let crate::ai::CrossNpcAction::SendStimulus {
                 target,
-                stimulus_type: crate::ai::StimulusType::CallLookThere,
+                stimulus_type,
                 info,
-                fallback_to_sender: None,
+                fallback_to_sender,
                 to_whole_patrol,
             } = action
             else {
-                unreachable!("look-there drain returned a different cross-NPC action")
+                unreachable!("synchronous-stimulus drain returned a different cross-NPC action")
             };
             let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
                 panic!(
-                    "synchronous CALL_LOOKTHERE from NPC {} references missing target {}",
-                    source_id.index(),
-                    target
+                    "synchronous {stimulus_type:?} from NPC {} references missing target {target}",
+                    source_id.index()
                 )
             });
             assert!(
                 matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
-                "synchronous CALL_LOOKTHERE target {} is not a soldier",
-                target
+                "synchronous {stimulus_type:?} target {target} is not a soldier"
             );
 
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
@@ -8747,13 +8755,13 @@ impl EngineInner {
                 .entities
                 .get(target_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+                .unwrap_or_else(|| {
+                    panic!("synchronous {stimulus_type:?} target {target} disappeared")
+                });
             let ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(target_id)
-                    .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+                let entity = self.world.entities.get(target_id).unwrap_or_else(|| {
+                    panic!("synchronous {stimulus_type:?} target {target} disappeared")
+                });
                 build_ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
@@ -8770,12 +8778,190 @@ impl EngineInner {
                 )
             };
             let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
-            let mut stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere);
+            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
-            self.dispatch_think_with_drain_without_forecast(
+            let handled = self.dispatch_think_with_drain_without_forecast(
                 sim, target_id, &stimulus, &ctx, &tick_data, assets,
             );
+            if !handled && let Some(sender) = fallback_to_sender {
+                let sender_id = self.entity_id_for_index(sender).unwrap_or_else(|| {
+                    panic!(
+                        "synchronous {stimulus_type:?} fallback references missing sender {sender}"
+                    )
+                });
+                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let building_sector = self
+                    .world
+                    .entities
+                    .get(sender_id)
+                    .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                    .unwrap_or_else(|| panic!("synchronous fallback sender {sender} disappeared"));
+                let sender_ctx = {
+                    let entity = self.world.entities.get(sender_id).unwrap_or_else(|| {
+                        panic!("synchronous fallback sender {sender} disappeared")
+                    });
+                    build_ai_context_from_entity(
+                        entity,
+                        self.control.frame_counter,
+                        building_sector,
+                        self.world.weather.is_forest_level,
+                        self.world.weather.ambiance,
+                        self.ai.standard_view_polygon_radius,
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
+                        &self.world.fast_grid,
+                        &assets.hiking_paths,
+                        &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
+                    )
+                };
+                let sender_tick = self.build_npc_tick_data(sim, sender_id, &scratch, assets);
+                self.dispatch_think_with_drain_without_forecast(
+                    sim,
+                    sender_id,
+                    &stimulus,
+                    &sender_ctx,
+                    &sender_tick,
+                    assets,
+                );
+            }
+        }
+    }
+
+    fn process_synchronous_alert_requests_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        let requests = self
+            .world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_alert_requests)
+            .unwrap_or_default();
+
+        for request in requests {
+            let crate::ai::CrossNpcAction::RequestAlert {
+                target,
+                caller,
+                continuation,
+            } = request
+            else {
+                unreachable!("alert-request drain returned a deferred action")
+            };
+            assert_eq!(
+                source_id.index(),
+                caller,
+                "CALL_ALERT request caller must be its owner"
+            );
+
+            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                panic!(
+                    "synchronous CALL_ALERT from NPC {caller} references missing target {target}"
+                )
+            });
+            assert!(
+                matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
+                "synchronous CALL_ALERT target {target} is not a soldier"
+            );
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let target_building_sector = self
+                .world
+                .entities
+                .get(target_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
+            let target_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(target_id)
+                    .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    target_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let target_tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            let accepted = self.dispatch_think_with_drain_without_forecast(
+                sim,
+                target_id,
+                &crate::ai::Stimulus::with_human(crate::ai::StimulusType::CallAlert, caller),
+                &target_ctx,
+                &target_tick,
+                assets,
+            );
+
+            let source_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let source_building_sector = self
+                .world
+                .entities
+                .get(source_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
+            let source_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(source_id)
+                    .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    source_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &source_scratch.ai_entity_views,
+                    &source_scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
+            match continuation {
+                crate::ai::AlertContinuation::CivilianReachedSoldier
+                | crate::ai::AlertContinuation::CivilianSawSoldier => self
+                    .world
+                    .entities
+                    .get_mut(source_id)
+                    .and_then(Entity::friendly_ai_mut)
+                    .unwrap_or_else(|| {
+                        panic!("civilian CALL_ALERT caller {caller} lost its FriendlyAi")
+                    })
+                    .resolve_alert_request(accepted, continuation, target, &source_ctx),
+                crate::ai::AlertContinuation::SoldierSawOfficer => self
+                    .world
+                    .entities
+                    .get_mut(source_id)
+                    .and_then(Entity::enemy_ai_mut)
+                    .unwrap_or_else(|| {
+                        panic!("soldier CALL_ALERT caller {caller} lost its EnemyAi")
+                    })
+                    .resolve_alert_request(
+                        sim,
+                        accepted,
+                        continuation,
+                        target,
+                        &source_ctx,
+                        &source_tick,
+                    ),
+            }
         }
     }
 
@@ -9031,7 +9217,7 @@ impl EngineInner {
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
-            self.process_synchronous_look_there_for(sim, npc_id, assets);
+            self.process_synchronous_stimuli_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
     }
@@ -9185,7 +9371,7 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
-            self.process_synchronous_look_there_for(sim, npc_id, assets);
+            self.process_synchronous_stimuli_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {
                 let ai = self

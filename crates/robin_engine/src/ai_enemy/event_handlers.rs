@@ -562,74 +562,13 @@ impl EnemyAi {
 
                 match self.get_rank() {
                     ProfileRank::Soldier => {
-                        // Soldier sees officer → ask the officer to receive
-                        // an alert via `antagonist.Think(CALL_ALERT, me)`.
-                        // The cross-NPC dispatch is asynchronous, so
-                        // predict the officer's accept/reject locally
-                        // (mirrors the officer-rank CALL_ALERT arm) before
-                        // committing to the SeekingRunningToOfficerSeen
-                        // transition.
-                        let officer_accepts = antagonist_cs
-                            .map(crate::ai_enemy::officer_would_react_to_call_alert)
-                            .unwrap_or(false);
-                        if officer_accepts {
-                            // Deliver CALL_ALERT to the officer so its
-                            // own state machine flips to
-                            // SUBSTATE_SEEKING_OFFICER_WAIT_FOR_ALERTING_SOLDIER
-                            // (the substate the soldier's arrival path
-                            // in `SeekingRunningToOfficerSeen` expects on
-                            // the officer side).
-                            self.base.outbox.reentrant.cross_npc_actions.push(
-                                CrossNpcAction::SendStimulus {
-                                    fallback_to_sender: None,
-                                    to_whole_patrol: false,
-                                    target: antagonist,
-                                    stimulus_type: StimulusType::CallAlert,
-                                    info: StimulusInfo::Human(self.base.me),
-                                },
-                            );
-
-                            // Transition before the say so the remark fires
-                            // from the running-to-officer substate.
-                            self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
-
-                            self.base
-                                .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
-
-                            // Officer's forecast destination — head where
-                            // the officer will be, not where they currently
-                            // are.
-                            let officer_target_pos = antagonist_cs
-                                .map(|cs| {
-                                    cs.forecast_destination
-                                        .as_ref()
-                                        .unwrap_or_else(|| {
-                                            panic!(
-                                                "soldier {} is missing a required destination forecast",
-                                                cs.handle
-                                            )
-                                        })
-                                        .resolve(sim)
-                                        .position
-                                })
-                                .unwrap_or_else(|| {
-                                    ctx.entity_view(antagonist)
-                                        .map(|v| v.position)
-                                        .unwrap_or_default()
-                                });
-                            self.base.go_near(
-                                officer_target_pos,
-                                parameters_ai::AI_TALK_DISTANCE,
-                                crate::ai::GotoFlags::RUN,
-                                ctx,
-                            );
-
-                            // Reconsider approach in 20 frames.
-                            self.base.launch_timer(20, ctx.frame);
-                        } else {
-                            // Officer refused — give up.
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                        }
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::RequestAlert {
+                                target: antagonist,
+                                caller: self.base.me,
+                                continuation: crate::ai::AlertContinuation::SoldierSawOfficer,
+                            },
+                        );
                     }
                     ProfileRank::Officer => {
                         // Officer sees soldier → assert that the seen
@@ -708,20 +647,112 @@ impl EnemyAi {
                     // civilian, launch a 20-frame reaction timer, set a
                     // transient ? emoticon.
                     StimulusInfo::Human(civilian) => {
-                        if self.base.current_state != AiState::Default {
-                            // Soldier busy — refuse the alert.  The
-                            // civilian's optimistic state transition
-                            // will time out via its own EVENT_TIMER.
-                            return false;
+                        let caller = ctx.entity_view(civilian).unwrap_or_else(|| {
+                            panic!(
+                                "CALL_ALERT recipient {} requires caller {} entity view",
+                                self.base.me, civilian
+                            )
+                        });
+                        if caller.is_civilian() {
+                            if self.base.current_state != AiState::Default {
+                                return false;
+                            }
+                            self.base.antagonist = civilian;
+                            self.base.stop_all();
+                            self.base.face_entity(civilian, ctx);
+                            self.set_state(
+                                AiState::Seeking,
+                                Substate::SeekingWaitForAlertingCivilian,
+                            );
+                            self.base.launch_timer(20, ctx.frame);
+                            self.base.set_transient_emoticon(
+                                EmoticonType::QuestionMark,
+                                20,
+                                ctx.frame,
+                            );
+                            return true;
                         }
+
                         self.base.antagonist = civilian;
-                        self.base.stop_all();
-                        self.base.face_entity(civilian, ctx);
-                        self.set_state(AiState::Seeking, Substate::SeekingWaitForAlertingCivilian);
-                        self.base.launch_timer(20, ctx.frame);
-                        self.base
-                            .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
-                        return true;
+                        match self.get_rank() {
+                            ProfileRank::Soldier => {
+                                let react = matches!(
+                                    self.base.current_state,
+                                    AiState::Default | AiState::Wondering
+                                ) || self.base.current_state == AiState::Seeking
+                                    && matches!(
+                                        self.base.current_substate,
+                                        Substate::SeekingSoldierGiveReportToOfficer
+                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
+                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
+                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
+                                    );
+                                if !react
+                                    || !self.answer_question(Question::HasTheNewTaskPriority, ctx)
+                                {
+                                    return false;
+                                }
+                                assert_eq!(
+                                    caller.rank,
+                                    ProfileRank::Officer,
+                                    "soldier CALL_ALERT caller must be an officer"
+                                );
+                                self.base.stop_all();
+                                self.current_task_priority = self.new_task_priority;
+                                self.gather_position_instructed = false;
+                                self.base.friends_are_alerted = true;
+                                self.officers_position = caller.position;
+                                self.base.face_position(caller.position);
+                                self.set_state(
+                                    AiState::Seeking,
+                                    Substate::SeekingGroupCalledByOfficer,
+                                );
+                                self.base.launch_timer(20, ctx.frame);
+                                self.base.set_transient_emoticon(
+                                    EmoticonType::QuestionMark,
+                                    20,
+                                    ctx.frame,
+                                );
+                                return true;
+                            }
+                            ProfileRank::Officer => {
+                                let react = self.base.current_state == AiState::Default
+                                    || self.base.current_state == AiState::Seeking
+                                        && matches!(
+                                            self.base.current_substate,
+                                            Substate::SeekingOfficerWaitForInstructedGroup
+                                                | Substate::SeekingOfficerWaitForInstructedSoldier
+                                        );
+                                if !react {
+                                    return false;
+                                }
+                                assert_eq!(
+                                    caller.rank,
+                                    ProfileRank::Soldier,
+                                    "officer CALL_ALERT caller must be a soldier"
+                                );
+                                self.base.stop_all();
+                                self.base.friends_are_alerted = true;
+                                self.base.face_entity(civilian, ctx);
+                                self.set_state(
+                                    AiState::Seeking,
+                                    Substate::SeekingOfficerWaitForAlertingSoldier,
+                                );
+                                self.base.launch_timer(20, ctx.frame);
+                                self.base.set_transient_emoticon(
+                                    EmoticonType::QuestionMark,
+                                    20,
+                                    ctx.frame,
+                                );
+                                return true;
+                            }
+                            ProfileRank::Knight | ProfileRank::None => {
+                                panic!(
+                                    "CALL_ALERT reached unsupported recipient rank {:?}",
+                                    self.get_rank()
+                                )
+                            }
+                        }
                     }
                     _ => {}
                 }

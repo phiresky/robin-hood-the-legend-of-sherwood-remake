@@ -1062,13 +1062,19 @@ impl EnemyAi {
         }
 
         self.base.detected_body = body;
-        // seek_position = Position(body). Prefer the
-        // live entity view (covers bodies that aren't in the fighter
-        // snapshot); fall back to the fighter snapshot; last-resort 0.
+        // seek_position = Position(body). Prefer the live entity view
+        // (covers bodies that aren't in the fighter snapshot), then the
+        // fighter snapshot. The original dereferences the body here, so a
+        // missing required body cannot become a fabricated map origin.
         self.base.seek_position = view
             .map(|v| v.position)
             .or_else(|| self.find_fighter(body, tick).map(|f| f.position))
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "soldier {} cannot examine missing body {}",
+                    self.base.me, body
+                )
+            });
         // SetEmoticon(EMOTICON_X_MARK).
         self.base.set_emoticon(EmoticonType::XMark);
         // SetState(STATE_SEEKING, SUBSTATE_SEEKING_BODY).

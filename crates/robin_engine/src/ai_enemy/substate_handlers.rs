@@ -2233,30 +2233,19 @@ impl EnemyAi {
                             // Read the civilian's report off their
                             // entity-view snapshot — we can't borrow the
                             // brain mid-think.
-                            let civ_view = ctx.entity_view(hint.who_tells_me);
-                            let civ_report = civ_view
-                                .map(|v| crate::ai::ReconnaissanceReport {
-                                    report_type: v.report_type,
-                                    seek_position: v.report_seek_position,
-                                    seen_bodies: v.report_seen_bodies.clone(),
-                                    charly: v.report_charly,
-                                    charly_seen: v.report_charly != 0,
-                                })
-                                .unwrap_or_else(|| {
-                                    // No view (e.g. civilian de-spawned mid-tick) —
-                                    // fall back to the hint payload.  This
-                                    // mirrors the legacy shortcut: civilians
-                                    // only reach `CallReport` after having seen
-                                    // an enemy, so treat the report as Enemy
-                                    // pointed at `seek_point`.
-                                    crate::ai::ReconnaissanceReport {
-                                        report_type: ReportType::Enemy,
-                                        seek_position: hint.seek_point,
-                                        seen_bodies: Vec::new(),
-                                        charly: 0,
-                                        charly_seen: false,
-                                    }
-                                });
+                            let civ_view = ctx.entity_view(hint.who_tells_me).unwrap_or_else(|| {
+                                panic!(
+                                    "soldier {} receiving CALL_REPORT requires civilian {} view",
+                                    self.base.me, hint.who_tells_me
+                                )
+                            });
+                            let civ_report = crate::ai::ReconnaissanceReport {
+                                report_type: civ_view.report_type,
+                                seek_position: civ_view.report_seek_position,
+                                seen_bodies: civ_view.report_seen_bodies.clone(),
+                                charly: civ_view.report_charly,
+                                charly_seen: civ_view.report_charly != 0,
+                            };
                             // Merge with all three flags.
                             self.base.consider_report_merged(
                                 &civ_report,
@@ -5371,21 +5360,33 @@ impl EnemyAi {
                     // do/while loop across archery waypoints.  Bound it
                     // explicitly to the current sector's waypoint count so
                     // a pathological owner-map can't spin forever.
-                    let max_iters = self
-                        .my_archery_sector
-                        .and_then(|i| global.archery_sectors.get(i as usize))
-                        .map(|s| s.points.len() + 1)
-                        .unwrap_or(0);
+                    let sector_idx = self.my_archery_sector.unwrap_or_else(|| {
+                        panic!(
+                            "archer {} running on shooting path has no archery sector",
+                            self.base.me
+                        )
+                    });
+                    let max_iters = global
+                        .archery_sectors
+                        .get(sector_idx as usize)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "archer {} references missing archery sector {}",
+                                self.base.me, sector_idx
+                            )
+                        })
+                        .points
+                        .len()
+                        + 1;
                     let mut resolved = false;
                     for _ in 0..max_iters {
                         self.archery_path_increment_waypoint();
                         let point = self.archery_path_get_waypoint(global);
                         let Some(point) = point else {
-                            // End of path — safe equivalent is a battle
-                            // overview.
-                            self.get_battle_overview(0, ctx, tick);
-                            resolved = true;
-                            break;
+                            panic!(
+                                "archer {} reached the unsupported end of archery path in sector {}",
+                                self.base.me, sector_idx
+                            );
                         };
                         if !point.is_shooting_point {
                             // GoTo next entry waypoint, RUN | DONTSTOP.
@@ -5413,10 +5414,8 @@ impl EnemyAi {
                             // `archery_path_get_waypoint` is a pure read,
                             // so `my_archery_point_index` identifies this
                             // point directly.
-                            if let Some(sector_idx) = self.my_archery_sector {
-                                let pt_idx = u16::from(self.my_archery_point_index);
-                                self.set_my_shooting_point(global, Some((sector_idx, pt_idx)));
-                            }
+                            let pt_idx = u16::from(self.my_archery_point_index);
+                            self.set_my_shooting_point(global, Some((sector_idx, pt_idx)));
                             self.base
                                 .go_to(point.position, crate::ai::GotoFlags::RUN, ctx);
                             resolved = true;
@@ -5426,11 +5425,11 @@ impl EnemyAi {
                         // (loop iterates through archery_path_get_waypoint
                         // which already advances the cursor).
                     }
-                    if !resolved {
-                        // Bounded out without hitting a free point or
-                        // end-of-path sentinel — treat as end-of-path.
-                        self.get_battle_overview(0, ctx, tick);
-                    }
+                    assert!(
+                        resolved,
+                        "archer {} shooting-path scan exceeded sector {} point count",
+                        self.base.me, sector_idx
+                    );
                 }
             }
 
@@ -5445,12 +5444,29 @@ impl EnemyAi {
                     // `my_shooting_point` carries the (sector, point) pair
                     // set by `set_my_shooting_point`, so we can look up the
                     // reserved point's direction directly.
-                    if let Some((sec_idx, pt_idx)) = self.my_shooting_point
-                        && let Some(sector) = global.archery_sectors.get(sec_idx as usize)
-                        && let Some(pt) = sector.points.get(pt_idx as usize)
-                    {
-                        self.base.face_direction(pt.direction, ctx);
-                    }
+                    let (sec_idx, pt_idx) = self.my_shooting_point.unwrap_or_else(|| {
+                        panic!(
+                            "archer {} final sprint has no reserved shooting point",
+                            self.base.me
+                        )
+                    });
+                    let sector =
+                        global
+                            .archery_sectors
+                            .get(sec_idx as usize)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "archer {} final sprint references missing archery sector {}",
+                                    self.base.me, sec_idx
+                                )
+                            });
+                    let point = sector.points.get(pt_idx as usize).unwrap_or_else(|| {
+                        panic!(
+                            "archer {} final sprint references missing point {} in sector {}",
+                            self.base.me, pt_idx, sec_idx
+                        )
+                    });
+                    self.base.face_direction(point.direction, ctx);
                 }
             }
 
@@ -5945,5 +5961,65 @@ mod tests {
             assert_eq!(ai.base.current_state, AiState::Seeking);
             assert_eq!(ai.base.current_substate, substate);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "running on shooting path has no archery sector")]
+    fn shooting_path_does_not_fabricate_an_end_of_path_recovery() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(
+            AiState::Attacking,
+            Substate::AttackingArcherRunOnShootingPath,
+        );
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "final sprint has no reserved shooting point")]
+    fn shooting_path_final_sprint_requires_its_reserved_point() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(
+            AiState::Attacking,
+            Substate::AttackingArcherRunOnShootingPathFinalSprint,
+        );
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "receiving CALL_REPORT requires civilian 42 view")]
+    fn civilian_report_does_not_fabricate_enemy_data_when_sender_is_missing() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingWaitForAlertingCivilian);
+        let mut stimulus = Stimulus::new(StimulusType::CallReport);
+        stimulus.info = StimulusInfo::Hint(Hint {
+            seek_point: Position::default(),
+            seek_flags: 0,
+            who_tells_me: 42,
+        });
+        ai.think_expected_event(
+            &sim,
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
     }
 }

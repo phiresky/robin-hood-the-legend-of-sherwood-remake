@@ -1004,26 +1004,37 @@ impl AiController {
         reports
     }
 
-    /// Drain synchronous `HeyFolksLookThere` calls while leaving unrelated
-    /// formation/coordination work for the ordinary cross-NPC batch.
-    pub fn take_pending_look_there_actions(&mut self) -> Vec<CrossNpcAction> {
-        let mut look_there = Vec::new();
+    /// Drain result-bearing `CALL_ALERT` requests while leaving ordinary
+    /// cross-NPC work queued. These calls must close before the sender's
+    /// handler continuation, matching direct C++ `Think` re-entry.
+    pub fn take_pending_alert_requests(&mut self) -> Vec<CrossNpcAction> {
+        let mut requests = Vec::new();
         let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
         for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(
-                &action,
-                CrossNpcAction::SendStimulus {
-                    stimulus_type: StimulusType::CallLookThere,
-                    ..
-                }
-            ) {
-                look_there.push(action);
+            if matches!(action, CrossNpcAction::RequestAlert { .. }) {
+                requests.push(action);
             } else {
                 deferred.push(action);
             }
         }
         self.outbox.reentrant.cross_npc_actions = deferred;
-        look_there
+        requests
+    }
+
+    /// Drain direct recipient `Think` calls while leaving non-stimulus
+    /// formation/coordination work for the ordinary cross-NPC batch.
+    pub fn take_pending_synchronous_stimuli(&mut self) -> Vec<CrossNpcAction> {
+        let mut synchronous = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(&action, CrossNpcAction::SendStimulus { .. }) {
+                synchronous.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        synchronous
     }
 
     /// Drain self-directed stimuli queued by `say()`.

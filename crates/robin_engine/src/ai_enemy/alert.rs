@@ -639,7 +639,12 @@ impl EnemyAi {
                         .iter()
                         .find(|cs| cs.handle == handle)
                         .map(|cs| cs.position)
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "alerted soldier {} disappeared from officer {} tick roster",
+                                handle, self.base.me
+                            )
+                        });
                     let mut best_idx = 0usize;
                     let mut best_sq = f32::INFINITY;
                     for (k, slot) in slots.iter().enumerate() {

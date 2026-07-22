@@ -2001,9 +2001,9 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
                 engine.refresh_npc_view_for_npc(receiver_id, &positions);
-                engine.process_synchronous_look_there_for(sim, source_id, &assets);
+                engine.process_synchronous_stimuli_for(sim, source_id, &assets);
             } else {
-                engine.process_synchronous_look_there_for(sim, source_id, &assets);
+                engine.process_synchronous_stimuli_for(sim, source_id, &assets);
                 engine.refresh_npc_view_for_npc(receiver_id, &positions);
             }
         });

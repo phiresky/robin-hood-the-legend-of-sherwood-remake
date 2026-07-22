@@ -1657,6 +1657,329 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
     );
 }
 
+fn run_synchronous_civilian_alert(soldier_state: crate::ai::AiState) -> EngineInner {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::element::AiBrain;
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 100;
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Civilian(civilian) = engine
+        .get_entity_mut(civilian_id)
+        .expect("test civilian exists")
+    else {
+        panic!("test civilian changed kind")
+    };
+    civilian.element.active = true;
+    civilian.element.set_position_map(MapPoint::new(0.0, 0.0));
+    civilian.civilian.cached_camp = crate::element::Camp::Royalists;
+    civilian.npc.ai_brain = AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(
+        civilian_id.index(),
+    )));
+    let friendly = civilian
+        .npc
+        .ai_brain
+        .friendly_mut()
+        .expect("test civilian has FriendlyAi");
+    friendly.base.antagonist = soldier_id.index();
+    friendly.base.my_reconnaissance_report.update(
+        crate::ai::ReportType::Enemy,
+        crate::ai::Position {
+            x: 300.0,
+            y: 20.0,
+            sector: None,
+            level: 0,
+        },
+    );
+    friendly.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("test soldier exists")
+    else {
+        panic!("test soldier changed kind")
+    };
+    soldier.element.active = true;
+    soldier.element.set_position_map(MapPoint::new(20.0, 0.0));
+    let enemy = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test soldier has EnemyAi");
+    enemy.base.me = soldier_id.index();
+    enemy.set_state(
+        soldier_state,
+        if soldier_state == AiState::Default {
+            Substate::DefaultOnPost
+        } else {
+            Substate::AttackingSwordfight
+        },
+    );
+
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let scratch = engine.build_sim_scratch(sim, &assets);
+    let ctx = {
+        let entity = engine
+            .get_entity(civilian_id)
+            .expect("test civilian exists for context");
+        crate::engine::ai::build_ai_context_from_entity(
+            entity,
+            engine.control.frame_counter,
+            None,
+            engine.world.weather.is_forest_level,
+            engine.world.weather.ambiance,
+            engine.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &engine.world.fast_grid,
+            &assets.hiking_paths,
+            &engine.ai.global.all_soldier_handles,
+            engine.control.sim_config.difficulty,
+        )
+    };
+    let tick = engine.build_npc_tick_data(sim, civilian_id, &scratch, &assets);
+    engine.dispatch_think_with_drain(
+        sim,
+        civilian_id,
+        &Stimulus::new(StimulusType::EventReachPoint),
+        &ctx,
+        &tick,
+        &assets,
+    );
+    engine
+}
+
+#[test]
+fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
+    use crate::ai::{AiState, Substate};
+
+    let mut accepted = run_synchronous_civilian_alert(AiState::Default);
+    let civilian = accepted
+        .world
+        .entities
+        .civilians()
+        .next()
+        .expect("accepted civilian exists")
+        .1
+        .npc
+        .ai_brain
+        .friendly()
+        .expect("accepted civilian has FriendlyAi");
+    assert_eq!(
+        civilian.base.current_substate,
+        Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
+        "recipient CALL_ALERT and recursive EVENT_REACHPOINT must settle before dispatch returns"
+    );
+    assert_eq!(civilian.base.when_does_timer_ring, 110);
+    let soldier = accepted
+        .world
+        .entities
+        .soldiers()
+        .next()
+        .expect("accepting soldier exists")
+        .1
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("accepting soldier has EnemyAi");
+    assert_eq!(
+        soldier.base.current_substate,
+        Substate::SeekingWaitForAlertingCivilian
+    );
+
+    let civilian_id = accepted
+        .world
+        .entities
+        .civilians()
+        .next()
+        .expect("reporting civilian exists")
+        .0;
+    accepted.control.frame_counter = 110;
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+    complete_test_runtime_fixture(&mut accepted, &mut assets);
+    let sim_context = crate::sim_rng::test_context();
+    let scratch = accepted.build_sim_scratch(&sim_context, &assets);
+    let ctx = {
+        let entity = accepted
+            .get_entity(EntityId::Civilian(civilian_id))
+            .expect("reporting civilian exists for context");
+        crate::engine::ai::build_ai_context_from_entity(
+            entity,
+            accepted.control.frame_counter,
+            None,
+            accepted.world.weather.is_forest_level,
+            accepted.world.weather.ambiance,
+            accepted.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &accepted.world.fast_grid,
+            &assets.hiking_paths,
+            &accepted.ai.global.all_soldier_handles,
+            accepted.control.sim_config.difficulty,
+        )
+    };
+    let civilian_entity_id = EntityId::Civilian(civilian_id);
+    let tick = accepted.build_npc_tick_data(&sim_context, civilian_entity_id, &scratch, &assets);
+    accepted.dispatch_think_with_drain(
+        &sim_context,
+        civilian_entity_id,
+        &crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
+        &ctx,
+        &tick,
+        &assets,
+    );
+    let soldier = accepted
+        .world
+        .entities
+        .soldiers()
+        .next()
+        .expect("reported-to soldier exists")
+        .1
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("reported-to soldier has EnemyAi");
+    assert_eq!(
+        soldier.base.current_substate,
+        Substate::SeekingGetAlertingReportFromCivilian,
+        "CALL_REPORT recipient transition must settle before the civilian timer dispatch returns"
+    );
+    assert_eq!(
+        soldier.base.my_reconnaissance_report.report_type,
+        crate::ai::ReportType::Enemy
+    );
+
+    let refused = run_synchronous_civilian_alert(AiState::Attacking);
+    let civilian = refused
+        .world
+        .entities
+        .civilians()
+        .next()
+        .expect("refused civilian exists")
+        .1
+        .npc
+        .ai_brain
+        .friendly()
+        .expect("refused civilian has FriendlyAi");
+    assert_ne!(civilian.base.current_state, AiState::Seeking);
+    assert_ne!(
+        civilian.base.current_substate,
+        Substate::SeekingCivilianRunningToSoldierSeen
+    );
+}
+
+#[test]
+fn soldier_alert_uses_caller_kind_and_recipient_result_synchronously() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::profiles::ProfileRank;
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 100;
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let reporter_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    for (id, x, rank) in [
+        (reporter_id, 0.0, ProfileRank::Soldier),
+        (officer_id, 40.0, ProfileRank::Officer),
+    ] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("alert soldier exists")
+        else {
+            panic!("alert soldier changed kind")
+        };
+        soldier.element.active = true;
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("alert soldier has EnemyAi");
+        ai.base.me = id.index();
+        ai.soldier_profile_rank = rank;
+        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    }
+
+    let scratch = engine.build_sim_scratch(sim, &assets);
+    let ctx = {
+        let entity = engine
+            .get_entity(reporter_id)
+            .expect("reporter exists for context");
+        crate::engine::ai::build_ai_context_from_entity(
+            entity,
+            engine.control.frame_counter,
+            None,
+            engine.world.weather.is_forest_level,
+            engine.world.weather.ambiance,
+            engine.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &engine.world.fast_grid,
+            &assets.hiking_paths,
+            &engine.ai.global.all_soldier_handles,
+            engine.control.sim_config.difficulty,
+        )
+    };
+    let tick = engine.build_npc_tick_data(sim, reporter_id, &scratch, &assets);
+    engine.dispatch_think_with_drain(
+        sim,
+        reporter_id,
+        &Stimulus::with_human(StimulusType::EventSeesSoldier, officer_id.index()),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let reporter = engine
+        .get_entity(reporter_id)
+        .and_then(Entity::enemy_ai)
+        .expect("reporter retains EnemyAi");
+    assert_eq!(
+        reporter.base.current_substate,
+        Substate::SeekingRunningToOfficerSeen
+    );
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("officer retains EnemyAi");
+    assert_eq!(
+        officer.base.current_substate,
+        Substate::SeekingOfficerWaitForAlertingSoldier,
+        "soldier caller must not be routed through the civilian CALL_ALERT arm"
+    );
+}
+
 #[test]
 fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
     let sim_context = crate::sim_rng::test_context();
