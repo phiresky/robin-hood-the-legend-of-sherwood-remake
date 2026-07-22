@@ -1885,13 +1885,28 @@ impl EnemyAi {
                 };
                 if finished {
                     self.pending_alert_soldier_candidates.clear();
-                    if !self.finish_alert_soldiers(
-                        global,
-                        grid.filter(|_| use_formation),
-                        ctx,
-                        tick,
-                    ) {
-                        self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
+                    if accepted {
+                        // Original resumes AlertSoldiers only after the
+                        // accepted recipient's ConsiderReport call returns.
+                        // Keep that callback and all owner-side effects ahead
+                        // of formation/state/sequence work.
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::FinalizeAlertSoldiers {
+                                caller: self.base.me,
+                                use_formation,
+                                failure,
+                            },
+                        );
+                    } else {
+                        // A refused final call has no ConsiderReport boundary.
+                        self.finalize_alert_soldiers(
+                            sim,
+                            failure,
+                            global,
+                            grid.filter(|_| use_formation),
+                            ctx,
+                            tick,
+                        );
                     }
                 }
             }
@@ -1979,6 +1994,20 @@ impl EnemyAi {
                 self.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
                 self.base.fire_self_stimulus(StimulusType::EventReachPoint);
             }
+        }
+    }
+
+    pub(crate) fn finalize_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        failure: AlertSoldiersFailureContinuation,
+        global: &mut AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.finish_alert_soldiers(global, grid, ctx, tick) {
+            self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
         }
     }
 

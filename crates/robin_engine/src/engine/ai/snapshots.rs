@@ -350,6 +350,25 @@ pub(super) struct AiWorldView {
 }
 
 impl EngineInner {
+    #[cfg(test)]
+    pub(crate) fn test_soldier_snapshot_abilities(
+        &mut self,
+        assets: &LevelAssets,
+        soldier_id: EntityId,
+    ) -> (bool, bool) {
+        let snapshots = self.tick_enemy_ai_build_soldier_snapshots(assets, None);
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == soldier_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "soldier {} is missing from AI snapshots",
+                    soldier_id.index()
+                )
+            });
+        (snapshot.able_to_fight, snapshot.able_to_help)
+    }
+
     /// Build the single immutable AI world view for this tick.
     ///
     /// Original provenance: `RHelementactorsoldier.cpp::Hourglass` performs
@@ -804,8 +823,12 @@ impl EngineInner {
             let in_building = self.entity_data_inside_building(&s.element);
             // Filled only when the current NPC owner has queued Think work.
             let forecast_destination = None;
+            // IsAbleToHelp has its own early gate: dead/unconscious only.
+            // Do not feed it IsAbleToFight, which additionally rejects
+            // tied, carried, inactive, menacing, fleeing, and hit-stun.
+            let alive_and_conscious = s.npc.life_points > 0 && !s.human.unconscious;
             let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
-                able_to_fight,
+                alive_and_conscious,
                 s.npc.ai_state(),
                 s.npc.ai_substate(),
             );

@@ -1508,6 +1508,15 @@ pub enum CrossNpcAction {
         /// (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
         flags: u16,
     },
+    /// Resume the outer AlertSoldiers call after the final accepted
+    /// soldier's ConsiderReport call and all of its owner-side effects have
+    /// closed. A refused final Think has no report boundary and finalizes
+    /// directly in the result continuation.
+    FinalizeAlertSoldiers {
+        caller: NpcHandle,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
     /// Push `actor` onto `target`'s `synchronizing_actors` list. Used by
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.

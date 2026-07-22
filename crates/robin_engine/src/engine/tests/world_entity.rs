@@ -2996,6 +2996,192 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
 }
 
 #[test]
+fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
+    use crate::ai::{AlertSoldiersFailureContinuation, CrossNpcAction, Position};
+    use crate::element::Posture;
+
+    let sim = crate::sim_rng::test_context();
+    for carried in [false, true] {
+        let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("help-eligibility recipient exists")
+        else {
+            panic!("help-eligibility recipient changed kind")
+        };
+        if carried {
+            soldier.human.carrier = Some(officer_id);
+        } else {
+            soldier.element.posture = Posture::Tied;
+        }
+
+        let (snapshot_able_to_fight, snapshot_able_to_help) =
+            engine.test_soldier_snapshot_abilities(&assets, soldier_id);
+        assert!(!snapshot_able_to_fight);
+        assert!(
+            snapshot_able_to_help,
+            "Original IsAbleToHelp does not inherit the tied/carried fight gate"
+        );
+
+        let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+        let candidate = tick
+            .camp_soldiers
+            .iter()
+            .find(|candidate| candidate.handle == soldier_id.index())
+            .expect("tied/carried soldier remains in the owner camp snapshot");
+        assert!(!candidate.is_able_to_fight);
+        assert!(candidate.is_able_to_help);
+        let global = engine.ai.global.clone();
+        assert!(
+            engine
+                .get_entity_mut(officer_id)
+                .and_then(Entity::enemy_ai_mut)
+                .expect("help-eligibility officer has EnemyAi")
+                .alert_soldiers(
+                    Position::default(),
+                    0,
+                    &global,
+                    None,
+                    &ctx,
+                    &tick,
+                    AlertSoldiersFailureContinuation::None,
+                )
+        );
+        assert!(matches!(
+            engine
+                .get_entity(officer_id)
+                .and_then(Entity::ai_controller)
+                .expect("help-eligibility officer retains AI")
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .as_slice(),
+            [CrossNpcAction::RequestThinkResult { target, .. }] if *target == soldier_id.index()
+        ));
+    }
+}
+
+#[test]
+fn closure_review_final_alert_report_boundary_precedes_formation() {
+    use crate::ai::{
+        AlertSoldiersFailureContinuation, CrossNpcAction, ReportType, Substate,
+        ThinkResultContinuation,
+    };
+    use crate::element::{Detectable, DetectableType, Posture};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
+    let body_id = engine.add_entity(make_test_pc(Posture::Upright));
+    let Entity::Pc(body) = engine.get_entity_mut(body_id).expect("report body exists") else {
+        panic!("report body changed kind")
+    };
+    body.element.active = true;
+    body.pc.life_points = 0;
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(officer_id)
+        .expect("final-alert officer exists")
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -5.0, -5.0, 5.0, 5.0,
+        ));
+    engine
+        .get_entity_mut(soldier_id)
+        .expect("final-alert recipient exists")
+        .npc_data_mut()
+        .expect("final-alert recipient is an NPC")
+        .detectable_lists[DetectableType::Body as usize]
+        .push(Detectable {
+            element: Some(body_id),
+            detectable_type: DetectableType::Body,
+            ..Default::default()
+        });
+    {
+        let officer = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("final-alert officer has EnemyAi");
+        officer.base.my_reconnaissance_report.report_type = ReportType::Body;
+        officer
+            .base
+            .my_reconnaissance_report
+            .seen_bodies
+            .push(body_id.index());
+    }
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    let global = &mut engine.ai.global;
+    let grid = &engine.world.fast_grid;
+    engine
+        .world
+        .entities
+        .get_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("final-alert officer has EnemyAi")
+        .resolve_think_result(
+            &sim,
+            true,
+            soldier_id.index(),
+            ThinkResultContinuation::OfficerAlertedSoldier {
+                last: true,
+                use_formation: true,
+                failure: AlertSoldiersFailureContinuation::None,
+            },
+            global,
+            Some(grid),
+            &ctx,
+            &tick,
+        );
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("final-alert officer retains EnemyAi");
+    assert!(matches!(
+        officer.base.outbox.reentrant.cross_npc_actions.as_slice(),
+        [
+            CrossNpcAction::ConsiderReport { target, .. },
+            CrossNpcAction::FinalizeAlertSoldiers { caller, .. }
+        ] if *target == soldier_id.index() && *caller == officer_id.index()
+    ));
+    assert!(
+        officer.base.current_substate != Substate::SeekingOfficerWaitForGroup,
+        "formation must remain suspended behind the report boundary"
+    );
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let recipient = engine
+        .get_entity(soldier_id)
+        .expect("final-alert recipient remains present");
+    assert!(
+        recipient
+            .npc_data()
+            .expect("final-alert recipient remains an NPC")
+            .detectable_lists[DetectableType::Body as usize]
+            .iter()
+            .all(|detectable| detectable.element != Some(body_id)),
+        "ConsiderReport owner effects must close before finalization"
+    );
+    assert!(
+        recipient
+            .enemy_ai()
+            .expect("final-alert recipient retains EnemyAi")
+            .gather_position_instructed,
+        "formation resumes after the report boundary"
+    );
+    assert_eq!(
+        engine
+            .get_entity(officer_id)
+            .and_then(Entity::enemy_ai)
+            .expect("final-alert officer retains EnemyAi")
+            .base
+            .current_substate,
+        Substate::SeekingOfficerWaitForGroup
+    );
+}
+
+#[test]
 fn review2_alert_result_and_report_finish_before_next_soldier_call() {
     use crate::ai::{
         AlertSoldiersFailureContinuation, CrossNpcAction, Position, ReconnaissanceReport,

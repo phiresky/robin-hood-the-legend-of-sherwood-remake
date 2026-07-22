@@ -1677,6 +1677,7 @@ impl EngineInner {
                 continue;
             }
             let able_to_fight = crate::element::Human::is_able_to_fight(s);
+            let alive_and_conscious = s.npc.life_points > 0 && !s.human.unconscious;
             let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
                 continue;
             };
@@ -1805,7 +1806,7 @@ impl EngineInner {
                 ai_substate: s.npc.ai_substate(),
                 is_able_to_fight: able_to_fight,
                 is_able_to_help: crate::ai_enemy::soldier_is_able_to_help_state(
-                    able_to_fight,
+                    alive_and_conscious,
                     s.npc.ai_state(),
                     s.npc.ai_substate(),
                 ),
@@ -8109,6 +8110,11 @@ impl EngineInner {
                         "result-bearing Think request {caller}->{target} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::FinalizeAlertSoldiers { caller, .. } => {
+                    panic!(
+                        "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::InstructGatherPosition {
                     target,
                     position,
@@ -8839,6 +8845,18 @@ impl EngineInner {
                     } => {
                         self.process_synchronous_consider_report(sim, target, report, flags, assets)
                     }
+                    crate::ai::CrossNpcAction::FinalizeAlertSoldiers {
+                        caller,
+                        use_formation,
+                        failure,
+                    } => self.process_synchronous_finalize_alert_soldiers(
+                        sim,
+                        source_id,
+                        caller,
+                        use_formation,
+                        failure,
+                        assets,
+                    ),
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(sim, source_id, assets)
@@ -8929,6 +8947,60 @@ impl EngineInner {
             .base
             .consider_report_merged(&report, flags, scratch.ai_entity_views.as_ref());
         self.drain_direct_ai_owner_boundary_without_forecast(sim, target_id, assets);
+    }
+
+    fn process_synchronous_finalize_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        caller: u32,
+        use_formation: bool,
+        failure: crate::ai::AlertSoldiersFailureContinuation,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            source_id.index(),
+            caller,
+            "AlertSoldiers finalization caller must be its owner"
+        );
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let building_sector = self
+            .world
+            .entities
+            .get(source_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
+        let ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(source_id)
+                .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
+            build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
+        let global = &mut self.ai.global;
+        let grid = use_formation.then_some(&self.world.fast_grid);
+        self.world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} lost its EnemyAi"))
+            .finalize_alert_soldiers(sim, failure, global, grid, &ctx, &tick);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
     fn process_synchronous_gather_instruction(
