@@ -1659,6 +1659,9 @@ impl EngineInner {
                 s.element.position().z,
                 s.element.layer(),
                 self.entity_data_inside_building(&s.element),
+                s.element.posture,
+                s.soldier.rider,
+                s.element.direction(),
             )
         });
         let obstacles_owned = scratch.ai_sight_obstacles.clone();
@@ -1746,7 +1749,7 @@ impl EngineInner {
             // inside a building; fold those into the cached `false` here.
             let eye_blind = s.npc.eye_status.is_blind();
             let is_detecting_cone = match me_brawler_data {
-                Some((me_pos, me_ground_z, me_layer, me_in_building))
+                Some((me_pos, me_ground_z, me_layer, me_in_building, ..))
                     if !eye_blind && !in_building && able_to_fight && !me_in_building =>
                 {
                     let viewer = crate::coordinates::MapPoint::new(position.x, position.y);
@@ -1768,6 +1771,32 @@ impl EngineInner {
                     )
                 }
                 _ => false,
+            };
+            let is_detecting_360 = match me_brawler_data {
+                Some((me_pos, me_ground_z, _, me_in_building, posture, is_rider, direction)) => {
+                    crate::ai_enemy::soldier_detects_target_360(
+                        cs_position,
+                        s.element.position().z,
+                        s.soldier.rider,
+                        s.npc.view_radius,
+                        eye_blind,
+                        in_building,
+                        able_to_fight,
+                        crate::ai::Position {
+                            x: me_pos.x,
+                            y: me_pos.y,
+                            sector: None,
+                            level: 0,
+                        },
+                        me_ground_z,
+                        posture,
+                        is_rider,
+                        direction,
+                        me_in_building,
+                        obstacles,
+                    )
+                }
+                None => false,
             };
             camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
                 handle: other_id.index(),
@@ -1808,6 +1837,7 @@ impl EngineInner {
                 view_radius: s.npc.view_radius,
                 real_half_aperture: s.npc.real_half_aperture,
                 eye_blind,
+                is_detecting_360,
                 is_detecting_cone,
             });
         }
@@ -9207,6 +9237,8 @@ impl EngineInner {
                 )
             };
             let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
+            let global = &mut self.ai.global;
+            let grid = &self.world.fast_grid;
             self.world
                 .entities
                 .get_mut(source_id)
@@ -9217,6 +9249,8 @@ impl EngineInner {
                     accepted,
                     target,
                     continuation,
+                    global,
+                    Some(grid),
                     &source_ctx,
                     &source_tick,
                 );

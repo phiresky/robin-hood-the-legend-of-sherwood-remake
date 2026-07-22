@@ -13,6 +13,12 @@ use crate::position_interface::INVERSE_ASPECT_RATIO;
 use super::util::{soldier_is_able_to_help_state, vec_to_sector};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandSoldiersStart {
+    Pending,
+    Rejected,
+}
+
 impl EnemyAi {
     /// CanPutSoldiersInThisDirection. Lays out `num_soldiers`
     /// gather slots in a line formation radiating from `pt_officer` in
@@ -109,14 +115,14 @@ impl EnemyAi {
     // Port of the legacy officer attack broadcast.
     // -----------------------------------------------------------------------
 
-    pub fn command_soldiers_to_attack(
+    pub(crate) fn command_soldiers_to_attack(
         &mut self,
         center: Position,
-        global: &AiGlobalState,
+        _global: &AiGlobalState,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) -> bool {
+    ) -> CommandSoldiersStart {
         debug_assert_eq!(self.get_rank(), ProfileRank::Officer);
 
         let my_pos = ctx.position;
@@ -127,23 +133,12 @@ impl EnemyAi {
         let alert_radius_sq = alert_radius * alert_radius;
 
         self.alerted_us.clear();
-        // Per-soldier positions cached for nearest-slot distribution
-        // after `can_put_soldiers_in_this_direction` succeeds.
-        let mut alerted_positions: Vec<Position> = Vec::new();
-        let mut alerted_count: u16 = 0;
-        // Accumulate a sum of normalized (friend - me) vectors so
-        // that after the loop the officer faces the average direction
-        // of the alerted soldiers before gathering them.
-        // Updated while scanning helpers so the officer can face the
-        // average helper direction.
-        let mut avg_dir_vec_x: f32 = 0.0;
-        let mut avg_dir_vec_y: f32 = 0.0;
         let mut last_result_request = None;
 
         for cs in &tick.camp_soldiers {
             // Original eligibility is rank soldier + IsAbleToFight; the
             // recipient's live Think handles script/AI locks and state gates.
-            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight {
+            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight || !cs.is_detecting_360 {
                 continue;
             }
             // MaxNorm distance check
@@ -170,31 +165,68 @@ impl EnemyAi {
                     info: StimulusInfo::Position(center),
                     continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier {
                         last: false,
+                        use_formation: grid.is_some(),
                     },
                 });
-            self.alerted_us.push(cs.handle);
-            alerted_positions.push(cs.position);
-            alerted_count += 1;
-
-            // Accumulate normalized (friend - me) for the average
-            // turn-towards-soldiers direction.
-            let fdx = cs.position.x - my_pos.x;
-            let fdy = cs.position.y - my_pos.y;
-            let len = (fdx * fdx + fdy * fdy).sqrt();
-            if len > 0.0 {
-                avg_dir_vec_x += fdx / len;
-                avg_dir_vec_y += fdy / len;
-            }
         }
 
         if let Some(index) = last_result_request
             && let CrossNpcAction::RequestThinkResult { continuation, .. } =
                 &mut self.base.outbox.reentrant.cross_npc_actions[index]
         {
-            *continuation = ThinkResultContinuation::OfficerCombatAlertedSoldier { last: true };
+            *continuation = ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                last: true,
+                use_formation: grid.is_some(),
+            };
         }
 
+        if last_result_request.is_some() {
+            CommandSoldiersStart::Pending
+        } else {
+            CommandSoldiersStart::Rejected
+        }
+    }
+
+    pub(super) fn finish_command_soldiers_to_attack(
+        &mut self,
+        global: &AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> bool {
+        let center = self.base.seek_position;
+        let my_pos = ctx.position;
+        let alerted_count = self.alerted_us.len() as u16;
         if alerted_count > 0 {
+            let alerted_positions: Vec<Position> = self
+                .alerted_us
+                .iter()
+                .map(|handle| {
+                    tick.camp_soldiers
+                        .iter()
+                        .find(|cs| cs.handle == *handle)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "combat-alerted soldier {} disappeared from officer {} tick roster",
+                                handle, self.base.me
+                            )
+                        })
+                        .position
+                })
+                .collect();
+            let (avg_dir_vec_x, avg_dir_vec_y) =
+                alerted_positions
+                    .iter()
+                    .fold((0.0, 0.0), |(sum_x, sum_y), soldier_pos| {
+                        let dx = soldier_pos.x - my_pos.x;
+                        let dy = soldier_pos.y - my_pos.y;
+                        let len = (dx * dx + dy * dy).sqrt();
+                        if len > 0.0 {
+                            (sum_x + dx / len, sum_y + dy / len)
+                        } else {
+                            (sum_x, sum_y)
+                        }
+                    });
             // Try a line formation on the average
             // soldier-direction side, then distribute slots to each
             // alerted soldier (nearest-slot match, outdoor only) with
@@ -330,10 +362,11 @@ impl EnemyAi {
         &mut self,
         center: Position,
         flags: u16,
-        global: &AiGlobalState,
+        _global: &AiGlobalState,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         ctx: &AiContext,
         tick: &AiPerTickData,
+        failure: AlertSoldiersFailureContinuation,
     ) -> bool {
         // Stash seek center + flags on the AI.
         let my_pos = ctx.position;
@@ -368,22 +401,12 @@ impl EnemyAi {
         let alert_radius_sq = alert_radius * alert_radius;
 
         let my_handle = self.base.me;
-        // Whether the officer is currently inside a building.
-        let officer_in_building = ctx.in_building;
-
-        // Collect alerted soldiers as (handle, sqr_distance) so we can
-        // Insert in ascending-distance order.
-        let mut alerted: Vec<(HumanHandle, f32)> = Vec::with_capacity(20);
-
-        // Sum of normalized (friend - me) vectors — only used outdoors
-        // To pick the group-gather direction.
-        let mut avg_dir_vec_x: f32 = 0.0;
-        let mut avg_dir_vec_y: f32 = 0.0;
+        let mut candidate_count = 0usize;
         let mut last_result_request = None;
 
         for cs in &tick.camp_soldiers {
             // Hard cap of 20 alerted friends.
-            if alerted.len() >= 20 {
+            if candidate_count >= 20 {
                 break;
             }
             // Rank SOLDIER.
@@ -443,38 +466,82 @@ impl EnemyAi {
                     caller: self.base.me,
                     stimulus_type: StimulusType::CallAlert,
                     info: StimulusInfo::Human(self.base.me),
-                    continuation: ThinkResultContinuation::OfficerAlertedSoldier { last: false },
+                    continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                        last: false,
+                        use_formation: grid.is_some(),
+                        failure,
+                    },
                 });
-
-            // Distance-sorted insertion: soldiers
-            // appear in ascending SqrDistance.
-            let pos = alerted
-                .iter()
-                .position(|&(_, d)| sqr_dist < d)
-                .unwrap_or(alerted.len());
-            alerted.insert(pos, (cs.handle, sqr_dist));
-
-            // Outdoor gather-direction accumulator.
-            if !officer_in_building {
-                let fdx = cs.position.x - my_pos.x;
-                let fdy = cs.position.y - my_pos.y;
-                let len = (fdx * fdx + fdy * fdy).sqrt();
-                if len > 0.0 {
-                    avg_dir_vec_x += fdx / len;
-                    avg_dir_vec_y += fdy / len;
-                }
-            }
+            candidate_count += 1;
         }
 
         if let Some(index) = last_result_request
             && let CrossNpcAction::RequestThinkResult { continuation, .. } =
                 &mut self.base.outbox.reentrant.cross_npc_actions[index]
         {
-            *continuation = ThinkResultContinuation::OfficerAlertedSoldier { last: true };
+            *continuation = ThinkResultContinuation::OfficerAlertedSoldier {
+                last: true,
+                use_formation: grid.is_some(),
+                failure,
+            };
         }
 
-        // Publish the alerted-soldier list.
-        self.alerted_us = alerted.iter().map(|&(h, _)| h).collect();
+        last_result_request.is_some()
+    }
+
+    pub(super) fn finish_alert_soldiers(
+        &mut self,
+        global: &AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> bool {
+        let my_pos = ctx.position;
+        let officer_in_building = ctx.in_building;
+
+        let mut alerted: Vec<(HumanHandle, f32)> = self
+            .alerted_us
+            .iter()
+            .map(|handle| {
+                let soldier = tick
+                    .camp_soldiers
+                    .iter()
+                    .find(|cs| cs.handle == *handle)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "alerted soldier {} disappeared from officer {} tick roster",
+                            handle, self.base.me
+                        )
+                    });
+                let dx = soldier.position.x - my_pos.x;
+                let dy = soldier.position.y - my_pos.y;
+                (*handle, dx * dx + dy * dy)
+            })
+            .collect();
+        alerted.sort_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs));
+        self.alerted_us = alerted.iter().map(|(handle, _)| *handle).collect();
+
+        let (avg_dir_vec_x, avg_dir_vec_y) = if officer_in_building {
+            (0.0, 0.0)
+        } else {
+            self.alerted_us
+                .iter()
+                .fold((0.0, 0.0), |(sum_x, sum_y), handle| {
+                    let soldier = tick
+                        .camp_soldiers
+                        .iter()
+                        .find(|cs| cs.handle == *handle)
+                        .expect("accepted alert soldier was validated above");
+                    let dx = soldier.position.x - my_pos.x;
+                    let dy = soldier.position.y - my_pos.y;
+                    let len = (dx * dx + dy * dy).sqrt();
+                    if len > 0.0 {
+                        (sum_x + dx / len, sum_y + dy / len)
+                    } else {
+                        (sum_x, sum_y)
+                    }
+                })
+        };
 
         // Indoor officer with no stored my_door
         // bails out — no way to position soldiers outside.

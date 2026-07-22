@@ -2366,6 +2366,7 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
             None,
             &ctx,
             &tick,
+            crate::ai::AlertSoldiersFailureContinuation::None,
         );
     // The candidate snapshot admitted this soldier, but the live recipient
     // changes before the direct call and refuses it.
@@ -2463,10 +2464,353 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 }
 
 #[test]
+fn final_review_alert_all_refused_resumes_caller_failure() {
+    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("alert caller has EnemyAi")
+        .set_state(AiState::Seeking, Substate::SeekingArrowJustWatching);
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    let global = engine.ai.global.clone();
+    assert!(
+        engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("alert caller has EnemyAi")
+            .alert_soldiers(
+                Position {
+                    x: 100.0,
+                    ..Default::default()
+                },
+                0,
+                &global,
+                None,
+                &ctx,
+                &tick,
+                AlertSoldiersFailureContinuation::ReturnToDuty,
+            ),
+        "an admitted candidate suspends the outer AlertSoldiers call"
+    );
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("alert recipient has EnemyAi")
+        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("alert caller retains EnemyAi");
+    assert!(officer.alerted_us.is_empty());
+    assert_eq!(officer.base.current_state, AiState::Default);
+    assert_eq!(officer.base.current_substate, Substate::DefaultGotoPost);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .any(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    element.owner == Some(officer_id)
+                        && matches!(
+                            element.command,
+                            crate::element::Command::GatherSoldiers
+                                | crate::element::Command::Point
+                        )
+                })
+            })
+    );
+}
+
+#[test]
+fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
+    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+    use crate::profiles::ProfileRank;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
+    let accepted_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let Entity::Soldier(accepted) = engine
+        .get_entity_mut(accepted_id)
+        .expect("partial alert acceptor exists")
+    else {
+        panic!("partial alert acceptor changed kind")
+    };
+    accepted.element.active = true;
+    accepted.element.set_position_map(MapPoint::new(0.0, 80.0));
+    accepted.npc.life_points = 100;
+    let accepted_ai = accepted
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("partial alert acceptor has EnemyAi");
+    accepted_ai.base.me = accepted_id.index();
+    accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
+    accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(officer_id)
+        .expect("partial alert officer exists")
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -5.0, -5.0, 5.0, 5.0,
+        ));
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    let global = engine.ai.global.clone();
+    let grid = &engine.world.fast_grid;
+    engine
+        .world
+        .entities
+        .get_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("partial alert caller has EnemyAi")
+        .alert_soldiers(
+            Position {
+                x: 300.0,
+                ..Default::default()
+            },
+            0,
+            &global,
+            Some(grid),
+            &ctx,
+            &tick,
+            AlertSoldiersFailureContinuation::ReturnToDuty,
+        );
+    engine
+        .get_entity_mut(refused_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("partial alert rejector has EnemyAi")
+        .set_state(AiState::Attacking, Substate::AttackingSwordfight);
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("partial alert caller retains EnemyAi");
+    assert_eq!(officer.alerted_us, vec![accepted_id.index()]);
+    assert_eq!(
+        officer.base.current_substate,
+        Substate::SeekingOfficerWaitForGroup
+    );
+    assert!(
+        engine
+            .get_entity(accepted_id)
+            .and_then(Entity::enemy_ai)
+            .expect("partial alert acceptor retains EnemyAi")
+            .gather_position_instructed
+    );
+    assert!(
+        !engine
+            .get_entity(refused_id)
+            .and_then(Entity::enemy_ai)
+            .expect("partial alert rejector retains EnemyAi")
+            .gather_position_instructed
+    );
+}
+
+#[test]
+fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark() {
+    use crate::ai::{AiState, Position, Remark, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    assert!(tick.camp_soldiers[0].is_detecting_360);
+    let global = engine.ai.global.clone();
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("combat-alert caller has EnemyAi")
+        .command_soldiers_to_attack(
+            Position {
+                x: 300.0,
+                ..Default::default()
+            },
+            &global,
+            None,
+            &ctx,
+            &tick,
+        );
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("combat-alert recipient has EnemyAi")
+        .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("combat-alert caller retains EnemyAi");
+    assert!(officer.alerted_us.is_empty());
+    assert_eq!(officer.base.current_state, AiState::Attacking);
+    assert_eq!(officer.base.current_substate, Substate::AttackingReserve);
+    assert_ne!(officer.base.current_remark, Remark::OfficerGivesAttackOrder);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .any(|sequence| {
+                sequence.elements.iter().any(|element| {
+                    element.owner == Some(officer_id)
+                        && matches!(
+                            element.command,
+                            crate::element::Command::GatherSoldiers
+                                | crate::element::Command::Point
+                        )
+                })
+            })
+    );
+}
+
+#[test]
+fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() {
+    use crate::ai::{AiState, Position, Remark, Substate};
+    use crate::profiles::ProfileRank;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
+    let accepted_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let Entity::Soldier(accepted) = engine
+        .get_entity_mut(accepted_id)
+        .expect("partial-refusal acceptor exists")
+    else {
+        panic!("partial-refusal acceptor changed kind")
+    };
+    accepted.element.active = true;
+    accepted.element.set_position_map(MapPoint::new(0.0, 80.0));
+    accepted.npc.life_points = 100;
+    let accepted_ai = accepted
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("partial-refusal acceptor has EnemyAi");
+    accepted_ai.base.me = accepted_id.index();
+    accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
+    accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(officer_id)
+        .expect("partial-refusal officer exists")
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -5.0, -5.0, 5.0, 5.0,
+        ));
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    assert_eq!(tick.camp_soldiers.len(), 2);
+    assert!(
+        tick.camp_soldiers
+            .iter()
+            .all(|soldier| soldier.is_detecting_360)
+    );
+    let global = engine.ai.global.clone();
+    let grid = &engine.world.fast_grid;
+    engine
+        .world
+        .entities
+        .get_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("partial-refusal caller has EnemyAi")
+        .command_soldiers_to_attack(
+            Position {
+                x: 300.0,
+                ..Default::default()
+            },
+            &global,
+            Some(grid),
+            &ctx,
+            &tick,
+        );
+    engine
+        .get_entity_mut(refused_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("partial-refusal rejector has EnemyAi")
+        .set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("partial-refusal caller retains EnemyAi");
+    assert_eq!(officer.alerted_us, vec![accepted_id.index()]);
+    assert_eq!(
+        officer.base.current_substate,
+        Substate::AttackingOfficerGivingOrders
+    );
+    assert_eq!(officer.base.current_remark, Remark::OfficerGivesAttackOrder);
+    let accepted = engine
+        .get_entity(accepted_id)
+        .and_then(Entity::enemy_ai)
+        .expect("partial-refusal acceptor retains EnemyAi");
+    assert!(accepted.gather_position_instructed);
+    let refused = engine
+        .get_entity(refused_id)
+        .and_then(Entity::enemy_ai)
+        .expect("partial-refusal rejector retains EnemyAi");
+    assert!(!refused.gather_position_instructed);
+}
+
+#[test]
+fn final_review_combat_alert_requires_recipient_360_detection() {
+    use crate::ai::Position;
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| match entity {
+            Entity::Soldier(soldier) => Some(&mut soldier.npc),
+            _ => None,
+        })
+        .expect("360-degree recipient is a soldier")
+        .view_radius = 10;
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    assert!(!tick.camp_soldiers[0].is_detecting_360);
+    let global = engine.ai.global.clone();
+    let start = engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("360-degree caller has EnemyAi")
+        .command_soldiers_to_attack(
+            Position {
+                x: 300.0,
+                ..Default::default()
+            },
+            &global,
+            None,
+            &ctx,
+            &tick,
+        );
+    assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Rejected);
+    assert!(
+        engine
+            .get_entity(officer_id)
+            .and_then(Entity::ai_controller)
+            .expect("360-degree caller retains AI")
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .is_empty()
+    );
+}
+
+#[test]
 fn review2_alert_result_and_report_finish_before_next_soldier_call() {
     use crate::ai::{
-        CrossNpcAction, Position, ReconnaissanceReport, ReportType, StimulusInfo, StimulusType,
-        ThinkResultContinuation,
+        AlertSoldiersFailureContinuation, CrossNpcAction, Position, ReconnaissanceReport,
+        ReportType, StimulusInfo, StimulusType, ThinkResultContinuation,
     };
     use crate::profiles::ProfileRank;
 
@@ -2502,7 +2846,7 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
         .get_entity_mut(officer_id)
         .and_then(Entity::enemy_ai_mut)
         .expect("review2 officer has EnemyAi");
-    officer.alerted_us = vec![soldier_id.index(), second_id.index()];
+    officer.alerted_us.clear();
     officer.base.my_reconnaissance_report.report_type = ReportType::Enemy;
     officer.base.my_reconnaissance_report.seek_position = first_position;
     officer
@@ -2515,7 +2859,11 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
             caller: officer_id.index(),
             stimulus_type: StimulusType::CallAlert,
             info: StimulusInfo::Human(officer_id.index()),
-            continuation: ThinkResultContinuation::OfficerAlertedSoldier { last: false },
+            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                last: false,
+                use_formation: false,
+                failure: AlertSoldiersFailureContinuation::None,
+            },
         });
     officer
         .base
@@ -2527,7 +2875,11 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
             caller: officer_id.index(),
             stimulus_type: StimulusType::CallAlert,
             info: StimulusInfo::Human(officer_id.index()),
-            continuation: ThinkResultContinuation::OfficerAlertedSoldier { last: true },
+            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                last: true,
+                use_formation: false,
+                failure: AlertSoldiersFailureContinuation::None,
+            },
         });
     engine
         .get_entity_mut(second_id)

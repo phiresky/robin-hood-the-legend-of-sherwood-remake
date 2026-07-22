@@ -264,6 +264,9 @@ pub struct CampSoldierInfo {
     /// Whether the eyes are blind (closed / dying / unconscious), so
     /// the cone+LOS gate skips blind officers.
     pub eye_blind: bool,
+    /// Snapshot of `soldier.IsDetecting360Degrees(current_officer)`.
+    /// CommandSoldiersToAttack uses the recipient's view, not the caller's.
+    pub is_detecting_360: bool,
     /// Snapshot of full radius + cone + opaque-LOS detection from
     /// this soldier's POV against the ticking NPC's position,
     /// evaluated at populate time.  Drives
@@ -271,6 +274,49 @@ pub struct CampSoldierInfo {
     /// reads the cached flag instead of redoing the geometry per
     /// brawler/officer pair.
     pub is_detecting_cone: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn soldier_detects_target_360(
+    viewer_position: Position,
+    viewer_ground_z: f32,
+    viewer_is_rider: bool,
+    viewer_radius: u16,
+    viewer_blind: bool,
+    viewer_in_building: bool,
+    viewer_able_to_fight: bool,
+    target_position: Position,
+    target_ground_z: f32,
+    target_posture: crate::element::Posture,
+    target_is_rider: bool,
+    target_direction: i16,
+    target_in_building: bool,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    if viewer_blind || viewer_in_building || !viewer_able_to_fight || target_in_building {
+        return false;
+    }
+    let target_xy = crate::stealth::detection_point_xy(
+        crate::coordinates::MapPoint::new(target_position.x, target_position.y),
+        target_posture,
+        target_direction,
+    );
+    let viewer_z = viewer_ground_z
+        + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, viewer_is_rider);
+    let target_z =
+        target_ground_z + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
+    let dx = target_xy.x - viewer_position.x;
+    let dy = (target_xy.y - viewer_position.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_z - viewer_z;
+    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
+        return false;
+    }
+    crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer_position.x, viewer_position.y, viewer_z],
+        [target_xy.x, target_xy.y, target_z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
 }
 
 pub fn soldier_is_able_to_help_state(

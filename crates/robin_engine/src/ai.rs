@@ -32,14 +32,14 @@ pub use macro_patrol::{
 mod model;
 pub(crate) use model::cache_npc_villain_authorized_direct;
 pub use model::{
-    AMBUSH_BOX_HALF_SIZE, AiState, AlertContinuation, AlertLevel, AmbushPoint, Attitude,
-    CombatInfo, CrossNpcAction, Curiosity, Decision, Detection, DoorCombatInfo, DoorSeekInfo,
-    EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType, LookDirection, Noise, NoiseType,
-    PanicRequest, PatrolAssignment, PointArchery, ProbabilityDistribution, Question,
-    ReconnaissanceReport, Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest,
-    SectorArchery, SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo,
-    StimulusType, StolenObject, Substate, TargetType, ThinkResultContinuation, ViewCone,
-    stimulus_to_ai_event_code,
+    AMBUSH_BOX_HALF_SIZE, AiState, AlertContinuation, AlertLevel, AlertSoldiersFailureContinuation,
+    AmbushPoint, Attitude, CombatInfo, CrossNpcAction, Curiosity, Decision, Detection,
+    DoorCombatInfo, DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType,
+    LookDirection, Noise, NoiseType, PanicRequest, PatrolAssignment, PointArchery,
+    ProbabilityDistribution, Question, ReconnaissanceReport, Remark, ReportType, RepulsivePoint,
+    ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint, SeekPointDirection, Stimulus,
+    StimulusCategory, StimulusInfo, StimulusType, StolenObject, Substate, TargetType,
+    ThinkResultContinuation, ViewCone, stimulus_to_ai_event_code,
 };
 
 mod contexts;

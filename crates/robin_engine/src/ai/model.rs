@@ -1529,12 +1529,31 @@ pub enum AlertContinuation {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum AlertSoldiersFailureContinuation {
+    None,
+    ReturnToDuty,
+    SeekBody { center: Position, radius: u16 },
+    SeekMissingInstructedSoldier,
+    SeekMissedCharly { center: Position },
+    FleeingRunToDoor,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum ThinkResultContinuation {
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
-    OfficerInstructedGroupSoldier { last: bool },
-    OfficerAlertedSoldier { last: bool },
-    OfficerCombatAlertedSoldier { last: bool },
+    OfficerInstructedGroupSoldier {
+        last: bool,
+    },
+    OfficerAlertedSoldier {
+        last: bool,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
+    OfficerCombatAlertedSoldier {
+        last: bool,
+        use_formation: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -788,6 +788,10 @@ impl EnemyAi {
                     grid,
                     ctx,
                     tick,
+                    AlertSoldiersFailureContinuation::SeekBody {
+                        center: pos_center,
+                        radius: duty_radius,
+                    },
                 ) {
                     self.seek_area(
                         sim,

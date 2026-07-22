@@ -442,7 +442,7 @@ fn review2_result_continuation_consumes_live_script_filter_refusal() {
         .and_then(Entity::enemy_ai_mut)
         .expect("script-filter caller has EnemyAi");
     caller_ai.base.me = caller;
-    caller_ai.alerted_us = vec![target];
+    caller_ai.alerted_us.clear();
     caller_ai
         .base
         .outbox
@@ -454,7 +454,10 @@ fn review2_result_continuation_consumes_live_script_filter_refusal() {
             stimulus_type: StimulusType::CallCombatAlert,
             // No Human source makes SourceSensitive::FilterAIEvent return 0.
             info: StimulusInfo::Position(Position::default()),
-            continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier { last: true },
+            continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                last: true,
+                use_formation: false,
+            },
         });
 
     engine.drain_direct_ai_owner_boundary(&sim, caller_id, &assets);

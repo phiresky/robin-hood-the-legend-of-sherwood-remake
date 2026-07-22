@@ -2155,7 +2155,15 @@ impl EnemyAi {
                         let center = self.base.seek_position;
                         let flags =
                             (SeekFlags::LOCATION_FIRST | SeekFlags::REPORT_OFFICER_AFTER).bits();
-                        if !self.alert_soldiers(center, flags, global, grid, ctx, tick) {
+                        if !self.alert_soldiers(
+                            center,
+                            flags,
+                            global,
+                            grid,
+                            ctx,
+                            tick,
+                            AlertSoldiersFailureContinuation::ReturnToDuty,
+                        ) {
                             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                         }
                     }
@@ -2328,7 +2336,15 @@ impl EnemyAi {
                                     ctx,
                                     tick,
                                 );
-                            } else if !self.alert_soldiers(seek_pos, 0, global, grid, ctx, tick) {
+                            } else if !self.alert_soldiers(
+                                seek_pos,
+                                0,
+                                global,
+                                grid,
+                                ctx,
+                                tick,
+                                AlertSoldiersFailureContinuation::ReturnToDuty,
+                            ) {
                                 self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                             }
                         }
@@ -2503,6 +2519,7 @@ impl EnemyAi {
                                         grid,
                                         ctx,
                                         tick,
+                                        AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
                                     ) {
                                         self.seek_area(
                                             sim,
@@ -2523,7 +2540,15 @@ impl EnemyAi {
                             self.missed_soldier_timer += 1;
                             if self.missed_soldier_timer > 100 {
                                 // Enough waiting — seek ourselves or alert soldiers
-                                if !self.alert_soldiers(ctx.position, 0, global, grid, ctx, tick) {
+                                if !self.alert_soldiers(
+                                    ctx.position,
+                                    0,
+                                    global,
+                                    grid,
+                                    ctx,
+                                    tick,
+                                    AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
+                                ) {
                                     self.seek_area(
                                         sim,
                                         ctx.position,
@@ -2852,6 +2877,7 @@ impl EnemyAi {
                         grid,
                         ctx,
                         tick,
+                        AlertSoldiersFailureContinuation::ReturnToDuty,
                     )
                 {
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
@@ -3509,6 +3535,7 @@ impl EnemyAi {
                             grid,
                             ctx,
                             tick,
+                            AlertSoldiersFailureContinuation::ReturnToDuty,
                         ) =>
                     {
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
@@ -3804,6 +3831,7 @@ impl EnemyAi {
                             grid,
                             ctx,
                             tick,
+                            AlertSoldiersFailureContinuation::SeekMissedCharly { center: my_pos },
                         ),
                         ProfileRank::Knight | ProfileRank::None => false,
                     };
@@ -5821,6 +5849,7 @@ impl EnemyAi {
                         grid,
                         ctx,
                         tick,
+                        AlertSoldiersFailureContinuation::FleeingRunToDoor,
                     );
                     if !alerted {
                         // Fire a self-stimulus so the re-delivery happens

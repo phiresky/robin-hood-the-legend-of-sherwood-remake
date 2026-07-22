@@ -2416,6 +2416,27 @@ impl EngineInner {
                                 &self.world.fast_grid,
                             )
                         };
+                    let is_detecting_360 = crate::ai_enemy::soldier_detects_target_360(
+                        ss_position,
+                        ss.ground_z,
+                        ss.is_rider,
+                        ss.view_radius,
+                        ss.eye_blind,
+                        ss.in_building,
+                        ss.able_to_fight,
+                        crate::ai::Position {
+                            x: me_pos_map.x,
+                            y: me_pos_map.y,
+                            sector: None,
+                            level: layer,
+                        },
+                        ground_z,
+                        npc_posture,
+                        viewer.is_rider,
+                        dir,
+                        me_in_building,
+                        sight_obstacles,
+                    );
                     tick_data
                         .camp_soldiers
                         .push(crate::ai_enemy::CampSoldierInfo {
@@ -2450,6 +2471,7 @@ impl EngineInner {
                             view_radius: ss.view_radius,
                             real_half_aperture: ss.real_half_aperture,
                             eye_blind: ss.eye_blind,
+                            is_detecting_360,
                             is_detecting_cone,
                         });
                 }

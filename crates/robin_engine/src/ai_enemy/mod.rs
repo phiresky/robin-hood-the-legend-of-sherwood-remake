@@ -14,6 +14,8 @@ mod seek;
 mod substate_handlers;
 mod util;
 
+#[cfg(test)]
+pub(crate) use alert::CommandSoldiersStart;
 pub use util::*;
 
 use serde::{Deserialize, Serialize};
@@ -1797,6 +1799,8 @@ impl EnemyAi {
         accepted: bool,
         target: NpcHandle,
         continuation: ThinkResultContinuation,
+        global: &mut AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
@@ -1835,8 +1839,13 @@ impl EnemyAi {
                     }
                 }
             }
-            ThinkResultContinuation::OfficerAlertedSoldier { last } => {
+            ThinkResultContinuation::OfficerAlertedSoldier {
+                last,
+                use_formation,
+                failure,
+            } => {
                 if accepted {
+                    self.alerted_us.push(target);
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::ConsiderReport {
                             target,
@@ -1845,20 +1854,101 @@ impl EnemyAi {
                                 | ReportUpdateFlags::UPDATE_TYPE.bits(),
                         },
                     );
-                } else {
-                    self.alerted_us.retain(|&handle| handle != target);
                 }
-                if last && self.alerted_us.is_empty() {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                if last
+                    && !self.finish_alert_soldiers(
+                        global,
+                        grid.filter(|_| use_formation),
+                        ctx,
+                        tick,
+                    )
+                {
+                    self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
                 }
             }
-            ThinkResultContinuation::OfficerCombatAlertedSoldier { last } => {
-                if !accepted {
-                    self.alerted_us.retain(|&handle| handle != target);
+            ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                last,
+                use_formation,
+            } => {
+                if accepted {
+                    self.alerted_us.push(target);
                 }
-                if last && self.alerted_us.is_empty() {
-                    self.get_battle_overview(0, ctx, tick);
+                if last {
+                    if self.finish_command_soldiers_to_attack(
+                        global,
+                        grid.filter(|_| use_formation),
+                        ctx,
+                        tick,
+                    ) {
+                        self.base.say(Remark::OfficerGivesAttackOrder);
+                    } else {
+                        self.enter_battle_reserve(ctx, tick);
+                    }
                 }
+            }
+        }
+    }
+
+    fn resume_failed_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        continuation: AlertSoldiersFailureContinuation,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        match continuation {
+            AlertSoldiersFailureContinuation::None => {}
+            AlertSoldiersFailureContinuation::ReturnToDuty => {
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            }
+            AlertSoldiersFailureContinuation::SeekBody { center, radius } => {
+                self.seek_area(
+                    sim,
+                    center,
+                    radius,
+                    SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier => {
+                self.seek_area(
+                    sim,
+                    ctx.position,
+                    parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                    SeekFlags::LOCATION_FIRST | self.seek_flags,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::SeekMissedCharly { center } => {
+                let charly_has_path = ctx
+                    .entity_view(self.base.checkpoint_charly)
+                    .is_some_and(|view| view.has_patrol_path);
+                let radius = if charly_has_path {
+                    parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+                } else {
+                    parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+                };
+                self.seek_area(
+                    sim,
+                    center,
+                    radius,
+                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::FleeingRunToDoor => {
+                self.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+                self.base.fire_self_stimulus(StimulusType::EventReachPoint);
             }
         }
     }
@@ -4490,6 +4580,7 @@ mod tests {
             view_radius: 400,
             real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             eye_blind: false,
+            is_detecting_360: false,
             is_detecting_cone: false,
         };
         let ahead = Position {

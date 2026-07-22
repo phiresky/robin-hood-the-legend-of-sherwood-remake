@@ -621,7 +621,15 @@ impl EnemyAi {
                         match self.get_rank() {
                             ProfileRank::Officer => {
                                 self.base.friends_are_alerted = true;
-                                self.alert_soldiers(hint.seek_point, 0, global, grid, ctx, tick);
+                                self.alert_soldiers(
+                                    hint.seek_point,
+                                    0,
+                                    global,
+                                    grid,
+                                    ctx,
+                                    tick,
+                                    AlertSoldiersFailureContinuation::None,
+                                );
                             }
                             _ => {
                                 self.current_task_priority = task_priority::ALERT;
@@ -2505,7 +2513,15 @@ impl EnemyAi {
                 self.current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
             }
             ProfileRank::Officer => {
-                self.alert_soldiers(self.base.seek_position, 0, global, grid, ctx, tick);
+                self.alert_soldiers(
+                    self.base.seek_position,
+                    0,
+                    global,
+                    grid,
+                    ctx,
+                    tick,
+                    AlertSoldiersFailureContinuation::None,
+                );
             }
             ProfileRank::Knight => unreachable!(
                 "RANK_KNIGHT is never returned by CanCallThisSoldier for tower-guard call-me dispatch"
