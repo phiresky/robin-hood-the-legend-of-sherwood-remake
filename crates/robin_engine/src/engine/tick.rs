@@ -632,6 +632,45 @@ pub(in crate::engine) struct MeleeOwnerSelection {
     pub(in crate::engine) order_id: std::num::NonZeroU32,
 }
 
+/// Source-to-owner ledger for the complete Original actor Execute override
+/// chain. `arm_count` counts outer animation/non-animation cases (fallthrough
+/// labels included, nested motion/command switches excluded). The listed Rust
+/// owners are exhaustive for that override; derived tails are the Human/PC/NPC
+/// hook surrounding the selected arm, not an additional animation owner.
+#[cfg(test)]
+pub(super) const ORIGINAL_ACTOR_EXECUTE_LEDGER: [(&str, usize, &str); 6] = [
+    (
+        "RHElementActor::Execute",
+        66,
+        "tick_actor_animation_for | movement",
+    ),
+    (
+        "RHElementActorHuman::Execute",
+        108,
+        "tick_actor_animation_for | movement | melee | bow | WaitingSword",
+    ),
+    (
+        "RHElementActorPC::Execute",
+        89,
+        "tick_actor_animation_for | movement | melee | bow | ability | beggar | WaitingSword | PC derived tail",
+    ),
+    (
+        "RHElementActorNPC::Execute",
+        6,
+        "tick_actor_animation_for | NPC derived tail",
+    ),
+    (
+        "RHElementActorSoldier::Execute",
+        42,
+        "tick_actor_animation_for | movement | melee | bow | WaitingSword | NPC derived tail",
+    ),
+    (
+        "RHElementActorCivilian::Execute",
+        8,
+        "tick_actor_animation_for | ability | NPC derived tail",
+    ),
+];
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -2719,33 +2758,6 @@ impl EngineInner {
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
                         entity_id,
                     ));
-                    let frozen_wait_execute = self
-                        .actors_frozen()
-                        .then(|| {
-                            self.orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id)
-                                .and_then(|(seq_id, elem_idx, order)| {
-                                    let element = self
-                                        .orders
-                                        .sequence_manager
-                                        .get_element(seq_id, elem_idx)?;
-                                    matches!(
-                                        element.command,
-                                        crate::element::Command::WaitTimer
-                                            | crate::element::Command::WaitFreeLift
-                                    )
-                                    .then_some(
-                                        super::animation::ActorExecuteResult {
-                                            order_type: order.order_type,
-                                            entry_seq_id: seq_id,
-                                            entry_elem_idx: elem_idx,
-                                            motion: crate::sprite::MotionState::InProgress,
-                                        },
-                                    )
-                                })
-                        })
-                        .flatten();
                     let (combat_injury_terminated, mut outcomes, mut execute_result) =
                         if movement_selection.is_some()
                             || melee_selection.is_some()
@@ -2754,8 +2766,6 @@ impl EngineInner {
                             || beggar_selection.is_some()
                         {
                             (Vec::new(), Default::default(), None)
-                        } else if frozen_wait_execute.is_some() {
-                            (Vec::new(), Default::default(), frozen_wait_execute)
                         } else {
                             self.tick_actor_animation_for(sim, assets, entity_id)
                         };
@@ -2848,12 +2858,10 @@ impl EngineInner {
             slot += 1;
         }
 
-        // The exhaustive Original rider-specific Execute arms are both owned
-        // by movement above: RunningUpright's synchronous GALOPP Think and
-        // RiderCharging's Human ExecuteRiderCharge delegation. The production
-        // caller also installs active melee, selected bow, owner-local active
-        // abilities and beggar work, and the human/PC/NPC tail hook before
-        // this loop advances. Other unsupported Execute arms remain separate.
+        // The Original Execute override chain is closed here: generic sprite
+        // arms use tick_actor_animation_for; selected movement, melee, bow,
+        // ability, beggar, and WaitingSword work use their live owner arms;
+        // the human/PC/NPC derived tail hook runs before the slot advances.
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one

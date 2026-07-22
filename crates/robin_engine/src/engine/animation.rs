@@ -2885,9 +2885,11 @@ impl EngineInner {
     ///
     /// Eligibility remains deliberately narrower than actor `Hourglass`:
     /// movement, melee, bow, and inactive actors keep their existing owners.
-    /// Execution-frozen actors remain skipped unless an installed
-    /// WAIT_TIMER/WAIT_FREE_LIFT needs the Original's post-Execute check. The
-    /// caller must still run `ActionChange` for skipped actors.
+    /// Per-actor execution-frozen actors remain skipped unless an installed
+    /// WAIT_TIMER/WAIT_FREE_LIFT needs the Original's post-Execute check. A
+    /// global FrozenAll does not skip Execute: it suppresses the selected
+    /// sprite call while preserving pre/post-sprite arm work. The caller must
+    /// still run `ActionChange` for skipped actors.
     pub(super) fn tick_actor_animation_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2898,8 +2900,43 @@ impl EngineInner {
         AnimCompletionOutcomes,
         Option<ActorExecuteResult>,
     ) {
-        if self.actors_frozen() {
-            return (Vec::new(), AnimCompletionOutcomes::default(), None);
+        let globally_frozen = self.actors_frozen();
+
+        // RHElementActor::Execute returns IN_PROGRESS immediately for a
+        // per-actor execution freeze. Actor::Hourglass still applies its
+        // WAIT_TIMER / WAIT_FREE_LIFT modifier to that return value, so retain
+        // the selected identity for those two commands without entering any
+        // Execute arm or touching the sprite.
+        if let Some(actor) = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            && actor.execution_frozen
+        {
+            let frozen_wait = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .and_then(|(seq_id, elem_idx, order)| {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "execution-frozen actor {entity_id:?} selected missing element {seq_id:?}/{elem_idx}"
+                            )
+                        });
+                    matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
+                        .then_some(ActorExecuteResult {
+                            order_type: order.order_type,
+                            entry_seq_id: seq_id,
+                            entry_elem_idx: elem_idx,
+                            motion: MotionState::InProgress,
+                        })
+                });
+            return (Vec::new(), AnimCompletionOutcomes::default(), frozen_wait);
         }
 
         let mut combat_injury_terminated: Vec<EntityId> = Vec::new();
@@ -2968,11 +3005,6 @@ impl EngineInner {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
             let anim_type = order.order_type;
-            if actor.execution_frozen
-                && !matches!(cur_command, Command::WaitTimer | Command::WaitFreeLift)
-            {
-                return (Vec::new(), AnimCompletionOutcomes::default(), None);
-            }
             let driving_one_shot = !matches!(
                 cur_command,
                 Command::Wait | Command::WaitTimer | Command::WaitFreeLift
@@ -3396,17 +3428,17 @@ impl EngineInner {
                         // rotation via `turn_fast()`.  Resulting motion
                         // state is Terminated iff the rotation reached
                         // its goal this tick.
-                        let sprite_motion = {
+                        if !globally_frozen {
                             let sprite = &mut entity.element_data_mut().sprite;
-                            sprite.perform_action(
+                            let _ = sprite.perform_action(
                                 sim,
                                 order_id,
                                 effective_anim,
                                 direction,
                                 FrameProgression::Default,
                                 false,
-                            )
-                        };
+                            );
+                        }
                         let still_turning = entity.position_iface_mut().turn_fast();
                         // PI is the single source of truth for direction —
                         // no sync needed now that `ElementData.direction`
@@ -3415,7 +3447,6 @@ impl EngineInner {
                         // is driven by `action_done_frame` in sprite
                         // data, but the control flow here ties
                         // completion to `turn_fast()` instead.
-                        let _ = sprite_motion;
                         if still_turning {
                             Some(MotionState::InProgress)
                         } else {
@@ -3523,6 +3554,15 @@ impl EngineInner {
                             .and_then(|actor| actor.active_door_pass.as_ref())
                             .map(|dp| dp.current_action);
                         let sprite_motion = held_weak_sword.or_else(|| {
+                            if globally_frozen {
+                                // RHEngine::FrozenAll leaves Actor::Execute
+                                // live but RHSprite::PerformAction returns
+                                // IN_PROGRESS without selecting, stamping, or
+                                // advancing the sprite. Keep initialization
+                                // fresh so pre-sprite work repeats while the
+                                // freeze persists.
+                                return Some(MotionState::InProgress);
+                            }
                             let elem = entity.element_data_mut();
                             let sprite = &mut elem.sprite;
                             // GETTING_FREE_FROM_WASP still-turning: the

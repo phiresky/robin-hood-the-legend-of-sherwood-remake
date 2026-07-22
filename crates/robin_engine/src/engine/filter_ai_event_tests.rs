@@ -2593,7 +2593,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
 }
 
 #[test]
-fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
+fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -2617,7 +2617,7 @@ fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
             .expect("frozen timer remains inspectable")
             .state,
         crate::sequence::SequenceState::Terminated,
-        "execution_frozen only suppresses Original Hourglass when no order is installed"
+        "Actor::Hourglass applies WAIT_TIMER after execution_frozen Execute returns InProgress"
     );
     assert_eq!(
         engine
@@ -2626,7 +2626,8 @@ fn frozen_actor_with_installed_wait_timer_still_executes_and_completes() {
             .element_data()
             .sprite
             .last_action,
-        OrderType::WaitingUprightBored
+        OrderType::NonanimationEnd,
+        "RHElementActor::Execute returns before selecting the installed wait animation"
     );
 }
 
@@ -3065,6 +3066,120 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
         .expect("defender remains human");
     assert_eq!(human.smalltalk_hint, crate::element::SmalltalkHint::None);
     assert_eq!(human.smalltalk_hint_opponent, None);
+}
+
+#[test]
+fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
+    use crate::element::Command;
+
+    let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
+    let before = [attacker, defender].map(|actor| {
+        engine
+            .get_entity(actor)
+            .expect("fighter exists")
+            .element_data()
+            .sprite
+            .last_processed_order_id
+    });
+    engine.set_actors_frozen(true);
+    crate::sim_rng::with_seed(1, |sim| {
+        engine.tick_actor_animation_action_change_slots(sim, &assets);
+    });
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender, |command| matches!(
+                command,
+                Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
+            )),
+        "FrozenAll suppresses PerformAction, not WaitingSword's synchronous EvaluateSmalltalkHint/EvaluateSwordfight tail"
+    );
+    assert_eq!(
+        [attacker, defender].map(|actor| {
+            engine
+                .get_entity(actor)
+                .expect("fighter remains live")
+                .element_data()
+                .sprite
+                .last_processed_order_id
+        }),
+        before,
+        "FrozenAll must not stamp either selected sprite order identity"
+    );
+}
+
+#[test]
+fn original_actor_execute_arm_ledger_is_exhaustive() {
+    fn outer_case_count(source: &str, signature: &str, switch_key: &str) -> usize {
+        let function = source
+            .split_once(signature)
+            .unwrap_or_else(|| panic!("missing Original signature {signature}"))
+            .1;
+        let switch = function
+            .split_once(switch_key)
+            .unwrap_or_else(|| panic!("missing {switch_key} in {signature}"))
+            .1;
+        let mut depth = 0_i32;
+        let mut entered = false;
+        let mut count = 0;
+        for line in switch.lines() {
+            if entered && depth == 1 {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("case RHANIMATION_")
+                    || trimmed.starts_with("case RHNONANIMATION_")
+                    || trimmed.starts_with("case RHMOVE_")
+                {
+                    count += 1;
+                }
+            }
+            for byte in line.bytes() {
+                match byte {
+                    b'{' => {
+                        entered = true;
+                        depth += 1;
+                    }
+                    b'}' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if entered && depth == 0 {
+                break;
+            }
+        }
+        count
+    }
+
+    let actor = include_str!("../../../../original-code/RHelementactor.cpp");
+    let human = include_str!("../../../../original-code/RHelementactorhuman.cpp");
+    let pc = include_str!("../../../../original-code/RHelementactorpc.cpp");
+    let npc = include_str!("../../../../original-code/RHelementactornpc.cpp");
+    let soldier = include_str!("../../../../original-code/RHelementactorsoldier.cpp");
+    let civilian = include_str!("../../../../original-code/rhelementactorcivilian.cpp");
+    let actual = [
+        outer_case_count(actor, "RHElementActor::Execute(", "switch( animation"),
+        outer_case_count(human, "RHElementActorHuman::Execute(", "switch( animation"),
+        outer_case_count(pc, "RHElementActorPC::Execute(", "switch( animation"),
+        outer_case_count(npc, "RHElementActorNPC::Execute(", "switch( animation"),
+        outer_case_count(
+            soldier,
+            "RHElementActorSoldier::Execute(",
+            "switch( animation",
+        ),
+        outer_case_count(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
+    ];
+    let expected = super::tick::ORIGINAL_ACTOR_EXECUTE_LEDGER.map(|(_, count, owners)| {
+        assert!(
+            !owners.is_empty(),
+            "every source override needs a live Rust owner"
+        );
+        count
+    });
+    assert_eq!(
+        actual, expected,
+        "update the source-to-owner Execute ledger when an Original outer arm changes"
+    );
 }
 
 #[test]

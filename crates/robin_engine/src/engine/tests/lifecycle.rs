@@ -927,6 +927,53 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
 }
 
 #[test]
+fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm() {
+    use crate::element::{Command, Posture};
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element = SequenceElement::new(1, Command::WaitTimer, Some(owner));
+    let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execution_frozen = true;
+
+    let (_, outcomes, result) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+    let result = result.expect("frozen wait still returns the base Execute identity");
+    assert_eq!(result.entry_seq_id, sequence);
+    assert_eq!(result.entry_elem_idx, 0);
+    assert_eq!(result.order_type, OrderType::WaitingUpright);
+    assert_eq!(result.motion, crate::sprite::MotionState::InProgress);
+    assert!(outcomes.seq_advance.is_empty());
+    assert_ne!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        order_id.get(),
+        "per-actor execution freeze returns before the selected sprite call"
+    );
+}
+
+#[test]
 fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass() {
     use crate::element::{Command, Posture};
     use crate::movement::ActiveShot;
