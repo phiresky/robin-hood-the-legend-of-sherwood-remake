@@ -322,7 +322,8 @@ impl EngineInner {
             let owner = dispatch.card.owner;
             self.send_condolation_card(sim, dispatch.card, assets);
             self.drain_self_stimuli_for_npc(sim, owner, assets);
-            self.dispatch_condolation_owner_moves(sim, assets, owner, active_scripts)?;
+            self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
+            self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
@@ -391,6 +392,7 @@ impl EngineInner {
         let card_owner = dispatch.card.owner;
         self.send_condolation_card(sim, dispatch.card, assets);
         self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+        self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
 
         // A condolence Think can issue GoTo for the next patrol leg. C++
         // LaunchSequenceElement immediately reaches the owner's Instruct
@@ -399,7 +401,7 @@ impl EngineInner {
         // queued move and drive its exact deferred InstructOwner action at
         // the same boundary. Other owners' FIFO positions remain untouched.
         let mut active_scripts = Vec::new();
-        self.dispatch_condolation_owner_moves(sim, assets, card_owner, &mut active_scripts)
+        self.dispatch_synchronous_owner_moves(sim, assets, card_owner, &mut active_scripts)
             .unwrap_or_else(|error| {
                 panic!(
                     "condolation owner {} synchronous Move dispatch failed: {error:?}",
@@ -440,7 +442,7 @@ impl EngineInner {
     /// by an owner's condolence-card Think call. In the Original this entire
     /// chain remains inside `SendCondolationCard`; unrelated owners keep their
     /// established queue positions.
-    fn dispatch_condolation_owner_moves(
+    pub(super) fn dispatch_synchronous_owner_moves(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

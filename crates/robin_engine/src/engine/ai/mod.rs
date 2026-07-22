@@ -9078,103 +9078,105 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        // `script_enabled` gate — when scripts are disabled, drain
-        // the pending requests but skip both the VM dispatch and the
-        // follow-up `EventAfterScriptGoOn` Think.
-        let scripts_enabled = sim.config().script_enabled;
-
-        // Collect requests so we can release the entity borrow before
-        // swapping engine state into the script host.  Always take the
-        // `Option` so we don't leave stale state when scripts are off.
-        let mut requests: Vec<(crate::element::EntityId, crate::ai::PathId, u8)> = Vec::new();
-        for (npc_id, entity) in self.world.entities.npcs_mut() {
-            let Some(ai) = entity.ai_controller_mut() else {
-                continue;
-            };
-            if let Some((path_idx, wp_idx)) = ai.outbox.reentrant.waypoint_script_reach_point.take()
-                && scripts_enabled
-            {
-                requests.push((npc_id.into(), path_idx, wp_idx));
-            }
+        let owners: Vec<_> = self
+            .world
+            .entities
+            .npcs()
+            .filter_map(|(npc_id, entity)| {
+                entity
+                    .ai_controller()
+                    .and_then(|ai| ai.outbox.reentrant.waypoint_script_reach_point)
+                    .map(|_| EntityId::from(npc_id))
+            })
+            .collect();
+        for owner in owners {
+            self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
         }
+    }
 
-        if requests.is_empty() {
+    /// Close one NPC's authored waypoint callback on the same owner-local
+    /// stack that selected it. `ExecuteWaypointScript` in the Original calls
+    /// `ReachPoint` and then `Think(EventAfterScriptGoOn)` directly.
+    pub(super) fn dispatch_pending_waypoint_script_for_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        let request = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(|entity| entity.ai_controller_mut())
+            .and_then(|ai| ai.outbox.reentrant.waypoint_script_reach_point.take());
+        let Some((path_idx, wp_idx)) = request else {
+            return;
+        };
+        if !sim.config().script_enabled {
             return;
         }
 
-        // ── Phase 1: dispatch ReachPoint(actor) on every pending VM ──
-        for &(npc_id, path_idx, wp_idx) in &requests {
-            let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
-            match self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Waypoint(path_idx, wp_idx),
-                "ReachPoint",
-                &[actor_handle],
-                crate::natives::ScriptCallFrame::default(),
-            ) {
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
-                    );
-                    debug_assert!(
-                        false,
-                        "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
-                    );
-                }
-            }
+        let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+        if let Err(error) = self.call_script_vm(
+            sim,
+            assets,
+            ScriptVmKey::Waypoint(path_idx, wp_idx),
+            "ReachPoint",
+            &[actor_handle],
+            crate::natives::ScriptCallFrame::default(),
+        ) {
+            tracing::warn!(
+                "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+            );
+            debug_assert!(
+                false,
+                "Waypoint ReachPoint (path {path_idx}, wp {wp_idx}, actor {actor_handle}): {error}"
+            );
         }
 
-        // ── Phase 2: synchronous Think(EventAfterScriptGoOn) ──
-        // `think(EVENT_AFTER_SCRIPT_GO_ON)` fires immediately after
-        // `reach_point` on the same call stack.  Replicate that by
-        // calling `think()` directly here — not via
-        // `pending_self_stimuli` (which would let cross-NPC actions
-        // interleave) — unless the script pulled the NPC into
-        // `DefaultScriptDriven`.
-        //
-        // Scripts may have spawned / deactivated entities, so refresh
-        // the entity-views map before rebuilding per-NPC AiContexts.
+        // The script may have spawned or deactivated entities, so rebuild the
+        // context only after its VM call returns.
         let scratch = self.build_sim_scratch(sim, assets);
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
         let ambiance = self.world.weather.ambiance;
         let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
-        for (npc_id, _, _) in requests {
-            let ctx = {
-                let Some(entity) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                // Read substate without holding a mutable borrow.
-                let substate = entity
-                    .ai_controller()
-                    .map(|ai| ai.current_substate)
-                    .unwrap_or(crate::ai::Substate::DefaultScriptDriven);
-                if substate == crate::ai::Substate::DefaultScriptDriven {
-                    continue;
-                }
-                build_ai_context_from_entity(
-                    entity,
-                    frame,
-                    None,
-                    is_forest_level,
-                    ambiance,
-                    standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                )
+        let ctx = {
+            let Some(entity) = self.world.entities.get(npc_id) else {
+                return;
             };
-            let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
-            // EventAfterScriptGoOn may re-enter BattleDecisions via
-            // ThinkExpectedEventCommonStuff when the AI is attacking.
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
-        }
+            let substate = entity
+                .ai_controller()
+                .map(|ai| ai.current_substate)
+                .unwrap_or(crate::ai::Substate::DefaultScriptDriven);
+            if substate == crate::ai::Substate::DefaultScriptDriven {
+                return;
+            }
+            build_ai_context_from_entity(
+                entity,
+                frame,
+                None,
+                is_forest_level,
+                ambiance,
+                standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+        self.dispatch_synchronous_owner_moves(sim, assets, npc_id, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "waypoint-script owner {} synchronous Move dispatch failed: {error:?}",
+                    npc_id.index()
+                )
+            });
     }
 
     /// Finish engine-facing work queued by a direct AI method that is not

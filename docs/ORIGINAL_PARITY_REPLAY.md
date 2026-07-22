@@ -24,12 +24,12 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 26. At frame 27 the Original
-consumes global RNG draw 119 while Rust consumes no draw. Identify the Original
-call site and missing logical decision before advancing the replay cursor;
-never consume a value merely to silence the cursor assertion. Increase the
-clean-prefix statement only after a normal first-divergence run has passed that
-frame.
+The current verified clean prefix is through frame 30. At frame 31 soldiers 89
+and 90 first diverge in movement position, with soldier 89 also retaining
+direction goal 10 versus Original 9. Trace the movement/anti-collision producer
+that first changes those exact bits rather than correcting the downstream
+positions. Increase the clean-prefix statement only after a normal
+first-divergence run has passed that frame.
 
 ## Change ledger
 
@@ -55,7 +55,8 @@ frame.
 | Done | Actor idle exit inside movement | Original's bored-to-waiting animation always uses base `PerformAction`, including when the order is stored in a movement element; only particular movement animation arms branch on `IsMovement()` and use `PerformMotion`. | Generic animation execution no longer rejects an order solely because its command/element is movement-shaped. The live animation-arm catalog remains the owner selector, and the universal base-actor idle state effects now apply to PCs as well as NPCs. Regression coverage verifies a PC changes from `Bored` to `Waiting` on bored-exit completion. |
 | Done | Patrol `GoToSpeed` close-point gate | At frame 24 Rust changed soldier 92 from patrol-running to waiting and issued `Turn`; Original downgraded it to patrol-walking and retained `MoveOk`. `RHArtificialIntelligence::GoTo` only synthesizes `EventReachPoint` within five units when the current animation is an idle wait. | `go_to_speed`, which represents the same Original overload, now applies the idle-animation, likes-to-sit, and special-action gates before setting `already_on_point`. Regression coverage exercises both ordinary and speed variants, including a nearby running actor that must still queue movement. |
 | Done | Re-entrant move after condolation | Soldier 94's Turn completion advances `DefaultGotoRouteTurn` to `DefaultEnroute` and launches the next patrol move during the sequence-manager pass. Original's active `Hourglass` loop instructs that newly registered Move before returning; Rust left it queued and exposed `Wait` for frame 26. | Generic condolation dispatch now promotes and synchronously instructs only the card owner's re-entrant Move before `Ready()` resumes. Other owners retain their FIFO positions, preserving the earlier deferred-patrol ordering fix. |
-| In progress | Frame-27 RNG frontier | Original consumes draw 119 during frame 27; Rust reaches the frame boundary without consuming it. | Map the recorded Original call-site provenance to its gameplay decision, then reproduce that decision and consume the draw at the corresponding Rust simulation point. |
+| Done | Scripted waypoint owner boundary | At frame 27 soldier 104's Turn condolence advances path 13 to scripted waypoint 0. Original synchronously calls `Officier_jaloux__0___8000024c::ReachPoint`, consumes `Rand(2)` (the odd result skips the optional animation), fires `EventAfterScriptGoOn`, and launches the next patrol Move before returning. Rust deferred the waypoint VM until the next frame. | Waypoint callbacks now have an owner-specific drain used inside both condolation paths, followed by same-stack `EventAfterScriptGoOn` and owner Move promotion. The compatibility global drain delegates to the same owner-local implementation without interleaving other NPCs. |
+| In progress | Frame-31 movement frontier | Soldiers 89 and 90 first differ in exact position; soldier 89 also has direction goal 10 rather than 9. | Compare their final transition/arrival and anti-collision commits against `RHSprite::PerformMotion` and `RHPositionInterface::UpdatePositionAntiCollision`. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow
