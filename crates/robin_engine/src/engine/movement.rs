@@ -124,9 +124,11 @@ fn rider_charge_point_in_quad(point: MapPoint, quad: [(f32, f32); 4]) -> bool {
 }
 
 fn is_galopp_decision_frame(current_frame: u16, frame_count: u16) -> bool {
-    frame_count > 0
-        && (current_frame == frame_count - 1
-            || (frame_count >= 2 && current_frame == frame_count / 2 - 1))
+    assert!(
+        frame_count > 0,
+        "selected RunningUpright rider-charge animation has no frames"
+    );
+    current_frame == frame_count - 1 || (frame_count >= 2 && current_frame == frame_count / 2 - 1)
 }
 
 fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {

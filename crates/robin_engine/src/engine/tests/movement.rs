@@ -90,6 +90,21 @@ fn one_frame_running_rider_fires_original_last_frame_galopp_disjunct() {
 }
 
 #[test]
+#[should_panic(expected = "selected RunningUpright rider-charge animation has no frames")]
+fn selected_running_rider_galopp_requires_nonzero_animation_frames() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, _, _) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
+    engine
+        .get_entity_mut(rider)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::default();
+    engine.set_actors_frozen(true);
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+}
+
+#[test]
 fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
@@ -255,6 +270,12 @@ fn install_rider_charge_fixture(
     };
     soldier.soldier.rider = true;
     soldier.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
+    soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("rider fixture remains enemy AI")
+        .hth_weapon_id = 1;
     soldier.element.active = true;
     soldier.element.posture = Posture::Upright;
     soldier
@@ -263,24 +284,28 @@ fn install_rider_charge_fixture(
     soldier.element.set_direction_instantly(0);
     soldier.actor.action_state = ActionState::MovingFast;
 
-    let action = crate::order::OrderType::TransitionCharging;
     let frames = frame_delays.len();
-    let script = SpriteScript {
+    let make_script = |action| SpriteScript {
         action_id: action as u16,
         action_done: frames.saturating_sub(1) as u16,
         average_speed: 4.0,
         hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
         sum_distance: frames as u16 * 4,
         frame_ids: (0..frames as u32).collect(),
-        delays: frame_delays,
+        delays: frame_delays.clone(),
         distances: vec![4; frames],
         offsets: vec![SpriteFrameOffset::ZERO; frames],
         sound_ids: vec![0; frames],
     };
+    let transition = make_script(crate::order::OrderType::TransitionCharging);
+    let running = make_script(crate::order::OrderType::RunningUpright);
+    let mut scripts = vec![transition; 16];
+    scripts.extend(vec![running; 16]);
     let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-    conversion[action as usize] = 0;
+    conversion[crate::order::OrderType::TransitionCharging as usize] = 0;
+    conversion[crate::order::OrderType::RunningUpright as usize] = 16;
     soldier.element.sprite = crate::sprite::Sprite::new(
-        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(scripts),
         std::sync::Arc::new(conversion),
     );
     soldier
@@ -827,16 +852,19 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
             .is_some()
     );
 
-    engine
+    let interrupted = engine
         .orders
         .sequence_manager
         .get_element_mut(sequence, 0)
-        .unwrap()
-        .orders
-        .front_mut()
-        .unwrap()
-        .order_type = crate::order::OrderType::RunningUpright;
+        .unwrap();
+    interrupted.orders.front_mut().unwrap().order_type = crate::order::OrderType::RunningUpright;
+    let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut interrupted.data else {
+        panic!("rider charge fixture must remain a movement element");
+    };
+    *flags = crate::sequence::MoveFlags::empty();
+    engine.set_actors_frozen(true);
     engine.tick_entity_movement(&sim, &assets);
+    engine.set_actors_frozen(false);
     assert!(
         engine
             .get_entity(rider)
