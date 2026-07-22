@@ -2902,6 +2902,26 @@ impl EngineInner {
     ) {
         let globally_frozen = self.actors_frozen();
 
+        // Production enters through the owner coordinator, which stamps this
+        // before choosing a specialized arm. Keep this helper self-contained
+        // for focused callers while preserving the same actor-level identity.
+        if let Some((_, _, order)) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+        {
+            let actor = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::actor_data_mut)
+                .unwrap_or_else(|| panic!("generic Execute owner {entity_id:?} lost actor data"));
+            if actor.last_execute_order_id != Some(order.order_id) {
+                actor.last_execute_order_id = Some(order.order_id);
+                actor.execute_order_initialising = true;
+            }
+        }
+
         // RHElementActor::Execute returns IN_PROGRESS immediately for a
         // per-actor execution freeze. Actor::Hourglass still applies its
         // WAIT_TIMER / WAIT_FREE_LIFT modifier to that return value, so retain
@@ -3106,8 +3126,7 @@ impl EngineInner {
                 anim_type,
                 OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
                     | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
-            ) && entity.element_data().sprite.last_processed_order_id
-                != order.order_id.get()
+            ) && actor.execute_order_initialising
             {
                 let dp = actor.active_door_pass.as_ref().unwrap_or_else(|| {
                     panic!(
@@ -3400,9 +3419,7 @@ impl EngineInner {
                     };
                     let mut weak_sword_held = false;
                     let owner_is_pc = entity.is_pc();
-                    let order_is_initialising = order_id.is_some_and(|oid| {
-                        entity.element_data().sprite.last_processed_order_id != oid.get()
-                    });
+                    let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
@@ -3558,9 +3575,9 @@ impl EngineInner {
                                 // RHEngine::FrozenAll leaves Actor::Execute
                                 // live but RHSprite::PerformAction returns
                                 // IN_PROGRESS without selecting, stamping, or
-                                // advancing the sprite. Keep initialization
-                                // fresh so pre-sprite work repeats while the
-                                // freeze persists.
+                                // advancing the sprite. Actor initialization
+                                // was nevertheless consumed at Hourglass
+                                // entry, independently of this sprite call.
                                 return Some(MotionState::InProgress);
                             }
                             let elem = entity.element_data_mut();
@@ -3650,7 +3667,7 @@ impl EngineInner {
                                 &mut motion_state,
                             );
                         }
-                        if matches!(motion_state, MotionState::Start)
+                        if order_is_initialising
                             && matches!(
                                 anim_type,
                                 OrderType::BeingWeakSword | OrderType::BeingStunnedSword

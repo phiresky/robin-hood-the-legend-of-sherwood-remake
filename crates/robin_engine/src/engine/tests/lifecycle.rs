@@ -1073,6 +1073,88 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
 }
 
 #[test]
+fn execution_frozen_selected_bow_does_not_advance_or_fire() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveShot;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let shooter = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut element =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
+    let mut order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    order.antagonist = Some(target);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let actor = engine
+        .get_entity_mut(shooter)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.execution_frozen = true;
+    actor.active_shot = ActiveShot {
+        sequence_id: Some(sequence),
+        element_index: 0,
+        target: Some(target),
+        order_id: Some(order_id),
+        released: false,
+        shoot_mode: Some(ShootMode::Normal),
+    };
+    let before = engine
+        .get_entity(shooter)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_shot;
+
+    assert!(
+        engine
+            .tick_bow_shot_for(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                shooter,
+                order_id
+            )
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .get_entity(shooter)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_shot,
+        before
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(shooter)
+            .unwrap()
+            .2
+            .order_id,
+        order_id
+    );
+    assert_eq!(
+        engine
+            .get_entity(shooter)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        u32::MAX
+    );
+}
+
+#[test]
 fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

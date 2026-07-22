@@ -21,8 +21,9 @@
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementData,
-    ElementKind, Entity, EntityId, HumanData, NpcData, PcData, Posture, SoldierData,
+    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementBonus,
+    ElementData, ElementKind, Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, PcData,
+    Posture, SoldierData,
 };
 use crate::engine::EngineInner;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -3111,9 +3112,165 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
 }
 
 #[test]
+fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_scripted_soldier(""));
+    let bottle = engine.add_entity(Entity::Bonus(ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectOther,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Ale,
+            ..Default::default()
+        },
+    }));
+    bind_test_actor_animations(&mut engine, soldier, &[OrderType::DrinkingAle]);
+    let mut element =
+        SequenceElement::new_interaction(1, Command::DrinkAle, Some(soldier), Some(bottle));
+    let mut order = Order::test_new(OrderType::DrinkingAle, 0.0, 0.0);
+    order.antagonist = Some(bottle);
+    let order_id = order.order_id;
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    engine.set_actors_frozen(true);
+    let assets = LevelAssets::new();
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .last_execute_order_id,
+        Some(order_id)
+    );
+    assert_ne!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        order_id.get()
+    );
+
+    engine
+        .get_entity_mut(bottle)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::InProgress,
+        "DrinkingAle's inactive-antagonist IsInitialisation gate must not repeat on a later frozen tick"
+    );
+}
+
+#[test]
+fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let weak = engine.add_entity(make_pc(true));
+    let opponent = engine.add_entity(make_pc(false));
+    bind_test_actor_animations(&mut engine, weak, &[OrderType::BeingWeakSword]);
+    install_test_action(
+        &mut engine,
+        weak,
+        OrderType::BeingWeakSword,
+        OrderType::WaitingSword,
+    );
+    engine
+        .get_entity_mut(weak)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![opponent];
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![weak];
+    engine
+        .get_entity_mut(weak)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .smalltalk_initiative = true;
+    engine.set_actors_frozen(true);
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    assert!(
+        !engine
+            .get_entity(weak)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .smalltalk_initiative
+    );
+    let opponent_human = engine.get_entity(opponent).unwrap().human_data().unwrap();
+    assert!(opponent_human.smalltalk_initiative);
+    assert!(opponent_human.received_smalltalk_initiative);
+    assert_eq!(
+        engine
+            .get_entity(weak)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id,
+        u32::MAX,
+        "weak/stunned IsInitialisation is actor-owned and precedes the frozen sprite boundary"
+    );
+}
+
+#[test]
 fn original_actor_execute_arm_ledger_is_exhaustive() {
-    fn outer_case_count(source: &str, signature: &str, switch_key: &str) -> usize {
-        let function = source
+    fn strip_comments(source: &str) -> String {
+        let mut out = String::with_capacity(source.len());
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"//") {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            } else if bytes[i..].starts_with(b"/*") {
+                i += 2;
+                while i + 1 < bytes.len() && !bytes[i..].starts_with(b"*/") {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            } else {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+        out
+    }
+
+    fn outer_cases(source: &str, signature: &str, switch_key: &str) -> Vec<String> {
+        let uncommented = strip_comments(source);
+        let function = uncommented
             .split_once(signature)
             .unwrap_or_else(|| panic!("missing Original signature {signature}"))
             .1;
@@ -3123,7 +3280,7 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
             .1;
         let mut depth = 0_i32;
         let mut entered = false;
-        let mut count = 0;
+        let mut cases = Vec::new();
         for line in switch.lines() {
             if entered && depth == 1 {
                 let trimmed = line.trim_start();
@@ -3131,7 +3288,14 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
                     || trimmed.starts_with("case RHNONANIMATION_")
                     || trimmed.starts_with("case RHMOVE_")
                 {
-                    count += 1;
+                    cases.push(
+                        trimmed["case ".len()..]
+                            .split(':')
+                            .next()
+                            .unwrap()
+                            .trim()
+                            .to_owned(),
+                    );
                 }
             }
             for byte in line.bytes() {
@@ -3148,7 +3312,55 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
                 break;
             }
         }
-        count
+        cases
+    }
+
+    fn owner_for_arm(class: &str, arm: &str) -> super::tick::ExecuteOwnerFamily {
+        use super::tick::ExecuteOwnerFamily as Owner;
+        if arm == "RHANIMATION_WAITING_SWORD" {
+            return Owner::WaitingSword;
+        }
+        if arm.contains("SHOOTING_WITH_BOW") {
+            return Owner::Bow;
+        }
+        if arm.contains("STRIKING_")
+            || arm == "RHANIMATION_EXECUTING_SWORD"
+            || arm == "RHANIMATION_TRANSITION_CHARGING"
+        {
+            return Owner::Melee;
+        }
+        if arm.contains("WALKING")
+            || arm.contains("RUNNING")
+            || arm.contains("CLIMBING")
+            || arm.contains("JUMPING")
+            || arm.contains("PASSING_DOOR")
+            || arm.contains("RIDER_CHARGING")
+            || arm.contains("REFRESHING_SEEK")
+        {
+            return Owner::Movement;
+        }
+        if class == "RHElementActorPC::Execute"
+            && (arm.contains("LISTENING")
+                || arm.contains("SIMULATING_BEGGAR")
+                || matches!(
+                    arm,
+                    "RHANIMATION_EATING"
+                        | "RHANIMATION_HEALING"
+                        | "RHANIMATION_WHISTLING"
+                        | "RHANIMATION_TYING"
+                        | "RHANIMATION_STRANGLING"
+                ))
+        {
+            return if arm == "RHANIMATION_SIMULATING_BEGGAR" {
+                Owner::Beggar
+            } else {
+                Owner::Ability
+            };
+        }
+        if class == "RHElementActorCivilian::Execute" && arm.contains("PURSE") {
+            return Owner::Ability;
+        }
+        Owner::GenericAnimation
     }
 
     let actor = include_str!("../../../../original-code/RHelementactor.cpp");
@@ -3157,29 +3369,35 @@ fn original_actor_execute_arm_ledger_is_exhaustive() {
     let npc = include_str!("../../../../original-code/RHelementactornpc.cpp");
     let soldier = include_str!("../../../../original-code/RHelementactorsoldier.cpp");
     let civilian = include_str!("../../../../original-code/rhelementactorcivilian.cpp");
-    let actual = [
-        outer_case_count(actor, "RHElementActor::Execute(", "switch( animation"),
-        outer_case_count(human, "RHElementActorHuman::Execute(", "switch( animation"),
-        outer_case_count(pc, "RHElementActorPC::Execute(", "switch( animation"),
-        outer_case_count(npc, "RHElementActorNPC::Execute(", "switch( animation"),
-        outer_case_count(
+    let parsed = [
+        outer_cases(actor, "RHElementActor::Execute(", "switch( animation"),
+        outer_cases(human, "RHElementActorHuman::Execute(", "switch( animation"),
+        outer_cases(pc, "RHElementActorPC::Execute(", "switch( animation"),
+        outer_cases(npc, "RHElementActorNPC::Execute(", "switch( animation"),
+        outer_cases(
             soldier,
             "RHElementActorSoldier::Execute(",
             "switch( animation",
         ),
-        outer_case_count(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
+        outer_cases(civilian, "RHElementActorCivilian::Execute(", "switch( anim"),
     ];
-    let expected = super::tick::ORIGINAL_ACTOR_EXECUTE_LEDGER.map(|(_, count, owners)| {
-        assert!(
-            !owners.is_empty(),
-            "every source override needs a live Rust owner"
+    for ((class, expected_count, allowed), arms) in super::tick::ORIGINAL_ACTOR_EXECUTE_LEDGER
+        .iter()
+        .zip(parsed)
+    {
+        assert_eq!(
+            arms.len(),
+            *expected_count,
+            "{class} source arm ledger changed"
         );
-        count
-    });
-    assert_eq!(
-        actual, expected,
-        "update the source-to-owner Execute ledger when an Original outer arm changes"
-    );
+        for arm in arms {
+            let owner = owner_for_arm(class, &arm);
+            assert!(
+                allowed.contains(&owner),
+                "{class} arm {arm} maps to disallowed/uninstalled owner {owner:?}"
+            );
+        }
+    }
 }
 
 #[test]

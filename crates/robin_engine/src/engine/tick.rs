@@ -638,36 +638,80 @@ pub(in crate::engine) struct MeleeOwnerSelection {
 /// owners are exhaustive for that override; derived tails are the Human/PC/NPC
 /// hook surrounding the selected arm, not an additional animation owner.
 #[cfg(test)]
-pub(super) const ORIGINAL_ACTOR_EXECUTE_LEDGER: [(&str, usize, &str); 6] = [
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ExecuteOwnerFamily {
+    GenericAnimation,
+    Movement,
+    Melee,
+    Bow,
+    Ability,
+    Beggar,
+    WaitingSword,
+    DerivedTail,
+}
+
+#[cfg(test)]
+pub(super) const ORIGINAL_ACTOR_EXECUTE_LEDGER: [(&str, usize, &[ExecuteOwnerFamily]); 6] = [
     (
         "RHElementActor::Execute",
-        66,
-        "tick_actor_animation_for | movement",
+        56,
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::Movement,
+        ],
     ),
     (
         "RHElementActorHuman::Execute",
         108,
-        "tick_actor_animation_for | movement | melee | bow | WaitingSword",
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::Movement,
+            ExecuteOwnerFamily::Melee,
+            ExecuteOwnerFamily::Bow,
+            ExecuteOwnerFamily::WaitingSword,
+        ],
     ),
     (
         "RHElementActorPC::Execute",
         89,
-        "tick_actor_animation_for | movement | melee | bow | ability | beggar | WaitingSword | PC derived tail",
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::Movement,
+            ExecuteOwnerFamily::Melee,
+            ExecuteOwnerFamily::Bow,
+            ExecuteOwnerFamily::Ability,
+            ExecuteOwnerFamily::Beggar,
+            ExecuteOwnerFamily::WaitingSword,
+            ExecuteOwnerFamily::DerivedTail,
+        ],
     ),
     (
         "RHElementActorNPC::Execute",
         6,
-        "tick_actor_animation_for | NPC derived tail",
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::DerivedTail,
+        ],
     ),
     (
         "RHElementActorSoldier::Execute",
-        42,
-        "tick_actor_animation_for | movement | melee | bow | WaitingSword | NPC derived tail",
+        41,
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::Movement,
+            ExecuteOwnerFamily::Melee,
+            ExecuteOwnerFamily::Bow,
+            ExecuteOwnerFamily::DerivedTail,
+        ],
     ),
     (
         "RHElementActorCivilian::Execute",
         8,
-        "tick_actor_animation_for | ability | NPC derived tail",
+        &[
+            ExecuteOwnerFamily::GenericAnimation,
+            ExecuteOwnerFamily::Ability,
+            ExecuteOwnerFamily::DerivedTail,
+        ],
     ),
 ];
 
@@ -2647,6 +2691,19 @@ impl EngineInner {
                         .sequence_manager
                         .current_order_for_actor(entity_id)
                         .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    if let Some((_, _, order_id)) = selected_order {
+                        let actor = self
+                            .world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::actor_data_mut)
+                            .unwrap_or_else(|| {
+                                panic!("selected Execute owner {entity_id:?} lost actor data")
+                            });
+                        actor.execute_order_initialising =
+                            actor.last_execute_order_id != Some(order_id);
+                        actor.last_execute_order_id = Some(order_id);
+                    }
                     let movement_selection =
                         selected_order.and_then(|(seq_id, elem_idx, order_id)| {
                             self.orders
@@ -2840,6 +2897,15 @@ impl EngineInner {
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
                     after_slot(self, entity_id);
 
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                    {
+                        actor.execute_order_initialising = false;
+                    }
+
                     let leaked_slot_work = self
                         .orders
                         .sequence_manager
@@ -2989,6 +3055,13 @@ impl EngineInner {
                 }
             },
             |engine, owner, movement, melee, bow, ability, selected_beggar| {
+                let execution_frozen = engine
+                    .get_entity(owner)
+                    .and_then(Entity::actor_data)
+                    .is_some_and(|actor| actor.execution_frozen);
+                if execution_frozen {
+                    return;
+                }
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
@@ -2996,11 +3069,7 @@ impl EngineInner {
                 if let Some((_, _, order_id)) = bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
-                let execution_frozen = engine
-                    .get_entity(owner)
-                    .and_then(Entity::actor_data)
-                    .is_some_and(|actor| actor.execution_frozen);
-                if ability.is_some() && !execution_frozen {
+                if ability.is_some() {
                     let is_listen = engine
                         .get_entity(owner)
                         .and_then(Entity::actor_data)
@@ -3013,9 +3082,7 @@ impl EngineInner {
                         engine.tick_ability_for(sim, display, assets, owner);
                     }
                 }
-                if let Some(order_id) = selected_beggar
-                    && !execution_frozen
-                {
+                if let Some(order_id) = selected_beggar {
                     engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
             },

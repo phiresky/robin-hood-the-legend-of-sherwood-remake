@@ -949,9 +949,9 @@ impl EngineInner {
     /// marks the failing sequence elements `Impossible` / `Terminated`
     /// before the animation tick advances them.
     ///
-    /// Init phase is detected via `sprite.last_processed_order_id`:
-    /// the flag is set only on the very first tick a fresh order is
-    /// ever ticked through `Execute`.
+    /// Init phase is detected via Actor::Hourglass's selected-order identity,
+    /// independently of sprite processing (FrozenAll consumes initialization
+    /// even though RHSprite returns before stamping its own order ID).
     ///
     /// Arms covered:
     /// - `Taking` / `TakingCrouched`: `check_position=true`,
@@ -1019,13 +1019,11 @@ impl EngineInner {
                 continue;
             };
 
-            // Init-phase detection.  Sprite's
-            // `last_processed_order_id` is stamped on the first
-            // `perform_action` call for a given order; before that, it
-            // holds the previous order's id (or `u32::MAX` for a
-            // fresh sprite).
-            let last_processed = entity.element.sprite.last_processed_order_id;
-            if last_processed == order_id {
+            if entity
+                .actor
+                .last_execute_order_id
+                .is_some_and(|id| id.get() == order_id)
+            {
                 continue;
             }
 

@@ -231,6 +231,13 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    set_map_position(&mut engine, victim, 40.0, 0.0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     let sequence =
         install_selected_melee(&mut engine, attacker, victim, MELEE_STRIKE_DURATION, false);
@@ -262,6 +269,11 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     let (_, rng_trace) =
         crate::sim_rng::with_draw_trace(|| run_owner_walk(&mut engine, &LevelAssets::new()));
     let entity = engine.get_entity(attacker).unwrap();
+    assert_eq!(
+        entity.element_data().direction(),
+        crate::position_interface::vector_to_sector_0_to_15(40.0, 0.0),
+        "FrozenAll preserves straight-strike SetDirection before the frozen sprite boundary"
+    );
     assert_eq!(entity.actor_data().unwrap().active_melee, before_melee);
     assert_eq!(
         entity.actor_data().unwrap().action_state,

@@ -195,17 +195,13 @@ impl EngineInner {
             return;
         }
 
-        // Original RHSprite::PerformAction returns IN_PROGRESS immediately
-        // under FrozenAll. No strike start, timer, sweep, completion, or order
-        // state is touched, while the surrounding Actor Hourglass envelope
-        // continues through ActionChange and derived tails.
-        if self.actors_frozen() {
-            return;
-        }
+        let sprite_frozen = self.actors_frozen();
 
         // The fixed-timer completion arm is already logically past its hit
         // frame. Close it before attempting to drive the strike sprite again.
-        self.tick_melee_completion_for(sim, assets, attacker_id);
+        if !sprite_frozen {
+            self.tick_melee_completion_for(sim, assets, attacker_id);
+        }
         if !self.selected_melee_identity_is_live(attacker_id, selected) {
             return;
         }
@@ -537,6 +533,9 @@ impl EngineInner {
         if let Some(entity) = self.get_entity_mut(attacker_id) {
             entity.element_data_mut().set_direction_instantly(direction);
         }
+        if self.actors_frozen() {
+            return;
+        }
 
         let mut hit = false;
         let mut completion = None;
@@ -811,6 +810,7 @@ impl EngineInner {
         {
             return false;
         }
+        let sprite_frozen = self.actors_frozen();
 
         // Collect strike results to avoid borrow conflicts
         struct StrikeHit {
@@ -855,6 +855,10 @@ impl EngineInner {
                 strike_kind,
                 WeaponThrustKind::Straight | WeaponThrustKind::Assault
             ) {
+                return false;
+            }
+
+            if sprite_frozen {
                 return false;
             }
 

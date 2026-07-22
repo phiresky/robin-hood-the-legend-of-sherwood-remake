@@ -570,6 +570,14 @@ pub struct ActorData {
     pub execution_frozen: bool,
     pub sequence_element_started: bool,
 
+    /// Actor::Hourglass-selected order identity, corresponding to Original
+    /// `mulLastOrderID`. This is deliberately independent of the sprite's
+    /// processed order: FrozenAll still consumes actor initialization once.
+    pub last_execute_order_id: Option<std::num::NonZeroU32>,
+    /// Original `mbNewOrder` for the currently-entered Execute call. Set at
+    /// owner selection and cleared after Execute/completion/ActionChange.
+    pub execute_order_initialising: bool,
+
     // Wait
     pub wait_time: u32,
 
@@ -742,6 +750,8 @@ impl Default for ActorData {
             action_state: ActionState::default(),
             execution_frozen: false,
             sequence_element_started: false,
+            last_execute_order_id: None,
+            execute_order_initialising: false,
             wait_time: 0,
             listen_wait_time: 0,
             whistle_wait_time: 0,
