@@ -1783,6 +1783,10 @@ impl EngineInner {
                     s.npc.ai_substate(),
                 ),
                 script_locked: enemy_ai.base.script_locked,
+                ai_lock_frozen: enemy_ai
+                    .base
+                    .locks_flag_field
+                    .contains(crate::ai::AiLockFlags::FREEZE),
                 layer: s.element.layer(),
                 report_type: enemy_ai.base.my_reconnaissance_report.report_type,
                 report_seek_position: enemy_ai.base.my_reconnaissance_report.seek_position,
@@ -8030,6 +8034,13 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        // Close any direct Think calls left by a global owner-work/self-
+        // stimulus fixed point before collecting genuinely deferred actions.
+        // Iterate live owner slots in their stable order (PA-013).
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for npc_id in npc_ids {
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+        }
         let scratch = self.build_sim_scratch(sim, assets);
         // Collect all pending actions first to avoid borrow issues.
         // Both enemy (soldier) and friendly (civilian) AIs can push
@@ -8063,6 +8074,11 @@ impl EngineInner {
                 crate::ai::CrossNpcAction::RequestAlert { caller, target, .. } => {
                     panic!(
                         "result-bearing CALL_ALERT {caller}->{target} escaped its owner boundary"
+                    )
+                }
+                crate::ai::CrossNpcAction::RequestThinkResult { caller, target, .. } => {
+                    panic!(
+                        "result-bearing Think request {caller}->{target} escaped its owner boundary"
                     )
                 }
                 crate::ai::CrossNpcAction::InstructGatherPosition {
@@ -8623,13 +8639,6 @@ impl EngineInner {
             npc.alerted = true;
         }
 
-        // The original Charly handler directly calls the officer's Think and
-        // branches on its bool before returning. Drain this result-bearing
-        // cross-NPC call here, inside the originating dispatch, rather than
-        // letting it fall into the end-of-frame cross-action batch.
-        self.process_synchronous_alert_requests_for(sim, npc_id, assets);
-        self.process_synchronous_officer_reports_for(sim, npc_id, assets);
-
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
             // Drain the per-NPC pending-flags pass (launches sequences,
@@ -8643,7 +8652,7 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc(npc_id);
 
-            self.process_synchronous_stimuli_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -8679,9 +8688,7 @@ impl EngineInner {
             // those direct C++ call boundaries before deciding this owner has
             // stabilised; otherwise the result-bearing request can escape to
             // the global cross-action batch.
-            self.process_synchronous_alert_requests_for(sim, npc_id, assets);
-            self.process_synchronous_officer_reports_for(sim, npc_id, assets);
-            self.process_synchronous_stimuli_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
             let still_pending = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
@@ -8699,6 +8706,7 @@ impl EngineInner {
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
+                    || ai.has_pending_synchronous_cross_npc_actions()
             };
             if !still_pending {
                 break;
@@ -8713,7 +8721,102 @@ impl EngineInner {
         handled
     }
 
-    pub(super) fn process_synchronous_stimuli_for(
+    pub(super) fn process_synchronous_reentrant_actions_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        loop {
+            let actions = self
+                .world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .map(crate::ai::AiController::take_pending_synchronous_cross_npc_actions)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "synchronous action source {} has no AI controller",
+                        source_id.index()
+                    )
+                });
+            if actions.is_empty() {
+                break;
+            }
+
+            let deferred = {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(source_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "synchronous action source {} lost its AI controller",
+                            source_id.index()
+                        )
+                    });
+                std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)
+            };
+            let mut generated = Vec::new();
+            for action in actions {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(source_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "synchronous action source {} lost its AI controller",
+                            source_id.index()
+                        )
+                    });
+                ai.outbox.reentrant.cross_npc_actions.push(action.clone());
+                match action {
+                    crate::ai::CrossNpcAction::SendStimulus { .. } => {
+                        self.process_synchronous_stimuli_for(sim, source_id, assets)
+                    }
+                    crate::ai::CrossNpcAction::RequestAlert { .. } => {
+                        self.process_synchronous_alert_requests_for(sim, source_id, assets)
+                    }
+                    crate::ai::CrossNpcAction::RequestThinkResult { .. } => {
+                        self.process_synchronous_think_results_for(sim, source_id, assets)
+                    }
+                    crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
+                        self.process_synchronous_officer_reports_for(sim, source_id, assets)
+                    }
+                    _ => unreachable!("ordered synchronous drain received deferred action"),
+                }
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(source_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "synchronous action source {} lost its AI controller",
+                            source_id.index()
+                        )
+                    });
+                generated.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
+            }
+            let ai = self
+                .world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "synchronous action source {} lost its AI controller",
+                        source_id.index()
+                    )
+                });
+            ai.outbox.reentrant.cross_npc_actions = deferred;
+            ai.outbox.reentrant.cross_npc_actions.extend(generated);
+        }
+    }
+
+    fn process_synchronous_stimuli_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
@@ -8725,7 +8828,12 @@ impl EngineInner {
             .get_mut(source_id)
             .and_then(Entity::ai_controller_mut)
             .map(crate::ai::AiController::take_pending_synchronous_stimuli)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous stimulus source {} has no AI controller",
+                    source_id.index()
+                )
+            });
 
         for action in actions {
             let crate::ai::CrossNpcAction::SendStimulus {
@@ -8829,6 +8937,136 @@ impl EngineInner {
         }
     }
 
+    fn process_synchronous_think_results_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        let requests = self
+            .world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(|ai| {
+                let mut requests = Vec::new();
+                let mut deferred = Vec::new();
+                for action in ai.outbox.reentrant.cross_npc_actions.drain(..) {
+                    if matches!(action, crate::ai::CrossNpcAction::RequestThinkResult { .. }) {
+                        requests.push(action);
+                    } else {
+                        deferred.push(action);
+                    }
+                }
+                ai.outbox.reentrant.cross_npc_actions = deferred;
+                requests
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Think-result source {} has no AI controller",
+                    source_id.index()
+                )
+            });
+
+        for request in requests {
+            let crate::ai::CrossNpcAction::RequestThinkResult {
+                target,
+                caller,
+                stimulus_type,
+                info,
+                continuation,
+            } = request
+            else {
+                unreachable!("Think-result drain returned a different action")
+            };
+            assert_eq!(
+                source_id.index(),
+                caller,
+                "Think-result caller must be its owner"
+            );
+            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                panic!(
+                    "synchronous {stimulus_type:?} from NPC {caller} references missing target {target}"
+                )
+            });
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let target_building_sector = self
+                .world
+                .entities
+                .get(target_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
+            let target_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(target_id)
+                    .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    target_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let target_tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
+            stimulus.info = info;
+            let accepted = self.dispatch_think_with_drain_without_forecast(
+                sim,
+                target_id,
+                &stimulus,
+                &target_ctx,
+                &target_tick,
+                assets,
+            );
+
+            let source_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let source_building_sector = self
+                .world
+                .entities
+                .get(source_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
+            let source_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(source_id)
+                    .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    source_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &source_scratch.ai_entity_views,
+                    &source_scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap_or_else(|| panic!("Think-result caller {caller} lost its EnemyAi"))
+                .resolve_think_result(sim, accepted, continuation, &source_ctx, &source_tick);
+        }
+    }
+
     fn process_synchronous_alert_requests_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -8841,7 +9079,12 @@ impl EngineInner {
             .get_mut(source_id)
             .and_then(Entity::ai_controller_mut)
             .map(crate::ai::AiController::take_pending_alert_requests)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "CALL_ALERT source {} has no AI controller",
+                    source_id.index()
+                )
+            });
 
         for request in requests {
             let crate::ai::CrossNpcAction::RequestAlert {
@@ -8944,7 +9187,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("civilian CALL_ALERT caller {caller} lost its FriendlyAi")
                     })
-                    .resolve_alert_request(accepted, continuation, target, &source_ctx),
+                    .resolve_alert_request(accepted, continuation, &source_ctx),
                 crate::ai::AlertContinuation::SoldierSawOfficer => self
                     .world
                     .entities
@@ -8953,14 +9196,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("soldier CALL_ALERT caller {caller} lost its EnemyAi")
                     })
-                    .resolve_alert_request(
-                        sim,
-                        accepted,
-                        continuation,
-                        target,
-                        &source_ctx,
-                        &source_tick,
-                    ),
+                    .resolve_alert_request(sim, accepted, continuation, &source_ctx, &source_tick),
             }
         }
     }
@@ -8977,7 +9213,12 @@ impl EngineInner {
             .get_mut(source_id)
             .and_then(Entity::ai_controller_mut)
             .map(crate::ai::AiController::take_pending_officer_reports)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "officer-report source {} has no AI controller",
+                    source_id.index()
+                )
+            });
 
         for report in reports {
             let crate::ai::CrossNpcAction::ReportBackToOfficer { officer, charly } = report else {
@@ -9217,7 +9458,7 @@ impl EngineInner {
             // arbitration before the next sibling stimulus is delivered.
             self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
-            self.process_synchronous_stimuli_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
     }
@@ -9371,7 +9612,7 @@ impl EngineInner {
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast);
             self.launch_pending_orders_for_npc(npc_id);
-            self.process_synchronous_stimuli_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {
                 let ai = self
@@ -9406,6 +9647,7 @@ impl EngineInner {
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
+                    || ai.has_pending_synchronous_cross_npc_actions()
             };
             if !still_pending {
                 break;

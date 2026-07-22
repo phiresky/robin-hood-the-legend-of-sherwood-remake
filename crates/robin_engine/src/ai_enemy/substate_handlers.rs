@@ -2381,25 +2381,15 @@ impl EnemyAi {
             Substate::SeekingOfficerCallSoldier => {
                 // Officer turned to face soldier, now calls them
                 if stimulus_type == StimulusType::EventDone {
-                    // The reference calls antagonist.think(CallHey)
-                    // synchronously and checks return value. We push
-                    // the stimulus and optimistically transition —
-                    // the timer-based validation in WaitForSoldier
-                    // will catch failures.
                     self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
+                        CrossNpcAction::RequestThinkResult {
                             target: self.base.antagonist,
+                            caller: self.base.me,
                             stimulus_type: StimulusType::CallHey,
                             info: StimulusInfo::Human(self.base.me),
+                            continuation: ThinkResultContinuation::OfficerCalledSoldier,
                         },
                     );
-                    self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
-                    self.base
-                        .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
-                    self.base.say(Remark::OfficerCallsSoldier);
-                    self.base.launch_timer(20, ctx.frame);
                 }
             }
 
@@ -3873,19 +3863,22 @@ impl EnemyAi {
 
             // Officer sends charly away toward another officer.
             Substate::SeekingSendCharlyToOfficer => match stimulus_type {
-                StimulusType::EventMyTalk1
-                    // antagonist.think(CallGoToOfficer, me)
-                    if self.base.antagonist != 0 => {
-                        self.base
-                            .outbox.reentrant.cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
+                StimulusType::EventMyTalk1 => {
+                    let charly = self.base.friend_in_trouble;
+                    if charly == 0 {
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::RequestThinkResult {
+                                target: charly,
+                                caller: self.base.me,
                                 stimulus_type: StimulusType::CallGoToOfficer,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
+                                info: crate::ai::StimulusInfo::Human(self.base.antagonist),
+                                continuation: ThinkResultContinuation::OfficerSentCharlyToOfficer,
+                            },
+                        );
                     }
+                }
                 StimulusType::EventMyTalk2 => {
                     self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
                     self.base.launch_timer(100, ctx.frame);

@@ -1744,11 +1744,6 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        assert_eq!(self.base.current_state, AiState::Seeking);
-        assert_eq!(
-            self.base.current_substate,
-            Substate::SeekingCharlyGoToOfficer
-        );
         if accepted {
             self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
             self.base.launch_timer(10, ctx.frame);
@@ -1762,7 +1757,6 @@ impl EnemyAi {
         sim: &crate::sim_rng::SimulationContext,
         accepted: bool,
         continuation: crate::ai::AlertContinuation,
-        target: NpcHandle,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
@@ -1770,8 +1764,6 @@ impl EnemyAi {
             continuation,
             crate::ai::AlertContinuation::SoldierSawOfficer
         ));
-        assert_eq!(self.base.antagonist, target);
-
         if !accepted {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
@@ -1780,6 +1772,7 @@ impl EnemyAi {
         self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
         self.base
             .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
+        let target = self.base.antagonist;
         let officer_target_pos = ctx
             .entity_view(target)
             .unwrap_or_else(|| {
@@ -1796,6 +1789,36 @@ impl EnemyAi {
             ctx,
         );
         self.base.launch_timer(20, ctx.frame);
+    }
+
+    pub(crate) fn resolve_think_result(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        accepted: bool,
+        continuation: ThinkResultContinuation,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        match continuation {
+            ThinkResultContinuation::OfficerCalledSoldier => {
+                if accepted {
+                    self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
+                    self.base
+                        .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
+                    self.base.say(Remark::OfficerCallsSoldier);
+                    self.base.launch_timer(20, ctx.frame);
+                } else {
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                }
+            }
+            ThinkResultContinuation::OfficerSentCharlyToOfficer => {
+                if accepted {
+                    self.base
+                        .say_with_flags(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
+                    self.base.point_to(self.officers_position);
+                }
+            }
+        }
     }
 
     /// 180°-detection (the simple-geometry half that can be answered
@@ -3526,7 +3549,7 @@ impl EnemyAi {
     /// Broadcasts a tower-guard alert: every same-camp soldier within
     /// `SQR_TOWER_GUARD_ALERT_RADIUS` that isn't itself a tower guard,
     /// isn't holed up in a building, and is able to help gets a
-    /// `CALL_TOWER_GUARD_ALERT` stimulus via the deferred inter-NPC
+    /// `CALL_TOWER_GUARD_ALERT` stimulus via the synchronous owner-boundary
     /// Think queue.  The nearest reachable officer additionally gets a
     /// `CALL_TOWER_GUARD_CALLS_ME` so they come to investigate.  If no
     /// officer is in ear-shot but a "far officer" exists, the nearest
@@ -4400,6 +4423,7 @@ mod tests {
             is_able_to_fight: true,
             is_able_to_help: true,
             script_locked: false,
+            ai_lock_frozen: false,
             layer: 0,
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),

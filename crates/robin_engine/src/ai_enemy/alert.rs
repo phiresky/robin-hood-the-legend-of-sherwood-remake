@@ -141,7 +141,15 @@ impl EnemyAi {
 
         for cs in &tick.camp_soldiers {
             // Must be rank SOLDIER, able to help.
-            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_help {
+            if cs.rank != ProfileRank::Soldier
+                || !cs.is_able_to_help
+                || cs.script_locked
+                || cs.ai_lock_frozen
+                || !matches!(
+                    cs.ai_state,
+                    AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
+                )
+            {
                 continue;
             }
             // MaxNorm distance check
@@ -442,7 +450,7 @@ impl EnemyAi {
                     to_whole_patrol: false,
                     target: cs.handle,
                     stimulus_type: StimulusType::CallAlert,
-                    info: StimulusInfo::None,
+                    info: StimulusInfo::Human(self.base.me),
                 });
 
             // Distance-sorted insertion: soldiers
@@ -1191,7 +1199,7 @@ impl EnemyAi {
     /// Broadcasts a tower-guard alert: every same-camp soldier within
     /// `SQR_TOWER_GUARD_ALERT_RADIUS` that isn't itself a tower guard,
     /// isn't holed up in a building, and is able to help gets a
-    /// `CALL_TOWER_GUARD_ALERT` stimulus via the deferred inter-NPC
+    /// `CALL_TOWER_GUARD_ALERT` stimulus via the synchronous owner-boundary
     /// Think queue.  The nearest reachable officer additionally gets a
     /// `CALL_TOWER_GUARD_CALLS_ME` so they come to investigate.  If no
     /// officer is in ear-shot but a "far officer" exists, the nearest

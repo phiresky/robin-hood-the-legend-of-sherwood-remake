@@ -389,25 +389,20 @@ impl FriendlyAi {
         &mut self,
         accepted: bool,
         continuation: AlertContinuation,
-        target: NpcHandle,
         ctx: &AiContext,
     ) {
-        assert_eq!(self.base.antagonist, target);
-        assert!(matches!(
-            self.base.current_substate,
-            Substate::SeekingCivilianRunningToSoldier
-        ));
-
         if !accepted {
             self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
             return;
         }
 
-        self.base
-            .outbox
-            .actor
-            .delete_detectables
-            .push(crate::element::DetectableType::Friend);
+        if matches!(continuation, AlertContinuation::CivilianReachedSoldier) {
+            self.base
+                .outbox
+                .actor
+                .delete_detectables
+                .push(crate::element::DetectableType::Friend);
+        }
         self.set_state(
             AiState::Seeking,
             Substate::SeekingCivilianRunningToSoldierSeen,
@@ -422,6 +417,7 @@ impl FriendlyAi {
                 .push(StimulusType::EventReachPoint),
             AlertContinuation::CivilianSawSoldier => {
                 self.base.say(Remark::CivCallsSoldier);
+                let target = self.base.antagonist;
                 let target_pos = ctx
                     .entity_view(target)
                     .unwrap_or_else(|| {
@@ -821,17 +817,21 @@ impl FriendlyAi {
             Substate::SeekingCivilianRunningToSoldier => {
                 if stimulus_type == StimulusType::EventReachPoint {
                     let antagonist_handle = self.base.antagonist;
-                    let antagonist_view = ctx.entity_view(antagonist_handle);
-                    match antagonist_view.map(|v| v.ai_state) {
-                        Some(AiState::Default) => {
+                    let antagonist_view = ctx.entity_view(antagonist_handle).unwrap_or_else(|| {
+                        panic!(
+                            "civilian {} running to required antagonist {} has no entity view",
+                            self.base.me, antagonist_handle
+                        )
+                    });
+                    match antagonist_view.ai_state {
+                        AiState::Default => {
                             // "You have not seen the officer!" — the
                             // soldier is still on duty, so close the
                             // last few steps and talk to them.  The
                             // outer match arm already proves the
                             // view is `Some(…)` here, so the unwrap
                             // is infallible.
-                            let antag_view = antagonist_view
-                                .expect("antagonist view resolved in outer match arm");
+                            let antag_view = antagonist_view;
                             let antag_pos = antag_view.position;
                             let dx = antag_pos.x - ctx.position.x;
                             let dy = antag_pos.y - ctx.position.y;
@@ -870,16 +870,8 @@ impl FriendlyAi {
                         _ => {
                             // Officer is no longer in STATE_DEFAULT
                             // (reassigned / knocked out / script
-                            // interrupted / entity gone) — look for
-                            // another soldier and, on failure, fall
-                            // back to `ReturnToDuty`.  This also
-                            // covers the "antagonist view not in the
-                            // entity map" case (entity removed this
-                            // tick): the original would crash on a
-                            // null antagonist, but the "look for
-                            // another officer" branch is the closest
-                            // legal analogue since the antagonist
-                            // isn't usable either way.
+                            // interrupted) — look for another soldier and,
+                            // on failure, fall back to `ReturnToDuty`.
                             let seek_pos = self.base.seek_position;
                             if !self.alert_soldier(sim, seek_pos, 0, ctx, grid, doors) {
                                 self.return_to_duty(sim, DutyFlags::empty(), ctx);
@@ -1136,6 +1128,13 @@ impl FriendlyAi {
             {
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
                     self.base.antagonist = soldier_handle;
+                    // The original deletes friend detectables before the
+                    // direct CALL_ALERT, including when the soldier refuses.
+                    self.base
+                        .outbox
+                        .actor
+                        .delete_detectables
+                        .push(crate::element::DetectableType::Friend);
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::RequestAlert {
                             target: soldier_handle,
@@ -2305,6 +2304,24 @@ mod tests {
 
         ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
         assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
+    }
+
+    #[test]
+    #[should_panic(expected = "civilian 1 running to required antagonist 42 has no entity view")]
+    fn review_running_to_soldier_requires_the_live_antagonist_view() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = FriendlyAi::new(1);
+        ai.base.antagonist = 42;
+        ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
+        );
     }
 
     #[test]

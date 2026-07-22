@@ -183,6 +183,10 @@ pub struct CampSoldierInfo {
     /// report-to-officer seeking substates can.
     pub is_able_to_help: bool,
     pub script_locked: bool,
+    /// Dynamic `AILOCK_FREEZE` gate. Direct `Think` retains the stimulus and
+    /// returns false while this is set, so result-bearing broadcasts must not
+    /// pre-count the recipient as having accepted.
+    pub ai_lock_frozen: bool,
     pub layer: u16,
     /// Reconnaissance report type (for `GetReportFromSoldier` checks).
     pub report_type: ReportType,
@@ -279,10 +283,12 @@ pub struct CampSoldierInfo {
 ///    - else, in Seeking/Wondering, false;
 ///    - else, true only when `minimal_task_priority == NONE`.
 ///
-/// Used by the officer-side `AlertSoldiers` insertion gate so that
-/// the asynchronous Rust cross-NPC dispatch matches the synchronous
-/// `pFriend->Think(stimulus)` return-value gating.
+/// Used by the officer-side `AlertSoldiers` candidate gate before the direct
+/// synchronous call is emitted.
 pub fn soldier_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
+    if cs.script_locked || cs.ai_lock_frozen {
+        return false;
+    }
     // State-set filter for the soldier rank.
     let state_ok = match cs.ai_state {
         AiState::Default | AiState::Wondering => true,
@@ -306,26 +312,6 @@ pub fn soldier_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
     match cs.ai_state {
         AiState::Seeking | AiState::Wondering => false,
         _ => cs.minimal_task_priority == task_priority::NONE,
-    }
-}
-
-/// Predicts whether an officer would react to `CALL_ALERT` from a
-/// soldier. React iff in STATE_DEFAULT, or STATE_SEEKING with a
-/// wait-for-instructed-group / wait-for-instructed-soldier substate.
-/// No task-priority gate in the officer arm.
-///
-/// Used by `EVENT_SEES_SOLDIER` (soldier→officer call-officer flow)
-/// to predict the officer's `Think(CALL_ALERT)` result before
-/// dispatching the cross-NPC stimulus.
-pub fn officer_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
-    match cs.ai_state {
-        AiState::Default => true,
-        AiState::Seeking => matches!(
-            cs.ai_substate,
-            Substate::SeekingOfficerWaitForInstructedGroup
-                | Substate::SeekingOfficerWaitForInstructedSoldier
-        ),
-        _ => false,
     }
 }
 

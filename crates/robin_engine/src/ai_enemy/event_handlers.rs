@@ -69,11 +69,7 @@ impl EnemyAi {
                             CrossNpcAction::SendStimulus {
                                 target: charly,
                                 stimulus_type: StimulusType::CallGoToOfficer,
-                                info: StimulusInfo::Hint(crate::ai::Hint {
-                                    who_tells_me: self.base.me,
-                                    seek_point: ctx.position,
-                                    seek_flags: 0,
-                                }),
+                                info: StimulusInfo::Human(self.base.me),
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
                             },
@@ -575,16 +571,19 @@ impl EnemyAi {
                         // target is a soldier, gate on
                         // `CanCallThisSoldier`, then face + transition
                         // into the SeekingOfficerCallSoldier handshake.
-                        let Some(cs) = antagonist_cs else {
-                            // Target not in same-camp roster — would assert
-                            // IsSoldier here. Treat as no-op.
-                            return false;
-                        };
-                        if cs.rank != ProfileRank::Soldier {
-                            // Officer EVENT_SEES_SOLDIER is only fired
-                            // against soldier-rank targets in practice.
-                            return false;
-                        }
+                        let cs = antagonist_cs.unwrap_or_else(|| {
+                            panic!(
+                                "officer {} EVENT_SEES_SOLDIER requires target {} in camp soldier roster",
+                                self.base.me, antagonist
+                            )
+                        });
+                        assert_eq!(
+                            cs.rank,
+                            ProfileRank::Soldier,
+                            "officer {} EVENT_SEES_SOLDIER target {} must have soldier rank",
+                            self.base.me,
+                            antagonist
+                        );
                         if self.can_call_this_soldier(cs, ctx, tick) {
                             self.face_npc(antagonist, tick);
                             // Transition to
@@ -759,19 +758,40 @@ impl EnemyAi {
             }
 
             StimulusType::CallCombatAlert => {
-                if let StimulusInfo::Position(ref pos) = stimulus.info {
-                    self.call_combat_alert_standard_procedure(pos, ctx, tick);
+                if self.get_rank() != ProfileRank::Soldier {
+                    panic!(
+                        "CALL_COMBAT_ALERT reached unsupported recipient rank {:?}",
+                        self.get_rank()
+                    );
+                }
+                match self.base.current_state {
+                    AiState::Default | AiState::Wondering | AiState::Seeking => {
+                        let StimulusInfo::Position(ref pos) = stimulus.info else {
+                            return false;
+                        };
+                        self.call_combat_alert_standard_procedure(pos, ctx, tick);
+                        return true;
+                    }
+                    AiState::Attacking => return true,
+                    _ => return false,
                 }
             }
 
             StimulusType::CallGoToOfficer => {
-                if let StimulusInfo::Hint(ref hint) = stimulus.info {
-                    self.officers_position = hint.seek_point;
-                    self.base.antagonist = hint.who_tells_me;
-                    self.set_state(AiState::Seeking, Substate::SeekingSoldierCalledByOfficer);
-                    self.base.face_entity(hint.who_tells_me, ctx);
-                    self.base.launch_timer(20, ctx.frame);
+                let StimulusInfo::Human(officer) = stimulus.info else {
+                    return false;
+                };
+                if self.base.current_state != AiState::Default
+                    && self.base.current_substate != Substate::SleepingAwakening
+                {
+                    return false;
                 }
+                self.base.antagonist = officer;
+                self.set_state(AiState::Seeking, Substate::SeekingCharlySentToOfficer);
+                self.base.set_emoticon(EmoticonType::None);
+                self.base.launch_timer(30, ctx.frame);
+                self.reported_to_officer = true;
+                return true;
             }
 
             // Officer hails a soldier. The legacy implementation civilian branch asserts
@@ -2695,6 +2715,60 @@ mod tests {
             report_seen_bodies: Vec::new(),
             report_charly: 0,
         }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "officer 1 EVENT_SEES_SOLDIER requires target 42 in camp soldier roster"
+    )]
+    fn review_officer_sees_soldier_requires_target_in_live_soldier_roster() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.soldier_profile_rank = ProfileRank::Officer;
+        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventSeesSoldier, 42),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+    }
+
+    #[test]
+    fn review_call_go_to_officer_preserves_original_boolean_gate() {
+        let sim = crate::sim_rng::test_context();
+        let stimulus = Stimulus::with_human(StimulusType::CallGoToOfficer, 42);
+
+        let mut available = EnemyAi::new(1);
+        available.soldier_profile_rank = ProfileRank::Soldier;
+        assert!(available.think_unexpected_event(
+            &sim,
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        ));
+        assert_eq!(
+            available.base.current_substate,
+            Substate::SeekingCharlySentToOfficer
+        );
+        assert_eq!(available.base.antagonist, 42);
+        assert!(available.reported_to_officer);
+
+        let mut busy = EnemyAi::new(2);
+        busy.soldier_profile_rank = ProfileRank::Soldier;
+        busy.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        assert!(!busy.think_unexpected_event(
+            &sim,
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        ));
     }
 
     fn ctx_with_object(object_type: ObjectType) -> AiContext {

@@ -988,6 +988,45 @@ impl AiController {
         std::mem::take(&mut self.outbox.reentrant.cross_npc_actions)
     }
 
+    /// Drain direct/re-entrant `Think` calls in the exact order the owner
+    /// emitted them, leaving genuinely deferred coordination mutations for
+    /// the global PA-013 owner-slot batch.
+    pub fn take_pending_synchronous_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
+        let mut synchronous = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(
+                action,
+                CrossNpcAction::SendStimulus { .. }
+                    | CrossNpcAction::RequestAlert { .. }
+                    | CrossNpcAction::RequestThinkResult { .. }
+                    | CrossNpcAction::ReportBackToOfficer { .. }
+            ) {
+                synchronous.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        synchronous
+    }
+
+    pub fn has_pending_synchronous_cross_npc_actions(&self) -> bool {
+        self.outbox
+            .reentrant
+            .cross_npc_actions
+            .iter()
+            .any(|action| {
+                matches!(
+                    action,
+                    CrossNpcAction::SendStimulus { .. }
+                        | CrossNpcAction::RequestAlert { .. }
+                        | CrossNpcAction::RequestThinkResult { .. }
+                        | CrossNpcAction::ReportBackToOfficer { .. }
+                )
+            })
+    }
+
     /// Drain only result-bearing officer reports, leaving ordinary deferred
     /// cross-NPC actions queued for the end-of-frame batch.
     pub fn take_pending_officer_reports(&mut self) -> Vec<CrossNpcAction> {

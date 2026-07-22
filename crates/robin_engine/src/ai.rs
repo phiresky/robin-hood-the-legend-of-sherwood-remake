@@ -38,7 +38,8 @@ pub use model::{
     PanicRequest, PatrolAssignment, PointArchery, ProbabilityDistribution, Question,
     ReconnaissanceReport, Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest,
     SectorArchery, SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo,
-    StimulusType, StolenObject, Substate, TargetType, ViewCone, stimulus_to_ai_event_code,
+    StimulusType, StolenObject, Substate, TargetType, ThinkResultContinuation, ViewCone,
+    stimulus_to_ai_event_code,
 };
 
 mod contexts;

@@ -209,6 +209,7 @@ pub(super) struct SoldierSnapshot {
     pub(super) bow_max_range: u16,
     /// Whether this soldier's AI is script-locked.
     pub(super) script_locked: bool,
+    pub(super) ai_lock_frozen: bool,
     /// Reconnaissance report type from the soldier's AI brain.
     pub(super) report_type: crate::ai::ReportType,
     /// Seek position from the soldier's reconnaissance report.
@@ -664,6 +665,10 @@ impl EngineInner {
             let shield_bearer_before_me = enemy_ai.shield_bearer_before_me;
             let shield_bearer_direction = enemy_ai.shield_bearer_direction;
             let script_locked = enemy_ai.base.script_locked;
+            let ai_lock_frozen = enemy_ai
+                .base
+                .locks_flag_field
+                .contains(crate::ai::AiLockFlags::FREEZE);
             let report_type = enemy_ai.base.my_reconnaissance_report.report_type;
             let report_seek_position = enemy_ai.base.my_reconnaissance_report.seek_position;
             let report_seen_bodies = enemy_ai.base.my_reconnaissance_report.seen_bodies.clone();
@@ -850,6 +855,7 @@ impl EngineInner {
                 shield_bearer_direction,
                 bow_max_range,
                 script_locked,
+                ai_lock_frozen,
                 report_type,
                 report_seek_position,
                 report_seen_bodies,

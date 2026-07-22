@@ -1404,6 +1404,16 @@ pub enum CrossNpcAction {
         caller: NpcHandle,
         continuation: AlertContinuation,
     },
+    /// Synchronously deliver a direct `Think` call whose boolean controls a
+    /// caller-side continuation. The recipient may re-enter and mutate the
+    /// caller before returning, so the continuation resumes on live fields.
+    RequestThinkResult {
+        target: NpcHandle,
+        caller: NpcHandle,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+        continuation: ThinkResultContinuation,
+    },
     /// Set gather position on target NPC, then deliver `CALL_INSTRUCTION`.
     InstructGatherPosition {
         target: NpcHandle,
@@ -1516,6 +1526,12 @@ pub enum AlertContinuation {
     CivilianReachedSoldier,
     CivilianSawSoldier,
     SoldierSawOfficer,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum ThinkResultContinuation {
+    OfficerCalledSoldier,
+    OfficerSentCharlyToOfficer,
 }
 
 // ---------------------------------------------------------------------------

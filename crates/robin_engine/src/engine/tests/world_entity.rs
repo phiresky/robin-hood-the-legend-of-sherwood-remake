@@ -1657,7 +1657,11 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
     );
 }
 
-fn run_synchronous_civilian_alert(soldier_state: crate::ai::AiState) -> EngineInner {
+fn run_synchronous_civilian_alert(
+    soldier_state: crate::ai::AiState,
+    trigger: crate::ai::StimulusType,
+    direct_owner_self_stimulus: bool,
+) -> EngineInner {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::AiBrain;
 
@@ -1709,6 +1713,13 @@ fn run_synchronous_civilian_alert(soldier_state: crate::ai::AiState) -> EngineIn
         },
     );
     friendly.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
+    civilian.npc.detectable_lists[crate::element::DetectableType::Friend as usize].push(
+        crate::element::Detectable {
+            element: Some(soldier_id),
+            detectable_type: crate::element::DetectableType::Friend,
+            ..Default::default()
+        },
+    );
 
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(soldier_id)
@@ -1756,22 +1767,34 @@ fn run_synchronous_civilian_alert(soldier_state: crate::ai::AiState) -> EngineIn
         )
     };
     let tick = engine.build_npc_tick_data(sim, civilian_id, &scratch, &assets);
-    engine.dispatch_think_with_drain(
-        sim,
-        civilian_id,
-        &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-        &tick,
-        &assets,
-    );
+    if direct_owner_self_stimulus {
+        engine
+            .get_entity_mut(civilian_id)
+            .and_then(Entity::friendly_ai_mut)
+            .expect("direct-owner civilian has FriendlyAi")
+            .base
+            .outbox
+            .reentrant
+            .self_stimuli
+            .push(trigger);
+        engine.drain_direct_ai_owner_boundary(sim, civilian_id, &assets);
+    } else {
+        let stimulus = if trigger == StimulusType::EventSeesSoldier {
+            Stimulus::with_human(trigger, soldier_id.index())
+        } else {
+            Stimulus::new(trigger)
+        };
+        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, &ctx, &tick, &assets);
+    }
     engine
 }
 
 #[test]
 fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
-    use crate::ai::{AiState, Substate};
+    use crate::ai::{AiState, StimulusType, Substate};
 
-    let mut accepted = run_synchronous_civilian_alert(AiState::Default);
+    let mut accepted =
+        run_synchronous_civilian_alert(AiState::Default, StimulusType::EventReachPoint, false);
     let civilian = accepted
         .world
         .entities
@@ -1783,6 +1806,19 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         .ai_brain
         .friendly()
         .expect("accepted civilian has FriendlyAi");
+    assert!(
+        accepted
+            .world
+            .entities
+            .civilians()
+            .next()
+            .expect("accepted civilian exists")
+            .1
+            .npc
+            .detectable_lists[crate::element::DetectableType::Friend as usize]
+            .is_empty(),
+        "reached-soldier acceptance deletes friend detectables"
+    );
     assert_eq!(
         civilian.base.current_substate,
         Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
@@ -1870,7 +1906,8 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         crate::ai::ReportType::Enemy
     );
 
-    let refused = run_synchronous_civilian_alert(AiState::Attacking);
+    let refused =
+        run_synchronous_civilian_alert(AiState::Attacking, StimulusType::EventReachPoint, false);
     let civilian = refused
         .world
         .entities
@@ -1890,7 +1927,182 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
 }
 
 #[test]
-fn soldier_alert_uses_caller_kind_and_recipient_result_synchronously() {
+fn review_civilian_sees_soldier_deletes_friends_before_acceptance_or_refusal() {
+    use crate::ai::{AiState, StimulusType};
+    use crate::element::DetectableType;
+
+    for state in [AiState::Default, AiState::Attacking] {
+        let engine = run_synchronous_civilian_alert(state, StimulusType::EventSeesSoldier, false);
+        let civilian = engine
+            .world
+            .entities
+            .civilians()
+            .next()
+            .expect("civilian exists")
+            .1;
+        assert!(
+            civilian.npc.detectable_lists[DetectableType::Friend as usize].is_empty(),
+            "EVENT_SEES_SOLDIER must delete friends before CALL_ALERT for {state:?} recipient"
+        );
+    }
+}
+
+#[test]
+fn review_direct_owner_self_stimulus_closes_nested_alert_request() {
+    use crate::ai::{AiState, StimulusType, Substate};
+
+    let engine =
+        run_synchronous_civilian_alert(AiState::Default, StimulusType::EventReachPoint, true);
+    let civilian = engine
+        .world
+        .entities
+        .civilians()
+        .next()
+        .expect("civilian exists")
+        .1
+        .npc
+        .ai_brain
+        .friendly()
+        .expect("civilian has FriendlyAi");
+    assert_eq!(
+        civilian.base.current_substate,
+        Substate::SeekingCivilianGiveAlertingReportToSoldierStart
+    );
+    assert!(
+        !civilian.base.has_pending_synchronous_cross_npc_actions(),
+        "nested RequestAlert must not escape the direct-owner fixed point"
+    );
+}
+
+#[test]
+fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::profiles::ProfileRank;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 100;
+    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    for (id, rank, state, substate) in [
+        (
+            officer_id,
+            ProfileRank::Officer,
+            AiState::Seeking,
+            Substate::SeekingOfficerCallSoldier,
+        ),
+        (
+            soldier_id,
+            ProfileRank::Soldier,
+            AiState::Attacking,
+            Substate::AttackingSwordfight,
+        ),
+    ] {
+        let enemy = engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has EnemyAi");
+        enemy.base.me = id.index();
+        enemy.soldier_profile_rank = rank;
+        enemy.set_state(state, substate);
+    }
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("officer has EnemyAi")
+        .base
+        .antagonist = soldier_id.index();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine.get_entity(officer_id).expect("officer exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    engine.dispatch_think_with_drain(
+        &sim,
+        officer_id,
+        &Stimulus::new(StimulusType::EventDone),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("officer retains EnemyAi");
+    assert_ne!(
+        officer.base.current_substate,
+        Substate::SeekingOfficerWaitForSoldier
+    );
+    assert_eq!(officer.base.current_state, AiState::Default);
+}
+
+#[test]
+#[should_panic(expected = "EVENT_SEES_SOLDIER target 1 must have soldier rank")]
+fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::profiles::ProfileRank;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    for id in [officer_id, target_id] {
+        let enemy = engine
+            .get_entity_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("officer test entity has EnemyAi");
+        enemy.base.me = id.index();
+        enemy.soldier_profile_rank = ProfileRank::Officer;
+        enemy.set_state(AiState::Default, Substate::DefaultOnPost);
+    }
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine.get_entity(officer_id).expect("officer exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    engine.dispatch_think_with_drain(
+        &sim,
+        officer_id,
+        &Stimulus::with_human(StimulusType::EventSeesSoldier, target_id.index()),
+        &ctx,
+        &tick,
+        &assets,
+    );
+}
+
+#[test]
+fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::profiles::ProfileRank;
 
@@ -1908,12 +2120,15 @@ fn soldier_alert_uses_caller_kind_and_recipient_result_synchronously() {
     }));
     let reporter_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let callback_officer_id =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     for (id, x, rank) in [
         (reporter_id, 0.0, ProfileRank::Soldier),
         (officer_id, 40.0, ProfileRank::Officer),
+        (callback_officer_id, 80.0, ProfileRank::Officer),
     ] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("alert soldier exists")
         else {
@@ -1930,6 +2145,22 @@ fn soldier_alert_uses_caller_kind_and_recipient_result_synchronously() {
         ai.soldier_profile_rank = rank;
         ai.set_state(AiState::Default, Substate::DefaultOnPost);
     }
+
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("accepting officer has EnemyAi")
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(crate::ai::CrossNpcAction::SendStimulus {
+            target: reporter_id.index(),
+            stimulus_type: StimulusType::CallAlert,
+            info: crate::ai::StimulusInfo::Human(callback_officer_id.index()),
+            fallback_to_sender: None,
+            to_whole_patrol: false,
+        });
 
     let scratch = engine.build_sim_scratch(sim, &assets);
     let ctx = {
@@ -1968,6 +2199,15 @@ fn soldier_alert_uses_caller_kind_and_recipient_result_synchronously() {
     assert_eq!(
         reporter.base.current_substate,
         Substate::SeekingRunningToOfficerSeen
+    );
+    assert_eq!(
+        reporter.base.antagonist,
+        callback_officer_id.index(),
+        "recipient callback must be allowed to mutate the suspended caller"
+    );
+    assert_eq!(
+        reporter.base.last_goto_destination.x, 80.0,
+        "outer continuation must resume from the caller's live antagonist"
     );
     let officer = engine
         .get_entity(officer_id)

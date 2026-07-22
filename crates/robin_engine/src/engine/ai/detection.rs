@@ -2428,6 +2428,7 @@ impl EngineInner {
                             is_able_to_fight: ss.able_to_fight,
                             is_able_to_help: ss.able_to_help,
                             script_locked: ss.script_locked,
+                            ai_lock_frozen: ss.ai_lock_frozen,
                             layer: ss.layer,
                             report_type: ss.report_type,
                             report_seek_position: ss.report_seek_position,
