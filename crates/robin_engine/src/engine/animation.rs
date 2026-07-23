@@ -398,6 +398,24 @@ mod tests {
     }
 
     #[test]
+    fn civilian_idle_override_does_not_run_base_actor_state_changes() {
+        let mut entity = civilian_actor();
+        entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+
+        apply_active_animation_start_state_side_effect(
+            &mut entity,
+            OrderType::TransitionWaitingUprightWaitingUprightBored,
+            MotionState::Done,
+        );
+
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::Waiting,
+            "RHElementActorCivilian::Execute returns directly after its coerced sprite call"
+        );
+    }
+
+    #[test]
     fn arrow_extraction_side_effect_only_runs_on_start() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Lying);
@@ -763,6 +781,60 @@ mod tests {
         );
 
         assert!(matches!(outcome, ExecuteOutcome::Consumed));
+    }
+
+    #[test]
+    fn bored_cycle_keeps_order_id_when_random_variant_is_not_selected() {
+        let seed = (0..1000)
+            .find(|seed| {
+                crate::sim_rng::with_seed(*seed, |sim| {
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BoredAnimationChoice, ..10)
+                        != 0
+                })
+            })
+            .expect("test should find a nonzero bored-animation roll");
+        let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+        let original_id = sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .front()
+            .unwrap()
+            .order_id;
+        let mut next_order_id = 9;
+        let mut side_outcomes = ExecuteSideOutcomes::default();
+        let mut ctx = ArmCtx {
+            entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
+            is_npc: false,
+            is_unconscious: false,
+            seq_id,
+            elem_idx: 0,
+            sequence_manager: &mut sequence_manager,
+            next_order_id: &mut next_order_id,
+            side_outcomes: &mut side_outcomes,
+        };
+
+        let outcome = crate::sim_rng::with_seed(seed, |sim| {
+            dispatch_arm_completion(
+                sim,
+                OrderType::WaitingUprightBored,
+                MotionState::Terminated,
+                &mut ctx,
+            )
+        });
+
+        let order = sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .front()
+            .unwrap();
+        assert!(matches!(outcome, ExecuteOutcome::Consumed));
+        assert_eq!(order.order_type, OrderType::WaitingUprightBored);
+        assert_eq!(
+            order.order_id, original_id,
+            "Original calls NewID only inside the 1-in-10 mutation branch"
+        );
     }
 
     #[test]
@@ -1614,6 +1686,22 @@ fn apply_active_animation_start_state_side_effect(
     anim_type: OrderType,
     motion: MotionState,
 ) {
+    // RHElementActorCivilian::Execute overrides this entire family, coerces
+    // the sprite animation to WAITING_UPRIGHT_BORED, and returns directly.
+    // None of RHElementActor::Execute's posture/action-state switch arms run.
+    if entity.is_civilian()
+        && matches!(
+            anim_type,
+            OrderType::WaitingUpright
+                | OrderType::WaitingUprightBored
+                | OrderType::WaitingUprightBoredRandom
+                | OrderType::TransitionWaitingUprightBoredWaitingUpright
+                | OrderType::TransitionWaitingUprightWaitingUprightBored
+        )
+    {
+        return;
+    }
+
     match (anim_type, motion) {
         (OrderType::WaitingUpright, MotionState::Start) => {
             entity.set_posture(Posture::Upright);
@@ -2749,24 +2837,23 @@ fn dispatch_arm_completion(
                 .unwrap_or(false);
             if is_wait_cmd {
                 let next_type = match anim_type {
-                    OT::WaitingUprightBored => {
+                    OT::WaitingUprightBored
                         if crate::sim_rng::u32(
                             sim,
                             crate::sim_rng::RngSite::BoredAnimationChoice,
                             ..10,
-                        ) == 0
-                        {
-                            OT::WaitingUprightBoredRandom
-                        } else {
-                            OT::WaitingUprightBored
-                        }
+                        ) == 0 =>
+                    {
+                        Some(OT::WaitingUprightBoredRandom)
                     }
-                    OT::WaitingUprightBoredRandom => OT::WaitingUprightBored,
+                    OT::WaitingUprightBored => None,
+                    OT::WaitingUprightBoredRandom => Some(OT::WaitingUprightBored),
                     _ => unreachable!(),
                 };
-                if let Some(elem) = ctx
-                    .sequence_manager
-                    .get_element_mut(ctx.seq_id, ctx.elem_idx)
+                if let Some(next_type) = next_type
+                    && let Some(elem) = ctx
+                        .sequence_manager
+                        .get_element_mut(ctx.seq_id, ctx.elem_idx)
                     && let Some(front) = elem.orders.front_mut()
                 {
                     front.order_type = next_type;

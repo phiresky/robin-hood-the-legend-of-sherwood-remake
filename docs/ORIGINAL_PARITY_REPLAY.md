@@ -24,11 +24,11 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 74. After frame 75, thirteen
-civilians expose `action_state = 0` while Rust retains `Waiting`; Original is
-playing animation 4 with command `Wait`. Trace the shared idle-animation state
-transition from the matching frame-74 state. Increase the clean-prefix
-statement only after a normal first-divergence run has passed that frame.
+The current verified clean prefix is through frame 94. After frame 95, soldier
+82 is waiting in Original with AI substate 15, while Rust has launched `Turn`
+and entered substate 25. Trace the owner-local AI/turn boundary from the
+matching frame-94 state. Increase the clean-prefix statement only after a
+normal first-divergence run has passed that frame.
 
 ## Change ledger
 
@@ -64,7 +64,9 @@ statement only after a normal first-divergence run has passed that frame.
 | Done | Route-arrival same-direction `Turn` | At frame 47 soldier 113 reaches path 5 waypoint 1 already facing sector 10. Original's `DefaultGotoRoute` handler directly constructs `RHCOMMAND_TURN`, so it remains in `DefaultGotoRouteTurn`; Rust called `FaceTo`, whose valid waiting/bored same-direction shortcut recursively fired `EventDone` and entered the waypoint macro in the same owner boundary. | The route-arrival handler now launches an unconditional direction-resolved Turn while ordinary `FaceTo` retains its same-direction shortcut. Regression coverage verifies that an already-aligned waiting actor still queues the Turn and does not synthesize a self stimulus. Replay matches through frame 49. |
 | Done | Periodic bored-roll animation source | At frame 50 Original soldier 127 runs `RHArtificialMalignity::The16thFrame` while `WAITING_UPRIGHT_BORED` and consumes draw 124 (`294702567 % 12 == 3`, so no remark follows). Rust skipped the draw because the periodic gate read `AiEntityView::current_animation`, which is the previous `ActionChange` value and was still `Invalid`. | The periodic gate now reads `AiContext::self_animation`, populated from live `Sprite::last_action` to match `GetAnimation()`. Regression coverage supplies deliberately stale action-change history and verifies that the live bored animation still consumes the draw. Replay now matches through frame 74. |
 | Todo | NPC periodic register number | Original staggers NPC periodic work with the NPC-only construction counter `muwRegisterNumber`; Rust currently substitutes the global entity slot. They happen to have equal low six bits for the frame-50 soldier, but civilians and exact 256-frame gates differ. | Persist the NPC construction ordinal through level loading and snapshots, then use it for `npc_hourglass_frame_phase`; do not reconstruct it from the current live table because removal must not renumber later NPCs. |
-| In progress | Frame-75 civilian idle state frontier | Thirteen civilians simultaneously report Original `action_state = 0`, animation 4, command `Wait`, while Rust remains in `Waiting` with `WaitingUprightBored`. | Compare the shared civilian/base-actor handling of animation 4 and the action-state update boundary from frame 74 to 75. |
+| Done | Civilian upright-idle override | At frame 75 thirteen civilians reach `RHMOTION_DONE` while their requested waiting-to-bored transition is visually coerced to the bored idle. `RHElementActorCivilian::Execute` returns directly from this family, so `RHElementActor::Execute` never changes their action state. | Rust still coerces the sprite animation, but now skips the base-actor posture/action-state side effects for the five civilian upright-idle arms. PC and soldier behavior remains unchanged. |
+| Done | Bored-loop `NewID` timing | Original PC 200 consumes the bored-loop choice at frames 39 and 78. The first nonzero roll keeps both `WAITING_UPRIGHT_BORED` and its order ID; Rust allocated a new ID even when the variant did not change, causing a fresh `RHMOTION_START` tick and delaying the next loop/RNG draw by one frame. | `BoredAnimationChoice` now calls the equivalent of `NewID()` only inside the 1-in-10 bored-to-random mutation branch; random-to-bored still always changes ID. Regression coverage verifies a rejected random variant preserves the order ID. |
+| In progress | Frame-95 soldier 82 turn frontier | Original soldier 82 remains `Wait` in substate 15 while Rust launches `Turn` and enters substate 25. | Compare its frame-94 AI timer/periodic callback, facing goal, and patrol/macro state against the Original call path. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow
