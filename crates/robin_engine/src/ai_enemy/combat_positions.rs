@@ -2374,13 +2374,10 @@ impl EnemyAi {
             return;
         }
 
-        // Drunk soldiers freeze.
-        if self.base.blood_alcohol > 0
-            && (crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
-                <= self.base.blood_alcohol as u16
-                || crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
-                    <= self.base.blood_alcohol as u16)
-        {
+        // Original: both gates are evaluated even for a sober soldier.
+        // Preserve the `||` short-circuit: a zero roll at blood alcohol 0
+        // consumes only the first draw and still freezes the soldier.
+        if drunk_combat_freezes(sim, self.base.blood_alcohol) {
             return;
         }
 
@@ -3146,11 +3143,19 @@ impl EnemyAi {
     }
 }
 
+fn drunk_combat_freezes(sim: &crate::sim_rng::SimulationContext, blood_alcohol: u8) -> bool {
+    crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+        <= blood_alcohol as u16
+        || crate::sim_rng::u16(sim, crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+            <= blood_alcohol as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::element::Posture;
     use crate::sight_obstacle::{ObstacleList, ObstaclePoint, SightObstacle};
+    use crate::sim_rng::{RngSite, SimulationContext, with_draw_trace};
 
     fn position(x: f32, y: f32) -> Position {
         Position {
@@ -3268,5 +3273,39 @@ mod tests {
         let mut blocked_merged = Vec::new();
         append_phalanx_member_enemies(&mut blocked_merged, &member, blocked);
         assert!(blocked_merged.is_empty());
+    }
+
+    #[test]
+    fn sober_drunk_combat_gate_preserves_original_draws_and_short_circuit() {
+        let two_draw_seed = (0..10_000)
+            .find(|seed| {
+                let sim = SimulationContext::with_seed(*seed);
+                crate::sim_rng::u16(&sim, RngSite::DrunkCombatFreeze, 0..100) != 0
+                    && crate::sim_rng::u16(&sim, RngSite::DrunkCombatFreeze, 0..100) != 0
+            })
+            .expect("find a seed whose first two drunk gates do not freeze a sober soldier");
+        let sim = SimulationContext::with_seed(two_draw_seed);
+        let (freezes, trace) = with_draw_trace(|| drunk_combat_freezes(&sim, 0));
+        assert!(!freezes);
+        assert_eq!(
+            trace,
+            vec![RngSite::DrunkCombatFreeze, RngSite::DrunkCombatFreeze],
+            "a sober soldier must still consume both Original drunk gates"
+        );
+
+        let short_circuit_seed = (0..10_000)
+            .find(|seed| {
+                let sim = SimulationContext::with_seed(*seed);
+                crate::sim_rng::u16(&sim, RngSite::DrunkCombatFreeze, 0..100) == 0
+            })
+            .expect("find a seed whose first drunk gate freezes a sober soldier");
+        let sim = SimulationContext::with_seed(short_circuit_seed);
+        let (freezes, trace) = with_draw_trace(|| drunk_combat_freezes(&sim, 0));
+        assert!(freezes);
+        assert_eq!(
+            trace,
+            vec![RngSite::DrunkCombatFreeze],
+            "a successful first gate must preserve Original || short-circuiting"
+        );
     }
 }
