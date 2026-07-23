@@ -1874,6 +1874,28 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.tick_enemy_sword_attacks_for(sim, assets, None);
+    }
+
+    /// Consume an event-driven `ReconsiderSwordfight` authorization before
+    /// the originating `Think` returns. Original calls
+    /// `ProposeGoodSwordStrike` directly in that handler, so postponing this
+    /// to the global melee pass can reorder its RNG draw behind later owners.
+    pub(crate) fn consume_pending_enemy_sword_attack_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.tick_enemy_sword_attacks_for(sim, assets, Some(owner));
+    }
+
+    fn tick_enemy_sword_attacks_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        only_owner: Option<EntityId>,
+    ) {
         let current_frame = self.control.frame_counter;
 
         // Per-tick reconciliation for `EnemyAi::pending_special_strike`.
@@ -1889,25 +1911,27 @@ impl EngineInner {
         //
         // Collecting flagged-npcs first so we can query the sequence
         // manager and then mutate the AI without aliasing `self`.
-        let mut flagged: Vec<EntityId> = Vec::new();
-        for (npc_id, soldier) in self.world.entities.soldiers() {
-            if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
-                && ai.pending_special_strike
-            {
-                flagged.push(npc_id.into());
+        if only_owner.is_none() {
+            let mut flagged: Vec<EntityId> = Vec::new();
+            for (npc_id, soldier) in self.world.entities.soldiers() {
+                if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
+                    && ai.pending_special_strike
+                {
+                    flagged.push(npc_id.into());
+                }
             }
-        }
-        for npc_id in flagged {
-            let has_active = self
-                .orders
-                .sequence_manager
-                .has_live_element_for_actor_matching(npc_id, |cmd| {
-                    cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
-                });
-            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
-                && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
-            {
-                ai.reconcile_special_strike(has_active, current_frame);
+            for npc_id in flagged {
+                let has_active = self
+                    .orders
+                    .sequence_manager
+                    .has_live_element_for_actor_matching(npc_id, |cmd| {
+                        cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
+                    });
+                if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
+                    && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
+                {
+                    ai.reconcile_special_strike(has_active, current_frame);
+                }
             }
         }
 
@@ -1921,6 +1945,9 @@ impl EngineInner {
             .entities
             .soldiers_mut()
             .filter_map(|(npc_id, soldier)| {
+                if only_owner.is_some_and(|owner| owner != EntityId::from(npc_id)) {
+                    return None;
+                }
                 let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
                     return None;
                 };

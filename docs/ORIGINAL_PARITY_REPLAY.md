@@ -24,11 +24,10 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 292. The first divergence is
-now after frame 293: soldier 82 installs `WaitTimer` instead of `Wait`, while
-soldier 104 retains `MoveOk` instead of the Original's `Turn`. Increase the
-clean-prefix statement only after a normal first-divergence run has passed that
-frame.
+The current verified clean prefix is through frame 310. The first divergence is
+now after frame 311: PC 198 begins `MoveOk` with seek wait-time 25 in Original,
+while Rust remains on `Wait`. Increase the clean-prefix statement only after a
+normal first-divergence run has passed that frame.
 
 ## Change ledger
 
@@ -83,7 +82,8 @@ frame.
 | Done | Sober combat RNG gates | Original evaluates `rand() % 100 <= bloodAlcohol || rand() % 100 <= bloodAlcohol` even when blood alcohol is zero. Rust skipped both draws for sober actors, which would desynchronize the global stream at the first legitimate combat reconsideration. | The two gates now always execute with literal short-circuit order. Focused RNG-trace coverage verifies two nonzero draws for a sober soldier and the rare first-zero one-draw freeze. |
 | Done | `EnterSwordfight` instruction/execute boundary | At frame 283 Original installs command 50 while PC 198 remains `Bored`, soldier 82 remains `MovingFast`, and both retain their old directions. Rust eagerly changed both to `WaitingSword` and updated facing. Original establishes opponent relationships during instruction, queues the raising-sword order behind authored exit work, and changes action state/facing only when that order executes in a later owner slot; the Soldier override delays `WaitingSword` until the raising animation is done. | AI engagement now queues the normal `EnterSwordfight` element, opponent-list setup is free of animation/state mutations, and raising-sword state/facing effects occur during actor execution. Focused instruction and animation tests preserve the Human/PC versus Soldier timing asymmetry. |
 | Done | Sword movement logical dispatch tokens | Soldier 82's short approach begins at frame 292. Original rewrites `RUNNING_UPRIGHT` to logical `RHNONANIMATION_RUNNING_WITH_SWORD`; the Human Execute override then calls `FaceOpponent` to choose a concrete sword animation and uses `RHMOTIONMETHOD_FAST`. Rust incorrectly gated that rewrite on `Sprite::has_animation(RunningWithSword)`, although the value is deliberately not a sprite row, and retained ordinary running. | Upright walking/running actions now become the logical sword movement tokens unconditionally in sword context, exactly as `RHElementActorHuman::DetermineMovementAnimation` does. Concrete sprite availability remains the later `FaceOpponent` concern. Focused coverage verifies both dispatch rewrites and distance-motion classification; replay matches the start cadence and RNG boundary through frame 292. |
-| In progress | Frame-293 combat callbacks | After the first legitimate swordfight reconsideration, Original leaves soldier 82 on `Wait` and sends soldier 104 into `Turn`; Rust exposes `WaitTimer` and retains `MoveOk`, with a downstream direction-goal mismatch. | Compare the two callback chains and restore their general sequence/AI ordering. |
+| Done | Event-owned strike RNG ordering | At frame 293 Original's soldier 82 executes `ProposeGoodSwordStrike` directly inside `ReconsiderSwordfight`, consuming its rejecting roll before the later soldier 104 waypoint script calls `Rand(2)`. Rust deferred the one-shot strike authorization to the global melee pass, swapping those draws: soldier 82 incorrectly launched a preparation `WaitTimer`, and soldier 104 skipped its authored `Turn`. | The canonical filtered-Think boundary now consumes that owner's pending strike consideration immediately after the AI handler releases its borrow. Owner-local consumption skips unrelated once-per-frame special-strike reconciliation, which remains in global melee maintenance. Focused coverage verifies a rejecting owner-scoped strike draw remains ahead of a later script draw; replay matches both actors and passes through frame 310. |
+| In progress | Frame-311 PC seek launch | Original exposes PC 198 as `MoveOk` with seek wait-time 25; Rust remains on `Wait`. | Compare the resolved player-command/sequence launch and restore its general owner-boundary timing. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow

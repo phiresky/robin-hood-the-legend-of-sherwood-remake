@@ -2473,6 +2473,7 @@ mod tests {
             .soldiers
             .push(crate::profiles::SoldierProfile {
                 hth_weapon_id: 1,
+                fighting: 20,
                 ..crate::profiles::SoldierProfile::default()
             });
 
@@ -2583,6 +2584,50 @@ mod tests {
             engine.control.rng.original_replay_cursor(),
             Some(cursor_after_first),
             "the rejected, consumed latch must not retry next frame"
+        );
+    }
+
+    #[test]
+    fn owner_scoped_sword_consideration_precedes_later_owner_rng() {
+        let mut engine = make_engine();
+        let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+        let assets = assets_with_sword_profile(7, 30);
+        {
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 0,
+                frame_ids: vec![0],
+                delays: vec![1],
+                distances: vec![0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                sound_ids: vec![0],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+        engine.control.rng = SimulationRng::with_original_replay(vec![85, 36]);
+
+        let later_roll = engine.with_simulation_context(|engine, sim| {
+            engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+            crate::sim_rng::u32(sim, crate::sim_rng::RngSite::ScriptRand, 0..100)
+        });
+
+        assert_eq!(
+            later_roll, 36,
+            "the reconsidering owner must consume its strike roll before a later owner's script"
+        );
+        assert_eq!(engine.control.rng.original_replay_cursor(), Some(2));
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(attacker, Command::is_swordstrike),
+            "the first roll rejects the strike and must not borrow the later owner's lower roll"
         );
     }
 

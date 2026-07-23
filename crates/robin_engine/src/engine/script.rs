@@ -2632,6 +2632,12 @@ impl EngineInner {
             }
         };
 
+        // ReconsiderSwordfight calls ProposeGoodSwordStrike before returning
+        // to its caller. Keep that event-owned RNG and sequence work ahead of
+        // later actors instead of leaving the one-shot authorization for the
+        // global melee maintenance pass.
+        self.consume_pending_enemy_sword_attack_for(sim, assets, entity_id);
+
         // `SetState` calls FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
