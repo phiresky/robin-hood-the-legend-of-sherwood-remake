@@ -37,6 +37,7 @@ frame.
 | --- | --- | --- | --- |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3` and `a97c9dd`. |
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. |
+| Done | Visual parity replay | A headless mismatch report does not show how the divergent frame looks in motion. | `original_parity_replay --visual` runs the same authoritative resolved-command/RNG replay in the normal window/GPU runner, ignores live gameplay input, renders the decoded map and current sprites at a visible rate, and freezes the first divergent state until the window is closed. Headless remains the default for fast iteration. |
 | Done | Global RNG replay | Bored/waiting choices affect head direction and later AI behavior; reproducing only a seed is insufficient across different implementations. | Rust can consume the trace's filtered global libc `rand()` draw stream and records typed Rust consumption sites. Startup and every frame assert the exact draw cursor. |
 | Done | Isomorphic identity | Original and Rust IDs and hidden startup objects differ, while the logical world is equivalent. | The runner constructs a mission-start entity bijection from kind, stable data, and creation order. Original's hidden 31-object prefix is retained where creation order is itself gameplay state, such as staggered detection. |
 | Done | Trace command decoding | Raw mouse/keyboard behavior is not under test. | Recorded resolved commands are translated through the entity bijection; unsupported command values and malformed or non-contiguous traces fail loudly. |
@@ -86,6 +87,15 @@ Build once, then use the first-divergence run for iteration:
 cargo build --example original_parity_replay
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
+  original-code/parity-traces/original-demo-rng-baseline.jsonl
+```
+
+To watch that same authoritative replay, add `--visual`. The window freezes on
+the first divergence while the normal logical mismatch report is printed:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
+  target/debug/examples/original_parity_replay --visual \
   original-code/parity-traces/original-demo-rng-baseline.jsonl
 ```
 

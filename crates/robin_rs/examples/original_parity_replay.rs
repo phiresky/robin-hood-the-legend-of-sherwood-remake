@@ -17,9 +17,14 @@ use std::{collections::BTreeMap, collections::BTreeSet};
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
+use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::sector::SectorNumber;
+use robin_engine::sprite::BBox;
 use robin_rs::Host;
+use robin_rs::gfx_types::BlendMode;
+use robin_rs::level_loading_host::EngineLevelLoadExt;
+use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -360,6 +365,7 @@ struct TraceFrame {
 
 struct Options {
     scan_all: bool,
+    visual: bool,
     trace_path: PathBuf,
     dump: Option<DumpOptions>,
     http_server: Option<u16>,
@@ -387,10 +393,159 @@ struct ActiveHttpStep {
     requested: u32,
 }
 
+struct VisualReplay {
+    window: robin_rs::window::GameWindow,
+    renderer: Renderer,
+    host: Host,
+    sprite_images: BTreeMap<u32, (GpuImage, u16, u16)>,
+}
+
+impl VisualReplay {
+    fn new(
+        mut window: robin_rs::window::GameWindow,
+        mut host: Host,
+        engine: &Engine,
+        background: robin_engine::engine::level_loading::PreDecodedBackground,
+    ) -> Self {
+        window.set_logical_size(1024, 768);
+        let mut renderer = Renderer::new(&window, 1024, 768, TextureScaleMode::Nearest);
+        robin_rs::level_loading_host::initialize_sprite_variants(&mut host, engine);
+        robin_rs::level_loading_host::apply_background_map(
+            engine,
+            &mut host,
+            &mut renderer,
+            background,
+        );
+        Self {
+            window,
+            renderer,
+            host,
+            sprite_images: BTreeMap::new(),
+        }
+    }
+
+    /// Draw the parity engine's current state while deliberately ignoring all
+    /// live keyboard/mouse commands. The trace remains the only input source.
+    fn render(&mut self, engine: &Engine) -> bool {
+        let _events = self.window.poll_events();
+        if self.window.close_requested {
+            return false;
+        }
+
+        let focus = engine
+            .selected_pc_ids()
+            .first()
+            .and_then(|id| engine.get_entity(*id))
+            .or_else(|| {
+                engine
+                    .entities_with_ids_iter()
+                    .find_map(|(_, entity)| entity.is_human().then_some(entity))
+            })
+            .map(|entity| entity.element_data().position_map())
+            .unwrap_or(MapPoint::ZERO);
+        self.host.viewport.view_position =
+            MapPoint::new((focus.x - 512.0).max(0.0), (focus.y - 319.0).max(0.0));
+        self.host.viewport.zoom_factor = 1.0;
+        engine.draw_background(&mut self.host, &mut self.renderer);
+
+        let mut entities: Vec<_> = engine.entities_with_ids_iter().collect();
+        entities.sort_by(|(_, left), (_, right)| {
+            left.sprite_visual_map_position()
+                .y
+                .total_cmp(&right.sprite_visual_map_position().y)
+        });
+        for (_, entity) in entities {
+            if !entity.element_data().active
+                || entity.element_data().hidden_in_building
+                || !entity.is_to_be_displayed(true)
+            {
+                continue;
+            }
+            let sprite = entity.sprite();
+            if sprite.current_width == 0 || sprite.current_height == 0 {
+                continue;
+            }
+            let bank_id = sprite.bank_id_for(sprite.current_row, sprite.current_frame);
+            if !self.sprite_images.contains_key(&bank_id) {
+                let width = self.host.frame_holder.sprite_width(bank_id);
+                let height = self.host.frame_holder.sprite_height(bank_id);
+                if width == 0 || height == 0 {
+                    continue;
+                }
+                let rgba = if let Some(rgba) = self.host.frame_holder.rgba_data(bank_id) {
+                    rgba.to_vec()
+                } else {
+                    let mut pixels = vec![0_u16; usize::from(width) * usize::from(height)];
+                    self.host.frame_holder.uncompress_frame(
+                        &mut pixels,
+                        usize::from(width),
+                        bank_id,
+                        robin_assets::frame_holder::SpriteVariant::Day,
+                        engine.weather().night_color,
+                        16,
+                    );
+                    let mut rgba = Vec::with_capacity(pixels.len() * 4);
+                    for pixel in pixels {
+                        if pixel == robin_assets::frame_holder::TRANSPARENT_COLOR_16 {
+                            rgba.extend_from_slice(&[0, 0, 0, 0]);
+                        } else {
+                            let (r, g, b) = rgb565_to_rgb8(pixel);
+                            rgba.extend_from_slice(&[r, g, b, 255]);
+                        }
+                    }
+                    rgba
+                };
+                let image = self
+                    .renderer
+                    .create_rgba_gpu_image(width, height, &rgba, "parity replay sprite")
+                    .unwrap_or_else(|| panic!("create parity sprite image for bank {bank_id}"));
+                self.sprite_images.insert(bank_id, (image, width, height));
+            }
+            let (image, width, height) = &self.sprite_images[&bank_id];
+            let world = entity.sprite_visual_map_position();
+            let offset = sprite.offset(sprite.current_row, sprite.current_frame);
+            let sprite_x = (world.x - sprite.center.x).floor() + offset.x;
+            let sprite_y = (world.y - sprite.center.y).floor() + offset.y;
+            let dst = BBox::from_coords(
+                sprite_x - self.host.viewport.view_position.x,
+                sprite_y - self.host.viewport.view_position.y,
+                sprite_x - self.host.viewport.view_position.x + f32::from(*width),
+                sprite_y - self.host.viewport.view_position.y + f32::from(*height),
+            );
+            self.renderer
+                .render_gpu_image(image, None, Some(&dst), BlendMode::Blend);
+        }
+        self.renderer.present();
+        std::thread::sleep(std::time::Duration::from_millis(16));
+        true
+    }
+
+    fn wait_until_closed(&mut self) {
+        while !self.window.close_requested {
+            let _events = self.window.poll_events();
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt::init();
 
     let options = parse_options();
+    if options.visual {
+        let exit = robin_rs::window::run_with_game(
+            "Robin Hood — Original parity replay",
+            1024,
+            768,
+            move |window| async move { run_replay(options, Some(window)) },
+        )
+        .unwrap_or_else(|error| panic!("start visual parity replay: {error}"));
+        std::process::exit(exit);
+    }
+    std::process::exit(run_replay(options, None));
+}
+
+fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
     let scan_all = options.scan_all;
     let trace_path = options.trace_path;
     let http_server = options.http_server;
@@ -458,7 +613,9 @@ fn main() {
         all_rng_draws.len() >= prefix_end,
         "RNG pre-scan is shorter than prefix"
     );
-    let (mut engine, assets) = initialize_demo_engine(&header, all_rng_draws);
+    let (mut engine, assets, host, background) = initialize_demo_engine(&header, all_rng_draws);
+    let mut visual =
+        visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
     assert_eq!(
         engine.original_rng_replay_cursor(),
         Some(prefix_end),
@@ -575,6 +732,15 @@ fn main() {
             std::panic::resume_unwind(payload);
         }
         let _ = engine.perform_post_initialize(&mut display, &assets);
+        if let Some(visual) = &mut visual
+            && !visual.render(&engine)
+        {
+            eprintln!(
+                "visual parity replay closed by user at frame {}",
+                engine.frame_counter()
+            );
+            return 0;
+        }
         let actual_rng_end = engine
             .original_rng_replay_cursor()
             .expect("original RNG replay unexpectedly disabled");
@@ -689,7 +855,7 @@ fn main() {
                     .entry(difference_field(difference).to_string())
                     .or_insert_with(|| (frame.frame_after, difference.clone()));
             }
-            if scan_all {
+            if scan_all && visual.is_none() {
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -722,7 +888,13 @@ fn main() {
                     &mut selected_view_element,
                 );
             }
-            std::process::exit(1);
+            if let Some(visual) = &mut visual {
+                eprintln!(
+                    "visual parity replay frozen at first divergence; close the window to exit"
+                );
+                visual.wait_until_closed();
+            }
+            return 1;
         }
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
@@ -748,23 +920,29 @@ fn main() {
     }
     if divergent_frames == 0 {
         println!("parity trace matched every recorded frame");
+        if let Some(visual) = &mut visual {
+            eprintln!("visual parity replay finished; close the window to exit");
+            visual.wait_until_closed();
+        }
+        0
     } else {
         println!("logical parity scan: {divergent_frames} divergent frames");
         for (field, (frame, example)) in first_by_field {
             println!("  first {field} divergence after frame {frame}: {example}");
         }
-        std::process::exit(1);
+        1
     }
 }
 
 fn parse_options() -> Options {
-    const USAGE: &str = "usage: original_parity_replay [--scan-all] \
+    const USAGE: &str = "usage: original_parity_replay [--scan-all] [--visual] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
         [--dump-entity KIND:INDEX]...] TRACE.jsonl";
 
     let mut args = std::env::args_os().skip(1);
     let mut scan_all = false;
+    let mut visual = false;
     let mut trace_path = None;
     let mut dump_path = None;
     let mut dump_from = 0;
@@ -775,6 +953,7 @@ fn parse_options() -> Options {
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
+            Some("--visual") => visual = true,
             Some("--http-server") => {
                 let port = parse_u64_option(args.next(), "--http-server");
                 let port = u16::try_from(port).expect("--http-server port exceeds 65535");
@@ -821,6 +1000,7 @@ fn parse_options() -> Options {
     );
     Options {
         scan_all,
+        visual,
         trace_path,
         http_server,
         start_paused,
@@ -1137,7 +1317,15 @@ fn difference_field(difference: &str) -> &str {
         .map_or("other", |(field, _)| field)
 }
 
-fn initialize_demo_engine(header: &TraceHeader, rng_prefix: Vec<u32>) -> (Engine, LevelAssets) {
+fn initialize_demo_engine(
+    header: &TraceHeader,
+    rng_prefix: Vec<u32>,
+) -> (
+    Engine,
+    LevelAssets,
+    Host,
+    robin_engine::engine::level_loading::PreDecodedBackground,
+) {
     assert_eq!(
         header.mission, "Dem_Lei_MP",
         "TODO: support mission setup other than the Leicester demo"
@@ -1229,7 +1417,7 @@ fn initialize_demo_engine(header: &TraceHeader, rng_prefix: Vec<u32>) -> (Engine
         },
     })
     .expect("initialize engine");
-    (engine, assets)
+    (engine, assets, host, background)
 }
 
 struct EntityMap {
