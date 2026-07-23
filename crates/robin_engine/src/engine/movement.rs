@@ -5118,17 +5118,26 @@ impl EngineInner {
             let dest_already_at_pos =
                 motion_method != MotionMethod::TillLastFrame && elem.position_map() == goal;
             let sprite = &mut elem.sprite;
-            let (mut motion_state, mut frame_dist_raw) = sprite.perform_motion(
-                sim,
-                motion_order,
-                sprite_motion_order_for_nonanimation(anim),
-                u16::from(sprite.position_iface.get_direction().as_u8()),
-                FrameProgression::Default,
-                false,
-                motion_method,
-                dest_already_at_pos,
-            );
-            if fast_climb_motion && motion_state != MotionState::Terminated {
+            // Entity-target PerformSeek returns from its successful
+            // pre-motion tolerance branch without calling PerformMotion.
+            // Besides avoiding displacement, this preserves the prior sprite
+            // action and suppresses START-owned side effects such as combat
+            // initiative transfer.
+            let (mut motion_state, mut frame_dist_raw) = if tolerance_arrival {
+                (MotionState::InProgress, 0.0)
+            } else {
+                sprite.perform_motion(
+                    sim,
+                    motion_order,
+                    sprite_motion_order_for_nonanimation(anim),
+                    u16::from(sprite.position_iface.get_direction().as_u8()),
+                    FrameProgression::Default,
+                    false,
+                    motion_method,
+                    dest_already_at_pos,
+                )
+            };
+            if !tolerance_arrival && fast_climb_motion && motion_state != MotionState::Terminated {
                 let _ = sprite.position_iface.turn();
                 let (second_state, second_distance) = sprite.perform_motion(
                     sim,
@@ -5146,9 +5155,6 @@ impl EngineInner {
             executed_sword_movement = is_sword_motion;
             if is_pc {
                 executed_pc_movement_actions.push((entity_id, order_action));
-            }
-            if matches!(motion_state, MotionState::Start) && is_sword_motion {
-                sword_movement_starts.push(entity_id);
             }
             if door_pass_anim.is_some()
                 && matches!(motion_state, MotionState::Done)
@@ -5215,6 +5221,13 @@ impl EngineInner {
                 active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
                     && ft.target_id.is_some(),
             );
+            // The initiative handoff belongs to the Human Execute START arm,
+            // so it observes entity-target PerformSeek's wrapper result just
+            // like posture/action-state changes do. A raw sprite START hidden
+            // as IN_PROGRESS by PerformSeek must not transfer initiative.
+            if matches!(state_effect_motion, MotionState::Start) && is_sword_motion {
+                sword_movement_starts.push(entity_id);
+            }
             tracing::trace!(
                 entity = ?entity_id,
                 frame = self.control.frame_counter,

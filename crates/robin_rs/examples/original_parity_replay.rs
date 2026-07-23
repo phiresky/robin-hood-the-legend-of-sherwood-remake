@@ -744,16 +744,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let actual_rng_end = engine
             .original_rng_replay_cursor()
             .expect("original RNG replay unexpectedly disabled");
-        if actual_rng_end != rng_end {
-            let sites = engine
-                .original_rng_replay_sites(rng_start..actual_rng_end)
-                .expect("original RNG site history unexpectedly disabled");
-            panic!(
-                "Rust consumed RNG draws {:?} at sites {sites:?} during original frame {}; original ended at draw {rng_end}",
-                rng_start..actual_rng_end,
-                frame.frame_before
-            );
-        }
         if let Ok(original_index) = std::env::var("PARITY_DEBUG_SOLDIER").map(|value| {
             value
                 .parse::<u32>()
@@ -839,6 +829,19 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 rng_end,
                 actual_rng_end,
                 &differences,
+            );
+        }
+        // Preserve the complete divergent frame in --dump-jsonl before
+        // stopping on an RNG cursor mismatch. RNG ordering failures are often
+        // precisely where the broad engine snapshot is most useful.
+        if actual_rng_end != rng_end {
+            let sites = engine
+                .original_rng_replay_sites(rng_start..actual_rng_end)
+                .expect("original RNG site history unexpectedly disabled");
+            panic!(
+                "Rust consumed RNG draws {:?} at sites {sites:?} during original frame {}; original ended at draw {rng_end}",
+                rng_start..actual_rng_end,
+                frame.frame_before
             );
         }
         if !differences.is_empty() {

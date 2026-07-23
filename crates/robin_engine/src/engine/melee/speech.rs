@@ -409,9 +409,14 @@ impl EngineInner {
             };
             let prev_id = pc.pc.prev_combat_anim_id;
             let prev_ot = pc.pc.prev_combat_anim_ot;
+            let current_order_started = pc.element.sprite.last_processed_order_id == cur_id
+                && pc.element.sprite.last_motion_state == Some(crate::sprite::MotionState::Start);
 
-            if cur_id != prev_id {
-                // START: a new anim took over.
+            if cur_id != prev_id && (cur_id == 0 || current_order_started) {
+                // START means the new order actually reached the PC Execute
+                // arm and its sprite returned MotionState::Start. Merely
+                // becoming the selected front order during the manager tail
+                // is one frame earlier and must not own speech/RNG yet.
                 if let Some(ot) = cur_ot {
                     match ot {
                         OT::TransitionRaisingSword if cur_command != Some(Command::HitTarget) => {
