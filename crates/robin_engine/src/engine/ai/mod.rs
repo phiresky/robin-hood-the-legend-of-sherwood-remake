@@ -9983,21 +9983,26 @@ impl EngineInner {
     ) {
         let current_frame = self.control.frame_counter;
 
-        // Exact original phase:
-        //   (frame & 255) - ((register_number + 100) & 255)
-        // with unsigned-byte wrap. Passing the full phase matters:
-        // The16thFrame uses bits 4..5 to reduce some work to every
-        // 64th frame, so substituting `frame % 16` ran that work 4x.
-        let frame_phase = npc_hourglass_frame_phase(current_frame, npc_id.index());
-        if (frame_phase & 15) != 0 {
-            return;
-        }
-
         let entity = self
             .world
             .entities
             .get(npc_id)
             .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
+
+        // Exact original phase:
+        //   (frame & 255) - ((register_number + 100) & 255)
+        // with unsigned-byte wrap. Passing the full phase matters:
+        // The16thFrame uses bits 4..5 to reduce some work to every
+        // 64th frame, so substituting `frame % 16` ran that work 4x.
+        let register_number = entity
+            .npc_data()
+            .unwrap_or_else(|| panic!("periodic entity {} is not an NPC", npc_id.index()))
+            .register_number;
+        let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
+        if (frame_phase & 15) != 0 {
+            return;
+        }
+
         if entity.is_dead() {
             return;
         }
@@ -10106,9 +10111,10 @@ impl EngineInner {
             .entities
             .get(npc_id)
             .unwrap_or_else(|| panic!("random-speech NPC {} disappeared", npc_id.index()));
-        if !matches!(entity, Entity::Civilian(_))
-            || npc_hourglass_frame_phase(current_frame, npc_id.index()) != 0
-        {
+        let Entity::Civilian(civilian) = entity else {
+            return;
+        };
+        if npc_hourglass_frame_phase(current_frame, u32::from(civilian.npc.register_number)) != 0 {
             return;
         }
 

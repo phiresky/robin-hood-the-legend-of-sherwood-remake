@@ -1324,6 +1324,13 @@ impl AiBrain {
 /// NPC-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct NpcData {
+    /// Persistent NPC-only construction ordinal.
+    ///
+    /// Original `RHElementActorNPC` assigns this from
+    /// `guwNPCRegisterNumber` and uses it to stagger periodic work. It is
+    /// distinct from both the entity-table slot and element creation order
+    /// because non-NPC elements do not increment the counter.
+    pub register_number: u16,
     pub life_points: i16,
     pub number_of_arrows: u16,
 
@@ -1496,6 +1503,7 @@ impl EyeStatus {
 impl Default for NpcData {
     fn default() -> Self {
         Self {
+            register_number: 0,
             life_points: 100,
             // Seed `MAX_NPC_ARROWS` for every NPC unconditionally —
             // civilians, friendlies, hostile soldiers — even those

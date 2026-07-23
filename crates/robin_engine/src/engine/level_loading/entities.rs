@@ -126,8 +126,12 @@ impl EngineInner {
         // of camp) seeds `invulnerable` from the session's highlander2
         // construction mode.
 
-        // Spawn civilians (CIVI sub-chunk, before soldiers in the ELEMENT chunk)
-        for raw in &loaded.mission.civilians {
+        // Spawn civilians (CIVI sub-chunk, before soldiers in the ELEMENT chunk).
+        // The index is Original's NPC-only construction register.
+        // TODO(original-parity): retain the next register number at engine
+        // scope if missions can be reloaded in-process or scripts gain
+        // dynamic NPC construction; Original's global counter never resets.
+        for (npc_register_number, raw) in loaded.mission.civilians.iter().enumerate() {
             let mut sprite = crate::sprite::Sprite::default();
             let civ_profile = profiles.get_civilian(raw.profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
@@ -208,6 +212,8 @@ impl EngineInner {
                     ..Default::default()
                 },
                 npc: crate::element::NpcData {
+                    register_number: u16::try_from(npc_register_number)
+                        .expect("civilian NPC register number exceeds u16"),
                     money: raw.money,
                     ai_brain: crate::element::AiBrain::Friendly(Box::new(ai)),
                     ..Default::default()
@@ -479,8 +485,16 @@ impl EngineInner {
         };
 
         let highlander2 = config.highlander2;
-        // Spawn soldiers (EVIL sub-chunk)
-        for raw in &loaded.mission.soldiers {
+        // Spawn soldiers (EVIL sub-chunk). Original's one NPC-only counter
+        // continues after every CIVI constructor.
+        for (soldier_index, raw) in loaded.mission.soldiers.iter().enumerate() {
+            let npc_register_number = loaded
+                .mission
+                .civilians
+                .len()
+                .checked_add(soldier_index)
+                .and_then(|value| u16::try_from(value).ok())
+                .expect("soldier NPC register number exceeds u16");
             let mut sprite = crate::sprite::Sprite::default();
             let soldier_profile = profiles.get_soldier(raw.profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
@@ -648,6 +662,7 @@ impl EngineInner {
                     ..Default::default()
                 },
                 npc: crate::element::NpcData {
+                    register_number: npc_register_number,
                     // cached_max_lp was already difficulty-scaled above.
                     life_points: cached_max_lp,
                     money: raw.money,
