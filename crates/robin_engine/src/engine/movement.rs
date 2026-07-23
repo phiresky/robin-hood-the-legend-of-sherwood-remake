@@ -5289,7 +5289,11 @@ impl EngineInner {
             // `UpdatePositionMap(fDistance)`, so this branch uses the
             // same precomputed map increment instead of a separate
             // dx/dy step.
-            if is_transition_anim {
+            // Entity-target PerformSeek checks its live tolerance before it
+            // dispatches the current sprite order.  An already-in-range seek
+            // therefore bypasses transition execution and enters the shared
+            // post-seek/frozen arrival tail below.
+            if is_transition_anim && !tolerance_arrival {
                 let transition_has_map_target = goal.x != 0.0 || goal.y != 0.0;
                 if !transition_has_map_target && !is_in_place_movement_transition(order_action) {
                     panic!(
@@ -5526,7 +5530,11 @@ impl EngineInner {
                 continue;
             }
 
-            if speed <= 0.0 {
+            // Zero-distance animation ticks are still real PerformSeek
+            // calls.  The pre-motion tolerance branch must be allowed to
+            // finish the seek even though there is no sprite displacement
+            // to commit this frame.
+            if speed <= 0.0 && !tolerance_arrival {
                 continue;
             }
 
