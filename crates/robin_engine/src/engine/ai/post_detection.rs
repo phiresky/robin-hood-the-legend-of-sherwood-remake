@@ -160,7 +160,7 @@ fn take_enemy_detection_tick_data(
     override_data.matched += 1;
     Some(override_data.tick_data.clone())
 }
-use crate::element::{Entity, EntityId};
+use crate::element::EntityId;
 
 impl EngineInner {
     /// Creation-ordered tail of `RHElementActorNPC::Hourglass`.
@@ -268,8 +268,7 @@ impl EngineInner {
     /// elapsed regardless of subclass; civilians use `LaunchTimer`
     /// from `WonderingCivilianAdmiringHero` /
     /// `WonderingCivilianEnemyReactiontime` and would otherwise stick
-    /// in those substates indefinitely.  The soldier-only pre-dispatch
-    /// facing snap is gated on `Entity::Soldier`.
+    /// in those substates indefinitely.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(crate) fn tick_ai_normal_timer_for_npc(
         &mut self,
@@ -280,7 +279,7 @@ impl EngineInner {
         let current_frame = self.control.frame_counter;
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
-        let (timer_fires, alerted, target_id, enemy_pos) = {
+        let timer_fires = {
             let entity = self
                 .world
                 .entities
@@ -292,16 +291,7 @@ impl EngineInner {
             let fires = ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
                     || ai.when_does_timer_ring > current_frame.wrapping_add(1_000_000));
-            // `primary_target == 0` means "no target selected" — the AI
-            // hasn't seen a PC yet.  Treating 0 as an EntityId would
-            // route target lookups to the first level entity.
-            let tid = (ai.primary_target != 0)
-                .then_some(EntityId::Pc(crate::entity_id::PcId(ai.primary_target)));
-            let alerted = match entity {
-                Entity::Soldier(s) => s.npc.alerted,
-                _ => false,
-            };
-            (fires, alerted, tid, entity.element_data().position_map())
+            fires
         };
         if !timer_fires {
             return;
@@ -310,23 +300,6 @@ impl EngineInner {
         // the live world. Forecast alternatives are prepared below and only
         // the handler that consumes one resolves it.
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        // Pre-dispatch facing snap: only when the AI is alerted
-        // and has a live target.  Surfaces the primary-target
-        // facing through a pre-dispatch snap alongside the
-        // `AiPerTickData` the builder assembles below.
-        let face_dir = target_id.and_then(|tid| {
-            self.world
-                .entities
-                .get(tid)
-                .map(|e| e.element_data().position_map())
-                .map(|tp| {
-                    crate::position_interface::vector_to_sector_0_to_15_iso(
-                        tp.x - enemy_pos.x,
-                        tp.y - enemy_pos.y,
-                    )
-                })
-        });
-
         // Build the rich tick data from the centralized builder
         // — covers primary target metadata, friend-swap
         // candidates, avenger-on-roof wait position, and seeded
@@ -349,12 +322,6 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-            // Only snap facing when the AI is alerted and has a
-            // target — idle soldiers keep whatever direction their
-            // look-sidewards cascade left them in.
-            if alerted && let Some(fd) = face_dir {
-                entity.element_data_mut().set_direction_instantly(fd);
-            }
             let mut ctx = build_ai_context_from_entity(
                 entity,
                 current_frame,

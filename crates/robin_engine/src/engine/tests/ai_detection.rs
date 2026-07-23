@@ -1245,6 +1245,44 @@ fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
 }
 
 #[test]
+fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(0.0, 100.0));
+    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).unwrap() else {
+        panic!("timer owner changed kind")
+    };
+    soldier.element.set_position_map(MapPoint::ZERO);
+    soldier.element.set_direction_instantly(5);
+    soldier.npc.alerted = true;
+    let ai = soldier.npc.ai_brain.base_mut().unwrap();
+    ai.primary_target = target.index();
+    ai.script_locked = true;
+    ai.timer_is_running = true;
+    ai.when_does_timer_ring = 0;
+    ai.substate_at_last_timer_launch = ai.current_substate;
+
+    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
+
+    let element = engine.get_entity(npc_id).unwrap().element_data();
+    assert_eq!(element.direction(), 5);
+    assert_eq!(
+        element.sprite.position_iface.get_direction_goal().as_u8(),
+        5,
+        "RHElementActorNPC::Focus changes only the view cone; normal timer dispatch does not turn the actor"
+    );
+}
+
+#[test]
 fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     use crate::ai::{AiLockFlags, Stimulus, StimulusType};
     use crate::element::Posture;

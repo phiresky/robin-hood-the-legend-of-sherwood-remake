@@ -219,6 +219,13 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
+        // AI Think reached from an entity/NPC slot can launch GoTo after the
+        // pre-entity order drain. Original registers that Move immediately,
+        // so the sequence-manager Hourglass below still instructs it in this
+        // frame. It reaches pathfinding only at next frame's earlier Paths
+        // phase and therefore remains MoveWaiting meanwhile.
+        self.drain_pending_move_requests();
+
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements in the manager's emitted order.
         let mut phase = SequencePhase::begin(&mut self.orders);
