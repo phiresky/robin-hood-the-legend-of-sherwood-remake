@@ -2838,14 +2838,13 @@ impl NativeContext<'_, '_> {
         true
     }
 
-    /// Common body for the `LockAI` script native and the Honolulu branch of
-    /// `SetActorLocation`.
+    /// Validate and yield the `LockAI` script native to the engine.
     ///
-    /// Original `RHArtificialIntelligence::ScriptLockAI` mutates the NPC
-    /// before returning to the script. In particular, a following `UnlockAI`
-    /// in the same callback must observe the lock. The live sequence query is
-    /// needed only to preserve the `RHCOMMAND_LOCK_AI` exception: that command
-    /// must not stop itself while executing its immediate action.
+    /// Original `ScriptLockAI` sets the lock and calls `actor.Stop()` before
+    /// the script executes its next native. The full stop path needs
+    /// `EngineInner`, so the VM must pause here; merely queuing an AI halt
+    /// would let a subsequent scripted sequence launch first and then be
+    /// stopped instead of the outgoing movement.
     fn script_lock_ai(&mut self, actor: i32, remember_events: bool) {
         let Some(owner) = self.actor_id(actor) else {
             tracing::warn!("LockAI: invalid actor handle {actor}");
@@ -2862,25 +2861,16 @@ impl NativeContext<'_, '_> {
             return;
         }
 
-        let sequence_manager = self
-            .sequence_manager
-            .as_ref()
-            .expect("LockAI requires a live SequenceManager query view");
-        let from_lockai_command = sequence_manager
-            .current_element_for_actor(owner)
-            .is_some_and(|(sequence_id, element_index)| {
-                sequence_manager
-                    .get_element(sequence_id, element_index)
-                    .is_some_and(|element| element.command == Command::LockAi)
-            });
-        let entity = self
-            .entities
-            .get_mut(owner)
-            .expect("LockAI resolved actor disappeared before mutation");
-        let ai = entity
-            .ai_controller_mut()
-            .expect("LockAI resolved an NPC without an AI controller");
-        ai.script_lock(remember_events, from_lockai_command);
+        self.pending_yield = Some(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::LockAi {
+                    actor,
+                    remember_events,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        });
     }
 
     /// Common body for the `UnlockAI` script native.

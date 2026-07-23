@@ -106,6 +106,11 @@ pub enum SynchronousScriptRequest {
         state: i32,
         native_return: i32,
     },
+    LockAi {
+        actor: i32,
+        remember_events: bool,
+        native_return: i32,
+    },
 }
 
 /// One accepted `RHScript::SetAIState` operation. The native validates its
@@ -160,7 +165,8 @@ impl SynchronousScriptRequest {
             | Self::SetPersistentLifePoints { native_return, .. }
             | Self::SetPersistentConcussion { native_return, .. }
             | Self::SetActorLocation { native_return, .. }
-            | Self::SetActorActionState { native_return, .. } => native_return,
+            | Self::SetActorActionState { native_return, .. }
+            | Self::LockAi { native_return, .. } => native_return,
         }
     }
 }

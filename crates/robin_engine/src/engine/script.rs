@@ -492,6 +492,47 @@ impl EngineInner {
                 self.drain_script_synchronous_actions(sim, assets, active)?;
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::LockAi {
+                actor,
+                remember_events,
+                ..
+            } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!("LockAI owner handle {actor} became stale at its synchronous barrier")
+                })?;
+                let from_lockai_command = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner)
+                    .is_some_and(|(sequence_id, element_index)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(sequence_id, element_index)
+                            .is_some_and(|element| {
+                                element.command == crate::element::Command::LockAi
+                            })
+                    });
+                let ai = self
+                    .get_entity_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .ok_or_else(|| {
+                        format!(
+                            "LockAI owner {} lost its required NPC AI at its synchronous barrier",
+                            owner.index()
+                        )
+                    })?;
+
+                // Apply the lock and macro teardown now, but suppress the
+                // controller's deferred Halt: Original immediately calls
+                // actor.Stop(NORMAL), which must finish before the VM resumes
+                // and launches any scripted replacement sequence.
+                ai.script_lock(remember_events, true);
+                if !from_lockai_command {
+                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
+                    self.dispatch_condolations_in_script_driver(sim, assets, active)?;
+                }
+                Ok(0)
+            }
         }
     }
 

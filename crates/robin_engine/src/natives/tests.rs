@@ -1686,7 +1686,7 @@ fn selection_mutates_canonical_state_before_a_later_native_in_the_same_callback(
 }
 
 #[test]
-fn ai_lock_and_unlock_mutate_canonical_state_in_native_call_order() {
+fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
     let mut host = BoundScriptEffects::new();
     host.entities.push(Some(native_test_soldier()));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
@@ -1715,48 +1715,23 @@ fn ai_lock_and_unlock_mutate_canonical_state_in_native_call_order() {
     let mut lock = NativeStack::default();
     lock.push_i32(actor);
     lock.push_i32(1);
-    assert_eq!(
+    assert!(matches!(
         <NativeContext<'_, '_> as HostFunctions>::call(
             &mut context,
             NativeFn::LockAI as u32,
             &mut lock,
-        )
-        .expect_return("LockAI is synchronous"),
-        0
-    );
-    let ai = context
-        .entities
-        .get_legacy_slot(0)
-        .expect("test NPC")
-        .1
-        .ai_controller()
-        .expect("test NPC AI");
-    assert!(ai.script_locked);
-    assert!(ai.remember_events);
-
-    let mut unlock = NativeStack::default();
-    unlock.push_i32(actor);
-    assert_eq!(
-        <NativeContext<'_, '_> as HostFunctions>::call(
-            &mut context,
-            NativeFn::UnlockAI as u32,
-            &mut unlock,
-        )
-        .expect_return("UnlockAI is synchronous"),
-        0
-    );
-    let ai = context
-        .entities
-        .get_legacy_slot(0)
-        .expect("test NPC")
-        .1
-        .ai_controller()
-        .expect("test NPC AI");
-    assert!(
-        !ai.script_locked,
-        "same-callback UnlockAI must observe and clear the preceding LockAI"
-    );
-    assert!(context.script_effects().simulation_barriers().is_empty());
+        ),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::LockAi {
+                    actor: yielded_actor,
+                    remember_events: true,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        }) if yielded_actor == actor
+    ));
 }
 
 #[test]
