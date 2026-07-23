@@ -183,6 +183,10 @@ pub struct CampSoldierInfo {
     /// report-to-officer seeking substates can.
     pub is_able_to_help: bool,
     pub script_locked: bool,
+    /// Dynamic `AILOCK_FREEZE` snapshot used by non-result-bearing candidate
+    /// checks. Original direct `Think` retains a locked stimulus and returns
+    /// true, so bool-consuming call sites must dispatch instead of predicting.
+    pub ai_lock_frozen: bool,
     pub layer: u16,
     /// Reconnaissance report type (for `GetReportFromSoldier` checks).
     pub report_type: ReportType,
@@ -260,6 +264,9 @@ pub struct CampSoldierInfo {
     /// Whether the eyes are blind (closed / dying / unconscious), so
     /// the cone+LOS gate skips blind officers.
     pub eye_blind: bool,
+    /// Snapshot of `soldier.IsDetecting360Degrees(current_officer)`.
+    /// CommandSoldiersToAttack uses the recipient's view, not the caller's.
+    pub is_detecting_360: bool,
     /// Snapshot of full radius + cone + opaque-LOS detection from
     /// this soldier's POV against the ticking NPC's position,
     /// evaluated at populate time.  Drives
@@ -269,64 +276,45 @@ pub struct CampSoldierInfo {
     pub is_detecting_cone: bool,
 }
 
-/// Predicts whether a same-camp rank-Soldier candidate would react
-/// to `CALL_ALERT` from an officer. The soldier-rank arm:
-///
-/// 1. State filter — `STATE_DEFAULT`, `STATE_WONDERING`, or specific
-///    `_REPORT_TO_OFFICER` Seeking substates.
-/// 2. `Q_HAS_THE_NEW_TASK_PRIORITY`:
-///    - if `new >= current`, true;
-///    - else, in Seeking/Wondering, false;
-///    - else, true only when `minimal_task_priority == NONE`.
-///
-/// Used by the officer-side `AlertSoldiers` insertion gate so that
-/// the asynchronous Rust cross-NPC dispatch matches the synchronous
-/// `pFriend->Think(stimulus)` return-value gating.
-pub fn soldier_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
-    // State-set filter for the soldier rank.
-    let state_ok = match cs.ai_state {
-        AiState::Default | AiState::Wondering => true,
-        AiState::Seeking => matches!(
-            cs.ai_substate,
-            Substate::SeekingSoldierGiveReportToOfficer
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
-                | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
-        ),
-        _ => false,
-    };
-    if !state_ok {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn soldier_detects_target_360(
+    viewer_position: Position,
+    viewer_ground_z: f32,
+    viewer_is_rider: bool,
+    viewer_radius: u16,
+    viewer_in_building: bool,
+    target_position: Position,
+    target_ground_z: f32,
+    target_posture: crate::element::Posture,
+    target_is_rider: bool,
+    target_direction: i16,
+    target_in_building: bool,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    if viewer_in_building || target_in_building {
         return false;
     }
-    // Q_HAS_THE_NEW_TASK_PRIORITY with new_priority = TASK_PRIORITY_ALERT.
-    let new_priority = task_priority::ALERT;
-    if new_priority >= cs.current_task_priority {
-        return true;
+    let target_xy = crate::stealth::detection_point_xy(
+        crate::coordinates::MapPoint::new(target_position.x, target_position.y),
+        target_posture,
+        target_direction,
+    );
+    let viewer_z = viewer_ground_z
+        + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, viewer_is_rider);
+    let target_z =
+        target_ground_z + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
+    let dx = target_xy.x - viewer_position.x;
+    let dy = (target_xy.y - viewer_position.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_z - viewer_z;
+    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
+        return false;
     }
-    match cs.ai_state {
-        AiState::Seeking | AiState::Wondering => false,
-        _ => cs.minimal_task_priority == task_priority::NONE,
-    }
-}
-
-/// Predicts whether an officer would react to `CALL_ALERT` from a
-/// soldier. React iff in STATE_DEFAULT, or STATE_SEEKING with a
-/// wait-for-instructed-group / wait-for-instructed-soldier substate.
-/// No task-priority gate in the officer arm.
-///
-/// Used by `EVENT_SEES_SOLDIER` (soldier→officer call-officer flow)
-/// to predict the officer's `Think(CALL_ALERT)` result before
-/// dispatching the cross-NPC stimulus.
-pub fn officer_would_react_to_call_alert(cs: &CampSoldierInfo) -> bool {
-    match cs.ai_state {
-        AiState::Default => true,
-        AiState::Seeking => matches!(
-            cs.ai_substate,
-            Substate::SeekingOfficerWaitForInstructedGroup
-                | Substate::SeekingOfficerWaitForInstructedSoldier
-        ),
-        _ => false,
-    }
+    crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer_position.x, viewer_position.y, viewer_z],
+        [target_xy.x, target_xy.y, target_z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
 }
 
 pub fn soldier_is_able_to_help_state(

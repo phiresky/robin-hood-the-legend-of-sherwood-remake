@@ -165,6 +165,42 @@ fn build_scb() -> ScbFile {
         quads: noov_quads,
     };
 
+    let mut reject_quads = Vec::new();
+    let mut reject_functions = Vec::new();
+    for name in [
+        "Initialize",
+        "ActionChange",
+        "HandleEvent",
+        "ProcessMessage",
+    ] {
+        let base = reject_quads.len() as i32;
+        let (f, q) = stub_fn(name, base);
+        reject_functions.push(f);
+        reject_quads.extend(q);
+    }
+    let filter_addr = reject_quads.len() as i32;
+    reject_functions.push(Function {
+        name: "FilterAIEvent".into(),
+        address: filter_addr,
+        num_parameters: 3,
+        size_of_return_value: 4,
+        size_of_parameters: 12,
+        size_of_volatile: 0,
+        size_of_temporary: 4,
+    });
+    reject_quads.push(q_begin_function(0, 1));
+    reject_quads.push(q_aff0_iconstant(TMP0, 0));
+    reject_quads.push(q_return_val(TMP0));
+    reject_quads.push(q_end_function());
+    let reject_all = ClassEntry {
+        source_file: "test.scs".into(),
+        class_name: "RejectAll".into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: reject_functions,
+        quads: reject_quads,
+    };
+
     let startup = ClassEntry {
         source_file: "test.scs".into(),
         class_name: "StartUp".into(),
@@ -176,7 +212,7 @@ fn build_scb() -> ScbFile {
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
-        classes: vec![startup, source_sensitive, no_override],
+        classes: vec![startup, source_sensitive, no_override, reject_all],
     }
 }
 
@@ -408,6 +444,200 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     assert_eq!(
         before_state, after_state,
         "think() must not run when filter blocks"
+    );
+}
+
+#[test]
+fn review2_result_continuation_consumes_live_script_filter_refusal() {
+    use crate::ai::{
+        CrossNpcAction, Position, StimulusInfo, StimulusType, ThinkResultContinuation,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, _, sensitive_handle, caller_handle) = build_engine();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let target = crate::natives::ScriptHandleCodec::actor_handle_index(sensitive_handle)
+        .expect("sensitive actor has an entity index") as u32;
+    let caller = crate::natives::ScriptHandleCodec::actor_handle_index(caller_handle)
+        .expect("caller actor has an entity index") as u32;
+    let caller_id = engine
+        .entity_id_for_index(caller)
+        .expect("script-filter caller exists");
+    let target_id = engine
+        .entity_id_for_index(target)
+        .expect("script-filter target exists");
+    engine
+        .get_entity_mut(target_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("script-filter target has EnemyAi")
+        .base
+        .me = target;
+    let caller_ai = engine
+        .get_entity_mut(caller_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("script-filter caller has EnemyAi");
+    caller_ai.base.me = caller;
+    caller_ai.alerted_us.clear();
+    caller_ai
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestThinkResult {
+            target,
+            caller,
+            stimulus_type: StimulusType::CallCombatAlert,
+            // No Human source makes SourceSensitive::FilterAIEvent return 0.
+            info: StimulusInfo::Position(Position::default()),
+            continuation: ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                last: true,
+                use_formation: false,
+            },
+        });
+
+    engine.drain_direct_ai_owner_boundary(&sim, caller_id, &assets);
+
+    assert!(
+        engine
+            .get_entity(caller_id)
+            .and_then(Entity::enemy_ai)
+            .expect("script-filter caller retains EnemyAi")
+            .alerted_us
+            .is_empty(),
+        "a script-authored zero result must prune the candidate"
+    );
+}
+
+#[test]
+fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
+    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+    use crate::coordinates::MapPoint;
+    use crate::profiles::ProfileRank;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 100;
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.scripts.mission =
+        Some(MissionScript::from_scb(build_scb()).expect("closure-review mission script builds"));
+
+    // Keep the officer and candidates off null human handle zero.
+    engine.add_entity(make_pc(true));
+    let officer_id = engine.add_entity(make_scripted_soldier(""));
+    let mut candidates = Vec::new();
+    for index in 0..24 {
+        let class = if index < 3 { "RejectAll" } else { "" };
+        candidates.push(engine.add_entity(make_scripted_soldier(class)));
+    }
+
+    for (index, id) in std::iter::once(officer_id)
+        .chain(candidates.iter().copied())
+        .enumerate()
+    {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(id)
+            .expect("closure-review alert actor exists")
+        else {
+            panic!("closure-review alert actor changed kind")
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        soldier.element.active = true;
+        soldier
+            .element
+            .set_position_map(MapPoint::new(index as f32 * 5.0, 0.0));
+        soldier.npc.life_points = 50;
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("closure-review alert actor has EnemyAi");
+        ai.base.me = id.index();
+        ai.soldier_profile_rank = if id == officer_id {
+            ProfileRank::Officer
+        } else {
+            ProfileRank::Soldier
+        };
+        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+    }
+
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.attach_script_bindings(&assets);
+    let capabilities = crate::natives::NativeSessionCapabilities::new(
+        &sim,
+        &mut engine.world.entities,
+        &mut engine.ai.global,
+        &mut engine.world.fast_grid,
+    );
+    let mission = engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("closure-review mission remains loaded");
+    for id in candidates.iter().take(3) {
+        assert!(mission.bind_actor(
+            crate::natives::ScriptHandleCodec::actor_handle(*id),
+            "RejectAll",
+            &mut engine.script_domains,
+            &capabilities,
+        ));
+    }
+
+    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let ctx = crate::engine::ai::build_ai_context_from_entity(
+        engine
+            .get_entity(officer_id)
+            .expect("closure-review officer exists"),
+        engine.control.frame_counter,
+        None,
+        engine.world.weather.is_forest_level,
+        engine.world.weather.ambiance,
+        engine.ai.standard_view_polygon_radius,
+        &scratch.ai_entity_views,
+        &scratch.ai_sight_obstacles,
+        &engine.world.fast_grid,
+        &assets.hiking_paths,
+        &engine.ai.global.all_soldier_handles,
+        engine.control.sim_config.difficulty,
+    );
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    assert_eq!(tick.camp_soldiers.len(), candidates.len());
+    let global = engine.ai.global.clone();
+    assert!(
+        engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("closure-review officer has EnemyAi")
+            .alert_soldiers(
+                Position {
+                    x: 300.0,
+                    ..Default::default()
+                },
+                0,
+                &global,
+                None,
+                &ctx,
+                &tick,
+                AlertSoldiersFailureContinuation::None,
+            )
+    );
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("closure-review officer retains EnemyAi");
+    let expected: Vec<_> = candidates[3..23].iter().map(|id| id.index()).collect();
+    assert_eq!(officer.alerted_us, expected);
+    assert_eq!(officer.alerted_us.len(), 20);
+    assert!(
+        !officer.alerted_us.contains(&candidates[23].index()),
+        "the scan stops immediately after the twentieth actual acceptance"
+    );
+    assert!(
+        officer.pending_alert_soldier_candidates.is_empty(),
+        "unattempted tail candidates are discarded when the accepted cap is reached"
     );
 }
 

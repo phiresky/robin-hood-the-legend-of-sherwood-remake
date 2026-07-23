@@ -994,6 +994,51 @@ impl AiController {
         std::mem::take(&mut self.outbox.reentrant.cross_npc_actions)
     }
 
+    /// Drain direct/re-entrant `Think` calls in the exact order the owner
+    /// emitted them, leaving genuinely deferred coordination mutations for
+    /// the global PA-013 owner-slot batch.
+    pub fn take_pending_synchronous_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
+        let mut synchronous = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(
+                action,
+                CrossNpcAction::SendStimulus { .. }
+                    | CrossNpcAction::RequestAlert { .. }
+                    | CrossNpcAction::RequestThinkResult { .. }
+                    | CrossNpcAction::ReportBackToOfficer { .. }
+                    | CrossNpcAction::ConsiderReport { .. }
+                    | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                    | CrossNpcAction::InstructGatherPosition { .. }
+            ) {
+                synchronous.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        synchronous
+    }
+
+    pub fn has_pending_synchronous_cross_npc_actions(&self) -> bool {
+        self.outbox
+            .reentrant
+            .cross_npc_actions
+            .iter()
+            .any(|action| {
+                matches!(
+                    action,
+                    CrossNpcAction::SendStimulus { .. }
+                        | CrossNpcAction::RequestAlert { .. }
+                        | CrossNpcAction::RequestThinkResult { .. }
+                        | CrossNpcAction::ReportBackToOfficer { .. }
+                        | CrossNpcAction::ConsiderReport { .. }
+                        | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                        | CrossNpcAction::InstructGatherPosition { .. }
+                )
+            })
+    }
+
     /// Drain only result-bearing officer reports, leaving ordinary deferred
     /// cross-NPC actions queued for the end-of-frame batch.
     pub fn take_pending_officer_reports(&mut self) -> Vec<CrossNpcAction> {
@@ -1010,26 +1055,37 @@ impl AiController {
         reports
     }
 
-    /// Drain synchronous `HeyFolksLookThere` calls while leaving unrelated
-    /// formation/coordination work for the ordinary cross-NPC batch.
-    pub fn take_pending_look_there_actions(&mut self) -> Vec<CrossNpcAction> {
-        let mut look_there = Vec::new();
+    /// Drain result-bearing `CALL_ALERT` requests while leaving ordinary
+    /// cross-NPC work queued. These calls must close before the sender's
+    /// handler continuation, matching direct C++ `Think` re-entry.
+    pub fn take_pending_alert_requests(&mut self) -> Vec<CrossNpcAction> {
+        let mut requests = Vec::new();
         let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
         for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
-            if matches!(
-                &action,
-                CrossNpcAction::SendStimulus {
-                    stimulus_type: StimulusType::CallLookThere,
-                    ..
-                }
-            ) {
-                look_there.push(action);
+            if matches!(action, CrossNpcAction::RequestAlert { .. }) {
+                requests.push(action);
             } else {
                 deferred.push(action);
             }
         }
         self.outbox.reentrant.cross_npc_actions = deferred;
-        look_there
+        requests
+    }
+
+    /// Drain direct recipient `Think` calls while leaving non-stimulus
+    /// formation/coordination work for the ordinary cross-NPC batch.
+    pub fn take_pending_synchronous_stimuli(&mut self) -> Vec<CrossNpcAction> {
+        let mut synchronous = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(&action, CrossNpcAction::SendStimulus { .. }) {
+                synchronous.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        synchronous
     }
 
     /// Drain self-directed stimuli queued by `say()`.

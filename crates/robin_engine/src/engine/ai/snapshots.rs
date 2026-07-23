@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{Camp, Entity, EntityId};
+use crate::element::{Camp, Entity, EntityId, Human};
 use serde::{Deserialize, Serialize};
 
 /// `RHArtificialMalignity::IsArcher` is exactly `GetBow() != NULL`.
@@ -144,6 +144,10 @@ pub(super) struct PcSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SoldierSnapshot {
     pub(super) id: EntityId,
+    /// Raw element activity. Inactive soldiers remain in this snapshot for
+    /// AlertSoldiers/IsAbleToHelp parity, while combat and visibility users
+    /// retain their original active gates through `able_to_fight`.
+    pub(super) active: bool,
     pub(super) position: MapPoint,
     pub(super) layer: u16,
     pub(super) camp: Camp,
@@ -209,6 +213,7 @@ pub(super) struct SoldierSnapshot {
     pub(super) bow_max_range: u16,
     /// Whether this soldier's AI is script-locked.
     pub(super) script_locked: bool,
+    pub(super) ai_lock_frozen: bool,
     /// Reconnaissance report type from the soldier's AI brain.
     pub(super) report_type: crate::ai::ReportType,
     /// Seek position from the soldier's reconnaissance report.
@@ -349,6 +354,25 @@ pub(super) struct AiWorldView {
 }
 
 impl EngineInner {
+    #[cfg(test)]
+    pub(crate) fn test_soldier_snapshot_abilities(
+        &mut self,
+        assets: &LevelAssets,
+        soldier_id: EntityId,
+    ) -> (bool, bool) {
+        let snapshots = self.tick_enemy_ai_build_soldier_snapshots(assets, None);
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == soldier_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "soldier {} is missing from AI snapshots",
+                    soldier_id.index()
+                )
+            });
+        (snapshot.able_to_fight, snapshot.able_to_help)
+    }
+
     /// Build the single immutable AI world view for this tick.
     ///
     /// Original provenance: `RHelementactorsoldier.cpp::Hourglass` performs
@@ -620,7 +644,7 @@ impl EngineInner {
         npc_jump_lines
     }
 
-    /// P2c — snapshot every alive soldier's combat-relevant state.
+    /// P2c — snapshot every conscious soldier's AI-relevant state.
     ///
     /// `battle_decisions` iterates all fighters to build the us-list;
     /// the snapshot lets each per-NPC inner loop walk this immutable
@@ -636,17 +660,17 @@ impl EngineInner {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.world.entities.soldiers().count());
         for (npc_id, s) in self.world.entities.soldiers() {
-            if !s.element.active || s.human.unconscious {
+            if s.human.unconscious {
                 continue;
             }
-            let able_to_fight = !s.human.unconscious && s.element.active && s.npc.life_points > 0;
+            let able_to_fight = s.is_able_to_fight();
             // Original: every `RHElementActorSoldier` owns
             // `RHArtificialMalignity`; its Hourglass calls soldier-only AI
-            // methods unconditionally. A live soldier without EnemyAi is an
+            // methods unconditionally. A soldier without EnemyAi is an
             // invalid partially-initialized entity.
             let enemy_ai = s.npc.ai_brain.enemy().unwrap_or_else(|| {
                 panic!(
-                    "active soldier {} has no EnemyAi brain",
+                    "soldier {} has no EnemyAi brain while building AI snapshots",
                     EntityId::from(npc_id).index()
                 )
             });
@@ -664,6 +688,10 @@ impl EngineInner {
             let shield_bearer_before_me = enemy_ai.shield_bearer_before_me;
             let shield_bearer_direction = enemy_ai.shield_bearer_direction;
             let script_locked = enemy_ai.base.script_locked;
+            let ai_lock_frozen = enemy_ai
+                .base
+                .locks_flag_field
+                .contains(crate::ai::AiLockFlags::FREEZE);
             let report_type = enemy_ai.base.my_reconnaissance_report.report_type;
             let report_seek_position = enemy_ai.base.my_reconnaissance_report.seek_position;
             let report_seen_bodies = enemy_ai.base.my_reconnaissance_report.seen_bodies.clone();
@@ -799,14 +827,19 @@ impl EngineInner {
             let in_building = self.entity_data_inside_building(&s.element);
             // Filled only when the current NPC owner has queued Think work.
             let forecast_destination = None;
+            // IsAbleToHelp has its own early gate: dead/unconscious only.
+            // Do not feed it IsAbleToFight, which additionally rejects
+            // tied, carried, inactive, menacing, fleeing, and hit-stun.
+            let alive_and_conscious = s.npc.life_points > 0 && !s.human.unconscious;
             let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
-                able_to_fight,
+                alive_and_conscious,
                 s.npc.ai_state(),
                 s.npc.ai_substate(),
             );
 
             soldier_snapshots.push(SoldierSnapshot {
                 id: npc_id.into(),
+                active: s.element.active,
                 position: owner_boundary
                     .map(|(owner, positions)| {
                         self.position_at_owner_boundary(npc_id.into(), owner, positions, true)
@@ -850,6 +883,7 @@ impl EngineInner {
                 shield_bearer_direction,
                 bow_max_range,
                 script_locked,
+                ai_lock_frozen,
                 report_type,
                 report_seek_position,
                 report_seen_bodies,
@@ -888,20 +922,20 @@ impl EngineInner {
             pairs.extend(
                 soldier_snapshots
                     .iter()
-                    .filter(|s| s.shield_bearer_before_me != 0)
+                    .filter(|s| s.active && s.shield_bearer_before_me != 0)
                     .map(|s| (s.id.index(), s.shield_bearer_before_me)),
             );
             for (archer_handle, sb_handle) in &pairs {
                 if let Some(sb) = soldier_snapshots
                     .iter_mut()
-                    .find(|s| s.id.index() == *sb_handle)
+                    .find(|s| s.active && s.id.index() == *sb_handle)
                 {
                     sb.archer_behind_me = *archer_handle;
                 }
             }
             // Write back to stored EnemyAi fields so direct self-reads
             // (outside snapshots) stay fresh.
-            for snap in &soldier_snapshots {
+            for snap in soldier_snapshots.iter().filter(|snap| snap.active) {
                 let npc_id = snap.id;
                 if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                     && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
@@ -1053,6 +1087,9 @@ impl EngineInner {
 
             // Soldier `is_able_to_help`.
             let able_to_help = if let Entity::Soldier(s) = entity {
+                // This HumanTarget is a detection/visibility projection, not
+                // AlertSoldiers' camp population. Preserve its independent
+                // active visibility gate here.
                 let able_to_fight = active && !s.human.unconscious && s.npc.life_points > 0;
                 crate::ai_enemy::soldier_is_able_to_help_state(
                     able_to_fight,

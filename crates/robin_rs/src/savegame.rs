@@ -96,7 +96,7 @@ impl SaveGame {
             text,
             filename,
             mission_id,
-            version: 1,
+            version: save_file::SAVE_FORMAT_VERSION,
             timestamp: String::new(),
             special,
             mission_name: String::new(),
@@ -799,6 +799,7 @@ mod tests {
     fn non_special_filename() {
         let save = SaveGame::new("Savegame_005".into(), "My Save".into(), 0);
         assert!(!save.is_special());
+        assert_eq!(save.version, save_file::SAVE_FORMAT_VERSION);
     }
 
     #[test]

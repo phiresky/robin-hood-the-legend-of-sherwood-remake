@@ -49,8 +49,8 @@ Original sequence/condolation boundaries.
 - Snapshot creation rejects an active script call/yield.
 - Persistent SCB VM state and unconsumed deterministic script effects are
   serialized and state-hashed.
-- Current schemas are save version 51, replay version 8, and network version
-  14. Older save/replay compatibility is intentionally unsupported.
+- Current schemas are save version 52, replay version 9, and network version
+  15. Older save/replay compatibility is intentionally unsupported.
 - Required targets and bindings fail with contextual errors or panics; missing
   data never becomes false, zero, empty, or a fabricated default.
 

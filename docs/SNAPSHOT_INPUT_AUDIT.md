@@ -37,7 +37,7 @@ from those boundaries. Original anchors are `RHEngine::PerformHourglass`
    a presentation-only dirty flag could perturb pre-tick multiplayer hashes.
 
 The snapshot shape and `PlayerCommand` wire shape changed. Current-only schema
-versions are save 51, replay 8 and network 14; older formats are intentionally
+versions are save 52, replay 9 and network 15; older formats are intentionally
 unsupported.
 
 ## Remaining uncertain cases

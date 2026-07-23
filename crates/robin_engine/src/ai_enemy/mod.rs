@@ -14,6 +14,8 @@ mod seek;
 mod substate_handlers;
 mod util;
 
+#[cfg(test)]
+pub(crate) use alert::CommandSoldiersStart;
 pub use util::*;
 
 use serde::{Deserialize, Serialize};
@@ -117,6 +119,10 @@ pub struct EnemyAi {
     /// Soldiers this officer has called to a group.
     /// Populated by `alert_soldiers`, read by group coordination substates.
     pub alerted_us: Vec<HumanHandle>,
+    /// AlertSoldiers candidates not yet called. The Original stops scanning
+    /// at 20 successful Think returns, not 20 attempts, so calls advance one
+    /// result at a time through this live continuation queue.
+    pub pending_alert_soldier_candidates: Vec<HumanHandle>,
 
     // Archery
     /// This NPC's reserved shooting point, as `(archery_sector_idx,
@@ -295,6 +301,7 @@ impl Default for EnemyAi {
             changed_to_alert_path: false,
             already_seen_bodies: Vec::new(),
             alerted_us: Vec::new(),
+            pending_alert_soldier_candidates: Vec::new(),
             my_shooting_point: None,
             my_archery_sector: None,
             my_archery_sector_index: 0,
@@ -1744,16 +1751,263 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        assert_eq!(self.base.current_state, AiState::Seeking);
-        assert_eq!(
-            self.base.current_substate,
-            Substate::SeekingCharlyGoToOfficer
-        );
         if accepted {
             self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
             self.base.launch_timer(10, ctx.frame);
         } else {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+        }
+    }
+
+    pub(crate) fn resolve_alert_request(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        accepted: bool,
+        continuation: crate::ai::AlertContinuation,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        assert!(matches!(
+            continuation,
+            crate::ai::AlertContinuation::SoldierSawOfficer
+        ));
+        if !accepted {
+            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            return;
+        }
+
+        self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
+        self.base
+            .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
+        let target = self.base.antagonist;
+        let officer_target_pos = ctx
+            .entity_view(target)
+            .unwrap_or_else(|| {
+                panic!(
+                    "accepted soldier alert from {} requires target officer {} view",
+                    self.base.me, target
+                )
+            })
+            .forecasted_destination;
+        self.base.go_near(
+            officer_target_pos,
+            parameters_ai::AI_TALK_DISTANCE,
+            crate::ai::GotoFlags::RUN,
+            ctx,
+        );
+        self.base.launch_timer(20, ctx.frame);
+    }
+
+    pub(crate) fn resolve_think_result(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        accepted: bool,
+        target: NpcHandle,
+        continuation: ThinkResultContinuation,
+        global: &mut AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        match continuation {
+            ThinkResultContinuation::OfficerCalledSoldier => {
+                if accepted {
+                    self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);
+                    self.base
+                        .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
+                    self.base.say(Remark::OfficerCallsSoldier);
+                    self.base.launch_timer(20, ctx.frame);
+                } else {
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                }
+            }
+            ThinkResultContinuation::OfficerSentCharlyToOfficer => {
+                if accepted {
+                    self.base
+                        .say_with_flags(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
+                    self.base.point_to(self.officers_position);
+                }
+            }
+            ThinkResultContinuation::OfficerInstructedGroupSoldier { last } => {
+                if !accepted {
+                    self.alerted_us.retain(|&handle| handle != target);
+                }
+                if last {
+                    if self.alerted_us.is_empty() {
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.set_state(
+                            AiState::Seeking,
+                            Substate::SeekingOfficerWaitForInstructedGroup,
+                        );
+                        self.base.launch_timer(30, ctx.frame);
+                    }
+                }
+            }
+            ThinkResultContinuation::OfficerAlertedSoldier {
+                last,
+                use_formation,
+                failure,
+            } => {
+                if accepted {
+                    self.alerted_us.push(target);
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::ConsiderReport {
+                            target,
+                            report: self.base.my_reconnaissance_report.clone(),
+                            flags: ReportUpdateFlags::UPDATE_CHARLY.bits()
+                                | ReportUpdateFlags::UPDATE_TYPE.bits(),
+                        },
+                    );
+                }
+                let finished = if self.alerted_us.len() >= 20 {
+                    self.pending_alert_soldier_candidates.clear();
+                    true
+                } else if !self.pending_alert_soldier_candidates.is_empty() {
+                    let next = self.pending_alert_soldier_candidates.remove(0);
+                    let next_is_last = self.pending_alert_soldier_candidates.is_empty();
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::RequestThinkResult {
+                            target: next,
+                            caller: self.base.me,
+                            stimulus_type: StimulusType::CallAlert,
+                            info: StimulusInfo::Human(self.base.me),
+                            continuation: ThinkResultContinuation::OfficerAlertedSoldier {
+                                last: next_is_last,
+                                use_formation,
+                                failure,
+                            },
+                        },
+                    );
+                    false
+                } else {
+                    last
+                };
+                if finished {
+                    self.pending_alert_soldier_candidates.clear();
+                    if accepted {
+                        // Original resumes AlertSoldiers only after the
+                        // accepted recipient's ConsiderReport call returns.
+                        // Keep that callback and all owner-side effects ahead
+                        // of formation/state/sequence work.
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::FinalizeAlertSoldiers {
+                                caller: self.base.me,
+                                use_formation,
+                                failure,
+                            },
+                        );
+                    } else {
+                        // A refused final call has no ConsiderReport boundary.
+                        self.finalize_alert_soldiers(
+                            sim,
+                            failure,
+                            global,
+                            grid.filter(|_| use_formation),
+                            ctx,
+                            tick,
+                        );
+                    }
+                }
+            }
+            ThinkResultContinuation::OfficerCombatAlertedSoldier {
+                last,
+                use_formation,
+            } => {
+                if accepted {
+                    self.alerted_us.push(target);
+                }
+                if last {
+                    if self.finish_command_soldiers_to_attack(
+                        global,
+                        grid.filter(|_| use_formation),
+                        ctx,
+                        tick,
+                    ) {
+                        self.base.say(Remark::OfficerGivesAttackOrder);
+                    } else {
+                        self.enter_battle_reserve(ctx, tick);
+                    }
+                }
+            }
+        }
+    }
+
+    fn resume_failed_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        continuation: AlertSoldiersFailureContinuation,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        match continuation {
+            AlertSoldiersFailureContinuation::None => {}
+            AlertSoldiersFailureContinuation::ReturnToDuty => {
+                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            }
+            AlertSoldiersFailureContinuation::SeekBody { center, radius } => {
+                self.seek_area(
+                    sim,
+                    center,
+                    radius,
+                    SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier => {
+                self.seek_area(
+                    sim,
+                    ctx.position,
+                    parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                    SeekFlags::LOCATION_FIRST | self.seek_flags,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::SeekMissedCharly { center } => {
+                let charly_has_path = ctx
+                    .entity_view(self.base.checkpoint_charly)
+                    .is_some_and(|view| view.has_patrol_path);
+                let radius = if charly_has_path {
+                    parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+                } else {
+                    parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+                };
+                self.seek_area(
+                    sim,
+                    center,
+                    radius,
+                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+                    0,
+                    global,
+                    ctx,
+                    tick,
+                );
+            }
+            AlertSoldiersFailureContinuation::FleeingRunToDoor => {
+                self.set_state(AiState::Fleeing, Substate::FleeingRunToDoor);
+                self.base.fire_self_stimulus(StimulusType::EventReachPoint);
+            }
+        }
+    }
+
+    pub(crate) fn finalize_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        failure: AlertSoldiersFailureContinuation,
+        global: &mut AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.finish_alert_soldiers(global, grid, ctx, tick) {
+            self.resume_failed_alert_soldiers(sim, failure, global, ctx, tick);
         }
     }
 
@@ -3509,7 +3763,7 @@ impl EnemyAi {
     /// Broadcasts a tower-guard alert: every same-camp soldier within
     /// `SQR_TOWER_GUARD_ALERT_RADIUS` that isn't itself a tower guard,
     /// isn't holed up in a building, and is able to help gets a
-    /// `CALL_TOWER_GUARD_ALERT` stimulus via the deferred inter-NPC
+    /// `CALL_TOWER_GUARD_ALERT` stimulus via the synchronous owner-boundary
     /// Think queue.  The nearest reachable officer additionally gets a
     /// `CALL_TOWER_GUARD_CALLS_ME` so they come to investigate.  If no
     /// officer is in ear-shot but a "far officer" exists, the nearest
@@ -4383,6 +4637,7 @@ mod tests {
             is_able_to_fight: true,
             is_able_to_help: true,
             script_locked: false,
+            ai_lock_frozen: false,
             layer: 0,
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
@@ -4407,6 +4662,7 @@ mod tests {
             view_radius: 400,
             real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             eye_blind: false,
+            is_detecting_360: false,
             is_detecting_cone: false,
         };
         let ahead = Position {
@@ -4650,6 +4906,13 @@ mod tests {
         assert_eq!(ai.base.interesting_object, 77);
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingNet);
+    }
+
+    #[test]
+    #[should_panic(expected = "soldier 1 cannot examine missing body 77")]
+    fn run_to_examine_body_rejects_a_missing_required_body() {
+        let mut ai = EnemyAi::new(1);
+        ai.run_to_examine_body(77, &AiContext::default(), &AiPerTickData::stub(), None);
     }
 
     #[test]
