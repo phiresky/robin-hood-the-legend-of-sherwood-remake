@@ -63,6 +63,26 @@ fn is_nonmovement_exit_from_moving(anim: OrderType) -> bool {
     )
 }
 
+/// Commands whose selected non-movement order supersedes a stale movement
+/// action state. Sequence priority has already chosen these injury/lethal
+/// elements over movement; Original then calls their ordinary `Execute`
+/// regardless of whether the interrupted actor still says Moving,
+/// MovingSword, or MovingShield.
+fn is_movement_interrupting_command(command: Command) -> bool {
+    matches!(
+        command,
+        Command::ReceiveSwordDamage
+            | Command::ReceiveArrowDamage
+            | Command::ReceiveStoneDamage
+            | Command::ReceiveHitDamage
+            | Command::ReceiveDamage
+            | Command::ReceiveMobileDamage
+            | Command::ReceiveNet
+            | Command::SwordstrikeTired
+            | Command::GetKilledAtBottom
+    )
+}
+
 fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
     let (dx, dy) = if matches!(owner, Entity::Soldier(_)) {
         let from = owner.element_data().position_map();
@@ -99,6 +119,11 @@ mod tests {
         assert!(is_nonmovement_exit_from_moving(
             OrderType::TransitionRaisingSword
         ));
+        assert!(is_movement_interrupting_command(
+            Command::ReceiveSwordDamage
+        ));
+        assert!(is_movement_interrupting_command(Command::ReceiveNet));
+        assert!(!is_movement_interrupting_command(Command::Wait));
     }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
@@ -3380,7 +3405,8 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .map(|element| {
                         !element.data.is_movement()
-                            && is_nonmovement_exit_from_moving(order.order_type)
+                            && (is_nonmovement_exit_from_moving(order.order_type)
+                                || is_movement_interrupting_command(element.command))
                     })
             })
             .unwrap_or(false);
@@ -3403,13 +3429,14 @@ impl EngineInner {
                     entity_id.index()
                 )
             });
-            if (actor.action_state.is_moving() && !nonmovement_exit_from_moving)
+            if (actor.action_state.is_moving()
                 || matches!(
                     actor.action_state,
                     crate::element::ActionState::MovingSword
                         | crate::element::ActionState::MovingFastSword
                         | crate::element::ActionState::MovingShield
-                )
+                ))
+                && !nonmovement_exit_from_moving
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
@@ -3657,13 +3684,14 @@ impl EngineInner {
                 // Keep this gate aligned with tick_entity_movement's
                 // own is_moving / sword / shield guard
                 // (movement.rs:2210).
-                if (actor.action_state.is_moving() && !nonmovement_exit_from_moving)
+                if (actor.action_state.is_moving()
                     || matches!(
                         actor.action_state,
                         crate::element::ActionState::MovingSword
                             | crate::element::ActionState::MovingFastSword
                             | crate::element::ActionState::MovingShield
-                    )
+                    ))
+                    && !nonmovement_exit_from_moving
                 {
                     break 'actor;
                 }
