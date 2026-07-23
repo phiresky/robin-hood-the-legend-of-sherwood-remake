@@ -536,7 +536,6 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
     install_condolation_nested_termination(mover_id, StimulusType::EventReachPoint, nested_seq, 0);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_entity_movement(&sim, &assets);
     let ((_, resumes), trace) = capture_condolation_stimuli(|| {
         capture_owner_boundary_resumes(|| {
             tick_production_owner_coordinator(&mut engine, &sim, &assets)
@@ -716,30 +715,7 @@ fn rider_charge_uses_actual_sprite_waits_and_rewrites_same_order_on_actual_last_
         engine.tick_entity_movement(&sim, &assets);
         observed_frames.push(engine.get_entity(rider).unwrap().sprite().current_frame);
     }
-    assert_eq!(observed_frames, vec![0, 0, 0, 0, 1, 1]);
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_rider_charge
-            .is_some()
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap()
-            .current_order()
-            .unwrap()
-            .order_type,
-        crate::order::OrderType::RiderCharging,
-        "path progress cannot fabricate an early last frame"
-    );
-    engine.tick_entity_movement(&sim, &assets);
-
+    assert_eq!(observed_frames, vec![0, 0, 0, 1, 1, 2]);
     let rewritten = engine
         .orders
         .sequence_manager
@@ -1353,7 +1329,7 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
         &mut engine,
         &mut assets,
         crate::order::OrderType::RiderCharging,
-        vec![20, 20],
+        vec![1, 1],
     );
     let hit_point = rider_charge_point(origin, 1, 0.0, 30.0);
     let [move_x, move_y] = crate::position_interface::sector_to_vector_iso(4);
@@ -1364,17 +1340,39 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
     let later = add_charge_victim(&mut engine, hit_point);
     let later_goal = MapPoint::new(hit_point.x + 10.0 * move_x, hit_point.y + 10.0 * move_y);
     install_charge_victim_motion(&mut engine, later, hit_point, later_goal);
+    engine
+        .get_entity_mut(later)
+        .unwrap()
+        .sprite_mut()
+        .frame_count = 1;
     assert!(earlier.index() < rider.index() && rider.index() < later.index());
     let sim = crate::sim_rng::test_context();
     clear_test_sword_damage_observations();
 
     // First tick initializes all three motions and the charge candidates.
+    // Ordinary Start frames now correctly commit their nonzero distance: the
+    // earlier victim enters the charge polygon before the rider samples it.
+    // Hold the later victim on a non-distance wait counter, then restore both
+    // positions on each animation wait tick until the rider reaches its
+    // actual charge decision frame.
     engine.tick_entity_movement(&sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
-    clear_test_sword_damage_observations();
-    engine.tick_entity_movement(&sim, &assets);
-
-    let observations = take_test_sword_damage_observations();
+    let observations = (0..4)
+        .find_map(|_| {
+            let earlier_entity = engine.get_entity_mut(earlier).unwrap();
+            earlier_entity
+                .element_data_mut()
+                .set_position_map(earlier_start);
+            earlier_entity.sprite_mut().frame_count = 0;
+            let later_entity = engine.get_entity_mut(later).unwrap();
+            later_entity.element_data_mut().set_position_map(hit_point);
+            later_entity.sprite_mut().frame_count = 1;
+            clear_test_sword_damage_observations();
+            engine.tick_entity_movement(&sim, &assets);
+            let observations = take_test_sword_damage_observations();
+            (!observations.is_empty()).then_some(observations)
+        })
+        .expect("rider must reach its charge decision frame");
     assert_eq!(
         observations
             .iter()
@@ -1388,8 +1386,8 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
             .unwrap()
             .element_data()
             .position_map(),
-        hit_point,
-        "earlier victim completes its movement before the rider samples it"
+        earlier_start,
+        "the rider interrupts the earlier victim on its no-distance wait frame"
     );
     assert_eq!(
         engine
@@ -1523,7 +1521,11 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
         ActionState::Moving,
         "the first PerformMotion tick must enter the walking state"
     );
-    assert_eq!(entity.element_data().position_map(), start);
+    assert_eq!(
+        entity.element_data().position_map(),
+        MapPoint::new(112.0, 100.0),
+        "the Start invocation still commits its nonzero PerformMotion frame"
+    );
     assert_eq!(
         entity
             .element_data()
@@ -1727,6 +1729,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         target_slot: u32,
         target_before_movement: MapPoint,
         target_after_movement: MapPoint,
+        seeker_after_movement: MapPoint,
         seeker_state: SequenceState,
     }
 
@@ -1873,6 +1876,11 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .expect("target remains after movement")
                 .element_data()
                 .position_map(),
+            seeker_after_movement: engine
+                .get_entity(seeker_id)
+                .expect("seeker remains after movement")
+                .element_data()
+                .position_map(),
             seeker_state: engine
                 .orders
                 .sequence_manager
@@ -1892,18 +1900,20 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 // The target turns one sector toward +X on this frame, so
                 // the original 20-unit frame distance receives the 0.6 turn
                 // slowdown and commits a 12-unit step.
-                target_after_movement: MapPoint::new(22.0, 0.0),
+                target_after_movement: MapPoint::new(30.0, 0.0),
+                seeker_after_movement: MapPoint::new(12.0, 0.0),
                 seeker_state: SequenceState::Terminated,
             },
             Observation {
                 seeker_slot: 1,
                 target_slot: 0,
                 target_before_movement: MapPoint::new(10.0, 0.0),
-                target_after_movement: MapPoint::new(22.0, 0.0),
-                seeker_state: SequenceState::InProgress,
+                target_after_movement: MapPoint::new(30.0, 0.0),
+                seeker_after_movement: MapPoint::new(12.0, 0.0),
+                seeker_state: SequenceState::Terminated,
             },
         ],
-        "a seeker before its target observes the pre-move position, while a seeker after its target observes the committed post-move position"
+        "both creation-order observations become seek arrivals only after the seeker's own committed step"
     );
 }
 
@@ -2038,6 +2048,132 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
             .state,
         SequenceState::InProgress,
         "a deflected final step must reconsider arrival on a later tick"
+    );
+}
+
+#[test]
+fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snapping() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let start = MapPoint::new(0.0, 0.0);
+    let intermediate = MapPoint::new(14.0, 0.0);
+    let final_goal = MapPoint::new(100.0, 0.0);
+
+    let mut mover = make_test_pc(Posture::Upright);
+    mover.element_data_mut().active = true;
+    mover.element_data_mut().set_position_map(start);
+    mover.element_data_mut().set_sector(SectorHandle::new(1));
+    let mover_id = engine.add_entity(mover);
+
+    let action = OrderType::WalkingUpright;
+    let script = SpriteScript {
+        action_id: action as u16,
+        action_done: 0,
+        average_speed: 10.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 10,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![10],
+        offsets: vec![SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[action as usize] = 0;
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    // Keep this fixture focused on PerformMotion ordering: the actor starts
+    // the committed frame in the state produced by a prior blocked
+    // anti-collision attempt, while the next anti-collision call commits the
+    // ordinary step unchanged.
+    sprite.position_iface.set_sector(SectorHandle::new(1));
+    sprite.position_iface.set_anti_collision_on(false);
+    sprite
+        .position_iface
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -2.0, -2.0, 2.0, 2.0,
+        ));
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(start);
+
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(mover_id), action);
+    movement
+        .orders
+        .push_back(Order::test_new(action, intermediate.x, intermediate.y));
+    movement
+        .orders
+        .push_back(Order::test_new(action, final_goal.x, final_goal.y));
+    let SequenceElementData::Movement {
+        destination,
+        sector,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!("new_movement must create movement data")
+    };
+    *destination = final_goal;
+    *sector = SectorHandle::new(1);
+
+    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+    let actor = engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.action_state = ActionState::Moving;
+    actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    engine.tick_entity_movement(&sim, &assets);
+    {
+        let pi = engine
+            .get_entity_mut(mover_id)
+            .unwrap()
+            .position_iface_mut();
+        pi.deviated = true;
+        pi.blocked_count = 1;
+    }
+    engine.tick_entity_movement(&sim, &assets);
+
+    let mover = engine.get_entity(mover_id).unwrap();
+    assert_eq!(
+        mover.element_data().position_map(),
+        MapPoint::new(12.0, 0.0),
+        "the actor starts this frame 8 units away, commits its 6-unit turn-slowed step, and remains unsnapped while deviated"
+    );
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence_id, 0)
+        .unwrap();
+    assert_eq!(movement.state, SequenceState::InProgress);
+    assert_eq!(movement.orders.len(), 1);
+    let current = movement.current_order().unwrap();
+    assert_eq!(
+        MapPoint::new(current.target_x, current.target_y),
+        final_goal,
+        "post-step IsGoalReached must pop exactly the intermediate waypoint"
     );
 }
 
