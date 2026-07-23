@@ -3609,6 +3609,25 @@ impl EngineInner {
                         .get_element(s, e)
                         .map(|el| el.command_level)
                 });
+                let requested_custom_animation = order_seq_elem.and_then(|(s, e)| {
+                    let element = self.orders.sequence_manager.get_element(s, e)?;
+                    if !matches!(
+                        element.command,
+                        Command::PlayAnim
+                            | Command::PlayAnimLoop
+                            | Command::PlayAnimFreeze
+                            | Command::PlayAnimFrozen
+                    ) {
+                        return None;
+                    }
+                    match element.get_property(crate::sequence::Field::AnimationId) {
+                        Some(crate::sequence::FieldValue::Animation(animation)) => Some(*animation),
+                        Some(crate::sequence::FieldValue::Integer(value)) => {
+                            OrderType::try_from(*value).ok()
+                        }
+                        _ => None,
+                    }
+                });
                 let driving_one_shot = matches!(cur_command, Some(cmd) if !matches!(
                     cmd,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
@@ -3909,6 +3928,15 @@ impl EngineInner {
                                         FrameProgression::FrozenFirstFrame,
                                     ),
                                 }
+                            } else if let Some(animation) = requested_custom_animation {
+                                let progression = match cur_command {
+                                    Some(Command::PlayAnimLoop) => FrameProgression::Cyclically,
+                                    Some(Command::PlayAnimFrozen) => {
+                                        FrameProgression::FrozenLastFrame
+                                    }
+                                    _ => FrameProgression::Default,
+                                };
+                                (animation, progression)
                             } else if matches!(cur_command, Some(Command::PlayAnimLoop)) {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
@@ -4136,7 +4164,11 @@ impl EngineInner {
                             completion_outcomes.play_anim_frozen.push((
                                 entity_id,
                                 cur_command_level.unwrap_or(1),
-                                anim_type,
+                                requested_custom_animation.unwrap_or_else(|| {
+                                    panic!(
+                                        "PlayAnimFreeze for {entity_id:?} has no AnimationId property"
+                                    )
+                                }),
                             ));
                         }
                     }

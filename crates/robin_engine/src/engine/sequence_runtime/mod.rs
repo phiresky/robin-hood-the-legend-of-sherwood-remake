@@ -770,8 +770,15 @@ impl TargetAnimationContext<'_> {
             return OwnerActionBarrier::Skip;
         };
         if owner_entity.is_human() {
+            let wrapper = match command {
+                Command::PlayAnim => crate::order::OrderType::PlayCustom,
+                Command::PlayAnimLoop => crate::order::OrderType::PlayCustomLooped,
+                Command::PlayAnimFreeze => crate::order::OrderType::PlayCustomFreeze,
+                Command::PlayAnimFrozen => crate::order::OrderType::PlayCustomFrozen,
+                _ => unreachable!("non-animation command passed to target animation context"),
+            };
             let id = crate::order::alloc_order_id(self.next_order_id);
-            let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
+            let mut order = crate::order::Order::new(wrapper, 0.0, 0.0, id);
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
             self.sequence_manager.element_in_progress(seq_id, elem_idx);

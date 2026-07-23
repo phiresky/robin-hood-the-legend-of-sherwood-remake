@@ -372,6 +372,57 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
     );
 }
 
+#[test]
+fn play_anim_uses_custom_wrapper_instead_of_requested_animation_semantics() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{Field, FieldValue, SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .expect("test soldier exists")
+        .actor_data_mut()
+        .expect("test soldier is an actor")
+        .action_state = ActionState::Bored;
+
+    let mut element = SequenceElement::new_generic(1, Command::PlayAnim, Some(owner));
+    element.set_property(
+        Field::AnimationId,
+        FieldValue::Animation(OrderType::Pointing),
+    );
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("PlayAnim element remains live");
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert_eq!(
+        element.current_order().map(|order| order.order_type),
+        Some(OrderType::PlayCustom),
+        "Pointing is only the requested sprite animation; Original executes the PlayCustom wrapper"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .expect("test soldier remains")
+            .actor_data()
+            .expect("test soldier remains an actor")
+            .action_state,
+        ActionState::Bored,
+        "translating custom Pointing must not apply Pointing's Waiting state"
+    );
+}
+
 /// An attentive-mode transition on an idle soldier queues
 /// `TransitionWaitingUprightWaitingAlerted` as an order on the
 /// sequence element.
