@@ -291,6 +291,30 @@ fn queued_human_detection_stimuli(
     stimuli
 }
 
+/// Original `RHElementActorNPC::HandlePredetection` shadow-edge update.
+///
+/// The shadow threshold is tested against the suspect accumulator as it stood
+/// before the current scan. The caller adds this frame's sharpness only after
+/// every detectable has passed through this helper.
+fn update_predetection_shadow_latch(
+    seen_now: bool,
+    suspects_before_scan: u16,
+    is_pc: bool,
+    guarded: bool,
+    shadow_seen_last_frame: &mut bool,
+) -> bool {
+    // The Original returns before touching the latch for both cases.
+    if !is_pc || guarded {
+        return false;
+    }
+
+    let shadow_is_seen =
+        seen_now && suspects_before_scan as u32 >= ai_vision::SHADOW_DETECTION_THRESHOLD;
+    let shadow_was_seen = *shadow_seen_last_frame;
+    *shadow_seen_last_frame = shadow_is_seen;
+    shadow_is_seen && !shadow_was_seen
+}
+
 impl EngineInner {
     /// Reconstruct `RHElement::mulCreationOrder` for the static mission
     /// entities stored in `marrayElements`.
@@ -2763,10 +2787,6 @@ impl EngineInner {
                 think_tick_data = Some(tick_data);
             }
 
-            // Accumulate the per-type detection suspects.
-            let suspects = &mut npc.detection_suspects[enemy_idx];
-            *suspects = suspects.saturating_add(sum_sharpness_new.min(u16::MAX as u32) as u16);
-
             // Running worst-detected-type (smallest enum value
             // wins).  We only drive Enemy detection here right now,
             // so the guard collapses to "promote from None / higher
@@ -2783,25 +2803,18 @@ impl EngineInner {
             // Per-detectable edge-triggered EVENT_SEES_SHADOW on the
             // rising edge of
             //   shadow_is_seen = (sharpness > 0)
-            //                 && suspects[type] >= SHADOW_DETECTION_THRESHOLD
+            //                 && suspects_before_scan[type]
+            //                    >= SHADOW_DETECTION_THRESHOLD
             // No outer `instant_detection` / upper-bound guards.
             // Each detectable dispatches its own event on its own
             // rising edge, so no `break` after the first one.
             //
-            // Skip PCs that are already guarded — once a soldier has
-            // the PC in custody, no more shadow events fire for that
-            // hero.  We still walk the latch update for non-guarded
-            // PCs below.
+            // HandlePredetection runs before this frame's sharpness is added
+            // to the suspect accumulator. It also returns without touching
+            // the latch for non-PC and guarded-PC targets.
+            let suspects_before_scan = npc.detection_suspects[enemy_idx];
             for det in npc.detectable_lists[enemy_idx].iter_mut() {
-                let shadow_is_seen =
-                    det.seen_now && *suspects as u32 >= ai_vision::SHADOW_DETECTION_THRESHOLD;
-                let shadow_was_seen = det.shadow_seen_last_frame;
-                det.shadow_seen_last_frame = shadow_is_seen;
-
-                if shadow_is_seen
-                    && !shadow_was_seen
-                    && let Some(target_id) = det.element
-                {
+                if let Some(target_id) = det.element {
                     let target = enemy_targets
                         .iter()
                         .find(|target| target.id == target_id)
@@ -2812,7 +2825,13 @@ impl EngineInner {
                                 npc_id.index()
                             )
                         });
-                    if !target.is_pc || target.guarded {
+                    if !update_predetection_shadow_latch(
+                        det.seen_now,
+                        suspects_before_scan,
+                        target.is_pc,
+                        target.guarded,
+                        &mut det.shadow_seen_last_frame,
+                    ) {
                         continue;
                     }
                     // Queue EVENT_SEES_SHADOW for this NPC's post-detection
@@ -2832,6 +2851,11 @@ impl EngineInner {
                     }
                 }
             }
+
+            // Original adds the current scan only after every detectable has
+            // run HandlePredetection against the prior accumulator.
+            let suspects = &mut npc.detection_suspects[enemy_idx];
+            *suspects = suspects.saturating_add(sum_sharpness_new.min(u16::MAX as u32) as u16);
 
             // Commit condition.
             let threshold_hit = *suspects as u32 >= ai_vision::DETECTION_SUSPECT_THRESHOLD;
@@ -3648,12 +3672,10 @@ impl EngineInner {
             }
         }
 
-        // (2) Suspect accumulation + commit.
+        // (2) Snapshot the suspect accumulator. Original
+        // HandlePredetection reads this value before the current scan is
+        // added below.
         let suspects_before = soldier.npc.detection_suspects[kind_idx];
-        let suspects_after = suspects_before.saturating_add(sum_of_sharpnesses as u16);
-        soldier.npc.detection_suspects[kind_idx] = suspects_after;
-        let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
-            || (instant_detection && sum_of_sharpnesses > 0);
 
         // (3) HandlePredetection shadow events for PC-typed targets.
         // Body is the only kind that fires; the helper is gated on
@@ -3661,13 +3683,12 @@ impl EngineInner {
         // / Beggar pre-empt and the Object skip fall out naturally.
         // Per-detectable rising edge of
         //   shadow_is_seen = (sharpness > 0)
-        //                && (suspects[type] >= SHADOW_DETECTION_THRESHOLD)
-        // — done before the `commit_threshold` resets suspects to 0,
-        // so the pre-commit accumulator value drives the shadow gate.
+        //                && (suspects_before_scan[type]
+        //                    >= SHADOW_DETECTION_THRESHOLD)
         //
         // Skip PCs already in custody (guarded) — once a soldier is
-        // guarding a hero, no further shadow events fire for that
-        // hero on any detectable kind.
+        // guarding a hero, no further shadow events fire for that hero, and
+        // HandlePredetection leaves its shadow latch unchanged.
         let mut shadow_dispatches: Vec<crate::ai::Position> = Vec::new();
         if fire_shadow_for_pc_targets {
             for det in soldier.npc.detectable_lists[kind_idx].iter_mut() {
@@ -3678,14 +3699,13 @@ impl EngineInner {
                 let Some(target) = targets.get(&target_id) else {
                     continue;
                 };
-                if !target.is_pc {
-                    continue;
-                }
-                let shadow_is_seen =
-                    det.seen_now && suspects_after as u32 >= ai_vision::SHADOW_DETECTION_THRESHOLD;
-                let shadow_was_seen = det.shadow_seen_last_frame;
-                det.shadow_seen_last_frame = shadow_is_seen;
-                if shadow_is_seen && !shadow_was_seen && !target.guarded {
+                if update_predetection_shadow_latch(
+                    det.seen_now,
+                    suspects_before,
+                    target.is_pc,
+                    target.guarded,
+                    &mut det.shadow_seen_last_frame,
+                ) {
                     shadow_dispatches.push(crate::ai::Position {
                         x: target.position.x,
                         y: target.position.y,
@@ -3696,13 +3716,19 @@ impl EngineInner {
             }
         }
 
+        // (4) Accumulate and determine whether the full detection commits.
+        let suspects_after = suspects_before.saturating_add(sum_of_sharpnesses as u16);
+        soldier.npc.detection_suspects[kind_idx] = suspects_after;
+        let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
+            || (instant_detection && sum_of_sharpnesses > 0);
+
         // worst_detected_type bookkeeping — only on visibility
         // frames where new sharpness was added.
         if sum_of_sharpnesses > 0 && (soldier.npc.worst_detected_type as u8) > (kind as u8) {
             soldier.npc.worst_detected_type = kind;
         }
 
-        // (4) Rising-edge dispatch + drop-on-commit.  When the threshold
+        // (5) Rising-edge dispatch + drop-on-commit.  When the threshold
         // or instant-detection commits, drop every detectable that
         // crossed the rising edge this frame and queue its event.
         let mut rising_dispatches: Vec<EntityId> = Vec::new();
@@ -3720,7 +3746,7 @@ impl EngineInner {
             });
         }
 
-        // (5) Suspect cooldown when nothing visible.
+        // (6) Suspect cooldown when nothing visible.
         if sum_of_sharpnesses == 0
             && soldier.npc.detection_suspects[kind_idx] > 0
             && ctx
@@ -3731,7 +3757,7 @@ impl EngineInner {
                 soldier.npc.detection_suspects[kind_idx].saturating_sub(1);
         }
 
-        // (6) maximal_detection_suspect contribution
+        // (7) maximal_detection_suspect contribution
         // (`type < FRIEND` only).
         if contribute_to_maximal
             && soldier.npc.maximal_detection_suspect < soldier.npc.detection_suspects[kind_idx]
@@ -3739,7 +3765,7 @@ impl EngineInner {
             soldier.npc.maximal_detection_suspect = soldier.npc.detection_suspects[kind_idx];
         }
 
-        // (7) Drain the queued stimuli onto pending_stimuli.
+        // (8) Drain the queued stimuli onto pending_stimuli.
         if (!rising_dispatches.is_empty() || !shadow_dispatches.is_empty())
             && let Some(ai) = soldier.npc.ai_brain.base_mut()
         {
@@ -4085,5 +4111,43 @@ mod tests {
             stimuli[1].stimulus_type,
             crate::ai::StimulusType::EventSeesBody
         );
+    }
+
+    #[test]
+    fn predetection_shadow_uses_suspects_from_before_current_scan() {
+        let mut shadow_seen_last_frame = false;
+
+        assert!(!update_predetection_shadow_latch(
+            true,
+            0,
+            true,
+            false,
+            &mut shadow_seen_last_frame,
+        ));
+        assert!(!shadow_seen_last_frame);
+
+        assert!(update_predetection_shadow_latch(
+            true,
+            ai_vision::SHADOW_DETECTION_THRESHOLD as u16 + 2,
+            true,
+            false,
+            &mut shadow_seen_last_frame,
+        ));
+        assert!(shadow_seen_last_frame);
+    }
+
+    #[test]
+    fn predetection_shadow_early_returns_preserve_the_latch() {
+        for (is_pc, guarded) in [(false, false), (true, true)] {
+            let mut shadow_seen_last_frame = true;
+            assert!(!update_predetection_shadow_latch(
+                false,
+                ai_vision::SHADOW_DETECTION_THRESHOLD as u16,
+                is_pc,
+                guarded,
+                &mut shadow_seen_last_frame,
+            ));
+            assert!(shadow_seen_last_frame);
+        }
     }
 }
