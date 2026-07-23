@@ -398,6 +398,48 @@ mod tests {
     }
 
     #[test]
+    fn nonmovement_upright_exit_completion_changes_pc_to_waiting() {
+        for (animation, motion, expected_posture) in [
+            (
+                OrderType::TransitionWalkingUprightWaitingUpright,
+                MotionState::Done,
+                Posture::Upright,
+            ),
+            (
+                OrderType::TransitionRunningUprightWaitingUpright,
+                MotionState::Terminated,
+                Posture::Upright,
+            ),
+            (
+                OrderType::TransitionWalkingCrouchedWaitingCrouched,
+                MotionState::Done,
+                Posture::Crouched,
+            ),
+        ] {
+            let mut entity = Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    posture: Posture::Upright,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            });
+            entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+
+            apply_active_animation_start_state_side_effect(&mut entity, animation, motion);
+
+            assert_eq!(entity.element_data().posture, expected_posture);
+            assert_eq!(
+                entity.actor_data().unwrap().action_state,
+                ActionState::Waiting,
+                "{animation:?} must apply RHElementActor::Execute's universal completion state"
+            );
+        }
+    }
+
+    #[test]
     fn civilian_idle_override_does_not_run_base_actor_state_changes() {
         let mut entity = civilian_actor();
         entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
@@ -1737,6 +1779,27 @@ fn apply_active_animation_start_state_side_effect(
             entity.set_posture(Posture::Upright);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Bored;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionWalkingUprightWaitingUpright
+            | OrderType::TransitionRunningUprightWaitingUpright,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionWalkingCrouchedWaitingCrouched,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            entity.set_posture(Posture::Crouched);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
             }
             return;
         }
