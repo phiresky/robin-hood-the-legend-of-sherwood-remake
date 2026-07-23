@@ -2640,9 +2640,11 @@ fn arm_is_always_consumed(anim_type: OrderType) -> bool {
     use OrderType as OT;
     matches!(
         anim_type,
-        // Idle loops — always-InProgress WAITING_* arms.
-        OT::WaitingUpright
-            | OT::WaitingCrouched
+        // Idle loops whose derived Execute arms explicitly return
+        // InProgress. Plain WaitingUpright is intentionally absent:
+        // RHElementActor::Execute forwards PerformAction's raw motion so a
+        // Wait transition chain can advance when that animation terminates.
+        OT::WaitingCrouched
             | OT::WaitingAlerted
             | OT::WaitingSword
             | OT::WaitingShield
@@ -3092,15 +3094,6 @@ impl EngineInner {
                     )
                 })
                 .command;
-            let movement_owned_order = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| element.data.is_movement())
-                && !is_nonmovement_exit_from_moving(order.order_type);
-            if movement_owned_order {
-                return (Vec::new(), AnimCompletionOutcomes::default(), None);
-            }
             let exact_selected_bow = actor.active_shot.is_active()
                 && actor.active_shot.sequence_id == Some(seq_id)
                 && actor.active_shot.element_index == elem_idx
@@ -3307,7 +3300,6 @@ impl EngineInner {
             let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
                 panic!("actor {entity_id:?} vanished before generic animation dispatch")
             });
-
             // Actors: animate based on current action state
             if let Some(actor) = entity.actor_data() {
                 // Moving actors are animated in tick_entity_movement(sim, ),

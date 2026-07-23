@@ -931,6 +931,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
+    use crate::sprite::MotionState;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
@@ -996,16 +997,112 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         .sequence_manager
         .element_in_progress(sequence, 0);
 
-    let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, animated);
+    let mut executed_idle = false;
+    let mut forwarded_termination = false;
+    for _ in 0..16 {
+        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, animated);
+        executed_idle |= executed.is_some();
+        forwarded_termination |= executed
+            .as_ref()
+            .is_some_and(|result| result.motion == MotionState::Terminated);
+        if forwarded_termination {
+            break;
+        }
+    }
     let entity = engine.get_entity(animated).unwrap();
     assert!(
-        executed.is_some(),
+        executed_idle,
         "inactive Actor::Hourglass must execute the selected idle order"
     );
     assert_eq!(entity.sprite().last_action, OrderType::WaitingUpright);
     assert!(
-        entity.sprite().frame_count > 0 || entity.sprite().current_frame > 0,
-        "inactive Actor::Hourglass must advance the bound idle animation"
+        forwarded_termination,
+        "WaitingUpright must forward sprite termination so Hourglass can advance into the bored transition"
+    );
+}
+
+#[test]
+fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Bored;
+
+    let transition = OrderType::TransitionWaitingUprightBoredWaitingUpright;
+    let script = SpriteScript {
+        action_id: transition as u16,
+        action_done: 2,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![2; 3],
+        distances: vec![0; 3],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[transition as usize] = 0;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(conversion),
+    );
+
+    let mut selected =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    selected
+        .orders
+        .push_back(Order::test_new(transition, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    let mut executed_transition = false;
+    for _ in 0..16 {
+        let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, owner);
+        executed_transition |= executed.is_some();
+        if engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state
+            == ActionState::Waiting
+        {
+            break;
+        }
+    }
+    assert!(
+        executed_transition,
+        "a transition selected as GenericAnimation must not be suppressed merely because its element carries Movement data"
+    );
+    assert_eq!(engine.get_entity(owner).unwrap().sprite().last_action, transition);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
+        ActionState::Waiting,
+        "bored-exit completion inside MoveOk must apply the base-Actor state transition"
     );
 }
 
