@@ -4990,12 +4990,12 @@ impl EngineInner {
             // over-rotate on that terminal tick and cannot expose the first
             // call's termination barrier.
             let _ = elem.sprite.position_iface.turn();
-            // The "already at destination" short-circuit needs the
-            // predicate routed into `perform_motion`.  Keep a 0.01
-            // epsilon to absorb any prior anti-collision jitter that
-            // may have nudged the actor a tiny fraction off the
-            // order's recorded destination.
-            let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
+            // Original short-circuits a newly initialized non-transition
+            // motion only for exact `pointDestination2D == GetPositionMap()`.
+            // A near-target continuation must still run PerformMotion so its
+            // ordinary arrival path snaps and retires it in this owner slot.
+            let dest_already_at_pos =
+                motion_method != MotionMethod::TillLastFrame && elem.position_map() == goal;
             let sprite = &mut elem.sprite;
             let (mut motion_state, mut frame_dist_raw) = sprite.perform_motion(
                 sim,
@@ -5260,6 +5260,30 @@ impl EngineInner {
                     }
                     elem.update_grid_cell();
                 }
+
+                // TILL_LAST_FRAME still performs the ordinary arrival check
+                // after every nonzero transition step. Reaching the target
+                // zeros both increments and snaps an undeviated zero-tolerance
+                // actor, but the transition keeps playing until its animation
+                // loops unless the next order uses the same animation.
+                let transition_goal_reached = entity
+                    .position_iface()
+                    .is_goal_reached(&self.world.fast_grid, None);
+                let transition_increment_nonzero = {
+                    let increment = entity.position_iface().get_increment_map();
+                    increment.x != 0.0 || increment.y != 0.0
+                };
+                if transition_goal_reached && speed != 0.0 && transition_increment_nonzero {
+                    let should_snap =
+                        !entity.position_iface().is_deviated() && order_tolerance == 0.0;
+                    entity.position_iface_mut().zero_all_increments();
+                    if should_snap {
+                        entity.element_data_mut().set_position_map(goal);
+                    }
+                    if next_destination_same_action.is_some() {
+                        motion_state = MotionState::Terminated;
+                    }
+                }
                 if matches!(motion_state, MotionState::Terminated) {
                     // TillLastFrame can exhaust its animation before its
                     // distance target is reached (notably the short
@@ -5269,11 +5293,6 @@ impl EngineInner {
                     // changes the copy to that next animation, then retires
                     // the exhausted transition. This keeps the copied order's
                     // old target as a one-tick continuation.
-                    let transition_goal_reached = entity
-                        .element_data()
-                        .sprite
-                        .position_iface
-                        .is_goal_reached(&self.world.fast_grid, None);
                     if !transition_goal_reached {
                         let next_order_id = &mut self.orders.next_order_id;
                         if let Some(element) = self
@@ -5822,8 +5841,16 @@ impl EngineInner {
                     // commit, gated on the mover's `anti_collision_on`
                     // flag — the flag stays `true` by default so this is
                     // active for every normal walk.
-                    let nx = dx / dist;
-                    let ny = dy / dist;
+                    // `PerformMotion` advances with PositionInterface's
+                    // cached `GetIncrementMap()`. It does not renormalize the
+                    // remaining goal vector each frame; that cache is rebuilt
+                    // only when a new order starts or anti-collision changes
+                    // deviation state. Recomputing here introduced tiny drift
+                    // into patrol-chief history and eventually flipped exact
+                    // transition-arrival dot products.
+                    let cached_increment = entity.position_iface().get_increment_map();
+                    let nx = cached_increment.x;
+                    let ny = cached_increment.y;
                     let anti_on = entity.position_iface().is_anti_collision_on();
                     // Pull transient anti-collision context from position_iface
                     // (move box, half-diagonal) + the current path goal.  The

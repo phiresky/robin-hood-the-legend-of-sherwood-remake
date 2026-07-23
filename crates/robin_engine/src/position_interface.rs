@@ -878,6 +878,15 @@ impl PositionInterface {
         self.increment_map = v;
     }
 
+    /// Stop an arrived motion while preserving the fact that every increment
+    /// representation is valid. This matches `SetIncrementMap(0)`,
+    /// `SetIncrement(0)`, then `SetIncrementAllComputed()` in the Original.
+    pub fn zero_all_increments(&mut self) {
+        self.increment_map = MapVec::ZERO;
+        self.increment = WorldVec3D::ZERO;
+        self.computed_increment = IncrementComputed::ALL;
+    }
+
     /// Advance map position by `increment_map * distance`.
     pub fn update_position_map_scaled(&mut self, distance: f32) {
         assert!(self.is_increment_map_computed());

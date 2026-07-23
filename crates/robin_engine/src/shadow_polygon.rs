@@ -62,9 +62,102 @@ impl Default for ViewParameters {
 /// Convert a 16-sector cardinal direction index to a unit (x, y) vector.
 /// Sector 0 = north = -Y; sectors increase clockwise.
 pub fn sector_to_direction(sector: i16) -> [f32; 2] {
-    let sector = sector.rem_euclid(16);
-    let angle = sector as f32 * std::f32::consts::TAU / 16.0;
-    let x = angle.sin();
-    let y = -angle.cos();
-    [x, y]
+    // Keep the literal table from SBGeoVector2D.cpp. Re-evaluating sin/cos
+    // produces values a few ULPs away from the Original constants; patrol
+    // formation multiplies these offsets by 20, and the resulting error can
+    // flip the exact dot-product test in IsGoalReached.
+    const SIN_PI_EIGHTH: f32 = 0.382_683_432_365_09;
+    const COS_PI_EIGHTH: f32 = 0.923_879_532_511_28;
+    const HALF_SQRT_TWO: f32 = 0.707_106_781_186_54;
+    const X: [f32; 16] = [
+        0.0,
+        SIN_PI_EIGHTH,
+        HALF_SQRT_TWO,
+        COS_PI_EIGHTH,
+        1.0,
+        COS_PI_EIGHTH,
+        HALF_SQRT_TWO,
+        SIN_PI_EIGHTH,
+        0.0,
+        -SIN_PI_EIGHTH,
+        -HALF_SQRT_TWO,
+        -COS_PI_EIGHTH,
+        -1.0,
+        -COS_PI_EIGHTH,
+        -HALF_SQRT_TWO,
+        -SIN_PI_EIGHTH,
+    ];
+    const Y: [f32; 16] = [
+        -1.0,
+        -COS_PI_EIGHTH,
+        -HALF_SQRT_TWO,
+        -SIN_PI_EIGHTH,
+        0.0,
+        SIN_PI_EIGHTH,
+        HALF_SQRT_TWO,
+        COS_PI_EIGHTH,
+        1.0,
+        COS_PI_EIGHTH,
+        HALF_SQRT_TWO,
+        SIN_PI_EIGHTH,
+        0.0,
+        -SIN_PI_EIGHTH,
+        -HALF_SQRT_TWO,
+        -COS_PI_EIGHTH,
+    ];
+    let index = sector.rem_euclid(16) as usize;
+    [X[index], Y[index]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sector_to_direction;
+
+    #[test]
+    fn sector_directions_match_original_literal_table_bits() {
+        let expected_x = [
+            0x0000_0000,
+            0x3ec3_ef15,
+            0x3f35_04f3,
+            0x3f6c_835e,
+            0x3f80_0000,
+            0x3f6c_835e,
+            0x3f35_04f3,
+            0x3ec3_ef15,
+            0x0000_0000,
+            0xbec3_ef15,
+            0xbf35_04f3,
+            0xbf6c_835e,
+            0xbf80_0000,
+            0xbf6c_835e,
+            0xbf35_04f3,
+            0xbec3_ef15,
+        ];
+        let expected_y = [
+            0xbf80_0000,
+            0xbf6c_835e,
+            0xbf35_04f3,
+            0xbec3_ef15,
+            0x0000_0000,
+            0x3ec3_ef15,
+            0x3f35_04f3,
+            0x3f6c_835e,
+            0x3f80_0000,
+            0x3f6c_835e,
+            0x3f35_04f3,
+            0x3ec3_ef15,
+            0x0000_0000,
+            0xbec3_ef15,
+            0xbf35_04f3,
+            0xbf6c_835e,
+        ];
+
+        for sector in 0..16 {
+            let [x, y] = sector_to_direction(sector);
+            assert_eq!(x.to_bits(), expected_x[sector as usize]);
+            assert_eq!(y.to_bits(), expected_y[sector as usize]);
+        }
+        assert_eq!(sector_to_direction(-1), sector_to_direction(15));
+        assert_eq!(sector_to_direction(16), sector_to_direction(0));
+    }
 }

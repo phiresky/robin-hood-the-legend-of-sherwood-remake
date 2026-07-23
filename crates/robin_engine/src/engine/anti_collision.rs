@@ -686,6 +686,16 @@ pub fn apply_anti_collision_step(
     let (deviated_future, deviated) =
         compute_deviated_future(mover.position_map, future, actor_radius, points, lines);
 
+    // Original keeps `ptFuture = position + increment * distance` and assigns
+    // that point directly when none of the gathered repulsive objects
+    // actually deflects the actor. Returning `ptFuture - position` here made
+    // the caller add the rounded delta a second time. At map coordinates in
+    // the thousands that cancellation can move the result by several ULPs,
+    // eventually changing exact IsGoalReached branches and patrol history.
+    if !deviated && !state.as_deref().is_some_and(|s| s.pi.deviated) {
+        return naive;
+    }
+
     // Without state-tracking, commit the deviated future directly.
     let Some(state) = state else {
         return (
@@ -734,10 +744,7 @@ pub fn apply_anti_collision_step(
                 return (0.0, 0.0);
             }
             state.pi.deviated = false;
-            return (
-                deviated_future.x - mover.position_map.x,
-                deviated_future.y - mover.position_map.y,
-            );
+            return naive;
         }
         // Was deviated && !reachable: fall through.
     }
