@@ -543,6 +543,31 @@ impl EngineInner {
             self.say_ouch(sim, assets, victim_id, Some(cutting_inflicted));
         }
 
+        // Provoke after sword strike — random taunt. Original evaluates this
+        // gate before the later hero-speech checks.
+        if !result.is_empty()
+            && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
+            && let Some(atk_id) = attacker_id
+        {
+            // Original evaluates the random chance before its selected-PC
+            // suppression clause.  A controlled attacker therefore still
+            // owns one global draw even though it can never launch Provoke.
+            let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
+            let provoke_roll =
+                crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100);
+
+            // Suppress Provoke when the attacker is the currently-selected
+            // PC — the player's controlled character shouldn't taunt on hit.
+            let attacker_is_selected_pc = self
+                .get_entity(atk_id)
+                .map(|e| e.kind().is_pc())
+                .unwrap_or(false)
+                && self.selected_pc_ids().contains(&atk_id);
+            if provoke_roll < provoke_chance && !attacker_is_selected_pc {
+                self.launch_provoke(atk_id);
+            }
+        }
+
         // Hero speech for PC attacker:
         // - HERO_KILLED_OPPONENT if dead
         // - HERO_SUCCESSFULL_BLOW if unconscious + cutting > 50
@@ -582,30 +607,6 @@ impl EngineInner {
                     self.hero_speaking(assets, atk_id, HERO_SUCCESSFULL_BLOW);
                 } else {
                     self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
-                }
-            }
-        }
-
-        // Provoke after sword strike — random taunt.
-        if !result.is_empty()
-            && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
-            && let Some(atk_id) = attacker_id
-        {
-            // Suppress Provoke when the attacker is the currently-
-            // selected PC — the player's controlled character
-            // shouldn't taunt on hit.
-            let attacker_is_selected_pc = self
-                .get_entity(atk_id)
-                .map(|e| e.kind().is_pc())
-                .unwrap_or(false)
-                && self.selected_pc_ids().contains(&atk_id);
-            if !attacker_is_selected_pc {
-                let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
-                if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeProvoke, 0..100)
-                    < provoke_chance
-                {
-                    // Launch PROVOKE on the attacker
-                    self.launch_provoke(atk_id);
                 }
             }
         }
