@@ -917,12 +917,7 @@ impl TurnCommandContext<'_> {
                             .set_map_goal(crate::coordinates::MapPoint::new(x, y));
                     }
                 }
-                self.push_order(
-                    seq_id,
-                    elem_idx,
-                    crate::order::OrderType::Turning,
-                    explicit_direction.is_none(),
-                );
+                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);
             }
             Command::TurnElement => {
                 let antagonist = self
@@ -950,7 +945,7 @@ impl TurnCommandContext<'_> {
                         entity.element_data_mut().set_direction_instantly(direction);
                     }
                 }
-                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, true);
+                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);
             }
             Command::Freeze => {
                 self.push_order(seq_id, elem_idx, crate::order::OrderType::Freezing, true);

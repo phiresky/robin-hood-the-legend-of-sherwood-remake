@@ -1458,7 +1458,6 @@ impl EngineInner {
                 );
             }
         }
-        self.stamp_element_transition_state(owner, seq_id, 0);
         seq_id
     }
 

@@ -1107,6 +1107,74 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
 }
 
 #[test]
+fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ActionState, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::MovingFast;
+    let retained_goal = MapPoint::new(321.0, 654.0);
+
+    let sequence = engine.launch_turn_sequence_deferred_no_transitions(
+        owner,
+        Some(9),
+        0.0,
+        0.0,
+        Some(retained_goal),
+    );
+    let deferred = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(deferred.state, SequenceState::Todo);
+    assert_eq!(deferred.posture_after_transition, Posture::Undefined);
+    assert!(
+        deferred.orders.is_empty(),
+        "deferred FaceTo must remain untranslated until its ordered InstructOwner boundary"
+    );
+
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let instructed = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(instructed.state, SequenceState::InProgress);
+    assert_eq!(
+        instructed
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        vec![
+            OrderType::TransitionRunningUprightWaitingUpright,
+            OrderType::Turning,
+        ],
+        "ordered instruction must sample the live running state and prepend its exit transition"
+    );
+    assert!(
+        !instructed.orders.back().unwrap().compute_direction,
+        "Turning must retain the direction resolved from FaceTo's Direction field"
+    );
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(u8::from(entity.position_iface().get_direction_goal()), 9);
+    assert_eq!(entity.position_iface().map_goal(), retained_goal);
+}
+
+#[test]
 fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveShot;

@@ -5729,7 +5729,10 @@ mod bow_command_body_parity_tests {
             element.current_order().map(|order| order.order_type),
             Some(OrderType::Turning)
         );
-        assert!(element.current_order().unwrap().compute_direction);
+        assert!(
+            !element.current_order().unwrap().compute_direction,
+            "Turn translation already resolved the direction goal and must not recompute it from the order's dummy point"
+        );
     }
 
     #[test]
