@@ -2945,7 +2945,7 @@ impl AiController {
         self.outbox
             .actor
             .orders
-            .push(AiOrderIntent::face_toward(pos.x, pos.y));
+            .push(AiOrderIntent::face_direction(target_dir));
     }
 
     /// Turn to face a position (2D — no elevation adjustment). Honours

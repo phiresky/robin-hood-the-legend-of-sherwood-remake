@@ -24,12 +24,13 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 95. After frame 96, soldier
-82 has entered the matching shadow-reaction substate in both engines, but only
-Original has synchronously changed its direction goal from sector 9 to 8.
-Trace positional `Face` through Turn instruction at that owner-local boundary.
-Increase the clean-prefix statement only after a normal first-divergence run
-has passed that frame.
+The current verified clean prefix is through frame 100. During Original frame
+100 (the trace transition to frame 101), Original consumes a friendly
+`RandomSpeech` draw followed by a malignity `The16thFrame` draw, while Rust
+consumes only one `VipIdleRemark` draw. Audit the documented NPC-only periodic
+register number and exact friendly/enemy periodic owner ordering. Increase the
+clean-prefix statement only after a normal first-divergence run has passed that
+frame.
 
 ## Change ledger
 
@@ -68,7 +69,8 @@ has passed that frame.
 | Done | Civilian upright-idle override | At frame 75 thirteen civilians reach `RHMOTION_DONE` while their requested waiting-to-bored transition is visually coerced to the bored idle. `RHElementActorCivilian::Execute` returns directly from this family, so `RHElementActor::Execute` never changes their action state. | Rust still coerces the sprite animation, but now skips the base-actor posture/action-state side effects for the five civilian upright-idle arms. PC and soldier behavior remains unchanged. |
 | Done | Bored-loop `NewID` timing | Original PC 200 consumes the bored-loop choice at frames 39 and 78. The first nonzero roll keeps both `WAITING_UPRIGHT_BORED` and its order ID; Rust allocated a new ID even when the variant did not change, causing a fresh `RHMOTION_START` tick and delaying the next loop/RNG draw by one frame. | `BoredAnimationChoice` now calls the equivalent of `NewID()` only inside the 1-in-10 bored-to-random mutation branch; random-to-bored still always changes ID. Regression coverage verifies a rejected random variant preserves the order ID. |
 | Done | Predetection suspect ordering | At frame 95 soldier 82 receives sharpness 102 from PC 198. Original `HandlePredetection` tests the prior Enemy suspect accumulator (zero), then adds this frame's sharpness; Rust added first and crossed the shadow threshold one frame early. Original also returns for non-PC and guarded-PC targets before changing their shadow latch. | Both detection paths now evaluate the shadow edge against `suspects_before_scan`, preserve the latch on Original's early-return cases, and only then accumulate current sharpness. Focused tests cover the prior-accumulator threshold and latch preservation. Replay matches through frame 95. |
-| In progress | Synchronous positional `Face` instruction | At frame 96 both engines put soldier 82 in the shadow-reaction substate. Original positional `Face` resolves sector 8 and synchronous Turn instruction writes that direction goal immediately; Rust launches the positional Turn after the global turn phase and leaves goal 9 until the next frame. | Resolve and install the positional Turn goal at its owner-local launch boundary, retaining the separate deferred formation-turn rule. |
+| Done | Synchronous positional `Face` instruction | At frame 96 both engines put soldier 82 in the shadow-reaction substate. Original positional `Face` resolves sector 8 and synchronous Turn instruction writes that direction goal immediately; Rust launched the positional Turn after the global turn phase and left goal 9 until the next frame. | Contextual positional `Face` now resolves to an authored sector before launch and retains Original's waiting/bored same-direction shortcut. The non-movement Turn drain also synchronously computes and installs goals for no-context positional intents while retaining the separate deferred formation-turn rule. Focused coverage verifies the resolved directional intent; replay matches through frame 100. |
+| In progress | Frame-100 NPC periodic cadence | Original consumes `RHArtificialBonhomie::RandomSpeech` then `RHArtificialMalignity::The16thFrame`; Rust consumes only one enemy VIP-idle draw, using the first Original value at the wrong semantic site. | Replace the global entity-slot periodic phase surrogate with Original's persistent NPC-only `muwRegisterNumber`, then verify friendly/enemy owner order and both draw sites. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow

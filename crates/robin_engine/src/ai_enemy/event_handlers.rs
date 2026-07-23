@@ -2364,7 +2364,7 @@ impl EnemyAi {
         self.base.stop_all();
         self.set_state(AiState::Default, Substate::DefaultLookingShadow);
         self.set_alert_status(AlertLevel::Yellow);
-        self.base.face_position(*pos);
+        self.base.face_position_with_ctx(*pos, ctx);
         self.base.launch_timer(10, ctx.frame);
     }
 

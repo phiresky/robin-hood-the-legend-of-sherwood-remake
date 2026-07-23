@@ -351,6 +351,26 @@ fn face_to_same_direction_bored_short_circuits() {
     assert!(ai.take_pending_orders().is_empty());
 }
 
+#[test]
+fn face_position_with_context_resolves_original_sector_before_launch() {
+    let ctx = face_to_ctx(crate::element::ActionState::Moving);
+    let target = Position {
+        x: ctx.position.x + 100.0,
+        y: ctx.position.y,
+        ..ctx.position
+    };
+    let expected = crate::position_interface::vector_to_sector_0_to_15_iso(100.0, 0.0) as i16;
+    let mut ai = AiController::new(1);
+
+    ai.face_position_with_ctx(target, &ctx);
+    let orders = ai.take_pending_orders();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
+    assert_eq!(orders[0].explicit_direction, Some(expected));
+    assert!(!orders[0].compute_direction);
+}
+
 fn assert_same_direction_queues_turn(action_state: crate::element::ActionState) {
     let mut ai = AiController::new(1);
     let ctx = face_to_ctx(action_state);

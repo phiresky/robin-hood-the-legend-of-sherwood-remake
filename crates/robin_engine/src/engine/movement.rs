@@ -6782,8 +6782,24 @@ impl EngineInner {
                                 None,
                             );
                         } else {
-                            if let Some(direction) = intent.explicit_direction
-                                && let Some(entity) = self.world.entities.get_mut(entity_id)
+                            // Original Face resolves positional targets during
+                            // FaceTo and synchronous Turn instruction writes
+                            // the direction goal before LaunchSequence
+                            // returns. This owner-local drain can run after
+                            // the global turn phase, so install both authored
+                            // and positional goals here rather than waiting
+                            // for next frame's command dispatch.
+                            let direction = intent.explicit_direction.or_else(|| {
+                                self.world.entities.get(entity_id).map(|entity| {
+                                    let position = entity.element_data().position_map();
+                                    crate::position_interface::vector_to_sector_0_to_15_iso(
+                                        intent.target_x - position.x,
+                                        intent.target_y - position.y,
+                                    )
+                                })
+                            });
+                            if let (Some(direction), Some(entity)) =
+                                (direction, self.world.entities.get_mut(entity_id))
                             {
                                 entity.element_data_mut().set_direction_goal(direction);
                             }
