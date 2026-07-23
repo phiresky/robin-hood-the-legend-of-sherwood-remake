@@ -127,6 +127,24 @@ impl SimulationRng {
                 .sites(range)
         })
     }
+
+    /// Clone the normal PRNG state while deliberately omitting the
+    /// non-serializable Original parity draw stream.
+    ///
+    /// This is only for diagnostic snapshots whose surrounding record carries
+    /// the parity cursor separately. It must not be used for rollback, saves,
+    /// or replay adoption, because those need the live draw capability.
+    pub(crate) fn clone_without_original_replay(&self) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(
+                self.state
+                    .lock()
+                    .expect("simulation RNG mutex poisoned")
+                    .clone(),
+            )),
+            original_replay: None,
+        }
+    }
 }
 
 impl Serialize for SimulationRng {

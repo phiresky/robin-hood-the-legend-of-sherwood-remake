@@ -256,6 +256,18 @@ impl Engine {
         self.inner.control.rng.original_replay_sites(range)
     }
 
+    /// Clone the complete engine for structured diagnostics while omitting
+    /// the Original parity replay capability, which intentionally cannot be
+    /// serialized as an ordinary save/rollback snapshot.
+    ///
+    /// Diagnostic callers must record [`Self::original_rng_replay_cursor`]
+    /// alongside the returned snapshot. All other engine state is unchanged.
+    pub fn diagnostic_snapshot_without_original_rng_replay(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.inner.control.rng = self.inner.control.rng.clone_without_original_replay();
+        snapshot
+    }
+
     /// Create a fully-initialised engine while preserving ownership of the
     /// supplied campaign if mission ingestion fails.
     ///
@@ -1100,6 +1112,20 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_snapshot_omits_only_nonserializable_original_rng_replay() {
+        let mut inner = EngineInner::new();
+        inner.control.rng = SimulationRng::with_original_replay(vec![11, 22]);
+        let engine = Engine { inner };
+
+        assert!(serde_json::to_value(&engine).is_err());
+        let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
+
+        assert_eq!(engine.original_rng_replay_cursor(), Some(0));
+        assert_eq!(diagnostic.original_rng_replay_cursor(), None);
+        serde_json::to_value(&diagnostic).expect("diagnostic engine must serialize");
+    }
 
     #[test]
     fn campaign_selection_transfers_one_rng_sequence_to_mission_construction() {

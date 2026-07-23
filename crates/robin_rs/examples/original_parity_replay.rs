@@ -9,7 +9,7 @@
 //!       original-code/parity-traces/original-demo-baseline.jsonl
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet};
@@ -20,7 +20,7 @@ use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, Level
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::sector::SectorNumber;
 use robin_rs::Host;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 struct TraceHeader {
@@ -30,7 +30,7 @@ struct TraceHeader {
     synchronous_pathfinding: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
@@ -74,13 +74,13 @@ struct TraceRngOnly {
     rng_draws: Option<TraceRngBatch>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 struct TraceEntityId {
     kind: TraceEntityKind,
     index: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 enum TraceEntityKind {
     Pc,
@@ -111,7 +111,7 @@ impl From<TraceEntityId> for EntityId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 struct TraceFloat {
     bits: u32,
 }
@@ -122,7 +122,7 @@ impl TraceFloat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 struct TracePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -134,7 +134,7 @@ impl From<TracePoint> for MapPoint {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
     GroupMove {
@@ -358,22 +358,39 @@ struct TraceFrame {
     rng_draws: TraceRngBatch,
 }
 
+struct Options {
+    scan_all: bool,
+    trace_path: PathBuf,
+    dump: Option<DumpOptions>,
+}
+
+struct DumpOptions {
+    path: PathBuf,
+    from_frame: u64,
+    through_frame: u64,
+    entities: Vec<TraceEntityId>,
+}
+
+impl DumpOptions {
+    fn includes(&self, frame: u64) -> bool {
+        (self.from_frame..=self.through_frame).contains(&frame)
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt::init();
 
-    let mut scan_all = false;
-    let mut trace_path = None;
-    for arg in std::env::args_os().skip(1) {
-        if arg == "--scan-all" {
-            scan_all = true;
-        } else if trace_path.replace(PathBuf::from(arg)).is_some() {
-            panic!("usage: original_parity_replay [--scan-all] TRACE.jsonl");
-        }
-    }
-    let trace_path = trace_path.expect("usage: original_parity_replay [--scan-all] TRACE.jsonl");
+    let options = parse_options();
+    let scan_all = options.scan_all;
+    let trace_path = options.trace_path;
     let trace_path = trace_path
         .canonicalize()
         .unwrap_or_else(|e| panic!("canonicalize {}: {e}", trace_path.display()));
+    let mut dump = options.dump.map(|options| {
+        let file = File::create(&options.path)
+            .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
+        (options, BufWriter::new(file))
+    });
     let all_rng_draws = read_all_rng_draws(&trace_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
@@ -406,6 +423,24 @@ fn main() {
     assert_eq!(prefix.r#type, "rng_prefix");
     assert_eq!(prefix.draws.first_index, 0);
     let prefix_end = prefix.draws.gameplay_draw_count();
+    if let Some((options, writer)) = &mut dump {
+        write_jsonl_record(
+            writer,
+            &serde_json::json!({
+                "schema": "robin-parity-engine-dump.v1",
+                "type": "header",
+                "source_trace": trace_path,
+                "mission": header.mission,
+                "rng_seed": header.rng_seed,
+                "frame_range": {
+                    "from": options.from_frame,
+                    "through": (options.through_frame != u64::MAX)
+                        .then_some(options.through_frame),
+                },
+                "entity_filter": options.entities,
+            }),
+        );
+    }
 
     assert!(
         all_rng_draws.len() >= prefix_end,
@@ -443,6 +478,8 @@ fn main() {
         let rng_start = gameplay_rng_index;
         let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
+        let resolved_commands =
+            serde_json::to_value(&frame.commands).expect("serialize resolved trace commands");
         assert_eq!(
             engine.original_rng_replay_cursor(),
             Some(rng_start),
@@ -582,6 +619,22 @@ fn main() {
         }
 
         let differences = compare_frame(&engine, &frame, map);
+        if let Some((options, writer)) = &mut dump
+            && options.includes(frame.frame_after)
+        {
+            write_engine_dump_frame(
+                writer,
+                options,
+                &engine,
+                map,
+                &frame,
+                resolved_commands,
+                rng_start,
+                rng_end,
+                actual_rng_end,
+                &differences,
+            );
+        }
         if !differences.is_empty() {
             divergent_frames += 1;
             for difference in &differences {
@@ -621,6 +674,228 @@ fn main() {
             println!("  first {field} divergence after frame {frame}: {example}");
         }
         std::process::exit(1);
+    }
+}
+
+fn parse_options() -> Options {
+    const USAGE: &str = "usage: original_parity_replay [--scan-all] \
+        [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
+        [--dump-entity KIND:INDEX]...] TRACE.jsonl";
+
+    let mut args = std::env::args_os().skip(1);
+    let mut scan_all = false;
+    let mut trace_path = None;
+    let mut dump_path = None;
+    let mut dump_from = 0;
+    let mut dump_through = u64::MAX;
+    let mut dump_entities = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--scan-all") => scan_all = true,
+            Some("--dump-jsonl") => {
+                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
+                assert!(dump_path.replace(PathBuf::from(value)).is_none(), "{USAGE}");
+            }
+            Some("--dump-from") => {
+                dump_from = parse_u64_option(args.next(), "--dump-from");
+            }
+            Some("--dump-through") => {
+                dump_through = parse_u64_option(args.next(), "--dump-through");
+            }
+            Some("--dump-entity") => {
+                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
+                dump_entities.push(parse_dump_entity(&value.to_string_lossy()));
+            }
+            Some(value) if value.starts_with('-') => panic!("unknown option {value:?}\n{USAGE}"),
+            _ => {
+                assert!(trace_path.replace(PathBuf::from(arg)).is_none(), "{USAGE}");
+            }
+        }
+    }
+    let trace_path = trace_path.unwrap_or_else(|| panic!("{USAGE}"));
+    assert!(
+        dump_from <= dump_through,
+        "--dump-from exceeds --dump-through"
+    );
+    assert!(
+        dump_path.is_some()
+            || (dump_from == 0 && dump_through == u64::MAX && dump_entities.is_empty()),
+        "--dump-from, --dump-through, and --dump-entity require --dump-jsonl"
+    );
+    Options {
+        scan_all,
+        trace_path,
+        dump: dump_path.map(|path| DumpOptions {
+            path,
+            from_frame: dump_from,
+            through_frame: dump_through,
+            entities: dump_entities,
+        }),
+    }
+}
+
+fn parse_u64_option(value: Option<std::ffi::OsString>, option: &str) -> u64 {
+    value
+        .unwrap_or_else(|| panic!("{option} requires a value"))
+        .to_string_lossy()
+        .parse()
+        .unwrap_or_else(|_| panic!("{option} must be an unsigned frame number"))
+}
+
+fn parse_dump_entity(value: &str) -> TraceEntityId {
+    let (kind, index) = value
+        .split_once(':')
+        .unwrap_or_else(|| panic!("--dump-entity must be KIND:INDEX, got {value:?}"));
+    let kind = match kind {
+        "pc" => TraceEntityKind::Pc,
+        "soldier" => TraceEntityKind::Soldier,
+        "civilian" => TraceEntityKind::Civilian,
+        "fx" => TraceEntityKind::Fx,
+        "target" => TraceEntityKind::Target,
+        "bonus" => TraceEntityKind::Bonus,
+        "scroll" => TraceEntityKind::Scroll,
+        "projectile" => TraceEntityKind::Projectile,
+        "net" => TraceEntityKind::Net,
+        _ => panic!("unknown --dump-entity kind {kind:?}"),
+    };
+    TraceEntityId {
+        kind,
+        index: index
+            .parse()
+            .unwrap_or_else(|_| panic!("invalid --dump-entity index in {value:?}")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_engine_dump_frame(
+    writer: &mut BufWriter<File>,
+    options: &DumpOptions,
+    engine: &Engine,
+    entity_map: &EntityMap,
+    frame: &TraceFrame,
+    resolved_commands: serde_json::Value,
+    rng_start: usize,
+    expected_rng_end: usize,
+    actual_rng_end: usize,
+    differences: &[String],
+) {
+    let mapped_entities = options
+        .entities
+        .iter()
+        .map(|original| {
+            let rust = entity_map.translate(*original);
+            serde_json::json!({
+                "original": original,
+                "rust": {
+                    "kind": format!("{:?}", rust.kind()).to_lowercase(),
+                    "index": rust.index(),
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    let selected_rust_indices = options
+        .entities
+        .iter()
+        .map(|original| entity_map.translate(*original).index() as usize)
+        .collect::<BTreeSet<_>>();
+    let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
+    let mut engine_value = serde_to_json_value(&diagnostic_engine);
+    if !selected_rust_indices.is_empty() {
+        let entities = engine_value
+            .get_mut("world")
+            .and_then(|world| world.get_mut("entities"))
+            .and_then(serde_json::Value::as_array_mut)
+            .expect("serialized Engine.world.entities must be an array");
+        for (index, entity) in entities.iter_mut().enumerate() {
+            if !selected_rust_indices.contains(&index) {
+                *entity = serde_json::Value::Null;
+            }
+        }
+    }
+    write_jsonl_record(
+        writer,
+        &serde_json::json!({
+            "schema": "robin-parity-engine-dump.v1",
+            "type": "frame",
+            "frame_before": frame.frame_before,
+            "frame_after": frame.frame_after,
+            "input": {
+                "resolved_commands": resolved_commands,
+                "selected_pcs": frame.selected_pcs,
+            },
+            "rng": {
+                "cursor_before": rng_start,
+                "expected_cursor_after": expected_rng_end,
+                "actual_cursor_after": actual_rng_end,
+                "original_frame_draws": frame.rng_draws,
+                "engine_original_replay_stream_omitted": true,
+            },
+            "entity_mapping": mapped_entities,
+            "parity_differences": differences,
+            "engine": engine_value,
+        }),
+    );
+}
+
+fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_json::Value) {
+    serde_json::to_writer(&mut *writer, value).expect("serialize diagnostic JSONL record");
+    writer
+        .write_all(b"\n")
+        .expect("write diagnostic JSONL newline");
+    writer.flush().expect("flush diagnostic JSONL record");
+}
+
+fn serde_to_json_value<T: Serialize + ?Sized>(value: &T) -> serde_json::Value {
+    serde_value_to_json(serde_value::to_value(value).expect("serialize diagnostic engine state"))
+}
+
+fn serde_value_to_json(value: serde_value::Value) -> serde_json::Value {
+    match value {
+        serde_value::Value::Bool(v) => serde_json::Value::Bool(v),
+        serde_value::Value::I8(v) => serde_json::json!(v),
+        serde_value::Value::I16(v) => serde_json::json!(v),
+        serde_value::Value::I32(v) => serde_json::json!(v),
+        serde_value::Value::I64(v) => serde_json::json!(v),
+        serde_value::Value::U8(v) => serde_json::json!(v),
+        serde_value::Value::U16(v) => serde_json::json!(v),
+        serde_value::Value::U32(v) => serde_json::json!(v),
+        serde_value::Value::U64(v) => serde_json::json!(v),
+        serde_value::Value::F32(v) => serde_json::json!(v),
+        serde_value::Value::F64(v) => serde_json::json!(v),
+        serde_value::Value::Char(v) => serde_json::json!(v.to_string()),
+        serde_value::Value::String(v) => serde_json::Value::String(v),
+        serde_value::Value::Bytes(v) => serde_json::json!(v),
+        serde_value::Value::Unit => serde_json::Value::Null,
+        serde_value::Value::Option(v) => v
+            .map(|v| serde_value_to_json(*v))
+            .unwrap_or(serde_json::Value::Null),
+        serde_value::Value::Newtype(v) => serde_value_to_json(*v),
+        serde_value::Value::Seq(values) => {
+            serde_json::Value::Array(values.into_iter().map(serde_value_to_json).collect())
+        }
+        serde_value::Value::Map(entries) => serde_json::Value::Object(
+            entries
+                .into_iter()
+                .map(|(key, value)| (serde_value_key_to_string(key), serde_value_to_json(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn serde_value_key_to_string(key: serde_value::Value) -> String {
+    match key {
+        serde_value::Value::String(v) => v,
+        serde_value::Value::Char(v) => v.to_string(),
+        serde_value::Value::Bool(v) => v.to_string(),
+        serde_value::Value::I8(v) => v.to_string(),
+        serde_value::Value::I16(v) => v.to_string(),
+        serde_value::Value::I32(v) => v.to_string(),
+        serde_value::Value::I64(v) => v.to_string(),
+        serde_value::Value::U8(v) => v.to_string(),
+        serde_value::Value::U16(v) => v.to_string(),
+        serde_value::Value::U32(v) => v.to_string(),
+        serde_value::Value::U64(v) => v.to_string(),
+        other => format!("{other:?}"),
     }
 }
 
