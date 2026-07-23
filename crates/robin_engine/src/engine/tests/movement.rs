@@ -1729,8 +1729,10 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         target_slot: u32,
         target_before_movement: MapPoint,
         target_after_movement: MapPoint,
-        seeker_after_movement: MapPoint,
-        seeker_state: SequenceState,
+        seeker_after_crossing_tolerance: MapPoint,
+        seeker_state_after_crossing_tolerance: SequenceState,
+        seeker_after_next_tolerance_sample: MapPoint,
+        seeker_state_after_next_tolerance_sample: SequenceState,
     }
 
     fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
@@ -1867,6 +1869,23 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         engine.tick_entity_movement(sim, &assets);
         engine.tick_entity_movement(sim, &assets);
 
+        let seeker_after_crossing_tolerance = engine
+            .get_entity(seeker_id)
+            .expect("seeker remains after crossing tolerance")
+            .element_data()
+            .position_map();
+        let seeker_state_after_crossing_tolerance = engine
+            .orders
+            .sequence_manager
+            .get_element(seeker_sequence, 0)
+            .expect("seeker movement remains after crossing tolerance")
+            .state;
+
+        // Entity-target PerformSeek does not re-sample tolerance after its
+        // committed step. The next actor tick observes the now-in-range
+        // position and terminates without another movement commit.
+        engine.tick_entity_movement(sim, &assets);
+
         Observation {
             seeker_slot: seeker_id.index(),
             target_slot: target_id.index(),
@@ -1876,12 +1895,14 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .expect("target remains after movement")
                 .element_data()
                 .position_map(),
-            seeker_after_movement: engine
+            seeker_after_crossing_tolerance,
+            seeker_state_after_crossing_tolerance,
+            seeker_after_next_tolerance_sample: engine
                 .get_entity(seeker_id)
                 .expect("seeker remains after movement")
                 .element_data()
                 .position_map(),
-            seeker_state: engine
+            seeker_state_after_next_tolerance_sample: engine
                 .orders
                 .sequence_manager
                 .get_element(seeker_sequence, 0)
@@ -1897,23 +1918,31 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 seeker_slot: 0,
                 target_slot: 1,
                 target_before_movement: MapPoint::new(10.0, 0.0),
-                // The target turns one sector toward +X on this frame, so
-                // the original 20-unit frame distance receives the 0.6 turn
-                // slowdown and commits a 12-unit step.
                 target_after_movement: MapPoint::new(30.0, 0.0),
-                seeker_after_movement: MapPoint::new(12.0, 0.0),
-                seeker_state: SequenceState::Terminated,
+                // This seeker observes the target's pre-movement position,
+                // which is already within 15 units, and terminates without
+                // committing a step.
+                seeker_after_crossing_tolerance: MapPoint::new(0.0, 0.0),
+                seeker_state_after_crossing_tolerance: SequenceState::Terminated,
+                seeker_after_next_tolerance_sample: MapPoint::new(0.0, 0.0),
+                seeker_state_after_next_tolerance_sample: SequenceState::Terminated,
             },
             Observation {
                 seeker_slot: 1,
                 target_slot: 0,
                 target_before_movement: MapPoint::new(10.0, 0.0),
                 target_after_movement: MapPoint::new(30.0, 0.0),
-                seeker_after_movement: MapPoint::new(12.0, 0.0),
-                seeker_state: SequenceState::Terminated,
+                // This seeker observes the target after its movement. Two
+                // 12-unit turning-slowed frames cross into tolerance, but
+                // the second frame remains in progress until the next
+                // pre-motion sample.
+                seeker_after_crossing_tolerance: MapPoint::new(24.0, 0.0),
+                seeker_state_after_crossing_tolerance: SequenceState::InProgress,
+                seeker_after_next_tolerance_sample: MapPoint::new(24.0, 0.0),
+                seeker_state_after_next_tolerance_sample: SequenceState::Terminated,
             },
         ],
-        "both creation-order observations become seek arrivals only after the seeker's own committed step"
+        "seek tolerance uses the target position visible at the actor boundary and is not re-sampled after a committed step"
     );
 }
 

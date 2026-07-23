@@ -144,6 +144,7 @@ impl EngineInner {
                         .get_mut(owner)
                         .and_then(|entity| entity.actor_data_mut())
                     {
+                        actor.wait_time = 0;
                         actor.seek_refresh_wait = 25;
                     }
                     if resolved.stop_npc {
@@ -160,6 +161,7 @@ impl EngineInner {
                     {
                         actor.seek_target = None;
                         actor.last_seek_target_position = stored_destination;
+                        actor.wait_time = 0;
                         actor.seek_refresh_wait = 25;
                     }
                     stored_destination
@@ -219,6 +221,18 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
+        // An actor order can terminate during the preceding entity phase.
+        // Original `SetState` closes its `SendCondolationCard` / `Ready`
+        // stack immediately, so a postponed successor is registered before
+        // `RHSequenceManager::Hourglass` starts and is instructed by that
+        // same drain. Rust defers the callback to avoid re-entrant borrows;
+        // close any such pre-existing stacks before collecting manager work.
+        //
+        // This deliberately does not process paths. A resumed Move/Seek is
+        // translated below, after this frame's path phase, and its request
+        // remains queued for the next frame just as in the Original.
+        self.dispatch_condolations(sim, assets);
+
         // AI Think reached from an entity/NPC slot can launch GoTo after the
         // pre-entity order drain. Original registers that Move immediately,
         // so the sequence-manager Hourglass below still instructs it in this

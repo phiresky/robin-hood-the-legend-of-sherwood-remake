@@ -1241,6 +1241,7 @@ impl WaitCommandContext<'_> {
                 .unwrap_or_else(|| {
                     panic!("WAIT_TIMER owner {owner:?} vanished during translation")
                 });
+            actor.seek_refresh_wait = 0;
             actor.wait_time = timer;
         }
         if is_pc
@@ -1253,6 +1254,7 @@ impl WaitCommandContext<'_> {
                 .and_then(Entity::actor_data_mut)
                 .unwrap_or_else(|| panic!("Wait translation listening owner {owner:?} vanished"));
             const TIME_LISTEN_WAIT: u32 = 25;
+            actor.seek_refresh_wait = 0;
             actor.wait_time = TIME_LISTEN_WAIT;
         }
         if set_posture_stuck_under_net {

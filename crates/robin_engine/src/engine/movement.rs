@@ -270,6 +270,39 @@ fn movement_execute_state_effect(
     }
 }
 
+/// Motion state observed by the Original Execute arm after `PerformSeek`.
+///
+/// Entity-target `PerformSeek` consumes a walking sprite's initial `START`
+/// result and returns `IN_PROGRESS`; point seeks return the raw result. This
+/// matters because walking and sword-walking update their action state only
+/// when their Execute switch observes `START`. Running upright is deliberately
+/// excluded: its Original Execute arm sets `MOVING_FAST` unconditionally after
+/// `PerformSeek`.
+fn movement_execute_visible_motion(
+    order: OrderType,
+    motion: MotionState,
+    reaches_goal_this_step: bool,
+    entity_target_seek: bool,
+) -> MotionState {
+    if reaches_goal_this_step && matches!(motion, MotionState::Start) {
+        return MotionState::Terminated;
+    }
+    if entity_target_seek
+        && matches!(motion, MotionState::Start)
+        && matches!(
+            order,
+            OrderType::WalkingUpright
+                | OrderType::WalkingAlerted
+                | OrderType::WalkingCrouched
+                | OrderType::WalkingWithSword
+                | OrderType::RunningWithSword
+        )
+    {
+        return MotionState::InProgress;
+    }
+    motion
+}
+
 fn is_in_place_movement_transition(order: OrderType) -> bool {
     matches!(
         order,
@@ -5119,14 +5152,13 @@ impl EngineInner {
             // Execute arm does not enter the Moving action state. Our
             // position update is staged below; fold that imminent arrival
             // into the state-effect result now.
-            let state_effect_motion = if !is_transition_anim
-                && matches!(motion_state, MotionState::Start)
-                && dist <= speed
-            {
-                MotionState::Terminated
-            } else {
-                motion_state
-            };
+            let state_effect_motion = movement_execute_visible_motion(
+                order_action,
+                motion_state,
+                !is_transition_anim && dist <= speed,
+                active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
+                    && ft.target_id.is_some(),
+            );
             tracing::trace!(
                 entity = ?entity_id,
                 frame = self.control.frame_counter,
@@ -5583,7 +5615,7 @@ impl EngineInner {
                     dist_sq < ft.tol * ft.tol * 1.1025
                 }
             };
-            let mut tolerance_arrival = seek_tolerance_reached(elem.position_map(), elem.sector());
+            let tolerance_arrival = seek_tolerance_reached(elem.position_map(), elem.sector());
 
             // FROZEN stand-still wait.  When the seek arrival
             // predicate fires at an intermediate waypoint and there
@@ -5612,12 +5644,17 @@ impl EngineInner {
                 continue;
             }
 
-            // Original `RHSprite::PerformMotion` commits every nonzero
-            // ordinary frame through `UpdatePositionAntiCollision` before
-            // asking `IsGoalReached`.  Re-enter this single arrival tail
-            // after the commit so intermediate/final waypoints and the
-            // seek/door-pass overlays cannot diverge.
-            let mut post_step_arrival = dist <= f32::EPSILON;
+            // Original entity-target `PerformSeek` samples its live-target
+            // tolerance before `PerformMotion`. If already in range it takes
+            // the frozen/post-seek arm without committing a movement step.
+            // If this frame's step merely crosses into range, that new
+            // distance is not sampled until the next actor Hourglass.
+            //
+            // Ordinary waypoint arrival is different: PerformMotion commits
+            // through UpdatePositionAntiCollision and then asks
+            // IsGoalReached. Re-enter the shared tail after that commit while
+            // retaining (not recomputing) the pre-motion seek predicate.
+            let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
             'arrival: loop {
                 if line_snap_arrival || post_step_arrival {
                     // Reached waypoint — snap to it and advance
@@ -6059,10 +6096,6 @@ impl EngineInner {
                     let movement_goal_reached = entity
                         .position_iface()
                         .is_goal_reached(&self.world.fast_grid, None);
-                    tolerance_arrival = seek_tolerance_reached(
-                        entity.element_data().position_map(),
-                        entity.element_data().sector(),
-                    );
                     point_seek_post_arrival = is_final_waypoint
                         && movement_goal_reached
                         && point_seek_post_sectors[actor_id]
@@ -8162,6 +8195,7 @@ impl EngineInner {
                 actor.last_seek_target_position = target_pos;
                 actor.seek_target = target_id;
                 // TIME_SEEK_REFRESH = 25.
+                actor.wait_time = 0;
                 actor.seek_refresh_wait = 25;
             }
             // `sequence_element_started` flips true once the movement
@@ -8518,6 +8552,55 @@ mod line_jump_tests {
                 MotionState::Done
             ),
             Some((Posture::Upright, ActionState::Waiting))
+        );
+    }
+
+    #[test]
+    fn entity_seek_hides_initial_sword_motion_start_from_execute() {
+        use crate::sprite::MotionState;
+
+        assert_eq!(
+            movement_execute_visible_motion(
+                OrderType::RunningWithSword,
+                MotionState::Start,
+                false,
+                true,
+            ),
+            MotionState::InProgress,
+            "entity-target PerformSeek returns IN_PROGRESS around the sprite's START"
+        );
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::RunningWithSword,
+                movement_execute_visible_motion(
+                    OrderType::RunningWithSword,
+                    MotionState::Start,
+                    false,
+                    true,
+                ),
+            ),
+            None,
+            "the Human Execute switch must retain WaitingSword"
+        );
+        assert_eq!(
+            movement_execute_visible_motion(
+                OrderType::RunningWithSword,
+                MotionState::Start,
+                false,
+                false,
+            ),
+            MotionState::Start,
+            "point and ordinary movement expose the sprite's START"
+        );
+        assert_eq!(
+            movement_execute_visible_motion(
+                OrderType::RunningUpright,
+                MotionState::Start,
+                false,
+                true,
+            ),
+            MotionState::Start,
+            "running upright sets MovingFast after PerformSeek unconditionally"
         );
     }
 

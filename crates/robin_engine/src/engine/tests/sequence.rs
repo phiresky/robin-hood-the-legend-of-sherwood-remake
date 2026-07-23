@@ -126,6 +126,126 @@ fn exhausted_generic_order_carrier_terminates_on_resume() {
 }
 
 #[test]
+fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+
+    let mut blocker = SequenceElement::new_generic(1, Command::Generic, Some(owner));
+    blocker.priority = SequencePriority::PostponeEverythingButInjuries;
+    blocker.posture_after_transition = Posture::Upright;
+    blocker.orders.push_back(Order::new(
+        OrderType::TransitionRaisingSword,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let blocker_sequence = engine.orders.sequence_manager.launch_element(blocker);
+    // This fixture starts after instruction, at the actor-execution boundary.
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(blocker_sequence, 0);
+
+    let mut successor = SequenceElement::new_generic(1, Command::Generic, Some(owner));
+    successor.priority = SequencePriority::Normal;
+    successor.posture_after_transition = Posture::Upright;
+    successor.orders.push_back(Order::new(
+        OrderType::RunningWithSword,
+        10.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let successor_sequence = engine.orders.sequence_manager.launch_element(successor);
+    // Consume the original launch registration: arbitration has postponed
+    // this work behind the live blocker, so only blocker completion may
+    // register it again.
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .postpone_element(successor_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(blocker_sequence, 0)
+        .unwrap()
+        .cross_postponed = Some((successor_sequence, 0));
+
+    // Actor execution ends before SequenceManager::Hourglass. The terminal
+    // card is intentionally still pending when the sequence phase begins.
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(blocker_sequence, 0);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(successor_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress,
+        "postponed work released by actor completion must be instructed by the same manager drain"
+    );
+}
+
+#[test]
+fn post_seek_handoff_clears_selected_movement_goal() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .position_iface_mut()
+        .set_map_goal(crate::coordinates::MapPoint::new(70.0, 80.0));
+
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .post_seek_sequence = Some(Box::new(post_seek));
+
+    let seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+    let seek_sequence = engine.orders.sequence_manager.launch_element(seek);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(seek_sequence, 0);
+
+    assert!(engine.start_post_seek_sequence(owner, Some((seek_sequence, 0))));
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        crate::coordinates::MapPoint::ZERO,
+        "SendCondolationCard clears the selected seek goal before post-seek launch"
+    );
+}
+
+#[test]
 fn parry_sword_queues_transition_and_hold_orders() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

@@ -1075,6 +1075,42 @@ impl EngineInner {
         }
     }
 
+    /// Value corresponding to Original `RHElementActor::mulWaitTime`.
+    ///
+    /// Rust keeps the seek-refresh countdown separate from ordinary command
+    /// waits, while the Original reuses `mulWaitTime` for both. Debug/parity
+    /// consumers need this isomorphic view rather than comparing the Rust
+    /// storage layout literally.
+    pub fn actor_legacy_wait_time(&self, actor: EntityId) -> u32 {
+        let entity = self
+            .get_entity(actor)
+            .unwrap_or_else(|| panic!("actor_legacy_wait_time: missing actor {actor:?}"));
+        let data = entity
+            .actor_data()
+            .unwrap_or_else(|| panic!("actor_legacy_wait_time: non-actor {actor:?}"));
+
+        if let Some(sequence_id) = data.active_movement.sequence_id
+            && let Some(element) = self
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, data.active_movement.element_index)
+            && let crate::sequence::SequenceElementData::Movement { flags, .. } = &element.data
+            && flags.contains(crate::sequence::MoveFlags::SEEK)
+        {
+            return data.seek_refresh_wait;
+        }
+
+        // Original leaves the overloaded seek countdown untouched when the
+        // post-seek interaction takes over. Rust has already cleared
+        // `active_movement` at that boundary, but the split seek field remains
+        // the isomorphic value until another ordinary wait owns the scalar.
+        if data.wait_time == 0 && data.seek_refresh_wait != 0 {
+            data.seek_refresh_wait
+        } else {
+            data.wait_time
+        }
+    }
+
     /// Current animation/order type for parity diagnostics.
     pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
         self.orders
@@ -2409,6 +2445,18 @@ impl EngineInner {
         let Some(post_seek) = post_seek else {
             return false;
         };
+
+        // `SetState(Terminated)` synchronously calls the selected actor's
+        // SendCondolationCard in Original, which clears the old movement goal
+        // before `StartPostSeekSequence` launches the interaction. Rust
+        // defers that callback to avoid a re-entrant borrow, so perform this
+        // selected-seek cleanup at the same handoff boundary.
+        if seek_element.is_some() {
+            self.get_entity_mut(owner)
+                .unwrap_or_else(|| panic!("post-seek owner {owner:?} disappeared"))
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
 
         if let Some(target_id) = target
             && self.get_entity(target_id).is_some_and(|e| e.is_pc())

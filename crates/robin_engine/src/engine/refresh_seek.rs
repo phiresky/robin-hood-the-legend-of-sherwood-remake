@@ -377,6 +377,7 @@ impl crate::engine::EngineInner {
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.last_seek_target_position = new_target_pos;
+            actor.wait_time = 0;
             actor.seek_refresh_wait = 25;
         }
 

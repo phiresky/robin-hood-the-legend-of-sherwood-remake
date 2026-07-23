@@ -1784,7 +1784,7 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 id,
                 "actor.wait_time",
                 expected_actor.wait_time,
-                actual_actor.wait_time,
+                engine.actor_legacy_wait_time(id),
             );
             compare(
                 &mut differences,
