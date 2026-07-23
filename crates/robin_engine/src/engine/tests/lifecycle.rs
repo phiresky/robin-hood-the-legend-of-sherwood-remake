@@ -927,6 +927,89 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
 }
 
 #[test]
+fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine.get_entity_mut(owner).unwrap().element_data_mut().active = false;
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .is_none(),
+        "regression requires Actor::Hourglass to synthesize the idle Wait"
+    );
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert!(!entity.is_active());
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(seq, index)| engine.orders.sequence_manager.get_element(seq, index))
+            .map(|element| element.command),
+        Some(Command::Wait),
+        "inactive Actor::Hourglass must lazily install the same Wait as an active actor"
+    );
+
+    let animated = engine.add_entity(make_test_pc(Posture::Upright));
+    let script = SpriteScript {
+        action_id: OrderType::WaitingUpright as u16,
+        action_done: 3,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3, 4],
+        delays: vec![2; 4],
+        distances: vec![0; 4],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+        sound_ids: vec![0; 4],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::WaitingUpright as usize] = 0;
+    let entity = engine.get_entity_mut(animated).unwrap();
+    entity.element_data_mut().active = false;
+    entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
+    entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(conversion),
+    );
+
+    let mut selected = SequenceElement::new(1, Command::Wait, Some(animated));
+    selected
+        .orders
+        .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
+    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    let (_, _, executed) = engine.tick_actor_animation_for(&sim, &assets, animated);
+    let entity = engine.get_entity(animated).unwrap();
+    assert!(
+        executed.is_some(),
+        "inactive Actor::Hourglass must execute the selected idle order"
+    );
+    assert_eq!(entity.sprite().last_action, OrderType::WaitingUpright);
+    assert!(
+        entity.sprite().frame_count > 0 || entity.sprite().current_frame > 0,
+        "inactive Actor::Hourglass must advance the bound idle animation"
+    );
+}
+
+#[test]
 fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveShot;

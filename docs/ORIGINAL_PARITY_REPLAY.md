@@ -25,10 +25,13 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   behavioral divergence.
 
 The current verified clean prefix is through frame 44. At frame 45 soldier 122
-has action state `Moving` in Original and `Waiting` in Rust while both expose a
-wait-like command/animation. Trace the movement completion or retained action
-state responsible for that state-only difference. Increase the clean-prefix
-statement only after a normal first-divergence run has passed that frame.
+has action state `Bored` (Original discriminant 1) while Rust retains `Waiting`.
+The actor is inactive in both worlds; Original still advances its idle Wait
+through the waiting-to-bored transition because activity is not an Hourglass
+eligibility gate. Rust now executes inactive actors, but the baseline still
+finds this frame-45 mismatch with Rust on `WaitingUpright`; audit the remaining
+idle-order timing/transition difference. Increase the clean-prefix statement
+only after a normal first-divergence run has passed that frame.
 
 ## Change ledger
 
@@ -60,6 +63,7 @@ statement only after a normal first-divergence run has passed that frame.
 | Done | Post-step intermediate arrival | At frame 32 soldier 89 has crossed its non-final waypoint only after committing the anti-collision step. Original runs `IsGoalReached` after `PerformMotion` and retires the waypoint in that owner slot; Rust only had the pre-step arrival check and retained the old patrol goal. | Non-final zero-tolerance movement now performs the post-step arrival check and pops the intermediate order at the same owner boundary. A worktree refactor is generalizing the shared final/tolerance/door arrival tail and its regression coverage. |
 | Done | Running patrol member `FaceTo` boundary | At frame 32 soldiers 95 and 97 receive a near-point-backwards `FaceTo` from their chief before their own creation slots. Original `Stop` rewrites the live run into a running-to-waiting transition, lets that slot commit its six-unit frame, then instructs the already-computed Turn in the sequence-manager phase. Eager Rust instruction skipped the transition movement; partially deferring it recomputed facing from the later position and lost the retained patrol goal. | Standalone Turns produced by cross-owner patrol coordination defer instruction only for a running member. The direction is frozen at `FaceTo` time, the movement goal is carried through and restored at Turn instruction, and walking/mixed-order patrol cases retain their existing synchronous behavior. Replay matches positions, directions, goals, commands, and the follow-on duplicate Turn through frame 37. |
 | Done | Cached movement increments and transition arrival | At frame 39 Rust advanced soldier 96 but left soldier 98 at the end of their run-to-walk transitions; Original did the reverse. The branch was determined by tiny signed dot products. Rust renormalized the remaining goal vector every ordinary frame instead of using `GetIncrementMap`, drifting the chief's historical patrol positions and the later formation targets. Rust also omitted `RHMOTIONMETHOD_TILL_LAST_FRAME`'s per-step arrival snap/zeroing and treated a merely-near destination as exactly equal when initializing the copied continuation. | Ordinary motion now uses the increment cached by order initialization and rebuilt by anti-collision, the 16-sector helper uses Original's literal float table, and non-deflecting anti-collision avoids a subtract/add round trip. Transition motion checks arrival after every committed step, zeros both increment representations, and snaps exactly under Original's deviation/tolerance gates. Fresh non-transition motion only short-circuits on exact point equality. This selects the correct continuation for soldiers 96/98 and retires it at the correct owner boundary, matching through frame 44. |
+| In progress | Inactive actor Hourglass | At frame 45 inactive soldier 122 changes from `Waiting` to `Bored` in Original while Rust leaves its idle sequence frozen. `RHEngine::Hourglass` calls every element's virtual Hourglass without testing `IsActive`; `RHElementActor::Hourglass` still installs a missing Wait and executes the current order. The active flag controls world/render presence and actor anti-collision, not sequence time. | Inactive actors now receive lazy Wait initialization and generic sprite Execute at their normal creation-order slot. Regression coverage verifies both gates. The baseline still diverges at frame 45 with Rust on `WaitingUpright`, so the remaining idle-order start/completion timing or generated transition chain must be audited before marking this row done. |
 | In progress | Frame-38 idle-look frontier | Soldier 83 is in `LookLeft` / AI substate 20 in Original but `Wait` / substate 21 in Rust. | Audit the patrol or idle-action continuation and its exact owner/RNG boundary from the now-clean frame-37 state. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
@@ -82,6 +86,34 @@ ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --scan-all \
   original-code/parity-traces/original-demo-rng-baseline.jsonl
 ```
+
+For interactive inspection, start the headless runner paused with its local
+HTTP endpoint:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
+  target/debug/examples/original_parity_replay \
+  --http-server 17640 --start-paused \
+  original-code/parity-traces/original-demo-rng-baseline.jsonl
+```
+
+While it is running, `GET /engine-dump` returns the complete current engine,
+`GET /state` reports the frame, and the existing controls advance the Original
+trace while retaining its recorded commands and RNG stream:
+
+```sh
+curl -s http://127.0.0.1:17640/engine-dump
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"n":1}' http://127.0.0.1:17640/step-forward
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"frame":45}' http://127.0.0.1:17640/go-to-frame
+```
+
+Forward steps reply only after all requested frames match. A divergence halts
+advancement and makes the in-flight step fail, but leaves `/engine-dump` and the
+other inspection endpoints alive at the divergent frame. Backward stepping is
+deliberately unsupported: restart the runner and use forward `go-to-frame` so
+every inspected state is rebuilt from the mission-start trace contract.
 
 For every newly fixed divergence:
 

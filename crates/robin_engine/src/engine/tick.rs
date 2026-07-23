@@ -3037,25 +3037,17 @@ impl EngineInner {
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
-                    let actor_is_active = self
-                        .world
-                        .entities
-                        .get(entity_id)
-                        .unwrap_or_else(|| {
+                    // `RHEngine::Hourglass` calls every element's virtual
+                    // Hourglass regardless of `IsActive()`. Actor::Hourglass
+                    // then installs Wait whenever its order is empty. Active
+                    // controls world presence/rendering, not sequence time.
+                    self.ensure_wait_element(entity_id);
+                    self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                        .unwrap_or_else(|error| {
                             panic!(
-                                "actor {entity_id:?} vanished before Wait initialization at legacy slot {slot}"
+                                "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
                             )
-                        })
-                        .is_active();
-                    if actor_is_active {
-                        self.ensure_wait_element(entity_id);
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
-                                )
-                            });
-                    }
+                        });
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
                         entity_id,
