@@ -6084,6 +6084,35 @@ fn unavailable_state_change_callbacks_are_consumed() {
         "bound VM does not bypass the owner's is_scripted gate"
     );
 
+    let mut unscripted_tail = EngineInner::new();
+    let actor = unscripted_tail.add_entity(make_scripted_soldier(""));
+    queue_seeking(&mut unscripted_tail, actor);
+    {
+        let ai = unscripted_tail
+            .world
+            .entities
+            .get_mut(actor)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap();
+        ai.set_ai_state(crate::ai::AiState::Default);
+        ai.current_substate = crate::ai::Substate::DefaultEnroute;
+    }
+    unscripted_tail.drain_ai_state_change_notifications_for(&sim, &assets, actor);
+    let ai = unscripted_tail
+        .world
+        .entities
+        .get(actor)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert_eq!(ai.current_state, crate::ai::AiState::Default);
+    assert_eq!(ai.current_substate, crate::ai::Substate::DefaultEnroute);
+    assert!(
+        ai.outbox.reentrant.owner_work.is_empty(),
+        "an unavailable callback is consumed without rewinding a later handler-tail state"
+    );
+
     let mut disabled = EngineInner::new();
     let actor = disabled.add_entity(make_scripted_soldier("StateRecorder"));
     let assets = install_state_change_script(

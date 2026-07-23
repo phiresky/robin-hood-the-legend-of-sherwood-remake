@@ -2822,8 +2822,6 @@ impl EngineInner {
                 let ai = entity
                     .ai_controller_mut()
                     .unwrap_or_else(|| panic!("AI SetState owner {} lost its AI", owner.index()));
-                ai.set_ai_state(notification.outgoing_state);
-                ai.current_substate = notification.outgoing_substate;
                 let later_work = std::mem::take(&mut ai.outbox.reentrant.owner_work);
                 let is_scripted = entity
                     .actor_data()
@@ -2846,8 +2844,49 @@ impl EngineInner {
                     .mission
                     .as_ref()
                     .is_some_and(|script| script.actor_has_function(handle, "FilterAIEvent"));
+            if !should_call {
+                // With no observable synchronous callback, consuming the
+                // deferred notification must not rewind canonical AI state.
+                // The pure-Rust handler may already have performed a later
+                // direct state mutation after SetState returned (Original's
+                // one-point macro completion does this before re-entering
+                // EVENT_REACHPOINT).
+                self.world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "AI SetState owner {} vanished while consuming callback {}",
+                            owner.index(),
+                            work_index
+                        )
+                    })
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .extend(later_work);
+                continue;
+            }
+
+            {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "AI SetState owner {} vanished before callback rewind {}",
+                            owner.index(),
+                            work_index
+                        )
+                    });
+                ai.set_ai_state(notification.outgoing_state);
+                ai.current_substate = notification.outgoing_substate;
+            }
             #[cfg(test)]
-            if should_call {
+            {
                 let entity = self.world.entities.get(owner).unwrap_or_else(|| {
                     panic!(
                         "AI SetState owner {} vanished before observation",
@@ -2898,16 +2937,14 @@ impl EngineInner {
                     }
                 });
             }
-            if should_call
-                && let Err(error) = self.call_script_vm(
-                    sim,
-                    assets,
-                    ScriptVmKey::Actor(handle),
-                    "FilterAIEvent",
-                    &[source, code],
-                    crate::natives::ScriptCallFrame::actor(handle),
-                )
-            {
+            if let Err(error) = self.call_script_vm(
+                sim,
+                assets,
+                ScriptVmKey::Actor(handle),
+                "FilterAIEvent",
+                &[source, code],
+                crate::natives::ScriptCallFrame::actor(handle),
+            ) {
                 tracing::warn!(
                     actor_handle = handle,
                     source_handle = source,
