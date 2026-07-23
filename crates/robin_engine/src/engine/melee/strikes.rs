@@ -2008,9 +2008,9 @@ impl EngineInner {
                 continue;
             }
 
-            // Don't propose a second strike while one is still in
-            // flight.  We fold the special-strike substate into the
-            // pending-flag instead of a distinct substate.
+            // Don't propose a second strike while one is still in flight.
+            // The latch also covers cancellation reconciliation for the
+            // explicit special-strike substate.
             if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
                 && ai.pending_special_strike
             {
@@ -2381,23 +2381,21 @@ impl EngineInner {
             };
 
             // Flag the pending special strike and cancel movement so
-            // the soldier stands still during the delay.  We fold
-            // the special-strike substate into `AttackingSwordfight`
-            // + `EnemyAi::pending_special_strike` (see the deletion
-            // comment in `ai.rs`).  `begin_special_strike` sets the
-            // flag and transitions to `AttackingSwordfight`; the
+            // the soldier stands still during the delay.
+            // `begin_special_strike` sets the lifecycle latch and enters the
+            // observable legacy special-strike substate; the
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
-            self.stop_owner(
-                attack.soldier_id,
-                crate::sequence::SequencePriority::Preference,
-            );
             if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(attack.soldier_id)
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.begin_special_strike();
             }
             self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
+            self.stop_owner(
+                attack.soldier_id,
+                crate::sequence::SequencePriority::Preference,
+            );
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.

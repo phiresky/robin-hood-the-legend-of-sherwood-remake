@@ -6001,8 +6001,8 @@ fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
     assert!(ai.base.outbox.reentrant.owner_work.is_empty());
     assert_eq!(
         npc_custom_values(&engine, enemy)[9],
-        5,
-        "same-substate special strike must not emit an Enemy callback"
+        6,
+        "the observable special-strike substate must emit and drain its Enemy callback"
     );
 }
 

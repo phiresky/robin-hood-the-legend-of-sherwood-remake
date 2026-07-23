@@ -2534,6 +2534,26 @@ impl EngineInner {
         }
     }
 
+    /// Apply only an AI controller's pending synchronous `StopAll` barrier.
+    ///
+    /// Some original AI routines stop existing work and then immediately
+    /// launch replacement work inside one call. Their Rust counterparts must
+    /// consume the halt before launching that replacement, without draining
+    /// unrelated queued actor effects at the nested boundary.
+    pub(crate) fn apply_pending_ai_halt(&mut self, owner: EntityId) {
+        let take_halt = self
+            .get_entity_mut(owner)
+            .unwrap_or_else(|| panic!("pending-halt owner {} disappeared", owner.index()))
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("pending-halt owner {} has no AI controller", owner.index()))
+            .outbox
+            .actor
+            .take_halt();
+        if take_halt {
+            self.halt_actor(owner);
+        }
+    }
+
     /// Launch a one-shot damage sequence; wraps
     /// [`Self::launch_sequence`] so the damage element's priority is
     /// resolved eagerly.

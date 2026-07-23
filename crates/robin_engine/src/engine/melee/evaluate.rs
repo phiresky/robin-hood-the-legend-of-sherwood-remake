@@ -1373,15 +1373,12 @@ impl EngineInner {
             // fallback — so soldiers not in these substates simply
             // get nothing.
             if is_npc_soldier {
-                // The reference also lists SpecialStrike explicitly;
-                // we folded that substate into `AttackingSwordfight`
-                // (see `ai.rs`).  The plain `AttackingSwordfight`
-                // arm covers what the old SpecialStrike arm did — a
-                // soldier mid-strike can still parade an incoming
-                // blow.
+                // A soldier mid-special-strike can still parade an incoming
+                // blow; Original explicitly includes that observable state.
                 let in_swordfight_substate = matches!(
                     npc_substate,
                     Some(crate::ai::Substate::AttackingSwordfight)
+                        | Some(crate::ai::Substate::AttackingSwordfightSpecialStrike)
                         | Some(crate::ai::Substate::AttackingMovingAroundOldEnemy)
                         | Some(crate::ai::Substate::AttackingApproachingNewEnemy)
                 );
@@ -1925,6 +1922,13 @@ impl EngineInner {
                 {
                     ai.stop_all();
                 }
+                // `RHArtificialMalignity::ConsiderToBeginParade` performs
+                // StopAll synchronously before either GoTo or the parry
+                // sequence launch. Close the callback boundary and then apply
+                // that narrow halt barrier now, so it cannot interrupt the
+                // replacement work below.
+                self.drain_ai_owner_work_for(sim, assets, victim_id);
+                self.apply_pending_ai_halt(victim_id);
 
                 // Step-back dodge for push-back strikes if
                 // fighting ability is high enough.
@@ -2070,7 +2074,6 @@ impl EngineInner {
                 // `begin_special_strike` (single owner for the
                 // transition); StopAll is applied immediately before
                 // the counter-strike sequence is queued.
-                self.stop_owner(victim_id, crate::sequence::SequencePriority::Preference);
                 if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
                     && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                 {
@@ -2078,6 +2081,7 @@ impl EngineInner {
                     ai.begin_special_strike();
                 }
                 self.drain_ai_owner_work_for(sim, assets, victim_id);
+                self.stop_owner(victim_id, crate::sequence::SequencePriority::Preference);
 
                 // Launch counter-strike sequence
                 let counter_cmd = counter_strike.to_command();

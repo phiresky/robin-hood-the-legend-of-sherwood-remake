@@ -4466,13 +4466,10 @@ impl EnemyAi {
             // `reconsider_swordfight`, and (if still in the same
             // substate) says `CombatInsult`.
             //
-            // `pending_special_strike` gate: a folded-in special-strike
-            // arm — since we don't model SpecialStrike as a distinct
-            // substate, we skip `reconsider_swordfight` while a strike
-            // sequence is in flight.  The per-tick reconciliation in
-            // `engine/melee.rs::tick_enemy_sword_attacks` clears the
-            // flag and relaunches the 20-frame heartbeat once the
-            // sequence ends.
+            // Special-strike work occupies its own legacy substate and
+            // therefore does not enter this ordinary swordfight arm. The
+            // lifecycle latch remains as a cancellation guard; reconciliation
+            // restores this state and relaunches the 20-frame heartbeat.
             Substate::AttackingSwordfight => {
                 if matches!(
                     stimulus_type,
@@ -4495,6 +4492,18 @@ impl EnemyAi {
                             self.base.say(Remark::CombatInsult);
                         }
                     }
+                }
+            }
+
+            // A completed (or timed-out) strike returns to the ordinary
+            // swordfight heartbeat. This is an observable legacy substate,
+            // not merely an internal sequence latch.
+            Substate::AttackingSwordfightSpecialStrike => {
+                if matches!(
+                    stimulus_type,
+                    StimulusType::EventDone | StimulusType::EventTimer
+                ) {
+                    self.finish_special_strike(ctx.frame);
                 }
             }
 

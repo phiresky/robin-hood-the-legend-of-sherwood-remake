@@ -892,11 +892,10 @@ impl EnemyAi {
                 }
             }
 
-            // Special-strike gloating remark. Substate guard is
-            // `SUBSTATE_ATTACKING_SWORDFIGHT_SPECIAL_STRIKE`, which the
-            // port collapsed into the `pending_special_strike` flag.
+            // Special-strike gloating remark. Original guards on the
+            // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                if self.pending_special_strike {
+                if self.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
                     let remark = if self.is_vip {
                         Remark::VipGoodStrikeCombat
                     } else {
@@ -907,7 +906,7 @@ impl EnemyAi {
             }
             // Kill remark.
             StimulusType::EventLethalStrike => {
-                if self.pending_special_strike {
+                if self.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
                     let remark = if self.is_vip {
                         Remark::VipVictory
                     } else {

@@ -38,9 +38,9 @@ pub struct EnemyAi {
     pub base: AiController,
 
     /// True while this soldier has a pending/in-flight special-strike
-    /// sequence (prep wait + strike animation).  Replaces the deleted
-    /// `Substate::AttackingSwordfightSpecialStrike` — see the comment in
-    /// `ai.rs` next to `AttackingSwordfight` for the why.  Set by
+    /// sequence (prep wait + strike animation). Mirrors the observable
+    /// `Substate::AttackingSwordfightSpecialStrike` while also giving
+    /// cancellation reconciliation a direct sequence-lifecycle latch. Set by
     /// `begin_special_strike()`; cleared by per-tick reconciliation in
     /// `engine/melee.rs::tick_enemy_sword_attacks` when the sequence
     /// manager no longer has an active sword-strike element for this
@@ -2739,17 +2739,17 @@ impl EnemyAi {
     /// `tick_enemy_sword_attacks` (delayed strike) and
     /// `ConsiderToBeginParade` (counter-strike).
     ///
-    /// We deliberately don't use a distinct substate — see the
-    /// deletion comment in `ai.rs` next to `AttackingSwordfight`.
-    /// The soldier stays in `AttackingSwordfight` throughout; the
-    /// flag gates `tick_enemy_sword_attacks` from proposing a second
+    /// The flag gates `tick_enemy_sword_attacks` from proposing a second
     /// strike while one is in flight, and is cleared by per-tick
     /// reconciliation once the sequence no longer exists (any reason
     /// — natural completion or interruption), making the old wedge
     /// impossible by construction.
     pub fn begin_special_strike(&mut self) {
         self.pending_special_strike = true;
-        self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        self.set_state(
+            AiState::Attacking,
+            Substate::AttackingSwordfightSpecialStrike,
+        );
     }
 
     /// Reconcile `pending_special_strike` against the sequence
@@ -2762,12 +2762,31 @@ impl EnemyAi {
     /// `stop_owner`, `friday_evening_cleanup`), not just an EventDone
     /// path.
     pub fn reconcile_special_strike(&mut self, has_active_strike: bool, frame: u32) {
-        if self.pending_special_strike && !has_active_strike {
-            self.pending_special_strike = false;
-            // LaunchTimer(20) after flipping back to AttackingSwordfight.
-            self.base.launch_timer(20, frame);
-            self.next_sword_strike_frame = frame + 20;
+        if !self.pending_special_strike {
+            return;
         }
+        // A synchronous combat reaction may legitimately replace the
+        // special-strike state (for example, entering Parade) while stopping
+        // its sequence. In that case the latch is stale cancellation
+        // bookkeeping; it must not overwrite the newer state on the later
+        // reconciliation pass.
+        if self.base.current_substate != Substate::AttackingSwordfightSpecialStrike {
+            self.pending_special_strike = false;
+            return;
+        }
+        if !has_active_strike {
+            self.finish_special_strike(frame);
+        }
+    }
+
+    /// Match the legacy `EVENT_DONE` / `EVENT_TIMER` exit from the explicit
+    /// special-strike substate. The same transition is also used by the
+    /// cancellation reconciler when no completion event can be delivered.
+    pub fn finish_special_strike(&mut self, frame: u32) {
+        self.pending_special_strike = false;
+        self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        self.base.launch_timer(20, frame);
+        self.next_sword_strike_frame = frame + 20;
     }
 
     // -----------------------------------------------------------------------
@@ -4543,6 +4562,41 @@ mod tests {
         );
 
         assert!(ai.pending_special_strike);
+    }
+
+    #[test]
+    fn special_strike_latch_mirrors_legacy_substate_until_sequence_ends() {
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        ai.base.outbox.reentrant.owner_work.clear();
+
+        ai.begin_special_strike();
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike
+        );
+
+        ai.reconcile_special_strike(true, 40);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightSpecialStrike
+        );
+
+        ai.reconcile_special_strike(false, 41);
+        assert!(!ai.pending_special_strike);
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert_eq!(ai.next_sword_strike_frame, 61);
+
+        ai.begin_special_strike();
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
+        ai.reconcile_special_strike(false, 62);
+        assert!(!ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingSwordfightParade,
+            "cancellation cleanup must preserve a newer combat reaction"
+        );
     }
 
     #[test]
