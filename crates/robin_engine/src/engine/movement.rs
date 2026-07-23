@@ -4442,6 +4442,37 @@ impl EngineInner {
                     )
                 })
             });
+            let seek_tolerance_reached = |position: MapPoint, self_sector| {
+                if ft.tol <= 0.0 {
+                    return false;
+                }
+                let target_sector = live_seek_target.and_then(|(_, sector, _)| sector);
+                if target_sector.is_some() && self_sector != target_sector {
+                    false
+                } else {
+                    let target = ft
+                        .shield_destination
+                        .or(live_seek_target.map(|(position, _, _)| position))
+                        .expect(
+                            "SEEK FinalTol must have shield_destination or a live target position",
+                        );
+                    let (target_dx, target_dy) = (target.x - position.x, target.y - position.y);
+                    let use_point_offset = live_seek_target.and_then(|(_, _, offset)| offset);
+                    let (dx_use, dy_use) = if let Some(off) = use_point_offset {
+                        (target_dx + off.x, target_dy + off.y)
+                    } else {
+                        (target_dx, target_dy)
+                    };
+                    let dy_effective = if ft.directional {
+                        const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
+                        dy_use * INVERSE_ASPECT_RATIO
+                    } else {
+                        dy_use
+                    };
+                    let dist_sq = dx_use * dx_use + dy_effective * dy_effective;
+                    dist_sq < ft.tol * ft.tol * 1.1025
+                }
+            };
             let entity = self
                 .world
                 .entities
@@ -4638,6 +4669,31 @@ impl EngineInner {
                 // touching the sprite; this token has no destination-backed
                 // motion state to initialize or validate.
                 continue;
+            }
+
+            let tolerance_arrival = seek_tolerance_reached(
+                entity.element_data().position_map(),
+                entity.element_data().sector(),
+            );
+            // Original's entity-target PerformSeek ages this countdown
+            // before dispatching the current movement order. Keep it ahead
+            // of transition and zero-motion early returns; a successful
+            // pre-motion post-seek arrival is the one path that returns
+            // before the decrement.
+            if ft.target_id.is_some() && !(tolerance_arrival && ft.has_post_seek) {
+                let actor = entity.actor_data_mut().expect("movement owner is actor");
+                let wait_before = actor.seek_refresh_wait;
+                if actor.seek_refresh_wait > 0 {
+                    actor.seek_refresh_wait -= 1;
+                }
+                tracing::trace!(
+                    entity = ?entity_id,
+                    wait_before,
+                    wait_after = actor.seek_refresh_wait,
+                    tolerance_arrival,
+                    has_post_seek = ft.has_post_seek,
+                    "entity-target PerformSeek aged refresh countdown"
+                );
             }
 
             let elem = entity.element_data_mut();
@@ -5568,55 +5624,6 @@ impl EngineInner {
                 && point_seek_post_sectors[actor_id]
                     .map(|seek_sector| elem.sector() == Some(seek_sector))
                     .unwrap_or(false);
-            let seek_tolerance_reached = |position: MapPoint, self_sector| {
-                if ft.tol <= 0.0 {
-                    return false;
-                }
-                // Require same sector.
-                let target_sector = live_seek_target.and_then(|(_, sector, _)| sector);
-                if target_sector.is_some() && self_sector != target_sector {
-                    false
-                } else {
-                    // Check the live seek target here, not the
-                    // movement order's static waypoint.  That matters
-                    // for sword-strike seeks: the target can shift
-                    // during the approach, and the PC must stop at
-                    // the seek-distance from the target, not from the
-                    // stale path endpoint. Either `shield_destination` or a
-                    // live target observation is guaranteed to be present by
-                    // the FinalTol pre-pass; the `expect` documents
-                    // that invariant rather than papering over a
-                    // missing target with the order's goal vector
-                    // (which would wrongly arrive at intermediate
-                    // waypoints).
-                    let target = ft
-                        .shield_destination
-                        .or(live_seek_target.map(|(position, _, _)| position))
-                        .expect(
-                            "SEEK FinalTol must have shield_destination or a live target position",
-                        );
-                    let (target_dx, target_dy) = (target.x - position.x, target.y - position.y);
-                    let use_point_offset = live_seek_target.and_then(|(_, _, offset)| offset);
-                    let (dx_use, dy_use) = if let Some(off) = use_point_offset {
-                        (target_dx + off.x, target_dy + off.y)
-                    } else {
-                        (target_dx, target_dy)
-                    };
-                    let dy_effective = if ft.directional {
-                        const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
-                        dy_use * INVERSE_ASPECT_RATIO
-                    } else {
-                        dy_use
-                    };
-                    let dist_sq = dx_use * dx_use + dy_effective * dy_effective;
-                    // 5% tolerance: 1.05² = 1.1025.  Squared-norm
-                    // comparison avoids the sqrt that `dist` computed
-                    // above.
-                    dist_sq < ft.tol * ft.tol * 1.1025
-                }
-            };
-            let tolerance_arrival = seek_tolerance_reached(elem.position_map(), elem.sector());
-
             // FROZEN stand-still wait.  When the seek arrival
             // predicate fires at an intermediate waypoint and there
             // is no `post_seek_sequence` to consume the arrival, the

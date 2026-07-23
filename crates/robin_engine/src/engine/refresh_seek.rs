@@ -3,10 +3,11 @@
 //! ## Semantics
 //!
 //! A seek arms its `seek_refresh_wait` countdown to `TIME_SEEK_REFRESH`
-//! (=25) at launch and again at the tail of each refresh.  While a seek
-//! is translating, the per-tick driver decrements the counter and, once
-//! it hits zero AND the target has moved more than 10 units (MaxNorm)
-//! since the last launch, rebuilds a fresh single-element seek sequence
+//! (=25) at launch and again at the tail of each refresh. Entity-target
+//! `PerformSeek` decrements it at the owner movement boundary unless an
+//! in-range post-seek interaction returns first. Once it is zero AND the
+//! target has moved more than 10 units (MaxNorm) since the last launch,
+//! this pre-owner scan rebuilds a fresh single-element seek sequence
 //! bound to the target's *current* position, sets the previous movement
 //! element to interrupted, and launches the new sequence at info
 //! priority.
@@ -266,20 +267,6 @@ impl crate::engine::EngineInner {
                 tolerance: *tolerance,
                 new_target_pos: target_pos,
             });
-        }
-
-        // Decrement `seek_refresh_wait` for every actor with an active
-        // seek, regardless of whether it triggered.
-        for (_, entity) in self.world.entities.actors_mut() {
-            let Some(actor) = entity.actor_data_mut() else {
-                continue;
-            };
-            if actor.active_movement.sequence_id.is_none() {
-                continue;
-            }
-            if actor.seek_refresh_wait > 0 {
-                actor.seek_refresh_wait -= 1;
-            }
         }
 
         for r in refreshes {

@@ -615,8 +615,9 @@ pub struct ActorData {
     pub last_seek_target_position: MapPoint,
     /// Countdown before the actor may re-issue a seek against a moving
     /// target.  Armed to `TIME_SEEK_REFRESH` (25) at seek launch and
-    /// after each RefreshSeek; decremented each frame by
-    /// [`EngineInner::tick_refresh_seeks`].
+    /// after each RefreshSeek; decremented by entity-target `PerformSeek`
+    /// owner execution when that call does not return through a successful
+    /// post-seek arrival.
     pub seek_refresh_wait: u32,
     // Note: seek tolerance/flags/sector/layer all live on the active
     // `Movement` element rather than as duplicate per-actor fields —
