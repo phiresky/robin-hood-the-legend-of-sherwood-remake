@@ -3,7 +3,7 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
-use crate::element::{ActionState, Command, EntityId, Posture};
+use crate::element::{ActionState, Command, EntityId};
 use crate::movement::ActiveMelee;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
@@ -130,7 +130,8 @@ impl EngineInner {
 
     /// Dispatch an EnterSwordfight command.
     ///
-    /// Transitions the entity into sword-fighting action state.
+    /// Establishes the fight relationship and queues the transition into the
+    /// sword pose.  Execute owns the action-state and facing changes.
     pub(crate) fn dispatch_enter_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -185,64 +186,18 @@ impl EngineInner {
             }
         }
 
-        // Pre-fetch opponent position before borrowing owner mutably,
-        // so the `SetDirection` toward opponent on raising-sword
-        // initialisation can be applied at order-launch time.
-        let opponent_for_facing = opponent.filter(|opp| *opp != owner);
-        let opp_pos = opponent_for_facing
-            .and_then(|opp| self.get_entity(opp))
-            .map(|e| e.element_data().position_map());
-
-        let queue_raise = {
-            let Some(entity) = self.world.entities.get_mut(owner) else {
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                return;
-            };
-            // Queue transition animation based on current action state.
-            let needs_raise = entity
-                .actor_data()
-                .map(|a| !a.action_state.is_sword())
-                .unwrap_or(false);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
-            entity.set_posture(Posture::Upright);
-            // TRANSITION_RAISING_SWORD initialisation sets the
-            // direction goal toward the opponent; the goal is then
-            // pursued each frame by `turn()`.  We set the goal here at
-            // order-launch time so the per-tick `turn()` call in
-            // `engine/animation.rs` rotates the body toward the
-            // opponent during the raise.
-            if needs_raise && let Some(tp) = opp_pos {
-                let me_pos = entity.element_data().position_map();
-                let dx = tp.x - me_pos.x;
-                let dy = tp.y - me_pos.y;
-                let dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-                entity.element_data_mut().set_direction_goal(dir);
-            }
-            needs_raise
+        let owner_action_state = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| entity.actor_data())
+            .map(|actor| actor.action_state)
+            .unwrap_or(ActionState::Waiting);
+        let transition = match owner_action_state {
+            ActionState::WaitingSword => None,
+            ActionState::Menacing => Some(crate::order::OrderType::TransitionMenacingWaitingSword),
+            _ => Some(crate::order::OrderType::TransitionRaisingSword),
         };
-        if queue_raise {
-            // Queue raising-sword transition animation onto the owning element.
-            let id = self.orders.allocate_order_id();
-            let mut order = crate::order::Order::new(
-                crate::order::OrderType::TransitionRaisingSword,
-                0.0,
-                0.0,
-                id,
-            );
-            // The raising-sword order carries the antagonist (opponent)
-            // so per-tick logic and callers inspecting the order can
-            // see them.
-            if let Some(opp) = opponent_for_facing {
-                order = order.with_antagonist(opp);
-            }
-            self.orders
-                .sequence_manager
-                .push_order_on(seq_id, elem_idx, order);
-        }
         // The EnterSwordfight sequence element carries the
         // opponent (set by apply_enter_swordfight when the player
         // clicked a sword-target, or by the AI side on reciprocal
@@ -269,9 +224,25 @@ impl EngineInner {
                 });
             self.enter_swordfight_with_jump_line(sim, assets, owner, opp, false, aggressor_jl);
         }
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
+        if let Some(transition) = transition {
+            let id = self.orders.allocate_order_id();
+            let mut order = crate::order::Order::new(transition, 0.0, 0.0, id);
+            if let Some(opp) = opponent.filter(|opp| *opp != owner) {
+                order = order.with_antagonist(opp);
+            }
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+        }
+        if transition.is_some() {
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+        } else {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+        }
     }
 
     /// Handle the table-swordfight position check on entering a

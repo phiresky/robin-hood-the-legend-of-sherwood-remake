@@ -5225,10 +5225,9 @@ impl EngineInner {
 
         // Process enter_swordfight.  Two shapes:
         //   * Engage(target) — engagement against a specific opponent.
-        //     Run the full `enter_swordfight_with_jump_line` path so the
-        //     opponent lists, jump-line links, and
-        //     `prepare_to_enter_swordfight` `stop(Preference)` cascade
-        //     fire correctly.
+        //     Original `BeginSwordfight` launches ENTER_SWORDFIGHT; it
+        //     does not call `EnterSwordFight` directly from Think.  Keep
+        //     relationship and animation changes behind that owner boundary.
         //   * RaiseSword — sword pose without engagement. `go_to`'s
         //     `GOTO_SWORD` arm, `AttackingApproachToObserve`, and
         //     menace-effect-of-hit need a sword pose held without an
@@ -5246,17 +5245,30 @@ impl EngineInner {
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
                     let target_id = self
                         .expect_human_id_for_ai_handle(target_handle, "AI enter_swordfight target");
-                    let aggressor_jl = effects
-                        .enter_swordfight_jump_line
-                        .and_then(crate::jump_line::JumpLineIndex::new);
-                    self.enter_swordfight_with_jump_line(
-                        sim,
-                        assets,
-                        npc_id,
-                        target_id,
-                        false,
-                        aggressor_jl,
+                    let mut elem = crate::sequence::SequenceElement::new_generic(
+                        1,
+                        crate::element::Command::EnterSwordfight,
+                        Some(npc_id),
                     );
+                    elem.set_property(
+                        crate::sequence::Field::Opponent,
+                        crate::sequence::FieldValue::Element(target_id),
+                    );
+                    if let Some(jump_line) = effects
+                        .enter_swordfight_jump_line
+                        .and_then(crate::jump_line::JumpLineIndex::new)
+                    {
+                        elem.set_property(
+                            crate::sequence::Field::JumplineDestination,
+                            crate::sequence::FieldValue::LineId(jump_line),
+                        );
+                    } else {
+                        elem.set_property(
+                            crate::sequence::Field::JumplineDestination,
+                            crate::sequence::FieldValue::Integer(0),
+                        );
+                    }
+                    self.launch_element(elem);
                 }
             }
         }

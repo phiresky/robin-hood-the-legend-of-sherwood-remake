@@ -55,7 +55,25 @@ fn is_nonmovement_exit_from_moving(anim: OrderType) -> bool {
             | OrderType::TransitionWalkingAlertedWaitingAlerted
             | OrderType::TransitionRunningAlertedWaitingAlerted
             | OrderType::TransitionWalkingCrouchedWaitingCrouched
+            // ENTER_SWORDFIGHT directly books this order even when a
+            // Soldier is still MovingFast. Its Soldier Execute override
+            // plays the raise while retaining the moving action state and
+            // changes to WaitingSword only when the animation is done.
+            | OrderType::TransitionRaisingSword
     )
+}
+
+fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
+    let (dx, dy) = if matches!(owner, Entity::Soldier(_)) {
+        let from = owner.element_data().position_map();
+        let to = opponent.element_data().position_map();
+        (to.x - from.x, to.y - from.y)
+    } else {
+        let from = owner.element_data().position();
+        let to = opponent.element_data().position();
+        (to.x - from.x, to.y - from.y)
+    };
+    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy)
 }
 
 #[cfg(test)]
@@ -78,6 +96,9 @@ mod tests {
             OrderType::TransitionWaitingUprightWalkingUpright
         ));
         assert!(!is_nonmovement_exit_from_moving(OrderType::Turning));
+        assert!(is_nonmovement_exit_from_moving(
+            OrderType::TransitionRaisingSword
+        ));
     }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
@@ -95,6 +116,98 @@ mod tests {
         sprite.action_done_counter = 2;
         entity.human_data_mut().unwrap().tiredness = tiredness;
         entity
+    }
+
+    #[test]
+    fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
+        let mut soldier = weak_soldier_at_action_done(0);
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let mut opponent = weak_soldier_at_action_done(0);
+        for owner in [&mut soldier, &mut pc] {
+            owner
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::ZERO);
+            owner
+                .element_data_mut()
+                .set_position_map_preserving_3d(crate::coordinates::MapPoint::new(0.0, 0.0));
+        }
+        opponent
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            });
+        opponent
+            .element_data_mut()
+            .set_position_map_preserving_3d(crate::coordinates::MapPoint::new(0.0, 10.0));
+
+        assert_eq!(
+            raising_sword_direction(&soldier, &opponent),
+            crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 10.0)
+        );
+        assert_eq!(
+            raising_sword_direction(&pc, &opponent),
+            crate::position_interface::vector_to_sector_0_to_15_iso(10.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        apply_active_animation_start_state_side_effect(
+            &mut pc,
+            OrderType::TransitionRaisingSword,
+            MotionState::Start,
+        );
+        assert_eq!(
+            pc.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
+
+        let mut soldier = weak_soldier_at_action_done(0);
+        apply_soldier_execute_side_effects(
+            &mut soldier,
+            OrderType::TransitionRaisingSword,
+            MotionState::Start,
+            None,
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            &mut ExecuteSideOutcomes::default(),
+            &crate::profiles::ProfileManager::default(),
+        );
+        assert_eq!(
+            soldier.actor_data().unwrap().action_state,
+            ActionState::Waiting
+        );
+        apply_soldier_execute_side_effects(
+            &mut soldier,
+            OrderType::TransitionRaisingSword,
+            MotionState::Done,
+            None,
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            &mut ExecuteSideOutcomes::default(),
+            &crate::profiles::ProfileManager::default(),
+        );
+        assert_eq!(
+            soldier.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
     }
 
     fn civilian_actor() -> Entity {
@@ -1802,6 +1915,18 @@ fn apply_active_animation_start_state_side_effect(
     }
 
     match (anim_type, motion) {
+        // RHElementActorHuman owns this START transition for PCs and other
+        // non-soldier humans.  Soldiers override the arm and settle into
+        // WaitingSword on DONE instead.
+        (OrderType::TransitionRaisingSword, MotionState::Start)
+            if !matches!(entity, Entity::Soldier(_)) =>
+        {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
         (OrderType::WaitingUpright, MotionState::Start) => {
             entity.set_posture(Posture::Upright);
             if let Some(actor) = entity.actor_data_mut() {
@@ -3478,27 +3603,35 @@ impl EngineInner {
             // goal toward the live principal opponent before Turn() and
             // PerformAction(). A stale opponent reference is an invariant
             // failure here: the Original dereferences it directly.
-            let waiting_sword_direction = if anim_type == OrderType::WaitingSword {
+            let facing_opponent = if anim_type == OrderType::WaitingSword {
                 entity
                     .human_data()
                     .and_then(|human| human.opponents.first().copied())
-                    .map(|opponent_id| {
-                        let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
-                            panic!(
-                                "actor {entity_id:?} WaitingSword principal opponent {opponent_id:?} is missing at legacy slot {}",
-                                entity_id.index()
-                            )
-                        });
-                        let from = entity.element_data().position();
-                        let to = opponent.element_data().position();
-                        crate::position_interface::vector_to_sector_0_to_15_iso(
-                            to.x - from.x,
-                            to.y - from.y,
-                        )
-                    })
+            } else if anim_type == OrderType::TransitionRaisingSword
+                && actor.execute_order_initialising
+            {
+                order.antagonist
             } else {
                 None
             };
+            let waiting_sword_direction = facing_opponent.map(|opponent_id| {
+                let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} {anim_type:?} opponent {opponent_id:?} is missing at legacy slot {}",
+                        entity_id.index()
+                    )
+                });
+                if anim_type == OrderType::TransitionRaisingSword {
+                    raising_sword_direction(entity, opponent)
+                } else {
+                    let from = entity.element_data().position();
+                    let to = opponent.element_data().position();
+                    crate::position_interface::vector_to_sector_0_to_15_iso(
+                        to.x - from.x,
+                        to.y - from.y,
+                    )
+                }
+            });
 
             (
                 principal_frames,

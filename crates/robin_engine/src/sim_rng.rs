@@ -305,10 +305,39 @@ fn with_rng<R>(
 
 fn original_draw(context: &SimulationContext, site: RngSite) -> Option<u32> {
     context.original_replay.as_ref().map(|replay| {
-        replay
-            .lock()
-            .expect("original RNG replay mutex poisoned")
-            .draw(site)
+        let mut replay = replay.lock().expect("original RNG replay mutex poisoned");
+        let index = replay.cursor();
+        let value = replay.draw(site);
+
+        // This is intentionally generic parity tooling rather than a
+        // site-specific diagnostic. An Original replay can expose its complete
+        // global draw stream without another code change.
+        let trace_from = std::env::var("ROBIN_TRACE_RNG_FROM")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .expect("ROBIN_TRACE_RNG_FROM must be a non-negative integer")
+            })
+            .unwrap_or(0);
+        let trace_through = std::env::var("ROBIN_TRACE_RNG_THROUGH")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .expect("ROBIN_TRACE_RNG_THROUGH must be a non-negative integer")
+            })
+            .unwrap_or(usize::MAX);
+        if let Some(mode) = std::env::var_os("ROBIN_TRACE_RNG")
+            && (trace_from..=trace_through).contains(&index)
+        {
+            eprintln!("simulation RNG draw index={index} site={site:?} raw={value}");
+            if mode == "backtrace" {
+                eprintln!("{}", std::backtrace::Backtrace::force_capture());
+            }
+        }
+
+        value
     })
 }
 

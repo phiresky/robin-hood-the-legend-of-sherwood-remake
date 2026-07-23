@@ -24,12 +24,11 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 282. At frame 283 the two
-engines install the same `EnterSwordfight` commands and AI substate, but Rust
-eagerly applies the later raising-sword action-state and facing effects during
-instruction. Original leaves both actors in their prior execution states until
-their subsequent owner slots. Increase the clean-prefix statement only after a
-normal first-divergence run has passed that frame.
+The current verified clean prefix is through frame 292. The first divergence is
+now after frame 293: soldier 82 installs `WaitTimer` instead of `Wait`, while
+soldier 104 retains `MoveOk` instead of the Original's `Turn`. Increase the
+clean-prefix statement only after a normal first-divergence run has passed that
+frame.
 
 ## Change ledger
 
@@ -82,7 +81,9 @@ normal first-divergence run has passed that frame.
 | Done | Swordfight approach distance | At frame 283 Original begins swordfight because `ReconsiderEnemyApproach` computes the raw map-coordinate norm between soldier 82 and PC 198 and truncates it through `UWORD`: about 72.4 becomes 72, within the 75-unit threshold. Rust incorrectly applied the general isometric Y stretch and obtained about 77.0. | This specific approach routine now uses raw X/Y Euclidean distance with Original's `UWORD` truncation, including friend-target reassignment. Focused coverage reproduces the boundary where the general aspect-corrected helper would reject combat. Replay installs the matching combat commands and substate at frame 283. |
 | Done | Event-driven enemy strike proposal | Once Rust entered the matching swordfight substate at frame 283, its global melee scan immediately called `ProposeGoodSwordStrike` and consumed RNG. Original calls that routine only from the tail of event-driven `ReconsiderSwordfight`; its first legitimate call in this fight is the frame-293 reach-point cascade. | `ReconsiderSwordfight` now hands the engine a serialized one-shot strike-consideration latch. The melee pass consumes it even when a later range, honour, readiness, or selection check rejects the proposal; merely occupying `AttackingSwordfight` no longer retries every frame. Focused tests cover entry without authorization and one-shot rejection. |
 | Done | Sober combat RNG gates | Original evaluates `rand() % 100 <= bloodAlcohol || rand() % 100 <= bloodAlcohol` even when blood alcohol is zero. Rust skipped both draws for sober actors, which would desynchronize the global stream at the first legitimate combat reconsideration. | The two gates now always execute with literal short-circuit order. Focused RNG-trace coverage verifies two nonzero draws for a sober soldier and the rare first-zero one-draw freeze. |
-| In progress | `EnterSwordfight` instruction/execute boundary | At frame 283 Original installs command 50 while PC 198 remains `Bored`, soldier 82 remains `MovingFast`, and both retain their old directions. Rust eagerly changes both to `WaitingSword` and updates facing. Original establishes opponent relationships during instruction, queues the raising-sword order behind the authored exit work, and changes action state/facing only when that order executes in a later owner slot; the Soldier override delays `WaitingSword` until the raising animation is done. | Make AI engagement queue the normal `EnterSwordfight` element, keep opponent-list setup free of animation/state mutations, and move raising-sword state/facing effects to actor execution. Preserve the Human/PC versus Soldier timing asymmetry with focused instruction and animation tests. |
+| Done | `EnterSwordfight` instruction/execute boundary | At frame 283 Original installs command 50 while PC 198 remains `Bored`, soldier 82 remains `MovingFast`, and both retain their old directions. Rust eagerly changed both to `WaitingSword` and updated facing. Original establishes opponent relationships during instruction, queues the raising-sword order behind authored exit work, and changes action state/facing only when that order executes in a later owner slot; the Soldier override delays `WaitingSword` until the raising animation is done. | AI engagement now queues the normal `EnterSwordfight` element, opponent-list setup is free of animation/state mutations, and raising-sword state/facing effects occur during actor execution. Focused instruction and animation tests preserve the Human/PC versus Soldier timing asymmetry. |
+| Done | Sword movement logical dispatch tokens | Soldier 82's short approach begins at frame 292. Original rewrites `RUNNING_UPRIGHT` to logical `RHNONANIMATION_RUNNING_WITH_SWORD`; the Human Execute override then calls `FaceOpponent` to choose a concrete sword animation and uses `RHMOTIONMETHOD_FAST`. Rust incorrectly gated that rewrite on `Sprite::has_animation(RunningWithSword)`, although the value is deliberately not a sprite row, and retained ordinary running. | Upright walking/running actions now become the logical sword movement tokens unconditionally in sword context, exactly as `RHElementActorHuman::DetermineMovementAnimation` does. Concrete sprite availability remains the later `FaceOpponent` concern. Focused coverage verifies both dispatch rewrites and distance-motion classification; replay matches the start cadence and RNG boundary through frame 292. |
+| In progress | Frame-293 combat callbacks | After the first legitimate swordfight reconsideration, Original leaves soldier 82 on `Wait` and sends soldier 104 into `Turn`; Rust exposes `WaitTimer` and retains `MoveOk`, with a downstream direction-goal mismatch. | Compare the two callback chains and restore their general sequence/AI ordering. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow
@@ -95,6 +96,13 @@ ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   original-code/parity-traces/original-demo-rng-baseline.jsonl
 ```
+
+To inspect the authoritative global RNG stream during an Original replay, set
+`ROBIN_TRACE_RNG=1`. Each consumed draw reports its zero-based stream index,
+reviewed call site, and raw Original `rand()` value. Use
+`ROBIN_TRACE_RNG=backtrace` when call stacks are also needed. Late divergences
+can be isolated with inclusive `ROBIN_TRACE_RNG_FROM` and
+`ROBIN_TRACE_RNG_THROUGH` draw indices.
 
 To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:

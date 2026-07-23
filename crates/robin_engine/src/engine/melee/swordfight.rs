@@ -794,7 +794,27 @@ impl EngineInner {
                 crate::sequence::FieldValue::Integer(0),
             );
             seq.append_element(elem);
-            self.launch_sequence(seq);
+            let reciprocal_sequence = self.launch_sequence(seq);
+            let reciprocal_action = self
+                .orders
+                .sequence_manager
+                .take_deferred_owner_action(opponent, reciprocal_sequence, 0)
+                .unwrap_or_else(|detail| {
+                    panic!(
+                        "reciprocal EnterSwordfight instruction for {} failed: {detail}",
+                        opponent.index()
+                    )
+                });
+            if let Some(action) = reciprocal_action {
+                // `PrepareToEnterSwordFight` launches this element from
+                // inside the initiator's Instruct call. Original's active
+                // SequenceManager::Go pass instructs it before returning.
+                // Put the exact promoted action on the synchronous stream so
+                // the outer sequence phase splices it ahead of older work.
+                self.orders
+                    .sequence_manager
+                    .restore_pending_synchronous_actions(vec![action]);
+            }
         } else if !already_opponent {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,
@@ -898,26 +918,6 @@ impl EngineInner {
         self.recompute_relative_fighting_ability(initiator, assets);
         self.recompute_relative_fighting_ability(opponent, assets);
 
-        // Pre-compute shield bearer status and positions before mutable borrow.
-        let initiator_is_shield_bearer = self
-            .world
-            .entities
-            .get(initiator)
-            .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
-            .unwrap_or(false);
-        let opponent_is_shield_bearer = self
-            .world
-            .entities
-            .get(opponent)
-            .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
-            .unwrap_or(false);
-        let initiator_pos = self
-            .get_entity(initiator)
-            .map(|e| e.element_data().position_map());
-        let opponent_pos = self
-            .get_entity(opponent)
-            .map(|e| e.element_data().position_map());
-
         // Cancel pending pathfinder requests and active paths only
         // for entities that are ENTERING combat fresh (not already in
         // a sword or shield state).  This happens via the
@@ -957,91 +957,19 @@ impl EngineInner {
                 .retain(|r| r.owner != opponent);
         }
 
-        // Set both to combat action state and update PC melee_target
-        // tracking + disable actions during combat.  Shield bearers
-        // enter with shield raised; others raise sword.
-        //
-        // Collect the (entity, order) pairs to push so we can launch
-        // the single-order generic sequences once the `entities`
-        // borrow ends.
-        let mut launches: Vec<(EntityId, crate::order::OrderType, EntityId)> = Vec::new();
-        for &(me, them, shield_bearer, them_pos) in &[
-            (
-                initiator,
-                opponent,
-                initiator_is_shield_bearer,
-                opponent_pos,
-            ),
-            (
-                opponent,
-                initiator,
-                opponent_is_shield_bearer,
-                initiator_pos,
-            ),
-        ] {
-            if let Some(entity) = self.world.entities.get_mut(me) {
-                let mut raised_sword = false;
-                if let Some(actor) = entity.actor_data_mut()
-                    && !actor.action_state.is_sword()
-                    && !actor.action_state.is_shield()
-                {
-                    // Fresh entry: decouple the actor from any active
-                    // Move element and raise the sword.  For AI-driven
-                    // enter_swordfight, the upstream `pending_halt`
-                    // drain already tore down the Move sequence; for
-                    // PC-driven entries (melee strike retaliation),
-                    // `clear_path` decouples the actor and lets
-                    // arbitration interrupt the orphaned Move on the
-                    // next tick.
-                    actor.clear_path();
-
-                    if shield_bearer {
-                        // Shield bearer: raise shield instantly on
-                        // combat entry, for immediate effect (the
-                        // AI-driven equivalent goes through a
-                        // ProtectingWithShield substate).
-                        actor.shield_face_point = them_pos;
-                        actor.action_state = ActionState::HoldingShield;
-                        launches.push((me, crate::order::OrderType::WaitingShield, them));
-                    } else {
-                        // Normal fighter: raise sword.
-                        actor.action_state = ActionState::WaitingSword;
-                        launches.push((me, crate::order::OrderType::TransitionRaisingSword, them));
-                        raised_sword = true;
-                    }
-                }
-                if let Some(pc) = entity.pc_data_mut() {
-                    if pc.melee_target.is_none() {
-                        pc.melee_target = Some(them);
-                    }
-                    // `disable_all_actions_temp` saves
-                    // `current_action`, clears it, and (when
-                    // playable) marks every slot temp-disabled so the
-                    // PC can't fire abilities while swordfighting.
-                    // Re-enabled by `quit_swordfight`.
-                    pc.disable_all_actions_temp();
-                }
-                // TransitionRaisingSword initialisation sets the
-                // direction goal toward the opponent; the goal is
-                // then pursued each frame by `turn()`.  We set the
-                // goal here at order-launch time so the per-tick
-                // `turn()` call in `engine/animation.rs` rotates the
-                // body toward the opponent during the raise.
-                if raised_sword && let Some(tp) = them_pos {
-                    let me_pos = entity.element_data().position_map();
-                    let dx = tp.x - me_pos.x;
-                    let dy = tp.y - me_pos.y;
-                    let dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-                    entity.element_data_mut().set_direction_goal(dir);
-                }
+        // `EnterSwordFight` mutates the relationship and initiator PC UI.
+        // The ENTER_SWORDFIGHT element that called us owns its pose
+        // transition; the reciprocal element does the same for the opponent.
+        if let Some(pc) = self
+            .world
+            .entities
+            .get_mut(initiator)
+            .and_then(Entity::pc_data_mut)
+        {
+            if pc.melee_target.is_none() {
+                pc.melee_target = Some(opponent);
             }
-        }
-        for (me, ot, antagonist) in launches {
-            let id = self.orders.allocate_order_id();
-            // The raising-sword order carries the antagonist
-            // (opponent).
-            let order = crate::order::Order::new(ot, 0.0, 0.0, id).with_antagonist(antagonist);
-            self.launch_single_order_sequence_stamped(me, Command::EnterSwordfight, order);
+            pc.disable_all_actions_temp();
         }
         // Set PC melee target.
         Self::set_pc_melee_target(&mut self.world.entities, initiator, opponent);

@@ -206,6 +206,18 @@ fn is_sword_movement_nonanimation(order: OrderType) -> bool {
     )
 }
 
+/// Match `RHElementActorHuman::DetermineMovementAnimation`: these are logical
+/// dispatch tokens consumed by the Human Execute override, not sprite rows.
+/// `FaceOpponent` chooses the concrete forward/backward/strafe sword animation
+/// later, so sprite animation availability must not gate this rewrite.
+fn sword_movement_dispatch_action(order: OrderType) -> OrderType {
+    match order {
+        OrderType::WalkingUpright | OrderType::WalkingWithCorpse => OrderType::WalkingWithSword,
+        OrderType::RunningUpright => OrderType::RunningWithSword,
+        _ => order,
+    }
+}
+
 fn movement_execute_state_effect(
     order: OrderType,
     motion: MotionState,
@@ -5124,6 +5136,10 @@ impl EngineInner {
                 action_state = ?action_state,
                 sprite_frame = sprite.current_frame,
                 sprite_counter = sprite.frame_count,
+                frame_distance_raw = frame_dist_raw,
+                speed_factor,
+                effective_distance = speed,
+                remaining_distance = dist,
                 "movement Execute result"
             );
             if let Some((posture, action_state)) =
@@ -7502,13 +7518,9 @@ impl EngineInner {
         // hasn't applied yet) uses the intended post-transition
         // values.
         //
-        // PC-fallback: when the sword variant isn't in the actor's
-        // sprite profile (PCs like "Robin des bois" lack the
-        // WalkingWithSword / RunningWithSword rows), leave the order
-        // action as the upright variant.  The action state still
-        // becomes MovingSword below so the per-frame combat
-        // directional picker can substitute WalkingBackwardsSword /
-        // Strafing*Sword.
+        // WalkingWithSword / RunningWithSword are logical non-animation
+        // dispatch tokens. The Human Execute override resolves them through
+        // FaceOpponent to a concrete forward/backward/strafe sword row.
         let (posture_after, mut action_after) = self
             .orders
             .sequence_manager
@@ -7547,22 +7559,7 @@ impl EngineInner {
             && action_after.is_sword())
             || force_sword_movement;
         if sword_movement_context {
-            let sword_variant = match move_action {
-                // WALKING_UPRIGHT / WALKING_WITH_CORPSE →
-                // WALKING_WITH_SWORD; RUNNING_UPRIGHT →
-                // RUNNING_WITH_SWORD.
-                OrderType::WalkingUpright | OrderType::WalkingWithCorpse => {
-                    Some(OrderType::WalkingWithSword)
-                }
-                OrderType::RunningUpright => Some(OrderType::RunningWithSword),
-                _ => None,
-            };
-            if let Some(want) = sword_variant
-                && let Some(entity) = self.world.entities.get(owner)
-                && entity.sprite().has_animation(want)
-            {
-                move_action = want;
-            }
+            move_action = sword_movement_dispatch_action(move_action);
         }
         // PC shield-action arm: a shield-wielding PC on Upright
         // ground rewrites the movement element's stored `action`:
@@ -7980,7 +7977,7 @@ impl EngineInner {
             is_pass_door,
             elem_flags,
             sword_movement_context,
-            is_fast,
+            is_fast: _,
         } = request;
 
         // Drunken-soldier path deviation.  Only applies to upright
@@ -8145,33 +8142,19 @@ impl EngineInner {
                 None
             };
 
-        // Update actor state.  When a startup transition was prepended,
+        // Update actor state. When a startup transition was prepended,
         // leave `action_state` alone so the transition's `MS::Done`
-        // handler flips it to the moving state on completion.  End-only
-        // transitions are appended behind the movement orders; they must
-        // not delay the actor entering Moving/MovingSword now.
+        // handler flips it on completion. Sword movement without a startup
+        // transition also stays WaitingSword until `PerformMotion` returns
+        // START in the actor's later execution slot, matching
+        // RHElementActorHuman::Execute.
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
-            if !have_start_transition {
-                actor.action_state = if sword_movement_context {
-                    if is_fast
-                        || matches!(
-                            move_action,
-                            OrderType::RunningUpright | OrderType::RunningWithSword
-                        )
-                    {
-                        crate::element::ActionState::MovingFastSword
-                    } else {
-                        crate::element::ActionState::MovingSword
-                    }
-                } else {
-                    match move_action {
-                        OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
-                        OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
-                        OrderType::RunningUpright => crate::element::ActionState::MovingFast,
-                        _ => crate::element::ActionState::Moving,
-                    }
+            if !have_start_transition && !sword_movement_context {
+                actor.action_state = match move_action {
+                    OrderType::RunningUpright => crate::element::ActionState::MovingFast,
+                    _ => crate::element::ActionState::Moving,
                 };
             }
             actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
@@ -8447,6 +8430,18 @@ mod line_jump_tests {
 
     #[test]
     fn running_with_sword_uses_distance_motion() {
+        assert_eq!(
+            sword_movement_dispatch_action(OrderType::WalkingUpright),
+            OrderType::WalkingWithSword
+        );
+        assert_eq!(
+            sword_movement_dispatch_action(OrderType::WalkingWithCorpse),
+            OrderType::WalkingWithSword
+        );
+        assert_eq!(
+            sword_movement_dispatch_action(OrderType::RunningUpright),
+            OrderType::RunningWithSword
+        );
         assert!(order_uses_distance_motion(OrderType::RunningWithSword));
         assert!(order_uses_distance_motion(OrderType::WalkingWithSword));
         assert!(order_uses_distance_motion(OrderType::WalkingSword));

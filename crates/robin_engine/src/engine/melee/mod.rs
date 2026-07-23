@@ -1163,17 +1163,6 @@ fn is_rank_soldier(entity: &Entity, profile_manager: &crate::profiles::ProfileMa
     }
 }
 
-/// Check if an entity is a shield bearer (has a shield weapon).
-fn is_entity_shield_bearer(
-    entity: &Entity,
-    profile_manager: &crate::profiles::ProfileManager,
-) -> bool {
-    get_hth_weapon_id_full(entity, profile_manager)
-        .and_then(|idx| profile_manager.get_hth_weapon(idx))
-        .map(|p| p.shield)
-        .unwrap_or(false)
-}
-
 /// Full HtH weapon lookup using the profile_manager.  Returns the
 /// weapon profile id from the character/soldier profile.  The id is
 /// the raw 1-based value as stored in the profile; pass it to
@@ -3276,6 +3265,85 @@ mod tests {
                 .opponents,
             vec![pc, current],
             "the attacker is also promoted as the target's principal opponent"
+        );
+    }
+
+    #[test]
+    fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_goal(7);
+
+        let mut element =
+            crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(opponent),
+        );
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(element);
+        let seq_id = engine.launch_sequence(sequence);
+
+        engine.dispatch_enter_swordfight(
+            sim,
+            &LevelAssets::default(),
+            owner,
+            Some(opponent),
+            seq_id,
+            0,
+        );
+
+        let owner_entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            owner_entity.actor_data().unwrap().action_state,
+            ActionState::Waiting,
+            "Instruct must not apply the raising-sword Execute state"
+        );
+        assert_eq!(
+            i16::from(owner_entity.position_iface().get_direction_goal()),
+            7,
+            "Instruct must not apply the raising-sword Execute facing"
+        );
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+        let order = element.current_order().unwrap();
+        assert_eq!(
+            order.order_type,
+            crate::order::OrderType::TransitionRaisingSword
+        );
+        assert_eq!(order.antagonist, Some(opponent));
+        assert!(
+            owner_entity
+                .human_data()
+                .unwrap()
+                .opponents
+                .contains(&opponent),
+            "relationship changes still belong to Instruct"
         );
     }
 
