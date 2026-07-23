@@ -2631,6 +2631,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn deferred_combat_insult_depends_on_inline_strike_result() {
+        fn install_minimal_sprite(engine: &mut EngineInner, attacker: EntityId) {
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 0,
+                frame_ids: vec![0],
+                delays: vec![1],
+                distances: vec![0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                sound_ids: vec![0],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+
+        let assets = assets_with_sword_profile(7, 30);
+
+        // A failed proposal leaves Original in ordinary Swordfight and the
+        // caller's following statement says CombatInsult.
+        let mut rejected = make_engine();
+        let (rejected_attacker, _) = make_enemy_strike_pair(&mut rejected, true);
+        install_minimal_sprite(&mut rejected, rejected_attacker);
+        rejected
+            .get_entity_mut(rejected_attacker)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap()
+            .pending_combat_insult_after_strike_consideration = true;
+        rejected.control.rng = SimulationRng::with_original_replay(vec![85]);
+        rejected.with_simulation_context(|engine, sim| {
+            engine.consume_pending_enemy_sword_attack_for(sim, &assets, rejected_attacker);
+        });
+        let rejected_ai = rejected
+            .get_entity(rejected_attacker)
+            .and_then(Entity::enemy_ai)
+            .unwrap();
+        assert!(
+            rejected_ai
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::Speech(attempt)
+                        if attempt.remark == crate::ai::Remark::CombatInsult
+                ))
+        );
+
+        // A successful proposal changes Original to SpecialStrike before the
+        // same following statement tests the substate, suppressing the bark.
+        let mut accepted = make_engine();
+        let (accepted_attacker, _) = make_enemy_strike_pair(&mut accepted, true);
+        install_minimal_sprite(&mut accepted, accepted_attacker);
+        accepted
+            .get_entity_mut(accepted_attacker)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap()
+            .pending_combat_insult_after_strike_consideration = true;
+        accepted.control.rng = SimulationRng::with_original_replay(vec![0]);
+        accepted.with_simulation_context(|engine, sim| {
+            engine.consume_pending_enemy_sword_attack_for(sim, &assets, accepted_attacker);
+        });
+        let accepted_ai = accepted
+            .get_entity(accepted_attacker)
+            .and_then(Entity::enemy_ai)
+            .unwrap();
+        assert!(accepted_ai.pending_special_strike);
+        assert!(
+            !accepted_ai
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::Speech(attempt)
+                        if attempt.remark == crate::ai::Remark::CombatInsult
+                ))
+        );
+    }
+
     fn assets_with_nonstraight_profile(
         strike: SwordStrike,
         kind: crate::profiles::WeaponThrustKind,

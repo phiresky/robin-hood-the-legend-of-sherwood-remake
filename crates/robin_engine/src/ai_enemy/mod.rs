@@ -54,6 +54,16 @@ pub struct EnemyAi {
     #[serde(default)]
     pub pending_sword_strike_consideration: bool,
 
+    /// `Think` reached the post-`ReconsiderSwordfight` combat-insult site,
+    /// but the engine-side strike proposer has not yet settled the one-shot
+    /// consideration. Original proposes inline: a successful proposal
+    /// changes to `...SPECIAL_STRIKE` and suppresses the insult, while a
+    /// rejected proposal leaves `...SWORDFIGHT` and says it. The Rust port
+    /// settles this latch immediately after `Think`, at the same owner
+    /// boundary as `pending_sword_strike_consideration`.
+    #[serde(default)]
+    pub pending_combat_insult_after_strike_consideration: bool,
+
     // -- Private fields --
     pub missed_pc: ElementHandle,
     pub pc_missed: bool,
@@ -340,6 +350,7 @@ impl Default for EnemyAi {
             sword_is_charge_weapon: false,
             next_sword_strike_frame: 0,
             pending_sword_strike_consideration: false,
+            pending_combat_insult_after_strike_consideration: false,
             soldier_profile_bee_time: 0,
             soldier_profile_pride: 0,
             soldier_profile_hearing_factor: 1.0,

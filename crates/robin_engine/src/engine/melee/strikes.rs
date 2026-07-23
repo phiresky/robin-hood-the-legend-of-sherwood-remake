@@ -2466,6 +2466,27 @@ impl EngineInner {
                 "Enemy AI sword strike sequence launched"
             );
         }
+
+        // Complete the statement immediately following Original's inline
+        // ProposeGoodSwordStrike call. A successful proposal has entered the
+        // (folded) special-strike state and therefore suppresses CombatInsult;
+        // a rejection leaves the ordinary swordfight state and says it.
+        // Keep this after every rejection/launch path, but before returning
+        // to the dispatcher's owner-work drain.
+        for owner in pending_considerations {
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(owner) else {
+                continue;
+            };
+            let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
+                continue;
+            };
+            if std::mem::take(&mut ai.pending_combat_insult_after_strike_consideration)
+                && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
+                && !ai.pending_special_strike
+            {
+                ai.base.say(crate::ai::Remark::CombatInsult);
+            }
+        }
     }
 
     /// Per-frame concussion healing for all humans.

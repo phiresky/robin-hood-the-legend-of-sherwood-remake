@@ -1221,7 +1221,11 @@ impl EnemyAi {
                     self.base.stop_all();
                     self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
                     if self.base.current_substate == Substate::AttackingSwordfight {
-                        self.base.say(Remark::CombatInsult);
+                        if self.pending_sword_strike_consideration {
+                            self.pending_combat_insult_after_strike_consideration = true;
+                        } else {
+                            self.base.say(Remark::CombatInsult);
+                        }
                     }
                 }
             }

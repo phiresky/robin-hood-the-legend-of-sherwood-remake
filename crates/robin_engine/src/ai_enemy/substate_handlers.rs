@@ -4484,10 +4484,16 @@ impl EnemyAi {
                     // SetEmoticon(None).
                     self.base.set_emoticon(EmoticonType::None);
                     self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
-                    // If still in same substate after reconsider,
-                    // taunt the opponent.
+                    // Original proposes a strike inside ReconsiderSwordfight.
+                    // A successful proposal first changes to SpecialStrike,
+                    // suppressing this taunt. Our proposal needs engine state,
+                    // so defer the decision across that owner-local boundary.
                     if self.base.current_substate == Substate::AttackingSwordfight {
-                        self.base.say(Remark::CombatInsult);
+                        if self.pending_sword_strike_consideration {
+                            self.pending_combat_insult_after_strike_consideration = true;
+                        } else {
+                            self.base.say(Remark::CombatInsult);
+                        }
                     }
                 }
             }
