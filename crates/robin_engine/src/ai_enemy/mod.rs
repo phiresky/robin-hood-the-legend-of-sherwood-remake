@@ -47,6 +47,13 @@ pub struct EnemyAi {
     /// actor (covers both natural completion and interruption).
     pub pending_special_strike: bool,
 
+    /// One-shot handoff from `ReconsiderSwordfight` to the engine-side
+    /// strike proposer.  The Original only calls `ProposeGoodSwordStrike`
+    /// when that event-driven reconsideration reaches its decision tail;
+    /// merely entering the swordfight substate must not authorize a draw.
+    #[serde(default)]
+    pub pending_sword_strike_consideration: bool,
+
     // -- Private fields --
     pub missed_pc: ElementHandle,
     pub pc_missed: bool,
@@ -332,6 +339,7 @@ impl Default for EnemyAi {
             hth_weapon_id: 0,
             sword_is_charge_weapon: false,
             next_sword_strike_frame: 0,
+            pending_sword_strike_consideration: false,
             soldier_profile_bee_time: 0,
             soldier_profile_pride: 0,
             soldier_profile_hearing_factor: 1.0,

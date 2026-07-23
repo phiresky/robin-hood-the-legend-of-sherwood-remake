@@ -2468,6 +2468,7 @@ mod tests {
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = max_distance;
         weapon.thrusts[SwordStrike::A as usize].energy = energy;
         weapon.thrusts[SwordStrike::A as usize].minimal_distance = 0;
         weapon.thrusts[SwordStrike::A as usize].maximal_distance = max_distance;
@@ -2490,6 +2491,110 @@ mod tests {
             profile_manager: std::sync::Arc::new(profile_manager),
             ..LevelAssets::default()
         }
+    }
+
+    fn make_enemy_strike_pair(
+        engine: &mut EngineInner,
+        pending_consideration: bool,
+    ) -> (EntityId, EntityId) {
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let target = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            soldier.actor.action_state = ActionState::WaitingSword;
+            soldier.human.opponents.push(target);
+            let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
+                unreachable!()
+            };
+            ai.base.current_state = crate::ai::AiState::Attacking;
+            ai.base.current_substate = crate::ai::Substate::AttackingSwordfight;
+            ai.base.primary_target = target.index();
+            ai.hth_weapon_id = 1;
+            ai.pending_sword_strike_consideration = pending_consideration;
+        }
+        {
+            let target_entity = engine.get_entity_mut(target).unwrap();
+            target_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            target_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+        }
+        (attacker, target)
+    }
+
+    #[test]
+    fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
+        let mut engine = make_engine();
+        let (attacker, _) = make_enemy_strike_pair(&mut engine, false);
+        let assets = assets_with_sword_profile(7, 30);
+        engine.control.rng = SimulationRng::with_original_replay(Vec::new());
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_enemy_sword_attacks(sim, &assets);
+        });
+
+        assert_eq!(engine.control.rng.original_replay_cursor(), Some(0));
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(attacker, Command::is_swordstrike),
+            "entering AttackingSwordfight alone must not propose a strike"
+        );
+    }
+
+    #[test]
+    fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
+        let mut engine = make_engine();
+        let (attacker, target) = make_enemy_strike_pair(&mut engine, true);
+        let assets = assets_with_sword_profile(7, 30);
+        engine.control.rng = SimulationRng::with_original_replay(Vec::new());
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Waiting;
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_enemy_sword_attacks(sim, &assets);
+        });
+        let cursor_after_first = engine.control.rng.original_replay_cursor().unwrap();
+        assert_eq!(cursor_after_first, 0, "honour rejection precedes proposal");
+        let pending_after_first = engine
+            .get_entity(attacker)
+            .and_then(Entity::enemy_ai)
+            .unwrap()
+            .pending_sword_strike_consideration;
+        assert!(!pending_after_first, "the authorization must be one-shot");
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_enemy_sword_attacks(sim, &assets);
+        });
+        assert_eq!(
+            engine.control.rng.original_replay_cursor(),
+            Some(cursor_after_first),
+            "the rejected, consumed latch must not retry next frame"
+        );
     }
 
     fn assets_with_nonstraight_profile(

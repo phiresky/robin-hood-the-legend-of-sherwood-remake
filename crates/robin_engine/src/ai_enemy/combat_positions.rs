@@ -2501,6 +2501,11 @@ impl EnemyAi {
         // gates on the target's `action_state.is_sword()`, calls
         // `propose_good_sword_strike`, and handles the PC-specific
         // hulk/delay preamble + sequence launching.
+        //
+        // This is a one-shot authorization. The engine consumes it even
+        // when one of those downstream checks rejects the proposal, matching
+        // the Original's single event-driven call to ReconsiderSwordfight.
+        self.pending_sword_strike_consideration = true;
     }
 
     // -----------------------------------------------------------------------

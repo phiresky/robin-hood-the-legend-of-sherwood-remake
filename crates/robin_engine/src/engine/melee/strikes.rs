@@ -1911,6 +1911,24 @@ impl EngineInner {
             }
         }
 
+        // `RHArtificialMalignity::ReconsiderSwordfight` is event-driven and
+        // calls ProposeGoodSwordStrike at most once per invocation.  Consume
+        // that authorization up front so every downstream rejection
+        // (substate, tiredness, honour, range, or selection failure) remains
+        // one-shot instead of being retried by this per-frame engine pass.
+        let pending_considerations: std::collections::HashSet<EntityId> = self
+            .world
+            .entities
+            .soldiers_mut()
+            .filter_map(|(npc_id, soldier)| {
+                let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
+                    return None;
+                };
+                std::mem::take(&mut ai.pending_sword_strike_consideration)
+                    .then_some(EntityId::from(npc_id))
+            })
+            .collect();
+
         // Collect pending attacks
         struct PendingAttack {
             soldier_id: EntityId,
@@ -1936,6 +1954,10 @@ impl EngineInner {
         let mut pending_tired: Vec<EntityId> = Vec::new();
 
         for (npc_id, soldier) in self.world.entities.soldiers() {
+            if !pending_considerations.contains(&EntityId::from(npc_id)) {
+                continue;
+            }
+
             // Must be in swordfight substate and alive.
             //
             // Diagnose unexpected combat-state drift while accepting the
