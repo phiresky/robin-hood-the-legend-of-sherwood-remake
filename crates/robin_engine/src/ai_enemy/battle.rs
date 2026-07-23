@@ -19,6 +19,16 @@ use super::{
     archer, combat,
 };
 
+/// `ReconsiderEnemyApproach` uses raw `RHposition` map coordinates and stores
+/// their Euclidean norm in a `UWORD`. This is deliberately different from the
+/// game's general aspect-corrected distance helpers.
+fn reconsider_approach_distance(a: Position, b: Position) -> f32 {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
+    let truncated = (dx * dx + dy * dy).sqrt() as u16;
+    f32::from(truncated)
+}
+
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         let target = self.get_new_primary_target(
@@ -1636,13 +1646,9 @@ impl EnemyAi {
                     .unwrap_or(self.base.seek_position)
             };
 
-        // Live distance from me to the target.
-        let distance = {
-            let dx = live_target_pos.x - ctx.position.x;
-            let dy = (live_target_pos.y - ctx.position.y)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            (dx * dx + dy * dy).sqrt()
-        };
+        // This specific Original routine uses the raw map-coordinate norm and
+        // truncates it through UWORD. Do not use the usual isometric Y stretch.
+        let distance = reconsider_approach_distance(live_target_pos, ctx.position);
 
         // Pre-computed line-jump for table swordfight.
         let my_line_jump = tick.primary_target_jump_line;
@@ -1688,7 +1694,8 @@ impl EnemyAi {
                 swap_action = Some((cand.friend_id, working_target));
                 working_target = cand.friend_primary_target;
                 working_target_pos = cand.friend_primary_target_position;
-                working_distance = me_to_friend_target;
+                working_distance =
+                    reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
             }
         }
         if let Some((friend, new_tgt)) = swap_action {
@@ -2470,5 +2477,32 @@ impl EnemyAi {
             return;
         }
         self.base.outbox.actor.quit_swordfight = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reconsider_approach_uses_raw_truncated_map_distance() {
+        let soldier = Position {
+            x: 655.007_8,
+            y: 1744.445,
+            ..Position::default()
+        };
+        let target = Position {
+            x: 585.0,
+            y: 1726.0,
+            ..Position::default()
+        };
+
+        assert_eq!(reconsider_approach_distance(soldier, target), 72.0);
+        let dx = soldier.x - target.x;
+        let dy = (soldier.y - target.y) * INVERSE_ASPECT_RATIO;
+        assert!(
+            (dx * dx + dy * dy).sqrt() > 75.0,
+            "the general aspect-corrected distance would miss this swordfight boundary"
+        );
     }
 }
