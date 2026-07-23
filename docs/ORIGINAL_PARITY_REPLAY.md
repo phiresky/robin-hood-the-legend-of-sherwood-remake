@@ -24,13 +24,12 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 101. The frame-102 soldier
-104 command/goal divergence is fixed, but that frame now exposes an RNG-stream
-mismatch: Original runs two enemy bored rolls while Rust runs one. Soldier 83's
-live current order has already advanced from its waiting-to-bored transition to
-`WaitingUprightBored`, while Rust's periodic context still observes the
-previously rendered sprite action. Increase the clean-prefix statement only
-after a normal first-divergence run has passed that frame.
+The current verified clean prefix is through frame 110. At frame 111 Original
+resumes soldier 83's interrupted one-point waypoint macro, recursively
+re-enters `EventReachPoint`, and consumes the next macro-section draw. Rust
+currently reaches the macro-end path without consuming that draw. Increase the
+clean-prefix statement only after a normal first-divergence run has passed that
+frame.
 
 ## Change ledger
 
@@ -71,7 +70,8 @@ after a normal first-divergence run has passed that frame.
 | Done | Predetection suspect ordering | At frame 95 soldier 82 receives sharpness 102 from PC 198. Original `HandlePredetection` tests the prior Enemy suspect accumulator (zero), then adds this frame's sharpness; Rust added first and crossed the shadow threshold one frame early. Original also returns for non-PC and guarded-PC targets before changing their shadow latch. | Both detection paths now evaluate the shadow edge against `suspects_before_scan`, preserve the latch on Original's early-return cases, and only then accumulate current sharpness. Focused tests cover the prior-accumulator threshold and latch preservation. Replay matches through frame 95. |
 | Done | Synchronous positional `Face` instruction | At frame 96 both engines put soldier 82 in the shadow-reaction substate. Original positional `Face` resolves sector 8 and synchronous Turn instruction writes that direction goal immediately; Rust launched the positional Turn after the global turn phase and left goal 9 until the next frame. | Contextual positional `Face` now resolves to an authored sector before launch and retains Original's waiting/bored same-direction shortcut. The non-movement Turn drain also synchronously computes and installs goals for no-context positional intents while retaining the separate deferred formation-turn rule. Focused coverage verifies the resolved directional intent; replay matches through frame 100. |
 | Done | Synchronous script `LockAI` barrier | At frame 102 soldier 104's waypoint `ReachPoint` callback calls `LockAI`, then immediately records a positional Turn toward the officer. Original `ScriptLockAI` stops the outgoing actor work before returning to the script, so the replacement Turn survives with goal 11. Rust queued a deferred AI halt, resumed the script, launched the Turn, and then halted that new work, leaving `Wait` and goal 1. | The native now yields to an engine barrier that applies the lock, performs Original's normal-priority stop and synchronous condolations, then resumes the VM. The `RHCOMMAND_LOCK_AI` self-stop exception is retained. Native regression coverage verifies the yield precedes replacement script work. |
-| In progress | Live actor animation identity | At frame 102 Original soldiers 83 and 147 both consume the `The16thFrame` bored roll. Soldier 83 completed its waiting-to-bored transition during actor execution, so `GetAnimation()` already reads the promoted `WaitingUprightBored` order even though the sprite still displays transition row 62. Rust builds `AiContext::self_animation` from `Sprite::last_action` and skips soldier 83's draw. | Read the live current order for periodic `GetAnimation()` semantics without overwriting legitimate displayed-sprite state; audit the other AI consumers of `self_animation` for the same distinction. |
+| Done | Live actor animation identity | At frame 102 Original soldiers 83 and 147 both consume the `The16thFrame` bored roll. Soldier 83 completed its waiting-to-bored transition during actor execution, so `GetAnimation()` already reads the promoted `WaitingUprightBored` order even though the sprite still displays transition row 62. Rust built `AiContext::self_animation` from `Sprite::last_action` and skipped soldier 83's draw. | The periodic owner boundary now samples the live current sequence order, falling back to `NonanimationEnd` like a null C++ `mpOrder`, without overwriting legitimate displayed-sprite state. The generic context documents its sprite-action fallback and retains a TODO to thread live-order identity through the other `GetAnimation()` consumers. Replay matches through frame 110. |
+| In progress | One-point macro recursive reach | At frame 111 soldier 83's `DefaultDetectedCharly` timer resumes an interrupted one-point macro with no bytes remaining. Original clears the macro, changes to `DefaultEnroute`, and calls `Think(EventReachPoint)` synchronously; selecting the same waypoint's next macro section immediately draws `(rand() % 100) + 1`. | Determine why Rust's queued self `EventReachPoint` does not close within the normal-timer Think boundary, then preserve Original recursion/filter semantics and add focused one-point macro coverage. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow

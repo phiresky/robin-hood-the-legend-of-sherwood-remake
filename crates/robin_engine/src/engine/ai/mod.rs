@@ -576,12 +576,15 @@ pub(super) fn build_ai_context_from_entity(
         })
         .map(|lst| lst.len() as u16)
         .unwrap_or(0);
-    // The live animation/order currently displayed by the actor. Do not use
+    // The most recently performed sprite animation. Do not use
     // `ActorData::old_action`: that is the previous value retained solely for
     // the next script `ActionChange(new, old)` callback and is still Invalid
-    // during AI initialization. `Sprite::last_action` is updated when the
-    // initial Wait element is translated, matching the original
-    // `RHElementActor::GetAnimation()` observed by `InitOneAI`.
+    // during AI initialization. Engine paths modelling Original
+    // `RHElementActor::GetAnimation()` must overwrite this with the live
+    // sequence order: C++ reads `mpOrder->action`, which can advance before
+    // the successor order has performed and updated `Sprite::last_action`.
+    // TODO(parity): thread that live order into all GetAnimation consumers
+    // rather than requiring boundary-specific context overrides.
     let self_animation = if actor.is_some() {
         elem.sprite.last_action
     } else {
@@ -10026,6 +10029,17 @@ impl EngineInner {
         // window where a teardown nulls the sequence-element
         // before the next animation tick resets `action_state`.
         let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
+        // C++ `RHElementActor::GetAnimation()` returns `mpOrder->action`, not
+        // the sprite row most recently performed. A transition may complete
+        // during Actor::Execute and promote its successor before NPC
+        // Hourglass reaches The16thFrame; in that window `Sprite::last_action`
+        // still names the transition.
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
@@ -10041,7 +10055,7 @@ impl EngineInner {
                 panic!("periodic NPC {} disappeared before call", npc_id.index())
             });
 
-        let ctx = build_ai_context_from_entity(
+        let mut ctx = build_ai_context_from_entity(
             entity,
             current_frame,
             building_sector,
@@ -10055,6 +10069,7 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        ctx.self_animation = live_animation;
 
         match entity {
             Entity::Soldier(s) => {
