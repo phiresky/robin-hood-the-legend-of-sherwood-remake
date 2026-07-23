@@ -362,6 +362,8 @@ struct Options {
     scan_all: bool,
     trace_path: PathBuf,
     dump: Option<DumpOptions>,
+    http_server: Option<u16>,
+    start_paused: bool,
 }
 
 struct DumpOptions {
@@ -377,12 +379,22 @@ impl DumpOptions {
     }
 }
 
+struct ActiveHttpStep {
+    request: robin_rs::http_server::PendingStep,
+    direction: &'static str,
+    from_frame: u32,
+    remaining: u32,
+    requested: u32,
+}
+
 fn main() {
     tracing_subscriber::fmt::init();
 
     let options = parse_options();
     let scan_all = options.scan_all;
     let trace_path = options.trace_path;
+    let http_server = options.http_server;
+    let mut manual_pause = options.start_paused;
     let trace_path = trace_path
         .canonicalize()
         .unwrap_or_else(|e| panic!("canonicalize {}: {e}", trace_path.display()));
@@ -465,16 +477,44 @@ fn main() {
     let mut dev = DevState::new();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
+    let mut selected_view_element = None;
     let mut entity_map: Option<EntityMap> = None;
     let mut divergent_frames = 0_u64;
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
+    let mut active_http_step = None;
+
+    if let Some(port) = http_server {
+        robin_rs::http_server::start_global(port)
+            .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
+        eprintln!(
+            "parity replay HTTP server ready on http://127.0.0.1:{port} (frame {})",
+            engine.frame_counter()
+        );
+    }
 
     for (line_index, line) in lines.enumerate() {
         let mut frame: TraceFrame = serde_json::from_str(&line.expect("read parity trace frame"))
             .unwrap_or_else(|e| panic!("parse trace line {}: {e}", line_index + 2));
         assert_eq!(frame.frame_before, line_index as u64);
         assert_eq!(frame.frame_after, frame.frame_before + 1);
+        if http_server.is_some() {
+            loop {
+                drain_headless_http(
+                    &mut engine,
+                    &mut display,
+                    &assets,
+                    &mut input,
+                    &mut selected_view_element,
+                    &mut manual_pause,
+                    &mut active_http_step,
+                );
+                if !manual_pause || active_http_step.is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
         let rng_start = gameplay_rng_index;
         let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
@@ -636,6 +676,13 @@ fn main() {
             );
         }
         if !differences.is_empty() {
+            if let Some(step) = active_http_step.take() {
+                step.request.respond_err(format!(
+                    "parity divergence after frame {}: {} differences",
+                    frame.frame_after,
+                    differences.len()
+                ));
+            }
             divergent_frames += 1;
             for difference in &differences {
                 first_by_field
@@ -662,10 +709,43 @@ fn main() {
             for difference in differences.iter().take(40) {
                 eprintln!("  {difference}");
             }
+            if http_server.is_some() {
+                eprintln!(
+                    "parity replay halted at frame {}; HTTP inspection remains available",
+                    engine.frame_counter()
+                );
+                serve_halted_http(
+                    &mut engine,
+                    &mut display,
+                    &assets,
+                    &mut input,
+                    &mut selected_view_element,
+                );
+            }
             std::process::exit(1);
+        }
+        if let Some(step) = &mut active_http_step {
+            step.remaining -= 1;
+            if step.remaining == 0 {
+                let step = active_http_step.take().expect("active HTTP step exists");
+                step.request.respond_ok(serde_json::json!({
+                    "direction": step.direction,
+                    "from_frame": step.from_frame,
+                    "frame": engine.frame_counter(),
+                    "advanced": step.requested,
+                    "parity": "matched",
+                }));
+            }
         }
     }
 
+    if let Some(step) = active_http_step.take() {
+        step.request.respond_err(format!(
+            "trace ended at frame {} with {} requested frames still pending",
+            engine.frame_counter(),
+            step.remaining
+        ));
+    }
     if divergent_frames == 0 {
         println!("parity trace matched every recorded frame");
     } else {
@@ -679,6 +759,7 @@ fn main() {
 
 fn parse_options() -> Options {
     const USAGE: &str = "usage: original_parity_replay [--scan-all] \
+        [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
         [--dump-entity KIND:INDEX]...] TRACE.jsonl";
 
@@ -689,9 +770,21 @@ fn parse_options() -> Options {
     let mut dump_from = 0;
     let mut dump_through = u64::MAX;
     let mut dump_entities = Vec::new();
+    let mut http_server = None;
+    let mut start_paused = false;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
+            Some("--http-server") => {
+                let port = parse_u64_option(args.next(), "--http-server");
+                let port = u16::try_from(port).expect("--http-server port exceeds 65535");
+                assert_ne!(
+                    port, 0,
+                    "--http-server 0 cannot serve parity replay controls"
+                );
+                assert!(http_server.replace(port).is_none(), "{USAGE}");
+            }
+            Some("--start-paused") => start_paused = true,
             Some("--dump-jsonl") => {
                 let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
                 assert!(dump_path.replace(PathBuf::from(value)).is_none(), "{USAGE}");
@@ -722,15 +815,127 @@ fn parse_options() -> Options {
             || (dump_from == 0 && dump_through == u64::MAX && dump_entities.is_empty()),
         "--dump-from, --dump-through, and --dump-entity require --dump-jsonl"
     );
+    assert!(
+        !start_paused || http_server.is_some(),
+        "--start-paused requires --http-server"
+    );
     Options {
         scan_all,
         trace_path,
+        http_server,
+        start_paused,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
             through_frame: dump_through,
             entities: dump_entities,
         }),
+    }
+}
+
+fn drain_headless_http(
+    engine: &mut Engine,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    input: &mut InputState,
+    selected_view_element: &mut Option<EntityId>,
+    manual_pause: &mut bool,
+    active_step: &mut Option<ActiveHttpStep>,
+) {
+    robin_rs::http_server::drain_global_headless(
+        engine,
+        display,
+        assets,
+        input,
+        selected_view_element,
+    );
+    for request in robin_rs::http_server::take_pending_steps() {
+        match request.kind {
+            robin_rs::http_server::StepKind::Forward { n } => {
+                if n == 0 {
+                    request.respond_ok(serde_json::json!({
+                        "direction": "forward",
+                        "from_frame": engine.frame_counter(),
+                        "frame": engine.frame_counter(),
+                        "advanced": 0,
+                        "parity": "matched",
+                    }));
+                } else if active_step.is_some() {
+                    request.respond_err("another parity replay step is already active");
+                } else {
+                    *active_step = Some(ActiveHttpStep {
+                        request,
+                        direction: "forward",
+                        from_frame: engine.frame_counter(),
+                        remaining: n,
+                        requested: n,
+                    });
+                }
+            }
+            robin_rs::http_server::StepKind::Back { .. } => {
+                request.respond_err(
+                    "step-back is unavailable for Original parity traces; restart and go-to-frame",
+                );
+            }
+            robin_rs::http_server::StepKind::GoToFrame { target } => {
+                let current = engine.frame_counter();
+                if target < current {
+                    request.respond_err(
+                        "backward go-to-frame is unavailable for Original parity traces; restart the runner",
+                    );
+                } else if target == current {
+                    request.respond_ok(serde_json::json!({
+                        "direction": "go-to-frame",
+                        "from_frame": current,
+                        "frame": current,
+                        "advanced": 0,
+                        "parity": "matched",
+                    }));
+                } else if active_step.is_some() {
+                    request.respond_err("another parity replay step is already active");
+                } else {
+                    *active_step = Some(ActiveHttpStep {
+                        request,
+                        direction: "go-to-frame",
+                        from_frame: current,
+                        remaining: target - current,
+                        requested: target - current,
+                    });
+                }
+            }
+            robin_rs::http_server::StepKind::SetPaused { paused } => {
+                *manual_pause = paused;
+                request.respond_ok(serde_json::json!({
+                    "paused": paused,
+                    "frame": engine.frame_counter(),
+                }));
+            }
+        }
+    }
+}
+
+fn serve_halted_http(
+    engine: &mut Engine,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    input: &mut InputState,
+    selected_view_element: &mut Option<EntityId>,
+) -> ! {
+    loop {
+        robin_rs::http_server::drain_global_headless(
+            engine,
+            display,
+            assets,
+            input,
+            selected_view_element,
+        );
+        for request in robin_rs::http_server::take_pending_steps() {
+            request.respond_err(format!(
+                "parity replay is halted at divergent frame {}",
+                engine.frame_counter()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

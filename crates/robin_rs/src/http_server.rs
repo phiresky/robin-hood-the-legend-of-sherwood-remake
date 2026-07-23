@@ -797,6 +797,94 @@ pub fn drain_global(
     }
 }
 
+/// Drain requests for a headless tool that owns an [`Engine`] directly.
+///
+/// This is the small counterpart to [`drain_global`] used by deterministic
+/// replay/debug runners. Requests which need the renderer or live host UI are
+/// rejected, while engine inspection, script/native calls, player commands,
+/// and the pause/step queue remain available.
+pub fn drain_global_headless(
+    engine: &mut Engine,
+    display: &mut engine_api::HostDisplayState,
+    assets: &LevelAssets,
+    input: &mut engine_api::InputState,
+    selected_view_element: &mut Option<engine_element::EntityId>,
+) {
+    let Some(server) = GLOBAL.get() else { return };
+    let pending: Vec<HttpRequest> = {
+        let mut queue = server.queue.lock().expect("queue mutex poisoned");
+        queue.drain(..).collect()
+    };
+    for req in pending {
+        match req.payload {
+            HttpPayload::StepForward { n } => {
+                pending_steps()
+                    .lock()
+                    .expect("step queue poisoned")
+                    .push(PendingStep {
+                        response_tx: req.response_tx,
+                        kind: StepKind::Forward { n },
+                    });
+            }
+            HttpPayload::StepBack { n } => {
+                pending_steps()
+                    .lock()
+                    .expect("step queue poisoned")
+                    .push(PendingStep {
+                        response_tx: req.response_tx,
+                        kind: StepKind::Back { n },
+                    });
+            }
+            HttpPayload::GoToFrame { target } => {
+                pending_steps()
+                    .lock()
+                    .expect("step queue poisoned")
+                    .push(PendingStep {
+                        response_tx: req.response_tx,
+                        kind: StepKind::GoToFrame { target },
+                    });
+            }
+            HttpPayload::SetPaused { paused } => {
+                pending_steps()
+                    .lock()
+                    .expect("step queue poisoned")
+                    .push(PendingStep {
+                        response_tx: req.response_tx,
+                        kind: StepKind::SetPaused { paused },
+                    });
+            }
+            HttpPayload::Screenshot(_) => {
+                req.response_tx.send(Err(
+                    "screenshots are unavailable in a headless runner".into()
+                ));
+            }
+            HttpPayload::HostDebug => {
+                req.response_tx
+                    .send(Err("host-debug is unavailable in a headless runner".into()));
+            }
+            HttpPayload::EngineDump => {
+                let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
+                let reply = engine_dump_json(&diagnostic)
+                    .map(ReplyBody::Json)
+                    .map_err(|e| format!("engine serialize: {e}"));
+                req.response_tx.send(reply);
+            }
+            other => {
+                let reply = dispatch_in_engine(
+                    other,
+                    engine,
+                    display,
+                    assets,
+                    input,
+                    selected_view_element,
+                    None,
+                );
+                req.response_tx.send(reply);
+            }
+        }
+    }
+}
+
 fn dispatch_in_engine(
     payload: HttpPayload,
     engine: &mut Engine,
