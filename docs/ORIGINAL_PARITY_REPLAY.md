@@ -24,11 +24,11 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 37. At frame 38 soldier 83
-has `LookLeft` / AI substate 20 in Original while Rust has `Wait` / substate 21.
-Trace the patrol or idle-action continuation that chooses the sideward look.
-Increase the clean-prefix statement only after a normal first-divergence run
-has passed that frame.
+The current verified clean prefix is through frame 38. At frame 39 soldiers 96
+and 98 have matching logical state but different patrol positions and movement
+goals. Trace the movement/formation geometry that first separates their map
+coordinates. Increase the clean-prefix statement only after a normal
+first-divergence run has passed that frame.
 
 ## Change ledger
 
@@ -49,7 +49,7 @@ has passed that frame.
 | Done | Anti-collision direction | During deviation, Original faces the committed deviation step and rebuilds its normal increment when deviation ends. | Direction/increment are derived after the committed step; deviation recovery invalidates and recomputes the normal goal increment. |
 | Done | Mobile anti-collision scope | Original calls `IsBlockedByMobile` only when `GetMobileRepulsiveObjects` reported a mobile intersecting the actor's future box. Layer-wide mobile geometry must not block an unrelated actor's recovery or break-through corridor. | Mobile blocking checks in deviation recovery, ordinary commit, and break-through are gated by the future-box intersection result. |
 | Done | Transition anti-collision | Soldier 89 retained `deviated=true` through a running-to-walking transition at frame 25, so frame 26 incorrectly used anti-vibration turning and remained at direction 3. Original sends every nonzero `PerformMotion` distance, including `TILL_LAST_FRAME`, through `UpdatePositionAntiCollision`; it recovered on frame 25 and ordinarily turned to direction 4. | Nonzero movement transitions now use the same anti-collision step and recovery commit as walking motion while retaining their distinct animation-completion semantics. |
-| Done | Vision geometry | Rust applied the map's isometric Y correction at a point where Original compares raw view-space X/Y, shifting cone membership. | The detection cone now uses the Original coordinate convention at that boundary. |
+| Done | Vision geometry | Rust applied the map's isometric Y correction to the target delta at a point where Original compares raw view-space X/Y, shifting cone membership. At frame 38 Rust then saw soldier 82 from soldier 83 while Original kept looking left. Original applies the correction by scaling the rotated cone-side vectors instead; Rust had omitted that second part and consequently made diagonal cones too wide. | Cone determinants now compare the raw target delta against side vectors whose Y components carry `ASPECT_RATIO`, exactly as `RefreshView` and `IsDetecting` do. The frame-38 soldier geometry has direct regression coverage. Normal eye movement also uses the active PI/8 step and PI/80 iterator constants instead of values from Original's commented old-values block. |
 | Done | `Turn`/`FaceTo` during movement | Original turns once toward the retained movement goal, halts/promotes the turn immediately, retains the map goal, and drives the movement-exit animation through ordinary `Execute` even though action state remains `Moving` until that transition completes. | The old-goal turn step precedes halt, the turn sequence is launched eagerly, its requested direction goal is installed, and the retained map goal is restored. Generic animation dispatch admits non-movement walking/running exit transitions while the old moving state is still live. Unit coverage classifies the admitted transition family. |
 | Done | Actor idle exit inside movement | Original's bored-to-waiting animation always uses base `PerformAction`, including when the order is stored in a movement element; only particular movement animation arms branch on `IsMovement()` and use `PerformMotion`. | Generic animation execution no longer rejects an order solely because its command/element is movement-shaped. The live animation-arm catalog remains the owner selector, and the universal base-actor idle state effects now apply to PCs as well as NPCs. Regression coverage verifies a PC changes from `Bored` to `Waiting` on bored-exit completion. |
 | Done | Patrol `GoToSpeed` close-point gate | At frame 24 Rust changed soldier 92 from patrol-running to waiting and issued `Turn`; Original downgraded it to patrol-walking and retained `MoveOk`. `RHArtificialIntelligence::GoTo` only synthesizes `EventReachPoint` within five units when the current animation is an idle wait. | `go_to_speed`, which represents the same Original overload, now applies the idle-animation, likes-to-sit, and special-action gates before setting `already_on_point`. Regression coverage exercises both ordinary and speed variants, including a nearby running actor that must still queue movement. |

@@ -33,7 +33,7 @@
 use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
 use crate::order::OrderType;
-use crate::position_interface::INVERSE_ASPECT_RATIO;
+use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sight_obstacle::ObstacleList;
 use crate::sight_obstacle::SightObstacle;
 
@@ -127,11 +127,13 @@ pub const NORMAL_HALF_ANGLE_RANGE: f32 = 0.8;
 
 pub const STARE_HALF_ANGLE_RANGE: f32 = 1.3;
 
-/// π/16.
-pub const NORMAL_ANGLE_STEP: f32 = 0.19635;
+/// π/8.
+// RHparametersai.h's active definition is PI/8. The PI/16 value immediately
+// below it is inside the commented "old values" block.
+pub const NORMAL_ANGLE_STEP: f32 = 0.3927;
 
-/// π/40.
-pub const NORMAL_ANGLE_ITERATOR_STEP: f32 = 0.07854;
+/// π/80.
+pub const NORMAL_ANGLE_ITERATOR_STEP: f32 = 0.03927;
 
 pub const STARE_APERTURE_FACTOR: f32 = 0.7;
 
@@ -544,16 +546,20 @@ fn is_detecting_cone_and_los(
         // path, so skip the inner radius / forward-half-plane
         // re-check and go straight to the triangle test:
         //     left.Det(viewVector) < 0 || right.Det(viewVector) > 0
-        // where `left` and `right` are unit vectors set to the view
-        // direction rotated by ±real_half_aperture.  Sides include
-        // stare, drunk, and lean-out modifiers from `refresh_view`.
+        // where `left` and `right` start as unit vectors set to the view
+        // direction rotated by ±real_half_aperture, then have their Y
+        // component multiplied by ASPECT_RATIO. Sides include stare, drunk,
+        // and lean-out modifiers from `refresh_view`.
         //
         // The original constructs `viewVector` directly from the raw
-        // world-space X/Y delta for these determinants.  Its separately
-        // stretched 3D norm is used only to select this branch.
+        // world-space X/Y delta for these determinants. Its separately
+        // stretched 3D norm is used only to select this branch; the isometric
+        // correction is encoded in the precomputed side vectors instead.
         let ha = real_half_aperture;
-        let (lx, ly) = rotate_unit(fx, fy, -ha);
-        let (rx, ry) = rotate_unit(fx, fy, ha);
+        let (lx, mut ly) = rotate_unit(fx, fy, -ha);
+        let (rx, mut ry) = rotate_unit(fx, fy, ha);
+        ly *= ASPECT_RATIO;
+        ry *= ASPECT_RATIO;
         let det_left = lx * view_y - ly * view_x;
         let det_right = rx * view_y - ry * view_x;
         if det_left < 0.0 || det_right > 0.0 {
@@ -992,7 +998,7 @@ pub fn is_detecting_target(
         target_los,
         None,
         dx,
-        sy,
+        dy,
         sqr_distance,
         fx,
         fy,
@@ -1604,6 +1610,20 @@ mod tests {
         let q = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), grid);
         let v = compute_visibility(&q);
         assert!(v > 0.0 && v <= 1.0, "got {}", v);
+    }
+
+    #[test]
+    fn cone_sides_apply_original_isometric_aspect_ratio() {
+        // This is the frame-38 Soldier83 -> Soldier82 geometry from the
+        // original parity trace. In raw screen X/Y it appears to be about
+        // 21 degrees left of west and inside the 0.5-radian cone. Original
+        // scales each cone side's Y by ASPECT_RATIO, which puts it outside.
+        let grid = empty_grid();
+        let mut q = query(pt(655.01, 1576.0), 12, pt(560.0, 1539.0), grid);
+        q.view_forward = (-1.0, 0.0);
+        q.real_half_aperture = 0.5;
+
+        assert_eq!(compute_visibility(&q), 0.0);
     }
 
     #[test]
