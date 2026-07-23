@@ -880,6 +880,63 @@ mod tests {
     }
 
     #[test]
+    fn civilian_bored_cycle_does_not_run_base_actor_random_choice() {
+        let seed = (0..1000)
+            .find(|seed| {
+                crate::sim_rng::with_seed(*seed, |sim| {
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BoredAnimationChoice, ..10)
+                        == 0
+                })
+            })
+            .expect("test should find a zero bored-animation roll");
+        let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+        let original_id = sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .front()
+            .unwrap()
+            .order_id;
+        let mut next_order_id = 9;
+        let mut side_outcomes = ExecuteSideOutcomes::default();
+        let mut ctx = ArmCtx {
+            entity_id: EntityId::Civilian(crate::entity_id::CivilianId(7)),
+            is_npc: true,
+            is_unconscious: false,
+            seq_id,
+            elem_idx: 0,
+            sequence_manager: &mut sequence_manager,
+            next_order_id: &mut next_order_id,
+            side_outcomes: &mut side_outcomes,
+        };
+
+        let outcome = crate::sim_rng::with_seed(seed, |sim| {
+            dispatch_arm_completion(
+                sim,
+                OrderType::WaitingUprightBored,
+                MotionState::Terminated,
+                &mut ctx,
+            )
+        });
+
+        let order = sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .front()
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ExecuteOutcome::Forward(MotionState::Terminated)
+        ));
+        assert_eq!(order.order_type, OrderType::WaitingUprightBored);
+        assert_eq!(
+            order.order_id, original_id,
+            "RHElementActorCivilian::Execute returns directly from its coerced idle arm"
+        );
+    }
+
+    #[test]
     fn unconscious_sword_start_sets_lying_waiting_sword() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
@@ -2892,6 +2949,12 @@ fn dispatch_arm_completion(
         anim_type,
         OT::WaitingUprightBored | OT::WaitingUprightBoredRandom
     ) {
+        // RHElementActorCivilian::Execute returns the raw coerced
+        // PerformAction result for this family, bypassing all base-Actor
+        // bored-loop mutation and return-value handling.
+        if matches!(ctx.entity_id, EntityId::Civilian(_)) {
+            return ExecuteOutcome::Forward(motion);
+        }
         if matches!(motion, MS::Terminated) {
             let is_wait_cmd = ctx
                 .sequence_manager
