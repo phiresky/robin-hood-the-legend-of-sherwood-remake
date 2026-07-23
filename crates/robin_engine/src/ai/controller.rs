@@ -2988,6 +2988,10 @@ impl AiController {
             self.already_turned = true;
             return;
         }
+        self.launch_turn_direction_unconditionally(direction);
+    }
+
+    fn launch_turn_direction_unconditionally(&mut self, direction: u16) {
         // Original `FaceTo(UWORD)` stores the authored sector directly in
         // RHFIELD_DIRECTION. Keep it discrete rather than round-tripping it
         // through a synthetic point and a later vector-to-sector conversion.
@@ -3709,7 +3713,16 @@ impl AiController {
                                 let dy = ctx.position.y - prev_wp.y as f32;
                                 let sector =
                                     crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-                                self.face_direction(sector as u16, ctx);
+                                // This is deliberately not `FaceTo`: Original
+                                // constructs and launches RHCOMMAND_TURN
+                                // directly here.  In particular, an actor
+                                // already facing the route direction must
+                                // still keep the Turn alive until its actor
+                                // sequence completes; FaceTo's waiting/bored
+                                // same-direction shortcut would recursively
+                                // synthesize EVENT_DONE and enter the waypoint
+                                // macro in this same owner boundary.
+                                self.launch_turn_direction_unconditionally(sector as u16);
                             } else {
                                 // No previous waypoint, skip turn.
                                 self.think_event_done_on_self(sim, ctx);
