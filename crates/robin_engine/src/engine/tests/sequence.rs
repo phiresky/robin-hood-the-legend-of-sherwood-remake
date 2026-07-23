@@ -307,6 +307,71 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
     );
 }
 
+#[test]
+fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{
+        Field, FieldValue, Sequence, SequenceElement, SequencePriority, SequenceState,
+    };
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    // The officer-conversation regression leaves the actor idle after its
+    // Turn while a later owned PlayAnim waits behind an ownerless Timer.
+    // Original Actor::Hourglass sees no current order and launches its
+    // low-priority Wait; future command levels do not suppress that idle.
+    let mut sequence = Sequence::new();
+    let mut timer = SequenceElement::new_generic(1, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(50));
+    sequence.append_element(timer);
+    sequence.append_element(SequenceElement::new(2, Command::PlayAnim, Some(owner)));
+    let scripted_sequence = engine.orders.sequence_manager.launch_sequence(sequence);
+
+    let future = engine
+        .orders
+        .sequence_manager
+        .get_element(scripted_sequence, 1)
+        .expect("future actor action exists");
+    assert_eq!(future.state, SequenceState::Todo);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .is_none(),
+        "a future command level is not the actor's current order"
+    );
+
+    engine.ensure_wait_element(owner);
+    let mut display = HostDisplayState::default();
+    let assets = LevelAssets::default();
+    engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
+
+    let (wait_sequence, wait_index) = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(owner)
+        .expect("idle actor must execute a default Wait");
+    let wait = engine
+        .orders
+        .sequence_manager
+        .get_element(wait_sequence, wait_index)
+        .expect("default Wait remains live");
+    assert_eq!(wait.command, Command::Wait);
+    assert_eq!(wait.priority, SequencePriority::Wait);
+    assert_eq!(wait.state, SequenceState::InProgress);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(scripted_sequence, 1)
+            .expect("future actor action remains queued")
+            .state,
+        SequenceState::Todo
+    );
+}
+
 /// An attentive-mode transition on an idle soldier queues
 /// `TransitionWaitingUprightWaitingAlerted` as an order on the
 /// sequence element.

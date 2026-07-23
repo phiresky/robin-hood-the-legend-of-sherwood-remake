@@ -3172,16 +3172,16 @@ impl EngineInner {
     pub(crate) fn ensure_wait_element(&mut self, entity_id: EntityId) {
         use crate::sequence::{SequenceElement, SequencePriority};
 
-        // Skip if the actor already owns any live element — a wait
-        // element racing another Todo/InProgress element would break
-        // priority arbitration (the arbitrate_instruct pre-pass only
-        // sees InProgress currents).  Install the wait element lazily
-        // whenever the actor has no current order, i.e. "no other
-        // element is active".
+        // Original Actor::Hourglass installs Wait whenever the actor has no
+        // current order. Future Todo/Postponed elements do not count: they may
+        // sit behind an ownerless Timer while this actor idles. A concurrently
+        // InProgress element is the only state that corresponds to the
+        // Original's live `mpSequenceElement`/`mpOrder`.
         if self
             .orders
             .sequence_manager
-            .has_live_element_for_actor_matching(entity_id, |_| true)
+            .current_element_for_actor(entity_id)
+            .is_some()
         {
             return;
         }
