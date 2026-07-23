@@ -94,6 +94,26 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
     )
 }
 
+/// Match `RHSprite::PerformMotion`: scale the sprite-frame distance by the
+/// movement element's speed factor before applying the turn slowdown and its
+/// minimum useful step. Transition orders call `PerformMotion` without the
+/// element speed factor, so they retain the default factor of one.
+fn scaled_motion_distance(
+    frame_distance: f32,
+    speed_factor: f32,
+    is_transition: bool,
+    direction_differs_from_goal: bool,
+) -> f32 {
+    let mut distance = frame_distance * if is_transition { 1.0 } else { speed_factor };
+    if direction_differs_from_goal && distance > 0.0 {
+        distance *= 0.6;
+        if distance < 0.7 {
+            distance = 0.7;
+        }
+    }
+    distance
+}
+
 fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
     use crate::sector::LiftType;
 
@@ -5059,36 +5079,28 @@ impl EngineInner {
                     galopp_event = true;
                 }
             }
-            // Turn-slowdown: when the sprite is still rotating toward
-            // its goal direction, the per-tick walking distance is
-            // multiplied by 0.6× (with a 0.7-unit floor to keep the
-            // actor above the IsBlocked threshold).  The drunken-
-            // soldier branch that *increases* the factor to 2.0× is
-            // omitted here — this walking loop doesn't run
-            // `MotionMethod::Drunken`.
-            let mut frame_dist = frame_dist_raw;
+            // `PerformMotion` applies the sequence speed factor before its
+            // turn slowdown and 0.7-unit minimum. The order is observable:
+            // a slow patrol member with raw distance 2 and factor ~0.58 is
+            // clamped to exactly 0.7 after the 0.6 multiplier, rather than
+            // scaling an already-clamped 0.7 back below the minimum.
+            //
             // PerformMotion initializes a new order's direction goal after
-            // the caller's Turn() above. The slowdown test in the Original
-            // happens later and reads the now-live direction/goal pair, so
-            // it applies even though the pre-initialization Turn was a no-op.
+            // the caller's Turn() above. The slowdown test in Original
+            // happens later and reads the now-live direction/goal pair, so it
+            // applies even though the pre-initialization Turn was a no-op.
             let direction_differs_from_goal =
                 sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
-            if direction_differs_from_goal && frame_dist > 0.0 {
-                frame_dist *= 0.6;
-                if frame_dist < 0.7 {
-                    frame_dist = 0.7;
-                }
-            }
             // Transition Execute arms call `PerformMotion(...,
             // RHMOTIONMETHOD_TILL_LAST_FRAME)` without passing the movement
             // element's speed factor, so C++ uses the default 1.0. Patrol
             // formation factors only scale the subsequent Walk/Run orders.
-            let speed = frame_dist
-                * if is_transition_anim {
-                    1.0
-                } else {
-                    speed_factor
-                };
+            let speed = scaled_motion_distance(
+                frame_dist_raw,
+                speed_factor,
+                is_transition_anim,
+                direction_differs_from_goal,
+            );
             // PerformMotion applies the distance before returning its motion
             // state. A fresh walking order that reaches its goal on that same
             // invocation returns TERMINATED, not START, so the walking
@@ -8444,6 +8456,24 @@ mod line_jump_tests {
         assert!(!order_uses_distance_motion(
             OrderType::TransitionSpecialWaitingUpright
         ));
+    }
+
+    #[test]
+    fn turn_minimum_is_applied_after_movement_speed_factor() {
+        let distance = scaled_motion_distance(2.0, 0.582_163_33, false, true);
+        assert_eq!(
+            distance, 0.7,
+            "Original scales 2.0 by the patrol factor, then applies the 0.6 turn slowdown and 0.7 minimum"
+        );
+        assert_eq!(
+            scaled_motion_distance(2.0, 0.582_163_33, false, false),
+            1.164_326_7
+        );
+        assert_eq!(
+            scaled_motion_distance(2.0, 0.25, true, false),
+            2.0,
+            "transition motion does not use the movement element's speed factor"
+        );
     }
 
     #[test]
