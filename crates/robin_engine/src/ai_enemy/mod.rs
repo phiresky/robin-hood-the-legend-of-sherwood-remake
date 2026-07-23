@@ -4776,6 +4776,39 @@ mod tests {
     }
 
     #[test]
+    fn periodic_bored_roll_reads_live_animation_not_action_change_history() {
+        let sim = crate::sim_rng::test_context();
+        let seed_before = sim.seed();
+        let mut ai = EnemyAi::new(1);
+        let mut stale_view = soldier_view(Position::default());
+        stale_view.current_animation = OrderType::Invalid;
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, stale_view);
+        let ctx = AiContext {
+            self_animation: OrderType::WaitingUprightBored,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        ai.the_16th_frame(
+            &sim,
+            16,
+            &ctx,
+            &AiGlobalState::default(),
+            &AiPerTickData::stub(),
+            None,
+            true,
+            false,
+        );
+
+        assert_ne!(
+            sim.seed(),
+            seed_before,
+            "GetAnimation() must consume the bored-roll draw from the live sprite action"
+        );
+    }
+
+    #[test]
     fn start_think_handles_lose_consciousness() {
         let mut ai = EnemyAi::new(1);
         let ctx = AiContext::default();

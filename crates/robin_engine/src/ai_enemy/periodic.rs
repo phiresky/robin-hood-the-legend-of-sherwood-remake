@@ -57,11 +57,7 @@ impl EnemyAi {
         // Bored remark roll for officers/VIPs in DEFAULT
         // state when the entity is playing the WaitingUprightBored
         // idle animation.  1-in-12 per call (every 16 frames).
-        let self_animation = ctx
-            .entity_view(self.base.me)
-            .map(|v| v.current_animation)
-            .unwrap_or_default();
-        if self_animation == crate::order::OrderType::WaitingUprightBored
+        if ctx.self_animation == crate::order::OrderType::WaitingUprightBored
             && self.base.current_state == AiState::Default
             && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
         {
