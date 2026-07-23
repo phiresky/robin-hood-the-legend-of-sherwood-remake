@@ -677,7 +677,7 @@ impl EngineInner {
             || !self
                 .control
                 .frame_counter
-                .wrapping_add(npc_id.index())
+                .wrapping_add(self.original_static_creation_order(npc_id))
                 .is_multiple_of(DETECTION_FREQUENCY_BLIP)
         {
             return;

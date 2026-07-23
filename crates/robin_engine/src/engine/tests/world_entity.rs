@@ -2234,6 +2234,9 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             panic!("alert soldier changed kind")
         };
         soldier.element.active = true;
+        soldier.element.sprite.position_iface.set_move_box(
+            crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
+        );
         soldier.element.set_position_map(MapPoint::new(x, 0.0));
         let ai = soldier
             .npc

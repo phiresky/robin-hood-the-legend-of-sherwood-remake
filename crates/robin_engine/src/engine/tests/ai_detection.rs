@@ -427,7 +427,10 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
             (pc, npc)
         };
-        engine.control.frame_counter = 2;
+        // Static mission entities follow the Original's 31 hidden pre-level
+        // creations. For the following NPC (slot 1), frame 1 opens the
+        // three-frame hearing cadence: (1 + 31 + 1) % 3 == 0.
+        engine.control.frame_counter = 1;
         let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
             panic!("noise PC changed kind")
         };
@@ -2669,7 +2672,9 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    engine.control.frame_counter = 2;
+    // Slot 1 has Original creation order 32 after the hidden pre-level
+    // prefix, so frame 1 opens its three-frame hearing cadence.
+    engine.control.frame_counter = 1;
 
     let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
@@ -2831,7 +2836,7 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    engine.control.frame_counter = 2;
+    engine.control.frame_counter = 1;
 
     let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let first_visible_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
@@ -2914,8 +2919,9 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     friend.npc.eye_status = crate::element::EyeStatus::Closed;
 
     // RunningUpright produces the production 70-volume TAPTAPTAP used by
-    // RefreshDetection's acoustic pass. With observer slot 1 and frame 2,
-    // its three-frame hearing cadence is open.
+    // RefreshDetection's acoustic pass. With observer slot 1, the Original's
+    // hidden +31 creation-order prefix, and frame 1, its three-frame hearing
+    // cadence is open.
     let mut movement = SequenceElement::new_movement(
         1,
         crate::element::Command::Move,
@@ -3152,6 +3158,9 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
 
     for observer_inside in [true, false] {
         let mut engine = EngineInner::new();
+        // Slot 0 has Original creation order 31; frame 2 opens its
+        // three-frame hearing cadence.
+        engine.control.frame_counter = 2;
         let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
         let indoor_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
         let inactive_outdoor_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
@@ -3376,6 +3385,9 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
 
     for observer_inside in [true, false] {
         let mut engine = EngineInner::new();
+        // Slot 0 has Original creation order 31; frame 1 opens the common
+        // modulo-16 blip cadence.
+        engine.control.frame_counter = 1;
         let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
         let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
         install_test_building_sector(&mut engine, 42);
@@ -3444,6 +3456,10 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
+    // Slot 0 has Original creation order 31; frame 17 makes modified
+    // frame 48, opening both the three-frame hearing cadence and the
+    // modulo-16 blip cadence.
+    engine.control.frame_counter = 17;
     let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let runner_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
 
@@ -3588,7 +3604,9 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.control.frame_counter = 1;
+    // Slot 0 has Original creation order 31. Frame 2 is closed; frame 1 below
+    // is open for the common modulo-16 blip cadence.
+    engine.control.frame_counter = 2;
     engine.tick_enemy_ai(sim, &assets);
     assert!(
         engine
@@ -3598,7 +3616,7 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
             .blipped
     );
 
-    engine.control.frame_counter = 16;
+    engine.control.frame_counter = 1;
     engine.tick_enemy_ai(sim, &assets);
     assert!(
         !engine
@@ -4210,16 +4228,19 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         listener.npc.view_direction = [1.0, 0.0];
         listener.npc.eye_status = crate::element::EyeStatus::LookForward;
 
+        const ORIGINAL_PRE_LEVEL_CREATIONS: u32 = 31;
+        let source_creation_order = source_id.index() + ORIGINAL_PRE_LEVEL_CREATIONS;
+        let listener_creation_order = listener_id.index() + ORIGINAL_PRE_LEVEL_CREATIONS;
         engine.control.frame_counter = (crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
-            - source_id.index() % crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
+            - source_creation_order % crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
             % crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC;
         assert!(
-            (engine.control.frame_counter + source_id.index())
+            (engine.control.frame_counter + source_creation_order)
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
             "source fixture must start on an open Royalist NPC detection gate"
         );
         assert!(
-            !(engine.control.frame_counter + listener_id.index())
+            !(engine.control.frame_counter + listener_creation_order)
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
             "listener fixture must start on a closed Royalist NPC detection gate"
         );
@@ -4294,6 +4315,9 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
     use crate::element::{Camp, Detectable, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
+    // Slot 0 has Original creation order 31; frame 1 opens its strict
+    // modulo-16 Royalist NPC cadence.
+    engine.control.frame_counter = 1;
     let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let first_visible_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let lost_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -4499,9 +4523,11 @@ fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
             ..Detectable::default()
         }];
 
-        engine.control.frame_counter = 1;
+        // Slot 0 has Original creation order 31; frame 2 is a closed strict
+        // modulo-16 cadence frame.
+        engine.control.frame_counter = 2;
         assert!(
-            !(engine.control.frame_counter + observer_id.index())
+            !(engine.control.frame_counter + observer_id.index() + 31)
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC)
         );
         crate::sim_rng::with_seed(0xA013_1600 + eye_status as u64, |sim| {
@@ -4541,6 +4567,9 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
     use crate::element::{AiBrain, Camp, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
+    // Slot 0 has Original creation order 31; frame 1 opens the Royalist
+    // modulo-16 Enemy cadence.
+    engine.control.frame_counter = 1;
     let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
     let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let lacklandist_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -4974,7 +5003,7 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
                 })
             })
             .collect::<Vec<_>>();
-        let expected = if frame == 2 {
+        let expected = if frame == 3 {
             vec![pc_id.index()]
         } else {
             vec![pc_id.index(), royalist_id.index()]
@@ -4983,8 +5012,10 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
         targets
     }
 
-    assert_eq!(observed_targets(2).len(), 1);
-    assert_eq!(observed_targets(16).len(), 2);
+    // Observer slot 0 has Original creation order 31. Frame 3 opens only
+    // the modulo-2 PC cadence; frame 1 opens both modulo-2 and modulo-16.
+    assert_eq!(observed_targets(3).len(), 1);
+    assert_eq!(observed_targets(1).len(), 2);
 }
 
 #[test]
@@ -5005,7 +5036,9 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         Blocker::GuardedPc,
     ] {
         let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
-        engine.control.frame_counter = 1;
+        // Modified frame 33 keeps both the PC cadence and the common blip
+        // cadence closed.
+        engine.control.frame_counter = 2;
 
         let Entity::Soldier(observer) = engine
             .get_entity_mut(observer_id)
@@ -5044,7 +5077,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         }
 
         assert!(
-            !(engine.control.frame_counter + observer_id.index())
+            !(engine.control.frame_counter + observer_id.index() + 31)
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_PC)
         );
         crate::sim_rng::with_seed(0xA013_1A00 + blocker as u64, |sim| {
@@ -5103,7 +5136,9 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
     use crate::position_interface::DoorHandle;
 
     let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
-    engine.control.frame_counter = 1;
+    // Modified frame 34 keeps blip/NPC cadence closed while opening the
+    // Lacklandist PC cadence.
+    engine.control.frame_counter = 3;
 
     let Entity::Soldier(royalist) = engine
         .get_entity_mut(royalist_id)
@@ -5133,7 +5168,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
     observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
 
     assert!(
-        !(engine.control.frame_counter + observer_id.index())
+        !(engine.control.frame_counter + observer_id.index() + 31)
             .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
         "fixture must keep NPC blip auto-reveal closed"
     );

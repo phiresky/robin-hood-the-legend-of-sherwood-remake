@@ -592,7 +592,8 @@ mod tests {
         ("WriggleDirection", 1),
     ];
 
-    const REVIEWED_AUXILIARY_SITE_USES: &[(&str, usize)] = &[("PeasantNames", 1)];
+    const REVIEWED_AUXILIARY_SITE_USES: &[(&str, usize)] =
+        &[("DelayedSoundTimer", 1), ("PeasantNames", 1)];
 
     const REVIEWED_PUBLIC_ENTRY_POINTS: &[&str] = &[
         "bool",
@@ -613,7 +614,7 @@ mod tests {
     const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
         (
             "crates/robin_engine/src/engine/types.rs|fastrand::Rng::with_seed",
-            3,
+            2,
         ),
         (
             "crates/robin_rs/src/game_session/interactive.rs|fastrand::Rng::new",
