@@ -3674,6 +3674,13 @@ impl SequenceManager {
                 if elem.owner == Some(owner)
                     && elem.state == SequenceState::InProgress
                     && elem.command != Command::Wait
+                    // `RHSequenceElement::Stop` deliberately keeps an
+                    // in-progress movement alive so its rewritten
+                    // walking/running-to-waiting transition can play.
+                    // `stop_movement_for_owner` has already interrupted
+                    // movement actions without a transition arm; anything
+                    // still InProgress here is the preserved transition.
+                    && !elem.data.is_movement()
                 {
                     targets.push((*seq_id, elem_idx));
                 }
@@ -5711,6 +5718,20 @@ mod tests {
         // Trailing order should have been dropped.
         assert_eq!(s.elements[0].orders.len(), 1);
         assert!(cancellations.is_empty()); // No MoveWaiting — no cancellation.
+
+        // The generic half of Actor::Stop runs after StopMovement. Original
+        // leaves this rewritten movement InProgress so the transition can
+        // play; only movement actions without a rewrite arm were interrupted
+        // above.
+        mgr.stop_owner(
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            SequencePriority::NonInterruptable,
+            &|_| SequencePriority::Normal,
+        );
+        assert_eq!(
+            mgr.get_element(seq_id, 0).unwrap().state,
+            SequenceState::InProgress
+        );
     }
 
     #[test]
