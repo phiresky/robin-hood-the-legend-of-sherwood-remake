@@ -4783,6 +4783,8 @@ impl EngineInner {
                 );
             }
 
+            let soldier_attentive = matches!(entity, crate::element::Entity::Soldier(_))
+                && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
             let elem = entity.element_data_mut();
             let motion_order_is_new = order_id
                 .is_some_and(|order_id| elem.sprite.last_processed_order_id != order_id.get());
@@ -4994,6 +4996,19 @@ impl EngineInner {
                         _ => OrderType::WalkingUpright,
                     },
                 };
+                // `RHElementActorSoldier::Execute` keeps the authored order
+                // unchanged but plays the corresponding alerted sprite
+                // animation while the soldier is attentive.  This applies to
+                // movement orders too: the alerted start/stop transitions have
+                // different frame delays, and WalkingAlerted has different
+                // per-frame distances.  Apply the substitution before lift
+                // translation so ladder/wall selection also sees the effective
+                // upright animation, as in the Original dispatch chain.
+                let base = super::animation::soldier_movement_animation(
+                    base,
+                    soldier_attentive,
+                    action_state,
+                );
                 // Lift branches: when a moving actor is in a lift
                 // sector, the lift type rewrites the per-frame
                 // animation.  Upright posture takes the upwards

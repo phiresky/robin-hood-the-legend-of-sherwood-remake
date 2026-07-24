@@ -11,7 +11,7 @@ const WEAKNESS_DISMISH: u16 = 5;
 /// substitutes the alerted variant at the top of its "attentive"
 /// branch before delegating to action/motion playback.  Returns
 /// `None` for animation types that have no alerted variant.
-fn alerted_variant(anim: OrderType) -> Option<OrderType> {
+pub(super) fn alerted_variant(anim: OrderType) -> Option<OrderType> {
     use OrderType as OT;
     match anim {
         OT::Turning => Some(OT::TurningAlerted),
@@ -39,6 +39,54 @@ fn alerted_variant(anim: OrderType) -> Option<OrderType> {
             Some(OT::TransitionRunningAlertedWalkingAlerted)
         }
         _ => None,
+    }
+}
+
+/// Resolve the concrete sprite animation used by the movement portion of
+/// `RHElementActorSoldier::Execute` while leaving the authored order intact.
+///
+/// The Original's guards are deliberately branch-specific: upright movement
+/// transitions only test `mbAttentive`, ordinary walking excludes two sword
+/// states, and stairs/turning exclude the complete sword-action family.
+pub(super) fn soldier_movement_animation(
+    anim: OrderType,
+    attentive: bool,
+    action_state: ActionState,
+) -> OrderType {
+    use OrderType as OT;
+
+    if !attentive {
+        return anim;
+    }
+
+    let all_sword_states = matches!(
+        action_state,
+        ActionState::WaitingSword
+            | ActionState::MovingSword
+            | ActionState::MovingFastSword
+            | ActionState::ParryingSword
+            | ActionState::ParryingSwordLow
+    );
+
+    match anim {
+        OT::TransitionWalkingUprightWaitingUpright
+        | OT::TransitionRunningUprightWaitingUpright
+        | OT::TransitionWaitingUprightWalkingUpright
+        | OT::TransitionWaitingUprightRunningUpright
+        | OT::TransitionWalkingUprightRunningUpright
+        | OT::TransitionRunningUprightWalkingUpright => alerted_variant(anim).unwrap_or(anim),
+        OT::WalkingUpright
+            if !matches!(
+                action_state,
+                ActionState::WaitingSword | ActionState::MovingSword
+            ) =>
+        {
+            OT::WalkingAlerted
+        }
+        OT::WalkingStairs | OT::Turning if !all_sword_states => {
+            alerted_variant(anim).unwrap_or(anim)
+        }
+        _ => anim,
     }
 }
 
@@ -1332,7 +1380,7 @@ mod tests {
 /// pop: `WaitingUprightBored` → `TurningAlerted` (1 frame of
 /// "sword-drawn" pose) → `TransitionWaitingUprightBoredWaitingUpright`
 /// → the real lean-forward transition.
-fn soldier_is_attentive(entity: &Entity) -> bool {
+pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
     if !matches!(entity, Entity::Soldier(_)) {
         return false;
     }
@@ -4498,6 +4546,69 @@ impl EngineInner {
 #[cfg(test)]
 mod soldier_take_drink_parity_tests {
     use super::*;
+
+    #[test]
+    fn attentive_movement_uses_the_original_alerted_animation_family() {
+        use OrderType as OT;
+
+        let substitutions = [
+            (OT::WalkingUpright, OT::WalkingAlerted),
+            (
+                OT::TransitionWalkingUprightWaitingUpright,
+                OT::TransitionWalkingAlertedWaitingAlerted,
+            ),
+            (
+                OT::TransitionRunningUprightWaitingUpright,
+                OT::TransitionRunningAlertedWaitingAlerted,
+            ),
+            (
+                OT::TransitionWaitingUprightWalkingUpright,
+                OT::TransitionWaitingAlertedWalkingAlerted,
+            ),
+            (
+                OT::TransitionWaitingUprightRunningUpright,
+                OT::TransitionWaitingAlertedRunningAlerted,
+            ),
+            (
+                OT::TransitionWalkingUprightRunningUpright,
+                OT::TransitionWalkingAlertedRunningAlerted,
+            ),
+            (
+                OT::TransitionRunningUprightWalkingUpright,
+                OT::TransitionRunningAlertedWalkingAlerted,
+            ),
+            (OT::WalkingStairs, OT::WalkingStairsAlerted),
+            (OT::Turning, OT::TurningAlerted),
+        ];
+
+        for (authored, effective) in substitutions {
+            assert_eq!(
+                soldier_movement_animation(authored, true, ActionState::Waiting),
+                effective
+            );
+        }
+        assert_eq!(
+            soldier_movement_animation(OT::WalkingUpright, true, ActionState::MovingSword),
+            OT::WalkingUpright
+        );
+        assert_eq!(
+            soldier_movement_animation(OT::WalkingStairs, true, ActionState::MovingFastSword),
+            OT::WalkingStairs
+        );
+        assert_eq!(
+            soldier_movement_animation(
+                OT::TransitionWaitingUprightWalkingUpright,
+                true,
+                ActionState::MovingSword,
+            ),
+            OT::TransitionWaitingAlertedWalkingAlerted,
+            "upright transition substitutions only test mbAttentive"
+        );
+        assert_eq!(
+            soldier_movement_animation(OT::WalkingUpright, false, ActionState::Waiting),
+            OT::WalkingUpright
+        );
+    }
 
     #[test]
     fn npc_taking_plays_searching_sprite_row_without_changing_pc_taking() {
