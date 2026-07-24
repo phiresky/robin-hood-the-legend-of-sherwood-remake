@@ -218,6 +218,51 @@ fn sword_movement_dispatch_action(order: OrderType) -> OrderType {
     }
 }
 
+/// Match `SBGeoVector2D::Angle(vDisplacement, vDirection)` as used by
+/// `RHElementActorHuman::FaceOpponent`: the signed angle is measured from the
+/// movement displacement to the actor's facing vector.
+fn combat_movement_angle(move_angle: f32, facing_angle: f32) -> f32 {
+    let mut angle = facing_angle - move_angle;
+    if angle < 0.0 {
+        angle += 2.0 * std::f32::consts::PI;
+    }
+    if angle >= 2.0 * std::f32::consts::PI {
+        angle -= 2.0 * std::f32::consts::PI;
+    }
+    angle
+}
+
+fn combat_directional_animation(
+    action_state: crate::element::ActionState,
+    angle: f32,
+) -> OrderType {
+    let unit = std::f32::consts::FRAC_PI_4;
+    match action_state {
+        crate::element::ActionState::MovingShield => {
+            if angle < unit || angle >= 7.0 * unit {
+                OrderType::WalkingShield
+            } else if angle < 3.0 * unit {
+                OrderType::StrafingRightShield
+            } else if angle < 5.0 * unit {
+                OrderType::WalkingBackwardsShield
+            } else {
+                OrderType::StrafingLeftShield
+            }
+        }
+        _ => {
+            if angle < unit || angle >= 7.0 * unit {
+                OrderType::WalkingSword
+            } else if angle < 3.0 * unit {
+                OrderType::StrafingRightSword
+            } else if angle < 5.0 * unit {
+                OrderType::WalkingBackwardsSword
+            } else {
+                OrderType::StrafingLeftSword
+            }
+        }
+    }
+}
+
 fn movement_execute_state_effect(
     order: OrderType,
     motion: MotionState,
@@ -4823,7 +4868,9 @@ impl EngineInner {
                     let fdx = opp_pos.x - elem.position_map().x;
                     let fdy = opp_pos.y - elem.position_map().y;
                     if fdx * fdx + fdy * fdy > 0.01 {
-                        elem.set_direction_goal(vector_to_sector_0_to_15(fdx, fdy));
+                        elem.set_direction_goal(
+                            crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
+                        );
                     }
                 }
             } else if dist > 0.01
@@ -4898,47 +4945,13 @@ impl EngineInner {
                         (elem.direction() as f32) * std::f32::consts::PI / 8.0
                     };
                     let move_angle = dy.atan2(dx);
-                    // Angle from facing to movement, normalised to [0, 2π).
-                    let mut angle = move_angle - facing_angle;
-                    if angle < 0.0 {
-                        angle += 2.0 * std::f32::consts::PI;
-                    }
-                    if angle >= 2.0 * std::f32::consts::PI {
-                        angle -= 2.0 * std::f32::consts::PI;
-                    }
-
-                    let unit = std::f32::consts::FRAC_PI_4; // π/4 = 45°
-                    let sword_anim = match action_state {
-                        crate::element::ActionState::MovingShield => {
-                            if angle < unit || angle >= 7.0 * unit {
-                                OrderType::WalkingShield
-                            } else if angle < 3.0 * unit {
-                                OrderType::StrafingRightShield
-                            } else if angle < 5.0 * unit {
-                                OrderType::WalkingBackwardsShield
-                            } else {
-                                OrderType::StrafingLeftShield
-                            }
-                        }
-                        // MovingSword and MovingFastSword both use the
-                        // directional walking/strafing sword
-                        // animations — the `fast` flag is ignored when
-                        // selecting the animation.  Running in combat
-                        // is implemented by playing the walking anim
-                        // under `MotionMethod::Fast` (2× frame rate +
-                        // 2× distance).
-                        _ => {
-                            if angle < unit || angle >= 7.0 * unit {
-                                OrderType::WalkingSword
-                            } else if angle < 3.0 * unit {
-                                OrderType::StrafingRightSword
-                            } else if angle < 5.0 * unit {
-                                OrderType::WalkingBackwardsSword
-                            } else {
-                                OrderType::StrafingLeftSword
-                            }
-                        }
-                    };
+                    let angle = combat_movement_angle(move_angle, facing_angle);
+                    // MovingSword and MovingFastSword both use the
+                    // directional walking/strafing sword animations — the
+                    // `fast` flag is ignored when selecting the animation.
+                    // Running in combat is implemented by playing the walking
+                    // animation under `MotionMethod::Fast`.
+                    let sword_anim = combat_directional_animation(action_state, angle);
                     if elem.sprite.has_animation(sword_anim) {
                         sword_anim
                     } else {
@@ -9050,5 +9063,42 @@ mod line_jump_tests {
         assert_eq!(expanded.y_min(), 19.5);
         assert_eq!(expanded.x_max(), 30.5);
         assert_eq!(expanded.y_max(), 40.5);
+    }
+
+    #[test]
+    fn face_opponent_uses_original_displacement_to_facing_angle_sign() {
+        use crate::element::ActionState;
+
+        let right = combat_movement_angle(0.0, std::f32::consts::FRAC_PI_2);
+        assert_eq!(
+            combat_directional_animation(ActionState::MovingSword, right),
+            OrderType::StrafingRightSword,
+            "Angle(eastward displacement, northward facing) is +90 degrees"
+        );
+
+        let left = combat_movement_angle(0.0, -std::f32::consts::FRAC_PI_2);
+        assert_eq!(
+            combat_directional_animation(ActionState::MovingSword, left),
+            OrderType::StrafingLeftSword,
+            "reversing the facing vector selects the opposite strafe"
+        );
+    }
+
+    #[test]
+    fn face_opponent_direction_uses_isometric_map_aspect() {
+        use crate::position_interface::{
+            ASPECT_RATIO, vector_to_sector_0_to_15, vector_to_sector_0_to_15_iso,
+        };
+
+        let bare = vector_to_sector_0_to_15(1.0, ASPECT_RATIO);
+        let isometric = vector_to_sector_0_to_15_iso(1.0, ASPECT_RATIO);
+        assert_eq!(
+            isometric, 6,
+            "isometric stretch restores a 45-degree vector"
+        );
+        assert_ne!(
+            bare, isometric,
+            "raw map-space binning must not replace GetSector0to15(ASPECT_RATIO)"
+        );
     }
 }
