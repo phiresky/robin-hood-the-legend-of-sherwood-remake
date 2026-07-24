@@ -2965,9 +2965,9 @@ mod tests {
             .unwrap()
             .active_melee = active;
 
-        let initialized = engine.tick_nonstraight_melee_for(sim, &assets, attacker);
+        let phase = engine.tick_nonstraight_melee_for(sim, &assets, attacker);
         assert!(
-            initialized,
+            phase == strikes::SweepTickPhase::Initialized,
             "the lateral DONE branch must initialize a sweep"
         );
         let initial_current = engine
@@ -2979,7 +2979,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .current_angle;
-        engine.tick_sweep_for(sim, &assets, attacker, initialized);
+        engine.tick_sweep_for(sim, &assets, attacker, true);
 
         let current = engine
             .get_entity(attacker)
@@ -2998,6 +2998,175 @@ mod tests {
             soldier_life(&engine, victim),
             50,
             "lateral initialization cannot hit until a later Hourglass"
+        );
+    }
+
+    #[test]
+    fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let unreached_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: -10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        let mut profile_manager = crate::profiles::ProfileManager::new();
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        let retained = &mut weapon.thrusts[SwordStrike::D as usize];
+        retained.kind = crate::profiles::WeaponThrustKind::Lateral;
+        retained.direction = crate::profiles::WeaponThrustDirection::RightToLeft;
+        retained.minimal_distance = 0;
+        retained.maximal_distance = 100;
+        retained.rotation_angle = 5;
+        retained.cutting = 1;
+        let replacement = &mut weapon.thrusts[SwordStrike::E as usize];
+        replacement.kind = crate::profiles::WeaponThrustKind::Lateral;
+        replacement.direction = crate::profiles::WeaponThrustDirection::LeftToRight;
+        replacement.minimal_distance = 0;
+        replacement.maximal_distance = 100;
+        replacement.rotation_angle = 90;
+        replacement.cutting = 100;
+        profile_manager.hth_weapons.push(weapon);
+        profile_manager
+            .characters
+            .push(crate::profiles::CharacterProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::CharacterProfile::default()
+            });
+        profile_manager
+            .soldiers
+            .push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::SoldierProfile::default()
+            });
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profile_manager),
+            ..LevelAssets::default()
+        };
+
+        let mut active = crate::movement::ActiveMelee::new(victim, SwordStrike::D, None, 0);
+        active.hit_applied = true;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_melee = active;
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![victim, unreached_victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: -std::f32::consts::PI,
+            rotation_per_frame: -5.0_f32.to_radians(),
+            direction: crate::profiles::WeaponThrustDirection::RightToLeft,
+            strike: SwordStrike::D,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::Lateral,
+        });
+
+        engine.stop_owner_active_mechanics(attacker);
+        let retained_after_interrupt = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("interrupting the D sequence must retain its human-owned sweep");
+        assert_eq!(retained_after_interrupt.strike, SwordStrike::D);
+        assert_eq!(
+            retained_after_interrupt.pending_victims,
+            vec![victim, unreached_victim]
+        );
+
+        {
+            let entity = engine.get_entity_mut(attacker).unwrap();
+            let mut replacement =
+                crate::movement::ActiveMelee::new(victim, SwordStrike::E, None, 0);
+            replacement.order_id = std::num::NonZeroU32::new(99);
+            entity.actor_data_mut().unwrap().active_melee = replacement;
+
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 3,
+                frame_ids: vec![0, 1, 2, 3],
+                delays: vec![1, 1, 1, 1],
+                distances: vec![0, 0, 0, 0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+                sound_ids: vec![0; 4],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+
+        engine.tick_melee_strikes(sim, &assets);
+        let retained_on_start = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("the replacement strike START must not consume the retained sweep");
+        assert_eq!(retained_on_start.strike, SwordStrike::D);
+        assert_eq!(retained_on_start.current_angle, 0.0);
+        assert_eq!(soldier_life(&engine, victim), 50);
+
+        engine.tick_melee_strikes(sim, &assets);
+
+        assert!(
+            soldier_life(&engine, victim) < 50,
+            "the first E IN_PROGRESS must hit using E's left-to-right 90-degree sweep"
+        );
+        assert_eq!(
+            soldier_life(&engine, unreached_victim),
+            50,
+            "a victim outside E's newly swept sector must remain pending"
+        );
+        let retained_after_hit = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("a lateral sweep remains allocated until its animation terminates");
+        assert_eq!(retained_after_hit.strike, SwordStrike::E);
+        assert_eq!(
+            retained_after_hit.direction,
+            crate::profiles::WeaponThrustDirection::LeftToRight
+        );
+        assert!(
+            (retained_after_hit.rotation_per_frame - std::f32::consts::FRAC_PI_2).abs()
+                < f32::EPSILON,
+            "the retained geometry must advance using E's rotation, not D's"
         );
     }
 
@@ -3239,7 +3408,10 @@ mod tests {
             .unwrap()
             .active_melee = active;
 
-        assert!(!engine.tick_nonstraight_melee_for(sim, &assets, attacker));
+        assert_eq!(
+            engine.tick_nonstraight_melee_for(sim, &assets, attacker),
+            strikes::SweepTickPhase::Dormant
+        );
 
         assert!(
             soldier_life(&engine, first_victim) < 50 && soldier_life(&engine, second_victim) < 50,

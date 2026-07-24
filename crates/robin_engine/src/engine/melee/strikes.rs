@@ -8,6 +8,14 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SweepTickPhase {
+    Dormant,
+    Start,
+    InProgress,
+    Initialized,
+}
+
 fn sweep_rotation_complete(sweep: &crate::movement::SweepState) -> bool {
     match sweep.direction {
         crate::profiles::WeaponThrustDirection::LeftToRight => {
@@ -206,13 +214,13 @@ impl EngineInner {
             return;
         }
         self.tick_straight_melee_for(sim, assets, attacker_id);
-        let initialized_sweep = if self.selected_melee_identity_is_live(attacker_id, selected) {
+        let sweep_phase = if self.selected_melee_identity_is_live(attacker_id, selected) {
             self.tick_nonstraight_melee_for(sim, assets, attacker_id)
         } else {
-            false
+            SweepTickPhase::Dormant
         };
         if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_sweep_for(sim, assets, attacker_id, initialized_sweep);
+            self.tick_selected_sweep_phase(sim, assets, attacker_id, sweep_phase);
         }
     }
 
@@ -716,10 +724,20 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
+        let clears_shared_sweep = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .is_some_and(|profile| {
+                !matches!(
+                    profile.thrusts[strike as usize].kind,
+                    WeaponThrustKind::Straight | WeaponThrustKind::Assault
+                )
+            });
         let pending_swordfights = if let Some(entity) = self.world.entities.get_mut(actor_id)
             && let Some(actor) = entity.actor_data_mut()
         {
-            actor.sweep_state = None;
+            if clears_shared_sweep {
+                actor.sweep_state = None;
+            }
             std::mem::take(&mut actor.pending_push_swordfight)
         } else {
             Vec::new()
@@ -794,8 +812,8 @@ impl EngineInner {
             .collect();
         for actor_id in actor_ids {
             self.tick_straight_melee_for(sim, assets, actor_id);
-            let initialized_sweep = self.tick_nonstraight_melee_for(sim, assets, actor_id);
-            self.tick_sweep_for(sim, assets, actor_id, initialized_sweep);
+            let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id);
+            self.tick_selected_sweep_phase(sim, assets, actor_id, sweep_phase);
         }
     }
 
@@ -806,13 +824,13 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
-    ) -> bool {
+    ) -> SweepTickPhase {
         if self
             .get_entity(attacker_id)
             .and_then(Entity::actor_data)
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return false;
+            return SweepTickPhase::Dormant;
         }
         let sprite_frozen = self.actors_frozen();
 
@@ -835,12 +853,13 @@ impl EngineInner {
         let mut completed: Vec<CompletedStrike> = Vec::new();
         let mut initialized_sweep = false;
         let mut started = false;
+        let mut sweep_phase;
 
         // Phase 1: advance this attacker's timer and collect its hit.
         {
             let entity_id = attacker_id;
             let Some(entity) = self.world.entities.get_mut(attacker_id) else {
-                return false;
+                return SweepTickPhase::Dormant;
             };
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -849,7 +868,7 @@ impl EngineInner {
                 .map(|actor| actor.active_melee)
                 .filter(|melee| melee.is_active())
             else {
-                return false;
+                return SweepTickPhase::Dormant;
             };
             let strike_kind = profile_idx
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -859,23 +878,24 @@ impl EngineInner {
                 strike_kind,
                 WeaponThrustKind::Straight | WeaponThrustKind::Assault
             ) {
-                return false;
+                return SweepTickPhase::Dormant;
             }
 
             if sprite_frozen {
-                return false;
+                return SweepTickPhase::Dormant;
             }
 
             // Drive the strike animation through the sprite (like bow_shot).
             // This makes the character visually swing the sword.
             let direction = entity.element_data().direction() as u16;
+            sweep_phase = SweepTickPhase::InProgress;
             {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
-                    None => return false,
+                    None => return SweepTickPhase::Dormant,
                 };
                 if !actor.active_melee.is_active() {
-                    return false;
+                    return SweepTickPhase::Dormant;
                 }
                 let order_id = actor.active_melee.order_id;
                 let strike = actor.active_melee.strike;
@@ -914,6 +934,14 @@ impl EngineInner {
                             motion
                         );
                         started = matches!(motion, crate::sprite::MotionState::Start);
+                        sweep_phase = match motion {
+                            crate::sprite::MotionState::Start => SweepTickPhase::Start,
+                            crate::sprite::MotionState::InProgress
+                            | crate::sprite::MotionState::Done => SweepTickPhase::InProgress,
+                            crate::sprite::MotionState::Terminated
+                            | crate::sprite::MotionState::Aborted
+                            | crate::sprite::MotionState::Error => SweepTickPhase::Dormant,
+                        };
                         // Mark sprite as driving hit timing on first
                         // non-Error frame.  When sprite-driven, the
                         // natural frames_remaining countdown is frozen —
@@ -959,7 +987,7 @@ impl EngineInner {
 
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
-                None => return false,
+                None => return SweepTickPhase::Dormant,
             };
 
             // Read melee state before mutating
@@ -1165,7 +1193,91 @@ impl EngineInner {
                 completed_strike.profile_idx,
             );
         }
-        initialized_sweep
+        if initialized_sweep {
+            SweepTickPhase::Initialized
+        } else {
+            sweep_phase
+        }
+    }
+
+    fn tick_selected_sweep_phase(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        phase: SweepTickPhase,
+    ) {
+        match phase {
+            SweepTickPhase::Dormant | SweepTickPhase::Start => {}
+            SweepTickPhase::Initialized => {
+                self.tick_sweep_for(sim, assets, attacker_id, true);
+            }
+            SweepTickPhase::InProgress => {
+                self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
+                self.tick_sweep_for(sim, assets, attacker_id, false);
+            }
+        }
+    }
+
+    /// Original stores sweep victims and angles on the human, but reads the
+    /// strike direction, rotation, kind, and damage payload from the current
+    /// Execute call. If a strike is interrupted after its action point, a new
+    /// sweep strike therefore advances the retained geometry using its own
+    /// semantics.
+    fn rebind_retained_sweep_to_active_strike(
+        &mut self,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+    ) {
+        let Some(entity) = self.get_entity(attacker_id) else {
+            return;
+        };
+        let Some(active) = entity.actor_data().map(|actor| actor.active_melee) else {
+            return;
+        };
+        if !active.is_active() {
+            return;
+        }
+        let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
+            return;
+        };
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| {
+                panic!(
+                    "retained sweep attacker {attacker_id:?} references missing weapon profile {profile_idx}"
+                )
+            });
+        let thrust = &profile.thrusts[active.strike as usize];
+        if !matches!(
+            thrust.kind,
+            WeaponThrustKind::Lateral
+                | WeaponThrustKind::TrueHalfCircle
+                | WeaponThrustKind::FalseHalfCircle
+                | WeaponThrustKind::TrueCircle
+                | WeaponThrustKind::FalseCircle
+        ) {
+            return;
+        }
+        let signed_rotation = (thrust.rotation_angle as f32)
+            * (std::f32::consts::PI / 180.0)
+            * if thrust.direction == crate::profiles::WeaponThrustDirection::RightToLeft {
+                -1.0
+            } else {
+                1.0
+            };
+        if let Some(sweep) = self
+            .get_entity_mut(attacker_id)
+            .and_then(Entity::actor_data_mut)
+            .and_then(|actor| actor.sweep_state.as_mut())
+        {
+            sweep.rotation_per_frame = signed_rotation;
+            sweep.direction = thrust.direction;
+            sweep.strike = active.strike;
+            sweep.attacker_profile_idx = Some(profile_idx);
+            sweep.strike_kind = thrust.kind;
+        }
     }
 
     /// Initialize a per-frame sweep for a lateral/circle sword strike.

@@ -2835,6 +2835,15 @@ impl EngineInner {
             return;
         };
 
+        let clears_shared_sweep = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .is_some_and(|profile| {
+                !matches!(
+                    profile.thrusts[strike as usize].kind,
+                    crate::profiles::WeaponThrustKind::Straight
+                        | crate::profiles::WeaponThrustKind::Assault
+                )
+            });
         let pending_swordfights = {
             let entity = self
                 .get_entity_mut(attacker_id)
@@ -2843,7 +2852,9 @@ impl EngineInner {
                 .actor_data_mut()
                 .expect("melee completion attacker must be an actor");
             actor.active_melee.clear();
-            actor.sweep_state = None;
+            if clears_shared_sweep {
+                actor.sweep_state = None;
+            }
             std::mem::take(&mut actor.pending_push_swordfight)
         };
         for victim_id in pending_swordfights {

@@ -2297,7 +2297,10 @@ impl EngineInner {
         {
             actor.active_movement.clear();
             actor.active_melee = crate::movement::ActiveMelee::none();
-            actor.sweep_state = None;
+            // Original's lateral/circle victim list and angles are
+            // human-owned members, not sequence-owned state. They survive an
+            // interrupted strike and are cleared only when a sweep genuinely
+            // terminates or a later action-done point reinitializes them.
             actor.pending_push_swordfight.clear();
             // Order-chain cleanup happens implicitly: interrupted
             // elements drop their `orders` in `Sequence::set_element_state`,
