@@ -2366,7 +2366,10 @@ impl EnemyAi {
 
         self.base.stop_all();
         self.set_state(AiState::Default, Substate::DefaultLookingShadow);
-        self.set_alert_status(AlertLevel::Yellow);
+        // A shadow raises only the music-side alert. The view remains green,
+        // so ordinary PC detection keeps its two-frame refresh cadence.
+        // Original: SetAlertStatus(ALERT_YELLOW, ALERT_ONLY_MUSIC).
+        self.set_alert_status_with_flags(AlertLevel::Yellow, crate::ai::AlertFlags::ONLY_MUSIC);
         self.base.face_position_with_ctx(*pos, ctx);
         self.base.launch_timer(10, ctx.frame);
     }
@@ -2788,6 +2791,30 @@ mod tests {
             &AiPerTickData::stub(),
             None,
         ));
+    }
+
+    #[test]
+    fn seeing_shadow_raises_music_alert_without_accelerating_view_refresh() {
+        let mut ai = EnemyAi::new(1);
+        let ctx = AiContext {
+            posture: Posture::Upright,
+            ..AiContext::default()
+        };
+
+        ai.event_sees_shadow_standard_procedure(
+            &Position {
+                x: 10.0,
+                y: 20.0,
+                sector: None,
+                level: 0,
+            },
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
+        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+        assert_eq!(ai.base.current_substate, Substate::DefaultLookingShadow);
     }
 
     fn ctx_with_object(object_type: ObjectType) -> AiContext {
