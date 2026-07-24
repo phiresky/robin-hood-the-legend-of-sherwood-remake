@@ -907,18 +907,31 @@ impl EngineInner {
                 .and_then(|jl| jl.associated_line_index)
                 .and_then(crate::jump_line::JumpLineIndex::new)
         });
-        Self::add_opponent(
+        let opponent_added = Self::add_opponent(
             &mut self.world.entities,
             opponent,
             initiator,
             opponent_jump_line,
         );
-        Self::add_opponent(
+        // Original `AddOpponent` owns these side effects and performs them
+        // immediately after each *fresh* insertion. In particular, merely
+        // re-entering an already-established fight must not reset initiative.
+        // Preserve the call order because the first initiative check happens
+        // before the reciprocal list entry is installed.
+        if opponent_added {
+            self.recompute_relative_fighting_ability(opponent, assets);
+            self.take_smalltalk_initiative(opponent);
+        }
+        let initiator_added = Self::add_opponent(
             &mut self.world.entities,
             initiator,
             opponent,
             aggressor_jump_line,
         );
+        if initiator_added {
+            self.recompute_relative_fighting_ability(initiator, assets);
+            self.take_smalltalk_initiative(initiator);
+        }
 
         // Recompute relative fighting ability on both sides after
         // the opponent lists change.
@@ -981,9 +994,6 @@ impl EngineInner {
         // Set PC melee target.
         Self::set_pc_melee_target(&mut self.world.entities, initiator, opponent);
         Self::set_pc_melee_target(&mut self.world.entities, opponent, initiator);
-        // Initiator takes smalltalk initiative.
-        self.take_smalltalk_initiative(initiator);
-
         // The opponent's `prepare_to_enter_swordfight` think fires
         // at the top of this function; no second dispatch needed
         // here.

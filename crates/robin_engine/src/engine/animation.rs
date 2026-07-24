@@ -1092,6 +1092,41 @@ mod tests {
     }
 
     #[test]
+    fn bored_cycle_rolls_for_non_timer_commands_and_skips_wait_timer() {
+        fn consumes_draw(command: Command) -> bool {
+            let sim = crate::sim_rng::test_context();
+            let seed_before = sim.seed();
+            let (mut sequence_manager, seq_id) =
+                sequence_with_order(OrderType::WaitingUprightBored);
+            sequence_manager.get_element_mut(seq_id, 0).unwrap().command = command;
+            let mut next_order_id = 9;
+            let mut side_outcomes = ExecuteSideOutcomes::default();
+            let mut ctx = ArmCtx {
+                entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
+                is_npc: false,
+                is_unconscious: false,
+                seq_id,
+                elem_idx: 0,
+                sequence_manager: &mut sequence_manager,
+                next_order_id: &mut next_order_id,
+                side_outcomes: &mut side_outcomes,
+            };
+
+            let _ = dispatch_arm_completion(
+                &sim,
+                OrderType::WaitingUprightBored,
+                MotionState::Terminated,
+                &mut ctx,
+            );
+            sim.seed() != seed_before
+        }
+
+        assert!(consumes_draw(Command::Wait));
+        assert!(consumes_draw(Command::WaitFreeLift));
+        assert!(!consumes_draw(Command::WaitTimer));
+    }
+
+    #[test]
     fn civilian_bored_cycle_does_not_run_base_actor_random_choice() {
         let seed = (0..1000)
             .find(|seed| {
@@ -3137,9 +3172,9 @@ fn dispatch_arm_completion(
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
 
-    // BORED ↔ RANDOM idle cycle — always Consumed.  Terminated
-    // rerolls the animation type + NewID on `Command::Wait` only
-    // (not `WaitTimer`).
+    // BORED ↔ RANDOM idle cycle — always Consumed. Terminated rerolls
+    // the animation type + NewID for every owning command except
+    // `WaitTimer`, exactly matching the base Actor Execute guard.
     if matches!(
         anim_type,
         OT::WaitingUprightBored | OT::WaitingUprightBoredRandom
@@ -3151,12 +3186,17 @@ fn dispatch_arm_completion(
             return ExecuteOutcome::Forward(motion);
         }
         if matches!(motion, MS::Terminated) {
-            let is_wait_cmd = ctx
+            let is_wait_timer = ctx
                 .sequence_manager
                 .get_element(ctx.seq_id, ctx.elem_idx)
-                .map(|el| matches!(el.command, crate::element::Command::Wait))
-                .unwrap_or(false);
-            if is_wait_cmd {
+                .map(|el| matches!(el.command, crate::element::Command::WaitTimer))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bored animation owner {:?} lost sequence element {:?}/{}",
+                        ctx.entity_id, ctx.seq_id, ctx.elem_idx
+                    )
+                });
+            if !is_wait_timer {
                 let next_type = match anim_type {
                     OT::WaitingUprightBored
                         if crate::sim_rng::u32(
@@ -3451,7 +3491,19 @@ impl EngineInner {
                     .map(|element| {
                         !element.data.is_movement()
                             && (is_nonmovement_exit_from_moving(order.order_type)
-                                || is_movement_interrupting_command(element.command))
+                                || is_movement_interrupting_command(element.command)
+                                // A stationary wait selected after movement
+                                // completion must execute immediately even
+                                // while the actor's action-state enum still
+                                // names the just-finished movement. Original
+                                // dispatches from the selected order, so a
+                                // WAIT_TIMER using WaitingSword performs its
+                                // first swordfight evaluation and countdown
+                                // tick in this owner slot.
+                                || matches!(
+                                    element.command,
+                                    Command::WaitTimer | Command::WaitFreeLift
+                                ))
                     })
             })
             .unwrap_or(false);

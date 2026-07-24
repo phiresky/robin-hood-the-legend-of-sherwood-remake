@@ -68,19 +68,19 @@ impl EngineInner {
             return;
         };
 
-        // Gate the entire body on
-        // `is_swordfighting(self) && is_swordfighting(opponent)` so a
-        // half-exited swordfight on either side doesn't flip the
-        // opponent's `smalltalk_initiative` flag.
+        // Original `IsSwordfighting()` is exactly
+        // `mlistOpponents.Size() != 0`; it does not inspect the actor action
+        // state. This matters while EnterSwordfight installs the reciprocal
+        // relationship before either actor has finished raising their sword.
         let self_swordfighting = self
             .get_entity(entity_id)
-            .and_then(|e| e.actor_data())
-            .map(|a| a.action_state.is_sword())
+            .and_then(|e| e.human_data())
+            .map(|human| !human.opponents.is_empty())
             .unwrap_or(false);
         let opp_swordfighting = self
             .get_entity(principal_id)
-            .and_then(|e| e.actor_data())
-            .map(|a| a.action_state.is_sword())
+            .and_then(|e| e.human_data())
+            .map(|human| !human.opponents.is_empty())
             .unwrap_or(false);
         if !(self_swordfighting && opp_swordfighting) {
             return;
