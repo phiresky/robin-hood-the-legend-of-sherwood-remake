@@ -3766,6 +3766,38 @@ impl EngineInner {
             )
         };
 
+        // RHElementActorHuman's eight dying/falling arms run
+        // FindPlaceToDie under IsInitialisation() immediately before
+        // PerformAction. Do this before borrowing the actor for the generic
+        // sprite dispatch so same-stack animation side effects and callbacks
+        // observe the relocated position in Original order.
+        let find_place_to_die_on_initialisation = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            && self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .is_some_and(|(_, _, order)| {
+                    matches!(
+                        order.order_type,
+                        OrderType::DyingSword
+                            | OrderType::DyingBow
+                            | OrderType::FallingBackSword
+                            | OrderType::FallingBackBow
+                            | OrderType::DyingUpright
+                            | OrderType::FallingBackUpright
+                            | OrderType::FallingBackCrouched
+                            | OrderType::DyingCrouched
+                    )
+                });
+        if find_place_to_die_on_initialisation {
+            self.find_place_to_die(entity_id);
+        }
+
         'actor: loop {
             let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
                 panic!("actor {entity_id:?} vanished before generic animation dispatch")

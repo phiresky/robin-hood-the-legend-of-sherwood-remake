@@ -2002,9 +2002,6 @@ impl EngineInner {
         });
 
         if let Some(anim) = dying_anim {
-            // Run `find_place_to_die` at dispatch time so the corpse
-            // is nudged before the animation starts driving.
-            self.find_place_to_die(victim_id);
             self.queue_damage_anim(victim_id, damage_element, anim);
         }
 
@@ -2222,8 +2219,6 @@ impl EngineInner {
                 ?anim,
                 "handle_knockout: queuing falling animation"
             );
-            // Run `find_place_to_die` at dispatch time.
-            self.find_place_to_die(victim_id);
             self.queue_damage_anim(victim_id, damage_element, anim);
         } else {
             tracing::warn!(
