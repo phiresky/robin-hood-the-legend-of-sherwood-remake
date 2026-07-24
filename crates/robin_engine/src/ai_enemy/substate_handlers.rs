@@ -202,7 +202,8 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventReachPoint {
                     if self.base.patrol_chief.is_some() {
                         // Face toward the chief's position (cached by engine).
-                        self.base.face_position(tick.patrol_chief_position);
+                        self.base
+                            .face_position_with_ctx(tick.patrol_chief_position, ctx);
                         self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
                         self.base.launch_timer(200, ctx.frame);
                     } else {
@@ -5995,6 +5996,50 @@ mod tests {
             assert_eq!(ai.base.current_state, AiState::Seeking);
             assert_eq!(ai.base.current_substate, substate);
         }
+    }
+
+    #[test]
+    fn goto_chief_reach_uses_face_same_direction_shortcut() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(89);
+        ai.set_state(AiState::Default, Substate::DefaultGotoChief);
+        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(91),
+        ));
+        let ctx = AiContext {
+            frame: 502,
+            position: Position {
+                x: 1078.101_9,
+                y: 1783.098,
+                ..Position::default()
+            },
+            direction: 12,
+            self_action_state: crate::element::ActionState::Waiting,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.patrol_chief_position = Position {
+            x: 1042.116_3,
+            y: 1783.832_4,
+            ..Position::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert!(ai.base.already_turned);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::DefaultPatrolEnrouteWaiting
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 702);
     }
 
     #[test]
