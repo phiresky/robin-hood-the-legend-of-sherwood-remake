@@ -1419,6 +1419,36 @@ impl EngineInner {
         // populated; empty when this NPC has no right neighbour.
         tick.phalanx_member_them_lists = self.build_phalanx_member_them_lists(npc_id);
 
+        // Patrol-chief data is live per-dispatch context, not specific to
+        // CALL_PATROL_COORDINATE. ReturnToDuty can synchronously enter
+        // DefaultGotoChief and immediately receive EventReachPoint; that
+        // handler faces this position on the same Think stack. Leaving the
+        // general builder's stub origin here made every such member face
+        // sector 15 even though the preceding GoNear used the real chief.
+        if let Some(chief_id) = ai.patrol_chief {
+            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
+                panic!(
+                    "enemy tick context owner {} has stale patrol chief {}",
+                    npc_id.index(),
+                    chief_id.index()
+                )
+            });
+            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
+                panic!(
+                    "enemy tick context patrol chief {} has no AI",
+                    chief_id.index()
+                )
+            });
+            let chief_point = chief.element_data().position_map();
+            tick.patrol_chief_position = crate::ai::Position {
+                x: chief_point.x,
+                y: chief_point.y,
+                sector: chief.element_data().sector(),
+                level: chief.element_data().layer(),
+            };
+            tick.patrol_chief_state = chief_ai.current_state;
+        }
+
         let Some(target_id) = target_id else {
             // No target selected — primary-target fields stay None,
             // enemy_sq_distances stays empty.  Friend-swap still

@@ -2075,6 +2075,45 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
 }
 
 #[test]
+fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
+    use crate::ai::AiState;
+    use crate::coordinates::MapPoint;
+    use crate::element::Camp;
+    use crate::position_interface::SectorHandle;
+
+    let mut engine = EngineInner::new();
+    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let minion_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    {
+        let chief = engine.get_entity_mut(chief_id).unwrap();
+        chief
+            .element_data_mut()
+            .set_position_map(MapPoint::new(1042.0, 1783.0));
+        chief.element_data_mut().set_layer(2);
+        chief.element_data_mut().set_sector(SectorHandle::new(61));
+        chief.ai_controller_mut().unwrap().current_state = AiState::Wondering;
+    }
+    {
+        let minion = engine.get_entity_mut(minion_id).unwrap();
+        let ai = minion.ai_controller_mut().unwrap();
+        ai.patrol_chief = Some(chief_id);
+        ai.primary_target = 0;
+    }
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    crate::sim_rng::with_seed(0xA013_0469, |sim| {
+        let scratch = engine.build_sim_scratch(sim, &assets);
+        let tick = engine.build_npc_tick_data(sim, minion_id, &scratch, &assets);
+        assert_eq!(tick.patrol_chief_position.x, 1042.0);
+        assert_eq!(tick.patrol_chief_position.y, 1783.0);
+        assert_eq!(tick.patrol_chief_position.level, 2);
+        assert_eq!(tick.patrol_chief_position.sector, SectorHandle::new(61));
+        assert_eq!(tick.patrol_chief_state, AiState::Wondering);
+    });
+}
+
+#[test]
 fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
     use crate::ai::{AiState, StimulusType, Substate};
     use crate::element::{AiBrain, Camp, Entity, EyeStatus, Posture};
