@@ -521,6 +521,7 @@ pub enum Field {
     MapDisplay,
     JumplineSource,
     JumplineDestination,
+    SwordfightPrepared,
     Amount,
     ShieldDangerPoint,
     ShieldDangerPointLayer,

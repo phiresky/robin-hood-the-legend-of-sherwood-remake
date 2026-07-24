@@ -696,7 +696,6 @@ impl EngineInner {
             if let Some(profile_idx) = profile_idx {
                 self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
             }
-            self.enter_swordfight(sim, assets, victim_id, attacker_id, true);
         } else {
             tracing::debug!(
                 attacker = ?attacker_id,
@@ -709,7 +708,7 @@ impl EngineInner {
 
     fn complete_melee_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         sequence_id: Option<crate::sequence::SequenceId>,
@@ -736,7 +735,21 @@ impl EngineInner {
             Vec::new()
         };
         for victim_id in pending_swordfights {
-            self.enter_swordfight(sim, assets, victim_id, actor_id, true);
+            let attacker = self
+                .world
+                .entities
+                .get(actor_id)
+                .unwrap_or_else(|| panic!("push completion attacker {actor_id:?} disappeared"));
+            let victim = self
+                .world
+                .entities
+                .get(victim_id)
+                .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
+            let should_enter =
+                should_enter_swordfight_after_strike(attacker, victim, &assets.profile_manager);
+            if should_enter {
+                self.queue_enter_swordfight_after_strike(victim_id, actor_id);
+            }
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
@@ -1547,7 +1560,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if should_enter {
-                    self.enter_swordfight(sim, assets, victim_id, active.attacker_id, true);
+                    self.queue_enter_swordfight_after_strike(victim_id, active.attacker_id);
                 }
             }
 
@@ -1578,6 +1591,36 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    /// Queue the `EnterSwordfight` instruction emitted after a successful
+    /// sword hit.
+    ///
+    /// Original strike executors register this immediately after the
+    /// victim's `ReceiveSwordDamage` element. Both are then instructed in
+    /// sequence-manager FIFO order; entering synchronously here would let the
+    /// relationship/state reset run before the injury has interrupted the
+    /// victim's old action.
+    fn queue_enter_swordfight_after_strike(&mut self, victim_id: EntityId, attacker_id: EntityId) {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::EnterSwordfight,
+            Some(victim_id),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(attacker_id),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Bool(false),
+        );
+        self.resolve_element_priority(&mut element);
+        self.orders.sequence_manager.launch_element(element);
     }
 
     // ─── Push flight tick ─────────────────────────────────────────
@@ -2847,7 +2890,7 @@ mod tests {
     use super::*;
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::element::{
-        ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, SoldierData,
+        ActorData, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
 
@@ -2939,5 +2982,65 @@ mod tests {
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+    }
+
+    #[test]
+    fn push_rechecks_current_relationship_before_queueing_enter_swordfight() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+
+        let mut attacker = falling_pushed_soldier(false);
+        let mut victim = falling_pushed_soldier(false);
+        if let Entity::Soldier(soldier) = &mut attacker {
+            soldier.soldier.cached_camp = Camp::Lacklandists;
+        }
+        if let Entity::Soldier(soldier) = &mut victim {
+            soldier.soldier.cached_camp = Camp::Lacklandists;
+        }
+        let attacker_id = engine.add_entity(attacker);
+        let victim_id = engine.add_entity(victim);
+
+        engine
+            .get_entity_mut(attacker_id)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .pending_push_swordfight = vec![victim_id];
+        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, None);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+
+        if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
+            soldier.soldier.cached_camp = Camp::Royalists;
+        }
+        engine
+            .get_entity_mut(attacker_id)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .pending_push_swordfight = vec![victim_id];
+        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, None);
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("eligible push victim should queue EnterSwordfight");
+        let enter = sequence.get(0).unwrap();
+        assert_eq!(enter.command, Command::EnterSwordfight);
+        assert_eq!(enter.owner, Some(victim_id));
+        assert!(matches!(
+            enter.get_property(crate::sequence::Field::Opponent),
+            Some(crate::sequence::FieldValue::Element(opponent)) if *opponent == attacker_id
+        ));
+        assert!(matches!(
+            enter.get_property(crate::sequence::Field::JumplineDestination),
+            Some(crate::sequence::FieldValue::Integer(0))
+        ));
+        assert!(matches!(
+            enter.get_property(crate::sequence::Field::SwordfightPrepared),
+            Some(crate::sequence::FieldValue::Bool(false))
+        ));
     }
 }
