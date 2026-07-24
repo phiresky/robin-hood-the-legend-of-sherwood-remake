@@ -542,6 +542,23 @@ pub const INVERSE_ASPECT_RATIO_PROJECTILES: f32 = 1.33;
 // PositionInterface
 // ---------------------------------------------------------------------------
 
+/// Match the 32-bit Original's x87 evaluation of
+/// `SBGeoVector2D::Normalize`.
+///
+/// Although the source stores `FLOAT`s, the normalization norm remains in an
+/// extended-precision x87 register across both component divisions. Rounding
+/// the norm to `f32`, or multiplying by a rounded reciprocal, changes common
+/// movement directions by an ULP and eventually changes signed arrival tests.
+fn normalize_map_vector_original(v: MapVec) -> Option<MapVec> {
+    let x = f64::from(v.x);
+    let y = f64::from(v.y);
+    let norm = (x * x + y * y).sqrt();
+    (norm != 0.0).then_some(MapVec {
+        x: (x / norm) as f32,
+        y: (y / norm) as f32,
+    })
+}
+
 /// Target-element context passed into [`PositionInterface::is_goal_reached`].
 ///
 /// `is_goal_reached` reads the target's radius live when evaluating the
@@ -1217,12 +1234,7 @@ impl PositionInterface {
             let map = self.position_map;
             let goal = self.goal_map;
             let v = goal - map;
-            let len = v.length();
-            self.increment_map = if len > f32::EPSILON {
-                v.scale(1.0 / len)
-            } else {
-                MapVec::ZERO
-            };
+            self.increment_map = normalize_map_vector_original(v).unwrap_or(MapVec::ZERO);
         }
         self.set_increment_map_computed(true);
     }
@@ -1257,7 +1269,8 @@ impl PositionInterface {
             very_small = v.x.abs().max(v.y.abs()) < 1.0;
 
             if v.x != 0.0 || v.y != 0.0 {
-                let v = v.scale(1.0 / v.length());
+                let v = normalize_map_vector_original(v)
+                    .expect("nonzero movement vector must have a finite positive norm");
                 self.increment_map = v;
 
                 self.increment.x = v.x;
@@ -1526,6 +1539,7 @@ pub fn sort_repulsive_objects(
 pub fn compute_deviated_future(
     origin: MapPoint,
     pt_future: MapPoint,
+    movement_distance: f32,
     actor_radius: f32,
     points: Vec<RepulsivePoint>,
     lines: Vec<RepulsiveLine>,
@@ -1550,10 +1564,14 @@ pub fn compute_deviated_future(
     loop {
         while !points.is_empty() && (lines.is_empty() || points[0].1 <= lines[0].1) {
             let (pt, _d) = points.remove(0);
-            let mag = movement.length();
             if let Some(dist_dest) = pt.is_deviating(future)
-                && let Some(new_mov) =
-                    pt.compute_deviation(movement, origin_map, mag, dist_dest, actor_radius)
+                && let Some(new_mov) = pt.compute_deviation(
+                    movement,
+                    origin_map,
+                    movement_distance,
+                    dist_dest,
+                    actor_radius,
+                )
             {
                 movement = new_mov;
                 future = origin_map + movement;
@@ -1564,10 +1582,14 @@ pub fn compute_deviated_future(
 
         while !lines.is_empty() && (points.is_empty() || lines[0].1 < points[0].1) {
             let (line, _d) = lines.remove(0);
-            let mag = movement.length();
             if let Some(dist_dest) = line.is_deviating(future)
-                && let Some(new_mov) =
-                    line.compute_deviation(movement, origin_map, mag, dist_dest, actor_radius)
+                && let Some(new_mov) = line.compute_deviation(
+                    movement,
+                    origin_map,
+                    movement_distance,
+                    dist_dest,
+                    actor_radius,
+                )
             {
                 movement = new_mov;
                 future = origin_map + movement;
@@ -1980,6 +2002,19 @@ mod tests {
         let im = pi.get_increment_map();
         assert!((im.x - 1.0).abs() < 1e-4);
         assert!(im.y.abs() < 1e-4);
+    }
+
+    #[test]
+    fn increment_normalization_divides_like_original_vector() {
+        let mut pi = PositionInterface::new();
+        pi.set_map_position(MapPoint::new(1834.0, 1771.0));
+        pi.set_map_goal(MapPoint::new(1838.447_6, 1766.972_8));
+
+        pi.compute_increment_all(false);
+
+        let increment = pi.get_increment_map();
+        assert_eq!(increment.x.to_bits(), 0x3f3dc40a);
+        assert_eq!(increment.y.to_bits(), 0xbf2bd409);
     }
 
     #[test]

@@ -693,8 +693,18 @@ pub fn apply_anti_collision_step(
         // Deviated && !reachable: fall through.
     }
 
-    let (deviated_future, deviated) =
-        compute_deviated_future(mover.position_map, future, actor_radius, points, lines);
+    // Original forwards the animation's requested `fDistance` unchanged to
+    // every repulsive object's `ComputeDeviation`. Recomputing the norm from
+    // the rounded `(increment * distance)` vector changes the deviation by
+    // ULPs even when the cached increment is unit length.
+    let (deviated_future, deviated) = compute_deviated_future(
+        mover.position_map,
+        future,
+        speed,
+        actor_radius,
+        points,
+        lines,
+    );
 
     // Original keeps `ptFuture = position + increment * distance` and assigns
     // that point directly when none of the gathered repulsive objects
