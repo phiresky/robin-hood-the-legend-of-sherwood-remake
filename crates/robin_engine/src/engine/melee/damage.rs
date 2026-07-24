@@ -1056,8 +1056,8 @@ impl EngineInner {
         // terminates the element when not a dying rider — i.e. for
         // everything except a sleeping rider dying.  This stops arrow
         // / stone damage that lands on an already-on-the-ground
-        // victim from re-pushing a fresh dying / corpse-idle order
-        // onto the damage element.
+        // victim from pushing a fresh dying order onto the damage
+        // element.
         if pre_posture.is_lying() {
             let post_dead = self
                 .get_entity(victim_id)
@@ -1072,13 +1072,9 @@ impl EngineInner {
                 self.orders.sequence_manager.element_terminated(dseq, didx);
                 return;
             }
-            // Sleeping-rider-dying special case falls through to the
-            // death path in `handle_post_damage` —
-            // `select_combat_animations` returns None for lying
-            // postures, so no fresh dying anim is pushed and the
-            // corpse_anim fallback in
-            // `handle_death_with_damage_element` covers the corpse
-            // pose.
+            // TODO: match the Original sleeping-rider special case,
+            // which selects an upright dying animation even from a
+            // lying posture.
         }
 
         // Shoulder-posture victims route through
@@ -1644,8 +1640,8 @@ impl EngineInner {
         // victim with full life points and dispatch it synchronously
         // — this routes through `dispatch_receive_damage` →
         // `apply_generic_damage` → `handle_post_damage` → death path,
-        // pushing the dying + corpse-idle orders onto the element so
-        // `do_next_order` chains them naturally.
+        // pushing the dying order onto the element so it participates
+        // in the normal actor/sequence lifecycle.
         let life_points = self.get_entity(victim_id).map(get_life_points).unwrap_or(0);
         let lethal_damage = if life_points > 0 {
             life_points as u16
@@ -1728,12 +1724,13 @@ impl EngineInner {
     /// Internal entry point for `handle_death` that accepts the active
     /// receive-damage element so the dying animation chains via
     /// `do_next_order` instead of `combat_anim`.  The death path
-    /// inserts `animDyingForward` onto the current sequence element;
-    /// after DYING terminates, the matching `BEING_DEAD_*`
-    /// corpse-idle order keeps returning IN_PROGRESS, so the element
-    /// stays `InProgress` forever — the visual dead body is the
-    /// terminal state.  We pre-push BOTH orders so `do_next_order`
-    /// makes the transition naturally on `DYING_*` MotionState::Terminated.
+    /// inserts `animDyingForward` onto the current sequence element.
+    /// Once DYING terminates, the damage element terminates too; the
+    /// actor's next Hourglass installs its ordinary `Wait`, whose
+    /// dead-posture translation selects the matching `BEING_DEAD_*`
+    /// corpse hold. Keeping that hold inside the damage element would
+    /// incorrectly expose `Receive*Damage` as the corpse's permanent
+    /// logical command.
     ///
     /// Remove `subject` from every other NPC's `detectable_lists[kind]`.
     /// `nets.rs::delete_body_detectable_for_all_npc` is the
@@ -1992,12 +1989,6 @@ impl EngineInner {
     ) {
         tracing::info!(entity = ?victim_id, "Entity died");
 
-        // Snapshot the pre-death action state for corpse-idle selection.
-        let action_at_death = self
-            .get_entity(victim_id)
-            .and_then(|e| e.actor_data().map(|a| a.action_state))
-            .unwrap_or_default();
-
         // Select dying animation (None when posture is already
         // Lying/Dead/Carried — the "already on the ground" case).
         // When the caller supplied an override (sword strike with a
@@ -2012,46 +2003,11 @@ impl EngineInner {
                 .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
         });
 
-        // Corpse-idle always resolves (unlike `dying_anim`): even
-        // when posture is already Lying we need a pose for the
-        // sprite to clamp onto.  Selection is keyed by action_state
-        // — falling back to the action-state map when the dying anim
-        // isn't in the main three families.
-        let corpse_anim = match dying_anim {
-            Some(OrderType::DyingSword) => OrderType::BeingDeadSword,
-            Some(OrderType::DyingBow) => OrderType::BeingDeadBow,
-            Some(OrderType::DyingUpright) | Some(OrderType::DyingCrouched) => OrderType::BeingDead,
-            _ => match action_at_death {
-                a if a.is_sword() => OrderType::BeingDeadSword,
-                a if a.is_bow() => OrderType::BeingDeadBow,
-                _ => OrderType::BeingDead,
-            },
-        };
-
         if let Some(anim) = dying_anim {
             // Run `find_place_to_die` at dispatch time so the corpse
             // is nudged before the animation starts driving.
             self.find_place_to_die(victim_id);
             self.queue_damage_anim(victim_id, damage_element, anim);
-            // Pre-push the corpse-idle as the next order so
-            // `do_next_order` advances to it on DYING TERMINATED.
-            // The BeingDead* execute path always returns IN_PROGRESS
-            // so the active_ai_anim never tears down — corpse loops
-            // forever.
-            let (dseq, didx) = damage_element;
-            self.push_new_order(dseq, didx, corpse_anim, 0.0, 0.0);
-        } else {
-            // Posture didn't map to a dying animation — the actor
-            // is already Lying / DeadBack / Carried / etc.  No
-            // fall-down transition is needed (they're already down),
-            // but we still need a corpse-idle to clamp the sprite:
-            // without it the in-flight StandingUp animation (the one
-            // the soldier was playing when the lethal blow landed)
-            // runs to completion and the corpse visually stands back
-            // up.  Push the matching BeingDead* order so the sprite
-            // snaps to the corpse pose.
-            let (dseq, didx) = damage_element;
-            self.push_new_order(dseq, didx, corpse_anim, 0.0, 0.0);
         }
 
         // Read the killer from the damage element so we can set the
@@ -2071,8 +2027,8 @@ impl EngineInner {
             .unwrap_or(false);
 
         // Throw away every sequence element the victim owns except the
-        // damage sequence (which just had `DyingSword` + corpse-idle
-        // orders queued).  The general-purpose `stop_owner` path is
+        // damage sequence (which just had its dying order queued).
+        // The general-purpose `stop_owner` path is
         // wrong for death — it calls `stop_movement_for_owner` which
         // rewrites a walking order to a `TransitionWalking*Waiting*`
         // stop-animation and lets the movement element keep playing,

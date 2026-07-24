@@ -4381,3 +4381,99 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         Some(OrderType::TransitionLoweringSword)
     );
 }
+
+#[test]
+fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::weapons::SwordStrike;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+        *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
+    }
+
+    let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+    damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 0);
+    let damage_sequence = engine.orders.sequence_manager.launch_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(damage_sequence, 0);
+
+    engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
+
+    let damage = engine
+        .orders
+        .sequence_manager
+        .get_element(damage_sequence, 0)
+        .expect("lethal damage element remains inspectable");
+    assert_eq!(
+        damage
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        vec![OrderType::DyingSword],
+        "ReceiveSwordDamage owns only the one-shot death animation"
+    );
+
+    // Model DYING_SWORD's START side effect before its eventual
+    // TERMINATED result advances the damage element.
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.set_posture(Posture::Dead);
+        victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+    }
+    engine.do_next_order(damage_sequence, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(damage_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(engine.actor_command(victim), Command::Wait);
+
+    engine.ensure_wait_element(victim);
+    let wait_sequence = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .find_map(|sequence| {
+            sequence
+                .elements
+                .first()
+                .filter(|element| element.owner == Some(victim) && element.command == Command::Wait)
+                .map(|_| sequence.id)
+        })
+        .expect("dead actor receives its ordinary Wait element");
+    crate::engine::sequence_runtime::WaitCommandContext {
+        entities: &mut engine.world.entities,
+        sequence_manager: &mut engine.orders.sequence_manager,
+        next_order_id: &mut engine.orders.next_order_id,
+        profiles: &assets.profile_manager,
+    }
+    .dispatch(victim, Command::Wait, wait_sequence, 0);
+
+    let wait = engine
+        .orders
+        .sequence_manager
+        .get_element(wait_sequence, 0)
+        .unwrap();
+    assert_eq!(wait.state, SequenceState::InProgress);
+    assert_eq!(
+        wait.current_order().map(|order| order.order_type),
+        Some(OrderType::BeingDeadSword)
+    );
+    assert_eq!(engine.actor_command(victim), Command::Wait);
+}
