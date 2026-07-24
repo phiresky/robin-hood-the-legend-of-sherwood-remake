@@ -2247,42 +2247,6 @@ fn sprite_anim_for_order(
     }
 }
 
-fn is_wall_anim(order: OrderType) -> bool {
-    matches!(
-        order,
-        OrderType::TransitionWaitingUprightClimbingWallUp
-            | OrderType::ClimbingWallUp
-            | OrderType::ClimbingWallDown
-            | OrderType::TransitionClimbingWallUpWaitingCrouched
-            | OrderType::TransitionClimbingWallDownWaitingUpright
-            | OrderType::TransitionWaitingCrouchedClimbingWallDown
-            | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
-            | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
-            | OrderType::ClimbingWallUpFast
-            | OrderType::ClimbingWallDownFast
-    )
-}
-
-fn is_ladder_anim(order: OrderType) -> bool {
-    matches!(
-        order,
-        OrderType::ClimbingLadderUp
-            | OrderType::ClimbingLadderDown
-            | OrderType::ClimbingLadderUpFast
-            | OrderType::ClimbingLadderDownFast
-            | OrderType::TransitionWaitingUprightClimbingLadderUp
-            | OrderType::TransitionClimbingLadderUpWaitingCrouched
-            | OrderType::TransitionWaitingCrouchedClimbingLadderDown
-            | OrderType::TransitionClimbingLadderDownWaitingUpright
-            | OrderType::TransitionWaitingUprightClimbingLadderUpAlerted
-            | OrderType::ClimbingLadderUpAlerted
-            | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
-            | OrderType::TransitionWaitingUprightClimbingLadderDownAlerted
-            | OrderType::ClimbingLadderDownAlerted
-            | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
-    )
-}
-
 /// Anims whose initialisation lifts the parent sequence element to
 /// `NonInterruptable`:
 /// - `FALLING_LADDER_WALL`
@@ -4119,10 +4083,6 @@ impl EngineInner {
                         if held_weak_sword.is_some() {
                             weak_sword_held = true;
                         }
-                        let door_pass_action = entity
-                            .actor_data()
-                            .and_then(|actor| actor.active_door_pass.as_ref())
-                            .map(|dp| dp.current_action);
                         let sprite_motion = held_weak_sword.or_else(|| {
                             if globally_frozen {
                                 // RHEngine::FrozenAll leaves Actor::Execute
@@ -4131,6 +4091,18 @@ impl EngineInner {
                                 // advancing the sprite. Actor initialization
                                 // was nevertheless consumed at Hourglass
                                 // entry, independently of this sprite call.
+                                return Some(MotionState::InProgress);
+                            }
+                            if effective_anim == OrderType::Freezing {
+                                // C++ RHElementActor::Execute handles
+                                // RHNONANIMATION_FREEZING by returning
+                                // RHMOTION_IN_PROGRESS without calling any
+                                // RHSprite method.  In particular it must not
+                                // stamp WaitingUpright: a pathfinding
+                                // MoveWaiting can be inserted between two
+                                // instances of the same transition, and
+                                // MaybeInitializeFrame then resumes the
+                                // transition's existing frame phase.
                                 return Some(MotionState::InProgress);
                             }
                             let elem = entity.element_data_mut();
@@ -4148,28 +4120,8 @@ impl EngineInner {
                             // fallbacks, etc.).  The order's `anim_type`
                             // stays unchanged so side-effect handlers
                             // keep matching on the original token.
-                            let posture = elem.posture;
                             let (played, progression) = if wasp_still_turning {
                                 (OrderType::TurningAlerted, FrameProgression::Default)
-                            } else if effective_anim == OrderType::Freezing {
-                                match (posture, door_pass_action) {
-                                    (crate::element::Posture::OnWall, _) => {
-                                        (OrderType::ClimbingWallUp, FrameProgression::Frozen)
-                                    }
-                                    (crate::element::Posture::OnLadder, _) => {
-                                        (OrderType::ClimbingLadderUp, FrameProgression::Frozen)
-                                    }
-                                    (_, Some(action)) if is_wall_anim(action) => {
-                                        (OrderType::ClimbingWallUp, FrameProgression::Frozen)
-                                    }
-                                    (_, Some(action)) if is_ladder_anim(action) => {
-                                        (OrderType::ClimbingLadderUp, FrameProgression::Frozen)
-                                    }
-                                    _ => (
-                                        OrderType::WaitingUpright,
-                                        FrameProgression::FrozenFirstFrame,
-                                    ),
-                                }
                             } else if let Some(animation) = requested_custom_animation {
                                 let progression = match cur_command {
                                     Some(Command::PlayAnimLoop) => FrameProgression::Cyclically,

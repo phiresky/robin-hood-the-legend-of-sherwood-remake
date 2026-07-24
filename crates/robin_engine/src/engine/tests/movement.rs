@@ -1550,6 +1550,7 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
     let position = MapPoint::new(1352.0, 246.0);
@@ -1558,6 +1559,41 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
     mover.element_data_mut().set_position_map(position);
     mover.actor_data_mut().unwrap().action_state = ActionState::Moving;
     let mover_id = engine.add_entity(mover);
+
+    let preserved_action = OrderType::TransitionWaitingUprightRunningUpright;
+    let script = SpriteScript {
+        action_id: preserved_action as u16,
+        action_done: 1,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1, 2],
+        delays: vec![2, 2],
+        distances: vec![0, 0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+        sound_ids: vec![0; 2],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[preserved_action as usize] = 0;
+    conversion[OrderType::WaitingUpright as usize] = 16;
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 32]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.last_action = preserved_action;
+    sprite.current_row = 0;
+    sprite.current_frame = 1;
+    sprite.frame_count = 1;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(mover_id)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(position);
 
     let order_id = engine.orders.allocate_order_id();
     let mut movement = SequenceElement::new_movement(
@@ -1585,6 +1621,10 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         .active_movement = ActiveMovement::new(sequence_id, 0);
 
     engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
 
     let entity = engine.get_entity(mover_id).unwrap();
     assert_eq!(entity.element_data().position_map(), position);
@@ -1603,6 +1643,14 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
             .order_type,
         OrderType::Freezing,
         "MOVE_WAITING must retain its pathfinder hold order"
+    );
+    let sprite = &entity.element_data().sprite;
+    assert_eq!(sprite.last_action, preserved_action);
+    assert_eq!(sprite.current_row, 0);
+    assert_eq!(sprite.current_frame, 1);
+    assert_eq!(
+        sprite.frame_count, 1,
+        "FREEZING must not select, stamp, or advance any sprite animation"
     );
 }
 
