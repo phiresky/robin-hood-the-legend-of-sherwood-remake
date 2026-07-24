@@ -15,7 +15,7 @@ use crate::fast_find_grid::FastFindGrid;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
-use crate::sequence::{SequenceElementData, SequenceManager};
+use crate::sequence::SequenceManager;
 
 /// Both constants are used for the repulsive lines built around
 /// motion-sector perimeters.
@@ -84,15 +84,25 @@ pub fn snapshot_all(
         let elem = entity.element_data();
         let is_actor = true;
         let actor = entity.actor_data();
-        let target_element = actor.and_then(|a| {
-            a.seek_target.or_else(|| {
-                let seq_id = a.active_movement.sequence_id?;
-                let elem = sequence_manager.get_element(seq_id, a.active_movement.element_index)?;
-                match &elem.data {
-                    SequenceElementData::Movement { element, .. } => *element,
-                    _ => None,
-                }
-            })
+        // RHsprite::PerformMotion copies pOrderCurrent->pAntagonist into
+        // PositionInterface::mpTargetElement whenever a motion order starts.
+        // Intermediate path orders deliberately have no antagonist, even
+        // though the owning Seek element and ActorData still retain their
+        // eventual target. Using either persistent value here makes actors
+        // ignore that target for the entire path instead of only on the final
+        // approach order.
+        let target_element = actor.and_then(|actor| {
+            let seq_id = actor.active_movement.sequence_id?;
+            let element = sequence_manager
+                .get_element(seq_id, actor.active_movement.element_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "anti-collision snapshot for {snapshot_id:?} references missing active \
+                         movement {seq_id:?}/{}",
+                        actor.active_movement.element_index
+                    )
+                });
+            element.current_order().and_then(|order| order.antagonist)
         });
         snapshots[entity_id] = Some(ActorSnapshot {
             id: snapshot_id,
@@ -970,6 +980,88 @@ mod tests {
     use super::*;
     use crate::coordinates::map_pt;
 
+    fn snapshot_mover_and_corpse(
+        order_antagonist: Option<EntityId>,
+    ) -> (ActorSnapshot, ActorSnapshot) {
+        use std::num::NonZeroU32;
+
+        use crate::element::{
+            ActorData, ActorPc, ActorSoldier, Command, ElementData, HumanData, NpcData, PcData,
+            SoldierData,
+        };
+        use crate::entity_id::{PcId, SoldierId};
+        use crate::movement::ActiveMovement;
+        use crate::order::{Order, OrderType};
+        use crate::sequence::SequenceElement;
+
+        let mover_id = EntityId::Pc(PcId(0));
+        let corpse_id = EntityId::Soldier(SoldierId(1));
+
+        let mut mover_element = ElementData {
+            active: true,
+            kind: ElementKind::ActorPc,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        mover_element.set_position_map(map_pt(0.0, 0.0));
+        mover_element.set_sector(crate::position_interface::SectorHandle::new(1));
+        let mut mover_actor = ActorData {
+            // Deliberately stale: the preceding Seek targeted this soldier,
+            // but the current sprite order is authoritative for anti-collision.
+            seek_target: Some(corpse_id),
+            ..Default::default()
+        };
+
+        let mut corpse_element = ElementData {
+            active: true,
+            kind: ElementKind::ActorSoldier,
+            posture: Posture::Dead,
+            ..Default::default()
+        };
+        corpse_element.set_position_map(map_pt(8.0, 0.0));
+        corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
+
+        let mut sequence_manager = SequenceManager::new();
+        let mut order = Order::new(
+            OrderType::WalkingUpright,
+            20.0,
+            0.0,
+            NonZeroU32::new(1).unwrap(),
+        );
+        order.antagonist = order_antagonist;
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(mover_id),
+            OrderType::WalkingUpright,
+        );
+        movement.orders.push_back(order);
+        let sequence_id = sequence_manager.launch_element(movement);
+        sequence_manager.element_in_progress(sequence_id, 0);
+        mover_actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
+        let entities = Entities::from_legacy_slots(vec![
+            Some(Entity::Pc(ActorPc {
+                element: mover_element,
+                actor: mover_actor,
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })),
+            Some(Entity::Soldier(ActorSoldier {
+                element: corpse_element,
+                actor: ActorData::default(),
+                human: HumanData::default(),
+                npc: NpcData::default(),
+                soldier: SoldierData::default(),
+            })),
+        ]);
+        let snapshots = snapshot_all(&entities, &sequence_manager, &ProfileManager::new());
+        (
+            snapshots[PcId(0)].clone().expect("mover snapshot"),
+            snapshots[SoldierId(1)].clone().expect("corpse snapshot"),
+        )
+    }
+
     fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {
         ActorSnapshot {
             id: EntityId::Pc(crate::entity_id::PcId(id)),
@@ -1155,6 +1247,57 @@ mod tests {
         let (dx, dy) = apply_anti_collision_step(
             &a,
             &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
+        assert!((dx - 1.0).abs() < 1e-4);
+        assert!(dy.abs() < 1e-4);
+    }
+
+    #[test]
+    fn stale_seek_target_does_not_hide_corpse_from_targetless_current_order() {
+        let (mover, corpse) = snapshot_mover_and_corpse(None);
+        assert_eq!(mover.target_element, None);
+
+        let neighbours = vec![Some(mover.clone()), Some(corpse)];
+        let (dx, dy) = apply_anti_collision_step(
+            &mover,
+            &neighbours,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
+        assert!(
+            dy.abs() > 0.01 || (dx - 1.0).abs() > 0.01,
+            "the current targetless Move must be repelled by the corpse, got dx={dx} dy={dy}"
+        );
+    }
+
+    #[test]
+    fn current_order_antagonist_is_hidden_from_anti_collision() {
+        let corpse_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mover, corpse) = snapshot_mover_and_corpse(Some(corpse_id));
+        assert_eq!(mover.target_element, Some(corpse_id));
+
+        let neighbours = vec![Some(mover.clone()), Some(corpse)];
+        let (dx, dy) = apply_anti_collision_step(
+            &mover,
+            &neighbours,
             &[],
             &[],
             &[],

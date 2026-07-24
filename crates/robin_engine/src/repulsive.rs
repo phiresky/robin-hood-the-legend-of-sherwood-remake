@@ -107,11 +107,10 @@ impl RepulsivePoint {
             actor_radius,
             rhline::Vec2::new(self.position.x, self.position.y),
             self.radius,
-            // The pure-math helper expects the *input* action radius
-            // (the falloff distance beyond the inner radius), which is
-            // `action_radius - radius` since our stored action_radius
-            // already includes the inner radius.
-            self.action_radius - self.radius,
+            // RHRepulsivePoint::ComputeDeviation reads the stored
+            // mfActionRadius, which SetForce has already expanded by
+            // the inner radius.
+            self.action_radius,
             self.force_a,
             self.force_b,
         )?;
@@ -213,7 +212,7 @@ impl RepulsiveLine {
             distance_destination,
             actor_radius,
             self.radius,
-            self.action_radius - self.radius,
+            self.action_radius,
             self.force_a,
             self.force_b,
             rhline::Vec2::new(self.normal.x, self.normal.y),
@@ -246,11 +245,52 @@ mod tests {
     }
 
     #[test]
+    fn corpse_point_deviation_matches_frame_404_geometry() {
+        // Original parity replay, frame 404: Robin's naive four-unit
+        // walking step enters a dead soldier's outer repulsion zone.
+        // RHRepulsivePoint::ComputeDeviation uses the stored total action
+        // radius (10 + 15), producing this exact deflection.
+        let origin = map_pt(f32::from_bits(1_142_634_601), f32::from_bits(1_155_129_408));
+        let movement = MapVec::new(f32::from_bits(1_079_899_904), f32::from_bits(1_073_682_432));
+        let future = origin + movement;
+        let corpse = RepulsivePoint::new(
+            map_pt(f32::from_bits(1_143_098_668), f32::from_bits(1_155_128_658)),
+            10.0,
+            15.0,
+        );
+        let distance_destination = (future - corpse.position).length();
+
+        let deviated = corpse
+            .compute_deviation(movement, origin, 4.0, distance_destination, 4.0)
+            .expect("corpse must deflect the approaching actor");
+        let committed = origin + deviated;
+
+        assert_eq!(committed.x.to_bits(), 1_142_678_042);
+        assert_eq!(committed.y.to_bits(), 1_155_153_943);
+    }
+
+    #[test]
     fn line_is_deviating_between() {
         let l = RepulsiveLine::new(map_pt(0.0, 0.0), map_pt(10.0, 0.0), 2.0, 5.0);
         // Point near midpoint, on +normal side → Some
         assert!(l.is_deviating(map_pt(5.0, 3.0)).is_some());
         // Point past the segment endpoints → None
         assert!(l.is_deviating(map_pt(20.0, 3.0)).is_none());
+    }
+
+    #[test]
+    fn line_deviation_uses_stored_total_action_radius() {
+        // radius=2 and input action radius=5 stores mfActionRadius=7.
+        // With actor radius 4, a destination ten units from the line is
+        // inside the C++ threshold (4 + 7) but outside the old, incorrectly
+        // subtracted threshold (4 + 5).
+        let line = RepulsiveLine::new(map_pt(0.0, 0.0), map_pt(100.0, 0.0), 2.0, 5.0);
+        let movement = MapVec::new(0.0, 4.0);
+        let deviated = line
+            .compute_deviation(movement, map_pt(50.0, -14.0), 4.0, 10.0, 4.0)
+            .expect("stored total action radius must keep the line active");
+
+        assert_eq!(deviated.x.to_bits(), (-2.3999999_f32).to_bits());
+        assert_eq!(deviated.y.to_bits(), 3.2_f32.to_bits());
     }
 }
