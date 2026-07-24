@@ -1244,7 +1244,7 @@ impl EngineInner {
         ];
 
         // Copy only the IDs to release the charge borrow. Each hit is removed
-        // before launching its damage element, and launch_sword_damage_now
+        // before launching its damage element, and queue_sword_damage
         // completes synchronously before the next candidate is inspected.
         let candidates = self.world.entities[rider_id]
             .as_ref()
@@ -1278,7 +1278,7 @@ impl EngineInner {
                 .expect("active charge must remain installed through synchronous damage")
                 .pending_victims
                 .retain(|pending| *pending != victim_id);
-            self.launch_sword_damage_now(
+            self.queue_sword_damage(
                 sim,
                 assets,
                 victim_id,

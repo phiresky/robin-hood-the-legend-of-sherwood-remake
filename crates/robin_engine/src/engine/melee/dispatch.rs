@@ -945,6 +945,11 @@ impl EngineInner {
         // is a no-op on a scroll-carrying beggar.
         match command {
             Command::ReceiveSwordDamage => {
+                #[cfg(test)]
+                let test_life_before = self
+                    .get_entity(victim_id)
+                    .and_then(super::damage::test_human_life_points)
+                    .expect("sword damage test victim is human");
                 self.apply_sword_damage(
                     sim,
                     assets,
@@ -954,6 +959,16 @@ impl EngineInner {
                     sword_profile_idx,
                     (seq_id, elem_idx),
                 );
+                #[cfg(test)]
+                if let (Some(attacker_id), Some(strike)) = (origin, sword_strike) {
+                    super::damage::record_test_sword_damage_observation(
+                        self,
+                        victim_id,
+                        attacker_id,
+                        strike,
+                        test_life_before,
+                    );
+                }
                 // ExecuteFallingPushed / ExecuteRolling marks the
                 // damage element NonInterruptable directly when those
                 // anims start.  Here, `queue_damage_anim` does the

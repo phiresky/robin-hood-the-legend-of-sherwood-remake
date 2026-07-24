@@ -3460,7 +3460,7 @@ mod tests {
             .tiredness = 11;
 
         crate::sim_rng::with_seed(1, |sim| {
-            engine.launch_sword_damage_now(sim, &assets, victim, attacker, SwordStrike::A, 1);
+            engine.queue_sword_damage(sim, &assets, victim, attacker, SwordStrike::A, 1);
         });
 
         assert_eq!(

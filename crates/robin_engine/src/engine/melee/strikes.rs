@@ -694,14 +694,7 @@ impl EngineInner {
                 entity.element_data_mut().set_direction_instantly(direction);
             }
             if let Some(profile_idx) = profile_idx {
-                self.launch_sword_damage_now(
-                    sim,
-                    assets,
-                    victim_id,
-                    attacker_id,
-                    strike,
-                    profile_idx,
-                );
+                self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
             }
             self.enter_swordfight(sim, assets, victim_id, attacker_id, true);
         } else {
@@ -1154,7 +1147,7 @@ impl EngineInner {
                 }
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = hit.attacker_profile_idx {
-                        self.launch_sword_damage_now(
+                        self.queue_sword_damage(
                             sim,
                             assets,
                             *victim_id,
@@ -1535,7 +1528,7 @@ impl EngineInner {
 
             for victim_id in hit_victim_ids {
                 if let Some(profile_idx) = active.sweep.attacker_profile_idx {
-                    self.launch_sword_damage_now(
+                    self.queue_sword_damage(
                         sim,
                         assets,
                         victim_id,

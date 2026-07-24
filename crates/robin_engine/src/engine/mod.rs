@@ -1776,7 +1776,7 @@ impl EngineInner {
         };
         // Idempotency guard.  Owned launches now arbitrate
         // synchronously inside `launch_element_for_owner`, but legacy
-        // callsites (e.g. `launch_sword_damage_now`) still hit
+        // callsites that explicitly arbitrate after an owned launch still hit
         // `arbitrate_instruct` explicitly after `launch_element`.  The
         // second call must be a safe no-op: if the first call already
         // resolved the element, return the matching bool without

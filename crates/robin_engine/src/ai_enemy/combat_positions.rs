@@ -2892,7 +2892,12 @@ impl EnemyAi {
         }
 
         // Distance is OK — maybe a step sideways?
-        if !b_move && crate::sim_rng::bool(sim, crate::sim_rng::RngSite::CombatObserveSideStep) {
+        // Source is `rand() % 2 == 0`. `sim_rng::bool` is true for the
+        // opposite (odd) half of the stream, so keep the legacy residue
+        // predicate explicit.
+        if !b_move
+            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatObserveSideStep, 0..2) == 0
+        {
             let prefer_left = self.propose_step_direction_while_observing_combat(ctx, tick);
 
             for i in 0..2u8 {

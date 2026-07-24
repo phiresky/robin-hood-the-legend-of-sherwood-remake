@@ -35,13 +35,54 @@ pub(crate) fn take_test_sword_damage_observations() -> Vec<TestSwordDamageObserv
 }
 
 #[cfg(test)]
-fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
+pub(crate) fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
     match entity {
         crate::element::Entity::Pc(pc) => Some(pc.pc.life_points),
         crate::element::Entity::Soldier(soldier) => Some(soldier.npc.life_points),
         crate::element::Entity::Civilian(civilian) => Some(civilian.npc.life_points),
         _ => None,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn record_test_sword_damage_observation(
+    engine: &EngineInner,
+    victim_id: EntityId,
+    attacker_id: EntityId,
+    strike: SwordStrike,
+    life_points_before: i16,
+) {
+    let attacker = engine
+        .get_entity(attacker_id)
+        .expect("sword damage test attacker exists");
+    let actor = attacker
+        .actor_data()
+        .expect("sword damage attacker is actor");
+    let observation = TestSwordDamageObservation {
+        victim_id,
+        attacker_id,
+        strike,
+        attacker_direction: attacker.element_data().direction(),
+        active_rider_charge: actor.active_rider_charge.is_some(),
+        pending_victims: actor
+            .active_rider_charge
+            .as_ref()
+            .map(|charge| charge.pending_victims.clone())
+            .unwrap_or_default(),
+        life_points_before,
+        life_points_after: engine
+            .get_entity(victim_id)
+            .and_then(test_human_life_points)
+            .expect("sword damage test victim remains human"),
+        victim_direction_after: engine
+            .get_entity(victim_id)
+            .expect("sword damage test victim remains present")
+            .element_data()
+            .direction(),
+    };
+    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| {
+        observations.borrow_mut().push(observation);
+    });
 }
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
 use crate::element::{ActionState, Camp, Entity, EntityId, EyeStatus, Posture};
@@ -108,18 +149,21 @@ impl EngineInner {
 
     // ─── Damage application ─────────────────────────────────────────
 
-    /// Build, launch and synchronously dispatch a `ReceiveSwordDamage`
-    /// sequence element targeting `victim_id`.
+    /// Build and queue a `ReceiveSwordDamage` sequence element targeting
+    /// `victim_id`.
     ///
     /// Use this from sword-strike resolution paths
     /// (`tick_active_sweeps`, `tick_active_rider_charges`, etc.) so the
     /// hit-reaction animations flow through `do_next_order` instead of
-    /// the legacy direct `combat_anim` writes.  Damage applies
-    /// same-tick because the launch + dispatch are inline.
-    pub(crate) fn launch_sword_damage_now(
+    /// the legacy direct `combat_anim` writes. The element is deliberately
+    /// only registered here: Original `LaunchSequenceElement` leaves it
+    /// for `RHSequenceManager::Hourglass` after every actor has performed
+    /// its frame, so the victim can finish its already-selected actor tick
+    /// before the damage interrupts it.
+    pub(crate) fn queue_sword_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
@@ -144,28 +188,6 @@ impl EngineInner {
             return;
         }
 
-        #[cfg(test)]
-        let test_before = {
-            let attacker = self
-                .get_entity(attacker_id)
-                .expect("sword damage test attacker exists");
-            let actor = attacker
-                .actor_data()
-                .expect("sword damage attacker is actor");
-            (
-                attacker.element_data().direction(),
-                actor.active_rider_charge.is_some(),
-                actor
-                    .active_rider_charge
-                    .as_ref()
-                    .map(|charge| charge.pending_victims.clone())
-                    .unwrap_or_default(),
-                self.get_entity(victim_id)
-                    .and_then(test_human_life_points)
-                    .expect("sword damage test victim is human"),
-            )
-        };
-
         let mut elem = crate::sequence::SequenceElement::new(
             1,
             crate::element::Command::ReceiveSwordDamage,
@@ -176,43 +198,12 @@ impl EngineInner {
             sword_strike,
             attacker_profile_idx,
         );
-        let seq_id = self.launch_element(elem);
-        // launch_element wraps in a fresh single-element sequence, so
-        // the element is at index 0.
-        let elem_idx = 0;
-        // Instruct arbitration first — damage may be Abandoned (e.g.
-        // against an immune posture) or PostponeCurrent the victim's
-        // existing in-progress element.
-        if !self.arbitrate_instruct(seq_id, elem_idx) {
-            return;
-        }
-        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
-
-        #[cfg(test)]
-        {
-            let life_points_after = self
-                .get_entity(victim_id)
-                .and_then(test_human_life_points)
-                .expect("sword damage test victim remains human");
-            let victim_direction_after = self
-                .get_entity(victim_id)
-                .expect("sword damage test victim remains present")
-                .element_data()
-                .direction();
-            TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| {
-                observations.borrow_mut().push(TestSwordDamageObservation {
-                    victim_id,
-                    attacker_id,
-                    strike: sword_strike,
-                    attacker_direction: test_before.0,
-                    active_rider_charge: test_before.1,
-                    pending_victims: test_before.2,
-                    life_points_before: test_before.3,
-                    life_points_after,
-                    victim_direction_after,
-                });
-            });
-        }
+        // Resolve the value normally determined by Instruct, but bypass the
+        // engine's ordinary owned-element launcher because that path performs
+        // synchronous arbitration. The manager-tail InstructOwner action owns
+        // arbitration, transition generation, and damage dispatch.
+        self.resolve_element_priority(&mut elem);
+        self.orders.sequence_manager.launch_element(elem);
     }
 
     /// Apply sword damage to a victim.
@@ -225,9 +216,9 @@ impl EngineInner {
     /// (simple-hit / standup / stunned-recovery) are pushed onto that
     /// element via `push_order_on` and consumed by `do_next_order`.
     /// Direct sword-strike resolution paths use
-    /// `launch_sword_damage_now` to build, launch, and synchronously
-    /// dispatch a real `ReceiveSwordDamage` element so this function
-    /// always receives a valid `damage_element`.
+    /// `queue_sword_damage` to build and register a real
+    /// `ReceiveSwordDamage` element, which the manager-tail instruction
+    /// dispatches here with a valid `damage_element`.
     pub(super) fn apply_sword_damage(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

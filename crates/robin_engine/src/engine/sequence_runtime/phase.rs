@@ -263,9 +263,15 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    if !self.arbitrate_instruct(seq_id, elem_idx) {
-                        continue;
-                    }
+                    // Sword damage produced by an actor strike is launched
+                    // through the ordinary manager queue so it reaches its
+                    // native Instruct boundary only after every actor's
+                    // frame. Stamp that deferred element from the victim's
+                    // state as it exists now, matching RHElementActor::Instruct.
+                    //
+                    // Other deferred element families retain their existing
+                    // admission behavior; broadening this requires auditing
+                    // their distinct native launch paths.
                     let needs_transition = self
                         .orders
                         .sequence_manager
@@ -278,6 +284,19 @@ impl EngineInner {
                             ) && element.posture_after_transition
                                 == crate::element::Posture::Undefined
                         });
+                    let is_deferred_sword_damage = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .is_some_and(|element| {
+                            element.command == crate::element::Command::ReceiveSwordDamage
+                        });
+                    if needs_transition && is_deferred_sword_damage {
+                        self.stamp_element_transition_state(owner, seq_id, elem_idx);
+                    }
+                    if !self.arbitrate_instruct(seq_id, elem_idx) {
+                        continue;
+                    }
                     if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
                         self.orders
                             .sequence_manager
