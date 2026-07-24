@@ -186,6 +186,67 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 }
 
 #[test]
+fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::OrderType;
+    use crate::sequence::{CascadeFlags, SequenceElement};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let goal = MapPoint::new(1004.836, 1774.2802);
+
+    let movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let movement_seq = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_seq, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
+        entity.position_iface_mut().set_map_goal(goal);
+    }
+
+    let incoming_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::EnterAttentiveMode,
+            Some(owner),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, incoming_seq, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(movement_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+    engine
+        .orders
+        .sequence_manager
+        .end_instruct_callback(owner, incoming_seq, 0);
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity.actor_data().unwrap().active_movement,
+        ActiveMovement::none(),
+        "Rust's stale movement tracker must still detach"
+    );
+    assert_eq!(
+        entity.position_iface().map_goal(),
+        goal,
+        "Original clears the sprite goal only when the outgoing movement is still selected"
+    );
+}
+
+#[test]
 fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
     use crate::element::{Command, Posture};
     use crate::order::{AiOrderIntent, OrderType};

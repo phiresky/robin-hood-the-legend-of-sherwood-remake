@@ -550,11 +550,13 @@ impl EngineInner {
         // `active_movement` is the exact selected element identity; ordinary
         // order exhaustion performs the same cleanup synchronously in
         // `do_next_order`, before detaching that tracker.
-        let replacement_movement_goal = self
+        let selected_element = self
             .orders
             .sequence_manager
-            .current_element_for_actor(owner)
-            .and_then(|(replacement_seq, replacement_idx)| {
+            .current_element_for_actor(owner);
+        let outgoing_is_selected = selected_element == Some((seq_id, elem_idx as usize));
+        let replacement_movement_goal =
+            selected_element.and_then(|(replacement_seq, replacement_idx)| {
                 (replacement_seq != seq_id || replacement_idx != elem_idx as usize)
                     .then(|| {
                         self.orders
@@ -570,10 +572,16 @@ impl EngineInner {
             && actor.active_movement.element_index == elem_idx as usize
         {
             actor.active_movement.clear();
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-            if let Some(goal) = replacement_movement_goal {
+            // Original clears the cached sprite goal only when this card
+            // still belongs to `mpSequenceElement`. During Instruct the
+            // incoming element is selected before the outgoing movement is
+            // interrupted, so its card detaches Rust's stale movement
+            // tracker but leaves the cached goal for the incoming command.
+            if outgoing_is_selected || selected_element.is_none() {
+                entity
+                    .position_iface_mut()
+                    .set_map_goal(crate::coordinates::MapPoint::ZERO);
+            } else if let Some(goal) = replacement_movement_goal {
                 entity.position_iface_mut().set_map_goal(goal);
             }
         }
