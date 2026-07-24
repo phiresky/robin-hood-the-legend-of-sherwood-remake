@@ -812,6 +812,11 @@ pub struct SequenceElement {
     /// appended; standard sequence-order teardown decrements it.
     pub num_transition_orders: usize,
 
+    /// Goal cached from a selected movement while this replacement waits for
+    /// pathfinding. Used to reproduce Original's select-new-before-condoling-
+    /// old movement handoff.
+    pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
+
     /// The sub-steps (movement waypoints, animation frames, etc.) for this element.
     pub orders: VecDeque<Order>,
 
@@ -860,6 +865,7 @@ impl SequenceElement {
             posture_after_transition: Posture::default(),
             action_state_after_transition: ActionState::default(),
             num_transition_orders: 0,
+            retained_movement_goal: None,
             orders: VecDeque::new(),
             data: SequenceElementData::Simple,
             postponed_element_index: None,

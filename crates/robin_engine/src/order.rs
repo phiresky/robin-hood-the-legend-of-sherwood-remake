@@ -681,6 +681,9 @@ pub struct AiOrderIntent {
     /// Movement speed multiplier copied onto generated movement sequence elements.
     pub speed_factor: f32,
     pub no_halt: bool,
+    /// Cached selected-movement goal that survives an implicit GoTo
+    /// replacement until the new movement installs a concrete order.
+    pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
     pub antagonist: Option<crate::element::EntityId>,
     /// When set, the engine drain runs
     /// `FastFindGrid::find_authorized_position` against the actor's
@@ -714,6 +717,7 @@ impl AiOrderIntent {
             move_flags: 0,
             speed_factor: 1.0,
             no_halt: false,
+            retained_movement_goal: None,
             antagonist: None,
             find_accessible: false,
             ask_obstacle: false,

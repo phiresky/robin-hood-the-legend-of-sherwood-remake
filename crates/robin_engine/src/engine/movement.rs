@@ -3609,6 +3609,7 @@ impl EngineInner {
             Some(entity_id),
             action,
         );
+        elem.retained_movement_goal = intent.retained_movement_goal;
         if let crate::sequence::SequenceElementData::Movement {
             destination,
             layer: elem_layer,
@@ -6881,6 +6882,36 @@ impl EngineInner {
                     if !self.preflight_ai_goto(entity_id, &mut intent) {
                         continue;
                     }
+                    // Original Halt preserves a selected movement long enough
+                    // for the replacement Move to become mpSequenceElement.
+                    // Only then is the old movement interrupted, so its
+                    // SendCondolationCard no longer owns the selected element
+                    // and cannot clear PositionGoalMap. Preserve that cached
+                    // transition goal across Rust's eager halt; launching the
+                    // replacement below remains free to overwrite it when a
+                    // path is available immediately.
+                    //
+                    // An explicit StopAll before this GoTo has already
+                    // performed the selected-element cleanup and must not
+                    // resurrect the old destination.
+                    let retained_movement_goal = (!had_explicit_halt)
+                        .then(|| {
+                            self.orders
+                                .sequence_manager
+                                .current_element_for_actor(entity_id)
+                                .and_then(|(seq, idx)| {
+                                    self.orders.sequence_manager.get_element(seq, idx)
+                                })
+                                .is_some_and(|element| element.data.is_movement())
+                        })
+                        .filter(|selected_is_movement| *selected_is_movement)
+                        .and_then(|_| {
+                            self.world
+                                .entities
+                                .get(entity_id)
+                                .map(|entity| entity.position_iface().map_goal())
+                        });
+                    intent.retained_movement_goal = retained_movement_goal;
                     // AI `GoTo` calls `Halt()` before issuing the new
                     // movement unless `no_halt` was set.  This tears
                     // down the previous sequence at the Preference
@@ -8107,11 +8138,13 @@ impl EngineInner {
         // immediately, but converts only A*-requiring moves to MOVE_WAITING
         // and queues an `RHpathRequest`.
         if !straight_ok {
+            let mut retained_movement_goal = None;
             if let Some(elem) = self
                 .orders
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
             {
+                retained_movement_goal = elem.retained_movement_goal;
                 elem.command = crate::element::Command::MoveWaiting;
                 elem.push_order(crate::order::Order::new(
                     OrderType::Freezing,
@@ -8123,6 +8156,15 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_in_progress(seq_id, elem_idx);
+            if let Some(goal) = retained_movement_goal
+                && let Some(entity) = self.world.entities.get_mut(owner)
+            {
+                // A pending replacement owns the actor now, but has no
+                // concrete waypoint with which to initialize the sprite.
+                // Keep the outgoing movement's cached goal until path
+                // completion installs the replacement's first order.
+                entity.position_iface_mut().set_map_goal(goal);
+            }
             self.orders.pending_path_requests.enqueue(request);
             return MovePathOutcome::Pending;
         }

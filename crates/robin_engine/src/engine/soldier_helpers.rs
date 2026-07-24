@@ -550,6 +550,20 @@ impl EngineInner {
         // `active_movement` is the exact selected element identity; ordinary
         // order exhaustion performs the same cleanup synchronously in
         // `do_next_order`, before detaching that tracker.
+        let replacement_movement_goal = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            .and_then(|(replacement_seq, replacement_idx)| {
+                (replacement_seq != seq_id || replacement_idx != elem_idx as usize)
+                    .then(|| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(replacement_seq, replacement_idx)
+                            .and_then(|element| element.retained_movement_goal)
+                    })
+                    .flatten()
+            });
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
             && actor.active_movement.sequence_id == Some(seq_id)
@@ -559,6 +573,9 @@ impl EngineInner {
             entity
                 .position_iface_mut()
                 .set_map_goal(crate::coordinates::MapPoint::ZERO);
+            if let Some(goal) = replacement_movement_goal {
+                entity.position_iface_mut().set_map_goal(goal);
+            }
         }
 
         // When a movement element with the MAP flag terminates, toggle

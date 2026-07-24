@@ -1294,6 +1294,79 @@ fn deferred_standalone_face_to_waits_for_manager_while_walking() {
 }
 
 #[test]
+fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
+    use std::num::NonZeroU32;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+
+    let old_goal = MapPoint::new(70.0, 80.0);
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::RunningUpright,
+        old_goal.x,
+        old_goal.y,
+        NonZeroU32::new(778).unwrap(),
+    ));
+    let old_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(old_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
+        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(old_sequence, 0);
+        entity.position_iface_mut().set_map_goal(old_goal);
+    }
+
+    let mut replacement = SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(owner),
+        OrderType::RunningUpright,
+    );
+    replacement.priority = SequencePriority::Normal;
+    replacement.retained_movement_goal = Some(old_goal);
+    let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(replacement_sequence, 0);
+    engine.orders.sequence_manager.set_halt_pending(true);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(old_sequence, 0, CascadeFlags::NEXT_LEVEL);
+    engine.orders.sequence_manager.set_halt_pending(false);
+    engine.dispatch_condolations(&sim, &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        old_goal,
+        "replacement selection must happen before the old movement's condolence can clear its cached transition goal"
+    );
+}
+
+#[test]
 fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveShot;
