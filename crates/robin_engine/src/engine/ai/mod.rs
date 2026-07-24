@@ -5155,6 +5155,26 @@ impl EngineInner {
         self.drain_ai_owner_work_for_mode(sim, assets, npc_id, owner_local_no_forecast);
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
+        // Direct SetDirection calls made before StopAll must update the goal
+        // before the halt/transition barrier. They do not create a standalone
+        // Turn element; the subsequently selected action performs the turn.
+        let direction_goal = {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                return;
+            };
+            let Some(ai) = entity.ai_controller_mut() else {
+                return;
+            };
+            ai.outbox.actor.take_direction_goal()
+        };
+        if let Some(direction_goal) = direction_goal
+            && let Some(entity) = self.world.entities.get_mut(npc_id)
+        {
+            entity.position_iface_mut().set_direction(
+                crate::position_interface::Direction::from_raw(direction_goal as i32),
+            );
+        }
+
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.
@@ -5279,10 +5299,22 @@ impl EngineInner {
         if let Some(request) = effects.enter_swordfight {
             match request {
                 crate::ai::EnterSwordfightRequest::RaiseSword => {
-                    let elem = crate::sequence::SequenceElement::new_generic(
+                    let mut elem = crate::sequence::SequenceElement::new_generic(
                         1,
                         crate::element::Command::EnterSwordfight,
                         Some(npc_id),
+                    );
+                    // Original AI explicitly stores null in RHFIELD_OPPONENT
+                    // for the raise-sword-only form.  Preserve that
+                    // distinction from a malformed element which omitted the
+                    // required property altogether.
+                    elem.set_property(
+                        crate::sequence::Field::Opponent,
+                        crate::sequence::FieldValue::Integer(0),
+                    );
+                    elem.set_property(
+                        crate::sequence::Field::JumplineDestination,
+                        crate::sequence::FieldValue::Integer(0),
                     );
                     self.launch_element(elem);
                 }

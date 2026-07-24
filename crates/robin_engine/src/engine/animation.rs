@@ -3994,7 +3994,8 @@ impl EngineInner {
                         // tick so the body keeps rotating toward the
                         // direction goal *while* the action animation
                         // plays.  Anims with explicit `Turn()` calls:
-                        //   TRANSITION_RAISING_SWORD, TRANSITION_LOWERING_SWORD,
+                        //   TRANSITION_RAISING_SWORD (only with an
+                        //   antagonist), TRANSITION_LOWERING_SWORD,
                         //   WAITING_SWORD, PARRYING_SWORD,
                         //   STRIKING_LOW_LEFT_SMALLTALK and the matching
                         //   strike/parry smalltalk family,
@@ -4065,7 +4066,8 @@ impl EngineInner {
                                 // but the parity slot is required.
                                 | OrderType::Pointing
                                 | OrderType::Searching
-                        );
+                        ) && (anim_type != OrderType::TransitionRaisingSword
+                            || antagonist.is_some());
                         // Capture `Turn()`'s return for the GETTING_FREE_FROM_WASP
                         // still-turning substitution: while still
                         // turning, play TURNING_ALERTED and return

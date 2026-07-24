@@ -4645,7 +4645,8 @@ impl EnemyAi {
             Substate::AttackingApproachToObserve => {
                 if stimulus_type == StimulusType::EventTimer {
                     if self.base.primary_target != 0 {
-                        self.base.face_entity(self.base.primary_target, ctx);
+                        self.base
+                            .set_direction_toward_entity(self.base.primary_target, ctx);
                     }
                     self.base.stop_all();
                     // Launch EnterSwordfight with opponent=0 (just

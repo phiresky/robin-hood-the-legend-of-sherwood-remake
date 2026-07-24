@@ -2984,6 +2984,19 @@ impl AiController {
         self.face_position_impl(view.position, ctx, elevation_delta, true);
     }
 
+    /// Match a direct Original `RHElement::SetDirection` toward an entity:
+    /// update only the progressive direction goal and do not launch a Turn
+    /// sequence. The currently selected animation may perform the turn itself.
+    pub fn set_direction_toward_entity(&mut self, handle: NpcHandle, ctx: &AiContext) {
+        let Some(view) = ctx.entity_view(handle) else {
+            return;
+        };
+        let dx = view.position.x - ctx.position.x;
+        let dy = view.position.y - ctx.position.y;
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+        self.outbox.actor.set_direction = Some(direction as i16);
+    }
+
     // -- Self-stimuli --
 
     /// Queue a stimulus to be re-dispatched to this NPC on the next tick.

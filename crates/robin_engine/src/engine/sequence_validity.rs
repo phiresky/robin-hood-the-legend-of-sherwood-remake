@@ -104,13 +104,16 @@ impl EngineInner {
 
             // ── EnterSwordfight ─────────────────────────────────
             Command::EnterSwordfight => {
-                let Some(opponent_id) =
-                    element.get_property(Field::Opponent).and_then(|v| match v {
-                        FieldValue::Element(id) => Some(*id),
-                        _ => None,
-                    })
-                else {
-                    return false;
+                let opponent_id = match element.get_property(Field::Opponent) {
+                    Some(FieldValue::Integer(0)) => {
+                        // Intentional Original null-opponent form: this
+                        // ENTER_SWORDFIGHT only raises/holds the sword.
+                        return true;
+                    }
+                    Some(FieldValue::Element(id)) => *id,
+                    // Do not silently reinterpret a missing or mistyped
+                    // required field as the explicit legacy null.
+                    _ => return false,
                 };
                 let Some(opponent) = self.get_entity(opponent_id) else {
                     return false;
@@ -1530,6 +1533,22 @@ mod tests {
                 "PC TAKE should still accept {object_type:?}"
             );
         }
+    }
+
+    #[test]
+    fn enter_swordfight_accepts_explicit_null_opponent_but_not_missing_field() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let actor = add_soldier(&mut engine);
+
+        let missing = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(actor));
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &missing, true));
+
+        let mut raise_sword =
+            SequenceElement::new_generic(1, Command::EnterSwordfight, Some(actor));
+        raise_sword.set_property(Field::Opponent, FieldValue::Integer(0));
+        raise_sword.set_property(Field::JumplineDestination, FieldValue::Integer(0));
+        assert!(engine.check_sequence_element_validity(&assets, actor, &raise_sword, true));
     }
 
     #[test]

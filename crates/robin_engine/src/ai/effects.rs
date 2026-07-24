@@ -248,6 +248,7 @@ pub struct AiActorOutbox {
     pub focus_point: Option<Position>,
     pub slowly_open_eyes: bool,
     pub forget_nearby_coins: Option<Position>,
+    pub set_direction: Option<i16>,
     pub set_direction_instantly: Option<i16>,
     pub set_attentive_mode: Option<AttentiveModeEffect>,
     pub set_guarded_pc: Option<GuardedPcEffect>,
@@ -355,6 +356,7 @@ impl AiActorOutbox {
             || self.focus_point.is_some()
             || self.slowly_open_eyes
             || self.forget_nearby_coins.is_some()
+            || self.set_direction.is_some()
             || self.set_direction_instantly.is_some()
             || self.set_attentive_mode.is_some()
             || self.set_guarded_pc.is_some()
@@ -373,6 +375,12 @@ impl AiActorOutbox {
     /// handling, so the later movement-prefix barrier must not be taken yet.
     pub(crate) fn take_halt(&mut self) -> bool {
         std::mem::take(&mut self.halt)
+    }
+
+    /// Drain a direct `SetDirection` write before the following `StopAll`
+    /// barrier. Unlike Face/Turn, this only changes the direction goal.
+    pub(crate) fn take_direction_goal(&mut self) -> Option<i16> {
+        self.set_direction.take()
     }
 
     /// Drain the two movement prefixes after halt has been applied.
