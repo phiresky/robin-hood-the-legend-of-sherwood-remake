@@ -1294,6 +1294,80 @@ fn deferred_standalone_face_to_waits_for_manager_while_walking() {
 }
 
 #[test]
+fn explicit_halt_then_goto_keeps_single_stop_transition() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{AiOrderIntent, Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use std::num::NonZeroU32;
+
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+    let old_goal = MapPoint::new(1004.836, 1774.2802);
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::WalkingUpright,
+        old_goal.x,
+        old_goal.y,
+        NonZeroU32::new(779).unwrap(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        entity.actor_data_mut().unwrap().active_movement =
+            ActiveMovement::new(movement_sequence, 0);
+        entity.position_iface_mut().set_map_goal(old_goal);
+        let ai = entity.ai_controller_mut().unwrap();
+        ai.outbox.actor.halt = true;
+        ai.outbox
+            .actor
+            .orders
+            .push(AiOrderIntent::new(OrderType::RunningUpright, 900.0, 1700.0));
+    }
+
+    engine.launch_pending_orders_for_npc_mode(owner, false);
+
+    let old = engine
+        .orders
+        .sequence_manager
+        .get_element(movement_sequence, 0)
+        .unwrap();
+    assert_eq!(old.state, SequenceState::InProgress);
+    assert_eq!(
+        old.current_order().unwrap().order_type,
+        OrderType::TransitionWalkingUprightWaitingUpright,
+        "the explicit StopAll Halt rewrites one stop transition and GoTo must not halt it again"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        old_goal
+    );
+    assert_eq!(
+        engine.orders.pending_move_requests.len(),
+        1,
+        "GoTo remains queued behind the preserved stop transition"
+    );
+}
+
+#[test]
 fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};

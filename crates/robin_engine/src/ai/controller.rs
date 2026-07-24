@@ -2615,9 +2615,10 @@ impl AiController {
         let mut order = AiOrderIntent::new(order_type, destination.x, destination.y);
         order.reverse = flags.contains(GotoFlags::BACK);
         order.compute_direction = !flags.contains(GotoFlags::STRAIGHT);
-        // `GoTo` calls `Halt()` by default unless `GOTO_NOHALT` is set.
-        // Propagate so the engine can honour the "don't tear down the
-        // outgoing sequence" request at dispatch time.
+        // Preserve the authored flag in the intent. The shipped C++ GoTo
+        // pre-launch Halt gate is accidentally dead because of operator
+        // precedence (`flags & GOTO_NOHALT == 0`), so movement dispatch does
+        // not act on this value; other intent families still use `no_halt`.
         order.no_halt = flags.contains(GotoFlags::NO_HALT);
 
         // Set movement-sequence flags derived from GoTo flags.

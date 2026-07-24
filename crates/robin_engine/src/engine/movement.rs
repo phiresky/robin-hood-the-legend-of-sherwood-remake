@@ -6901,6 +6901,18 @@ impl EngineInner {
                 | OrderType::WalkingCrouched
                 | OrderType::WalkingAlerted
                 | OrderType::RiderCharging => {
+                    let was_computing_path = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(sequence_id, element_index)
+                        })
+                        .is_some_and(|element| {
+                            element.command == crate::element::Command::MoveWaiting
+                        });
                     // `find_accessible` / `ask_obstacle` pre-flight
                     // gates.  Run them before the halt so a failure
                     // leaves the outgoing sequence in place rather
@@ -6940,19 +6952,23 @@ impl EngineInner {
                                 .map(|entity| entity.position_iface().map_goal())
                         });
                     intent.retained_movement_goal = retained_movement_goal;
-                    // AI `GoTo` calls `Halt()` before issuing the new
-                    // movement unless `no_halt` was set.  This tears
-                    // down the previous sequence at the Preference
-                    // priority, with `inside_halt_method=true` to
-                    // suppress the `Think(EventDone)` /
-                    // `Think(EventImpossible)` /
-                    // `Think(EventCouldntReachpoint)` that the
-                    // interrupted element would otherwise fire.
-                    if !intent.no_halt {
+                    // The Original source spells this pre-launch gate as
+                    // `uwFlags & GOTO_NOHALT == 0`. C/C++ precedence parses
+                    // it as `uwFlags & (GOTO_NOHALT == 0)`, which is always
+                    // zero: ordinary GoTo never halts here. Keep explicit
+                    // StopAll/Halt effects at their own call sites instead of
+                    // "fixing" the legacy bug.
+                    self.launch_ai_move(entity_id, &intent);
+
+                    // GoTo has a separate, effective tail check after
+                    // launching its sequence: an actor whose old movement is
+                    // still waiting on the pathfinder is halted. The halt
+                    // also cancels the just-registered replacement, matching
+                    // StopNotYetLaunchedSequenceElements.
+                    if was_computing_path {
                         self.check_shape1_contract(entity_id);
                         self.halt_actor(entity_id);
                     }
-                    self.launch_ai_move(entity_id, &intent);
                 }
                 OrderType::Turning => {
                     let turn_command = if intent.fast_turn {
