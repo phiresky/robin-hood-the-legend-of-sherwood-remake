@@ -1182,6 +1182,115 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
 }
 
 #[test]
+fn deferred_standalone_face_to_waits_for_manager_while_walking() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{AiOrderIntent, Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use std::num::NonZeroU32;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    let owner = engine.add_entity(soldier);
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::WalkingUpright,
+        70.0,
+        80.0,
+        NonZeroU32::new(777).unwrap(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.action_state = ActionState::Moving;
+        actor.active_movement = ActiveMovement::new(movement_sequence, 0);
+        entity
+            .position_iface_mut()
+            .set_map_goal(MapPoint::new(70.0, 80.0));
+    }
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .halt = true;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(AiOrderIntent::face_direction(9));
+
+    engine.launch_pending_orders_for_npc_mode(owner, true);
+
+    let turn_sequence = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .find(|sequence| {
+            sequence.elements.first().is_some_and(|element| {
+                element.owner == Some(owner) && element.command == Command::Turn
+            })
+        })
+        .expect("deferred standalone FaceTo registered a Turn");
+    assert_eq!(turn_sequence.elements[0].state, SequenceState::Todo);
+    assert!(
+        turn_sequence.elements[0].orders.is_empty(),
+        "an ordinary walking actor must not execute or translate an AI-tail Turn in the same owner slot"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "an explicit StopAll before Face must not resurrect the stopped movement goal"
+    );
+    let turn_sequence_id = turn_sequence.id;
+
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let instructed = engine
+        .orders
+        .sequence_manager
+        .get_element(turn_sequence_id, 0)
+        .unwrap();
+    assert_eq!(instructed.state, SequenceState::InProgress);
+    assert_eq!(
+        instructed
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        vec![
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            OrderType::Turning,
+        ]
+    );
+}
+
+#[test]
 fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveShot;

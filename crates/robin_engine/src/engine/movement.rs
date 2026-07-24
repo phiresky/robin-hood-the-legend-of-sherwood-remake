@@ -6794,6 +6794,19 @@ impl EngineInner {
         entity_id: EntityId,
         defer_turn_instruction: bool,
     ) {
+        self.launch_pending_orders_for_npc_mode_after_halt(
+            entity_id,
+            defer_turn_instruction,
+            false,
+        );
+    }
+
+    pub(super) fn launch_pending_orders_for_npc_mode_after_halt(
+        &mut self,
+        entity_id: EntityId,
+        defer_turn_instruction: bool,
+        halt_already_applied: bool,
+    ) {
         // `StopAll` halts the actor inline before subsequent work,
         // and `FaceTo` / `GoTo` do the same on their own.  The Halt
         // is deferred to this drain (via `pending_halt`) so it runs
@@ -6820,6 +6833,7 @@ impl EngineInner {
         if take_halt {
             self.halt_actor(entity_id);
         }
+        let had_explicit_halt = halt_already_applied || take_halt;
         if !has_pending_orders {
             return;
         }
@@ -6834,15 +6848,12 @@ impl EngineInner {
         };
         // CoordinatePatrol may emit a Move and a Turn together; that compound
         // owner boundary was already synchronous and its relative arbitration
-        // must remain intact. The deferred case is the standalone FaceTo used
-        // to rotate a moving formation member whose entity slot is still due.
+        // must remain intact. Every standalone FaceTo in a deferred owner
+        // boundary remains registered until SequenceManager::Hourglass,
+        // regardless of the actor's walking speed/state. Restricting this to
+        // MovingFast let ordinary walking actors execute the newly exposed
+        // exit transition one owner slot too early.
         let defer_standalone_turn = defer_turn_instruction
-            && self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(|entity| entity.actor_data())
-                .is_some_and(|actor| actor.action_state == crate::element::ActionState::MovingFast)
             && !intents.iter().any(|intent| {
                 matches!(
                     intent.order_type,
@@ -6895,11 +6906,20 @@ impl EngineInner {
                         // FaceTo interrupts the movement and installs its
                         // transition early enough for this actor slot, while
                         // retaining the movement goal cached by the sprite.
-                        let retained_goal = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .map(|entity| entity.position_iface().map_goal());
+                        // A standalone FaceTo halts a live movement only to
+                        // rotate the actor and therefore retains its cached
+                        // destination. An explicit StopAll/Halt preceding the
+                        // Face has already cleared the selected movement goal,
+                        // so sampling here naturally retains zero instead of
+                        // resurrecting the old destination.
+                        let retained_goal = (!had_explicit_halt)
+                            .then(|| {
+                                self.world
+                                    .entities
+                                    .get(entity_id)
+                                    .map(|entity| entity.position_iface().map_goal())
+                            })
+                            .flatten();
                         if let Some(entity) = self.world.entities.get_mut(entity_id) {
                             entity.position_iface_mut().turn();
                         }

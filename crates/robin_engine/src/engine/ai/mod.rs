@@ -5432,7 +5432,11 @@ impl EngineInner {
         // re-entrantly, advancing
         // `AttackingReactiontimeTurning → AttackingReactiontime` the
         // same frame as `EVENT_VIEW`.
-        self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+        self.launch_pending_orders_for_npc_mode_after_halt(
+            npc_id,
+            defer_turn_instruction,
+            take_halt,
+        );
 
         // Process pending `set_attentive_mode(target, fast_officer)`:
         //   * Flip `will_be_attentive = target`.
@@ -8756,7 +8760,12 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
 
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for_mode(
+                sim,
+                npc_id,
+                assets,
+                defer_turn_instruction,
+            );
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -8792,7 +8801,12 @@ impl EngineInner {
             // those direct C++ call boundaries before deciding this owner has
             // stabilised; otherwise the result-bearing request can escape to
             // the global cross-action batch.
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            self.process_synchronous_reentrant_actions_for_mode(
+                sim,
+                npc_id,
+                assets,
+                defer_turn_instruction,
+            );
 
             let still_pending = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
@@ -8830,6 +8844,16 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
+    ) {
+        self.process_synchronous_reentrant_actions_for_mode(sim, source_id, assets, false);
+    }
+
+    fn process_synchronous_reentrant_actions_for_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        defer_turn_instruction: bool,
     ) {
         loop {
             let actions = self
@@ -8928,7 +8952,12 @@ impl EngineInner {
                     ),
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_stimuli_for(sim, source_id, assets)
+                        self.process_synchronous_stimuli_for(
+                            sim,
+                            source_id,
+                            assets,
+                            defer_turn_instruction,
+                        )
                     }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -8948,7 +8977,12 @@ impl EngineInner {
                 // Direct C++ calls are depth-first: if A emits C while B was
                 // already queued, C closes before B. Isolate A's generated
                 // work, recursively drain it, then continue the saved batch.
-                self.process_synchronous_reentrant_actions_for(sim, source_id, assets);
+                self.process_synchronous_reentrant_actions_for_mode(
+                    sim,
+                    source_id,
+                    assets,
+                    defer_turn_instruction,
+                );
                 let ai = self
                     .world
                     .entities
@@ -9133,6 +9167,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
+        defer_turn_instruction: bool,
     ) {
         let actions = self
             .world
@@ -9201,8 +9236,15 @@ impl EngineInner {
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
-            let handled = self.dispatch_think_with_drain_without_forecast(
-                sim, target_id, &stimulus, &ctx, &tick_data, assets,
+            let handled = self.dispatch_think_with_drain_mode(
+                sim,
+                target_id,
+                &stimulus,
+                &ctx,
+                &tick_data,
+                assets,
+                true,
+                defer_turn_instruction,
             );
             if !handled && let Some(sender) = fallback_to_sender {
                 let sender_id = self.entity_id_for_index(sender).unwrap_or_else(|| {
@@ -9237,13 +9279,15 @@ impl EngineInner {
                     )
                 };
                 let sender_tick = self.build_npc_tick_data(sim, sender_id, &scratch, assets);
-                self.dispatch_think_with_drain_without_forecast(
+                self.dispatch_think_with_drain_mode(
                     sim,
                     sender_id,
                     &stimulus,
                     &sender_ctx,
                     &sender_tick,
                     assets,
+                    true,
+                    defer_turn_instruction,
                 );
             }
         }

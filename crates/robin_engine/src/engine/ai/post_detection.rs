@@ -625,7 +625,22 @@ impl EngineInner {
                 }
                 live
             };
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
+            // Production reaches this FIFO from RefreshDetection in the NPC
+            // tail, after the actor's Execute slot has already run. Face/Turn
+            // side effects are synchronous as sequence registration, but the
+            // newly registered standalone Turn is not instructed until the
+            // later SequenceManager::Hourglass boundary. Focused/global
+            // detection entry points have no owner-slot boundary to preserve.
+            self.dispatch_think_with_drain_mode(
+                sim,
+                npc_id,
+                &stimulus,
+                &ctx,
+                &tick_data,
+                assets,
+                false,
+                positions_before_movement.is_some(),
+            );
         }
         if let Some(override_data) = enemy_detection_tick_data {
             assert_eq!(
