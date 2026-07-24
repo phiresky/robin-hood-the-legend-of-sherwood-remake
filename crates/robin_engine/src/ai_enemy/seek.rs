@@ -91,13 +91,24 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        tracing::trace!(
+            npc = self.base.me,
+            state = ?self.base.current_state,
+            substate = ?self.base.current_substate,
+            center_x = center.x,
+            center_y = center.y,
+            standard_radius,
+            ?flags,
+            seek_direction,
+            "entering SeekArea"
+        );
         self.base.stop_all();
 
         // Focus(NULL): clear any prior stare-at-target focus so the
         // eye-tracking view cone doesn't stick on a stale primary
         // target while we sweep seek points. Drained by `engine/ai.rs`
         // → `unfocus`.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         // Royalists just return to duty.
         if ctx.camp == crate::element::Camp::Royalists {
@@ -1084,7 +1095,7 @@ impl EnemyAi {
         // SetState(STATE_SEEKING, SUBSTATE_SEEKING_BODY).
         // Matched implicitly by `go_near` below.
         // Focus(body).
-        self.base.outbox.actor.focus = Some(body);
+        self.base.outbox.actor.set_focus(body);
         self.go_near(
             AiState::Seeking,
             Substate::SeekingBody,

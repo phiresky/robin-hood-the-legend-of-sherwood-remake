@@ -2226,7 +2226,7 @@ impl EnemyAi {
             self.end_swordfight(ctx, tick);
 
             // Focus(NULL) — clear target lock.
-            self.base.outbox.actor.unfocus = true;
+            self.base.outbox.actor.set_unfocus();
 
             // Chase or overview depending on target type and personality.
             if tick.primary_target_is_pc
@@ -2692,9 +2692,9 @@ impl EnemyAi {
         // (5) Focus(primary). With null primary the focus is cleared,
         //     matching the engine's drain behaviour.
         if new_primary != 0 {
-            self.base.outbox.actor.focus = Some(new_primary);
+            self.base.outbox.actor.set_focus(new_primary);
         } else {
-            self.base.outbox.actor.unfocus = true;
+            self.base.outbox.actor.set_unfocus();
         }
 
         // (6) No target → battle overview.
@@ -2711,7 +2711,7 @@ impl EnemyAi {
                 let dir = vec_to_sector_ar(v.0, v.1, ASPECT_RATIO);
                 self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
             }
-            self.base.outbox.actor.focus = Some(new_primary);
+            self.base.outbox.actor.set_focus(new_primary);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);
@@ -2930,7 +2930,7 @@ impl EnemyAi {
 
         if b_move {
             // Go to the new position.
-            self.base.outbox.actor.focus = Some(self.base.primary_target);
+            self.base.outbox.actor.set_focus(self.base.primary_target);
             self.go_to(
                 AiState::Attacking,
                 Substate::AttackingObserveAndMove,
@@ -2943,7 +2943,7 @@ impl EnemyAi {
             let to_target = pos_diff(&primary.position, &ctx.position);
             let dir = vec_to_sector(to_target.0, to_target.1);
             self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
-            self.base.outbox.actor.focus = Some(self.base.primary_target);
+            self.base.outbox.actor.set_focus(self.base.primary_target);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
             self.base.launch_timer(20, ctx.frame);

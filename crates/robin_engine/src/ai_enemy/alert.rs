@@ -386,7 +386,7 @@ impl EnemyAi {
         }
 
         // Focus(NULL) — clear focus target.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         self.current_task_priority = task_priority::ALERT;
 
@@ -884,7 +884,7 @@ impl EnemyAi {
         // Focus(NULL) — drop any prior gaze lock so the
         // soldier doesn't keep staring at the trigger entity while running
         // to the officer.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         self.base.alert_soldiers_point = center;
 
@@ -1447,7 +1447,7 @@ impl EnemyAi {
         use crate::profiles::ProfileRank;
 
         // Focus(NULL) — clear focus target.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         self.base.seek_position = center;
 

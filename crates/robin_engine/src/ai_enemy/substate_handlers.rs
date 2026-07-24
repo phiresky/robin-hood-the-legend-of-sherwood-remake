@@ -4826,7 +4826,7 @@ impl EnemyAi {
                         // `focus(primary_target)`.
                         self.base.launch_timer(5, ctx.frame);
                         if self.base.primary_target != 0 {
-                            self.base.outbox.actor.focus = Some(self.base.primary_target);
+                            self.base.outbox.actor.set_focus(self.base.primary_target);
                         }
                     }
                     StimulusType::EventTimer => {
@@ -5316,7 +5316,7 @@ impl EnemyAi {
             Substate::AttackingTooProudToAttackOverview => match stimulus_type {
                 StimulusType::EventDone => {
                     if self.base.primary_target != 0 {
-                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_focus(self.base.primary_target);
                     }
                     self.base.launch_timer(5, ctx.frame);
                 }
@@ -5568,7 +5568,7 @@ impl EnemyAi {
                 StimulusType::EventReachPoint => {
                     if self.base.primary_target != 0 {
                         self.base.face_entity(self.base.primary_target, ctx);
-                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_focus(self.base.primary_target);
                     }
                     self.set_state(AiState::Attacking, Substate::AttackingWaitingAtLadder);
                     self.base.launch_timer(1, ctx.frame);
@@ -5594,7 +5594,7 @@ impl EnemyAi {
                         .unwrap_or(false);
                     if target_on_lift {
                         self.base.face_entity(self.base.primary_target, ctx);
-                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_focus(self.base.primary_target);
                         self.base.launch_timer(20, ctx.frame);
                     } else {
                         self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);

@@ -486,6 +486,13 @@ impl EngineInner {
             return;
         }
         for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
+            tracing::trace!(
+                npc = npc_id.index(),
+                queue_index,
+                stimulus_type = ?stimulus.stimulus_type,
+                stimulus_info = ?stimulus.info,
+                "dispatching RefreshDetection stimulus"
+            );
             // Original Think is a synchronous boundary. Its EndThink (and any
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by

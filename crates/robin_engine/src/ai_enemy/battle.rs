@@ -29,6 +29,20 @@ fn reconsider_approach_distance(a: Position, b: Position) -> f32 {
     f32::from(truncated)
 }
 
+fn enough_nearer_friends_to_observe(
+    nearer_friends: u16,
+    visible_enemies: usize,
+    courage: u16,
+) -> bool {
+    let visible_enemies = visible_enemies as f32;
+    // Preserve Original's floating comparison and operation grouping:
+    //   friends >= enemies + enemies * (0.045f * courage)
+    // Truncating the courage bonus first lets a soldier observe with too few
+    // friends at every non-integral threshold.
+    f32::from(nearer_friends)
+        >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
+}
+
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         let target = self.get_new_primary_target(
@@ -38,9 +52,9 @@ impl EnemyAi {
         );
         self.base.primary_target = target;
         if target != 0 {
-            self.base.outbox.actor.focus = Some(target);
+            self.base.outbox.actor.set_focus(target);
         } else {
-            self.base.outbox.actor.unfocus = true;
+            self.base.outbox.actor.set_unfocus();
         }
         self.set_state(AiState::Attacking, Substate::AttackingReserve);
         self.base.launch_timer(50, ctx.frame);
@@ -337,7 +351,7 @@ impl EnemyAi {
         // Focus(NULL) at BattleDecisions entry. The decision tree will
         // re-focus on a freshly chosen primary target later (via
         // `pending_focus`) if it picks Fight / Shoot / etc.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         // Rebuild list_us from the global same-camp fighter registry on
         // entry. Do the same from the engine snapshot so deferred
@@ -722,10 +736,11 @@ impl EnemyAi {
                     decision = Decision::TooProudToAttack;
                 } else if ctx.camp == crate::element::Camp::Lacklandists
                     && !soldiers_with_lower_pride
-                    && tick.friends_nearer_to_enemy
-                        >= num_enemies_i_can_see as u16
-                            + (num_enemies_i_can_see as f32 * 0.045 * self.get_courage() as f32)
-                                as u16
+                    && enough_nearer_friends_to_observe(
+                        tick.friends_nearer_to_enemy,
+                        num_enemies_i_can_see,
+                        self.get_courage(),
+                    )
                 {
                     // Lacklandist observe — enough friends are already
                     // fighting closer to the enemy, stand back and watch.
@@ -796,6 +811,9 @@ impl EnemyAi {
             ?decision,
             primary_target = self.base.primary_target,
             num_enemies_i_can_see,
+            friends_nearer_to_enemy = tick.friends_nearer_to_enemy,
+            soldiers_lower_pride = tick.soldiers_lower_pride,
+            friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"
         );
         // Carry out decision (with possible fallback loop)
@@ -876,9 +894,9 @@ impl EnemyAi {
                         self.base.outbox.actor.enter_swordfight_jump_line = None;
                     }
                     if target != 0 {
-                        self.base.outbox.actor.focus = Some(target);
+                        self.base.outbox.actor.set_focus(target);
                     } else {
-                        self.base.outbox.actor.unfocus = true;
+                        self.base.outbox.actor.set_unfocus();
                     }
                     self.set_state(AiState::Attacking, Substate::AttackingLastReserve);
                     self.base.launch_timer(50, ctx.frame);
@@ -892,9 +910,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if target != 0 {
-                        self.base.outbox.actor.focus = Some(target);
+                        self.base.outbox.actor.set_focus(target);
                     } else {
-                        self.base.outbox.actor.unfocus = true;
+                        self.base.outbox.actor.set_unfocus();
                     }
                     self.base.set_emoticon(EmoticonType::XMark);
                     if self.combat_trainer {
@@ -946,7 +964,7 @@ impl EnemyAi {
                     let target = self.propose_shot_target(sim, ctx, tick);
                     if target != 0 {
                         self.base.primary_target = target;
-                        self.base.outbox.actor.focus = Some(target);
+                        self.base.outbox.actor.set_focus(target);
                         // AIMING_TIME_FORMULA = (110 - shooting_ability) / 2.
                         // Use the soldier's modified shooting ability
                         // (with alcohol penalty) — *not* IQ — so the
@@ -1304,7 +1322,7 @@ impl EnemyAi {
                         // Good distance — face and observe.
                         let dir = vec_to_sector(d.0, d.1);
                         self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
-                        self.base.outbox.actor.focus = Some(self.base.primary_target);
+                        self.base.outbox.actor.set_focus(self.base.primary_target);
                         self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
                         self.base.launch_timer(20, ctx.frame);
                     }
@@ -1362,9 +1380,9 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if target != 0 {
-                        self.base.outbox.actor.focus = Some(target);
+                        self.base.outbox.actor.set_focus(target);
                     } else {
-                        self.base.outbox.actor.unfocus = true;
+                        self.base.outbox.actor.set_unfocus();
                     }
 
                     if ctx.self_action_state.is_bow() {
@@ -1708,7 +1726,7 @@ impl EnemyAi {
         if tick.primary_target_in_lift
             && let Some(entry) = tick.primary_target_lift_entry
         {
-            self.base.outbox.actor.focus = Some(working_target);
+            self.base.outbox.actor.set_focus(working_target);
             self.base.seek_position = entry;
             self.go_near(
                 AiState::Attacking,
@@ -1749,7 +1767,7 @@ impl EnemyAi {
         };
 
         // Lock eye-tracking onto the primary target.
-        self.base.outbox.actor.focus = Some(working_target);
+        self.base.outbox.actor.set_focus(working_target);
 
         // Riders try charge attack first.
         if ctx.self_is_rider && self.maybe_make_rider_attack(ctx, tick, grid) {
@@ -1826,7 +1844,7 @@ impl EnemyAi {
         self.base.seek_position = pos_prim_target;
 
         // Re-focus (redundant but mirrored for parity).
-        self.base.outbox.actor.focus = Some(working_target);
+        self.base.outbox.actor.set_focus(working_target);
 
         // Not below run distance: charge or run.
         if !b_below_run_distance {
@@ -2103,7 +2121,7 @@ impl EnemyAi {
             // Close enough to charge — begin charge pass. Drop stare
             // lock so the rider's cone follows the charge direction, not
             // the fleeing target.
-            self.base.outbox.actor.unfocus = true;
+            self.base.outbox.actor.set_unfocus();
             self.base.say(crate::ai::Remark::Warcry);
             self.go_to(
                 AiState::Attacking,
@@ -2418,7 +2436,7 @@ impl EnemyAi {
 
         // Release eye-tracking lock on swordfight entry so the soldier's
         // focus arrow / cone stops chasing the previous focus target.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
 
         // If the target is moving and not yet swordfighting, freeze it
         // via Stop() so the swordfight starts from a stable position.
@@ -2504,5 +2522,13 @@ mod tests {
             (dx * dx + dy * dy).sqrt() > 75.0,
             "the general aspect-corrected distance would miss this swordfight boundary"
         );
+    }
+
+    #[test]
+    fn observe_threshold_keeps_fractional_courage_bonus() {
+        // One visible enemy and courage 45 yields 3.025 in Original. Three
+        // nearer friends are therefore insufficient; four are sufficient.
+        assert!(!enough_nearer_friends_to_observe(3, 1, 45));
+        assert!(enough_nearer_friends_to_observe(4, 1, 45));
     }
 }

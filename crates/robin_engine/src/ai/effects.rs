@@ -262,6 +262,33 @@ pub struct AiActorOutbox {
     pub archery_reservation_release: ArcheryReservationRelease,
 }
 
+impl AiActorOutbox {
+    /// Queue `Focus(element)` with Original's synchronous last-write-wins
+    /// semantics. A Think call can issue `Focus(NULL)` and then focus a new
+    /// target before the deferred engine drain.
+    pub fn set_focus(&mut self, target: HumanHandle) {
+        self.focus = Some(target);
+        self.focus_point = None;
+        self.unfocus = false;
+    }
+
+    /// Queue `Focus(position)` and supersede any earlier focus operation from
+    /// the same synchronous Think call.
+    pub fn set_focus_point(&mut self, point: Position) {
+        self.focus = None;
+        self.focus_point = Some(point);
+        self.unfocus = false;
+    }
+
+    /// Queue `Focus(NULL)` and supersede any earlier focus operation from the
+    /// same synchronous Think call.
+    pub fn set_unfocus(&mut self) {
+        self.focus = None;
+        self.focus_point = None;
+        self.unfocus = true;
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct AiActorPreemptionEffects {
     pub stop_menace: bool,
@@ -388,5 +415,36 @@ impl AiActorOutbox {
     /// after bow-ammo refill and before the Charly-seeker broadcast barrier.
     pub(crate) fn take_archery_reservation_release(&mut self) -> ArcheryReservationRelease {
         std::mem::take(&mut self.archery_reservation_release)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_operations_are_last_write_wins() {
+        let mut effects = AiActorOutbox::default();
+
+        effects.set_unfocus();
+        effects.set_focus(17);
+        assert_eq!(effects.focus, Some(17));
+        assert_eq!(effects.focus_point, None);
+        assert!(!effects.unfocus);
+
+        let point = Position {
+            x: 12.0,
+            y: 34.0,
+            ..Position::default()
+        };
+        effects.set_focus_point(point);
+        assert_eq!(effects.focus, None);
+        assert_eq!(effects.focus_point, Some(point));
+        assert!(!effects.unfocus);
+
+        effects.set_unfocus();
+        assert_eq!(effects.focus, None);
+        assert_eq!(effects.focus_point, None);
+        assert!(effects.unfocus);
     }
 }

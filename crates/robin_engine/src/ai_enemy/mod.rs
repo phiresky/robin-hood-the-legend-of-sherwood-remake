@@ -2247,6 +2247,14 @@ impl EnemyAi {
         tick: &AiPerTickData,
         _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        tracing::trace!(
+            npc = self.base.me,
+            frame = ctx.frame,
+            state = ?self.base.current_state,
+            substate = ?self.base.current_substate,
+            enemy,
+            "handling OUTOFVIEW through lost-enemy path"
+        );
         // ForecastDestinationForIA
         if let Some(prepared) = &tick.primary_target_forecast {
             let forecast = prepared.resolve(sim);
@@ -2266,7 +2274,7 @@ impl EnemyAi {
             if ctx.is_swordfighting {
                 self.end_swordfight(ctx, tick);
             }
-            self.base.outbox.actor.unfocus = true;
+            self.base.outbox.actor.set_unfocus();
 
             if self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
@@ -3366,7 +3374,7 @@ impl EnemyAi {
         // Focus(NULL) — release any stare/follow target before the
         // report-to-officer / look-for-help branches so the focus releases
         // on every exit path, including the early returns.
-        self.base.outbox.actor.unfocus = true;
+        self.base.outbox.actor.set_unfocus();
         self.fleeing_seen_enemy_counter = 0;
 
         // Report to officer after seeking?

@@ -288,7 +288,7 @@ impl EnemyAi {
                                 self.missed_pc = enemy;
                                 self.pc_missed = true;
                                 self.end_swordfight(ctx, tick);
-                                self.base.outbox.actor.unfocus = true;
+                                self.base.outbox.actor.set_unfocus();
 
                                 if tick.primary_target_is_pc
                                     && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
@@ -1454,7 +1454,7 @@ impl EnemyAi {
                         // every frame by
                         // `EngineInner::update_shield_obstacles`.
 
-                        self.base.outbox.actor.focus = Some(shooter);
+                        self.base.outbox.actor.set_focus(shooter);
 
                         self.set_state(AiState::Attacking, Substate::AttackingProtectingWithShield);
                         self.base.launch_timer(15, ctx.frame);
@@ -1921,7 +1921,7 @@ impl EnemyAi {
         if ctx.self_action_state == crate::element::ActionState::MovingFast {
             self.set_state(AiState::Attacking, Substate::AttackingReactiontimeRunning);
             self.base.primary_target = enemy;
-            self.base.outbox.actor.focus = Some(enemy);
+            self.base.outbox.actor.set_focus(enemy);
             self.reinitialize_them_list(ctx, tick);
             // GoNear(Position(pEnemy), Distance/3, GOTO_RUN)
             let dx = enemy_pos.x - ctx.position.x;
@@ -1947,7 +1947,7 @@ impl EnemyAi {
         self.base.say(Remark::SeesEnemy);
 
         self.base.primary_target = enemy;
-        self.base.outbox.actor.focus = Some(enemy);
+        self.base.outbox.actor.set_focus(enemy);
         self.reinitialize_them_list(ctx, tick);
         // EventViewStandardProcedure
         // does NOT set `EMOTICON_X_MARK` here — the red `!` only
@@ -2253,7 +2253,7 @@ impl EnemyAi {
         // Remember the body and its position.
         self.base.seek_position = body_pos;
         self.base.detected_body = body;
-        self.base.outbox.actor.focus = Some(body);
+        self.base.outbox.actor.set_focus(body);
 
         self.set_state(AiState::Seeking, Substate::SeekingBodyReactiontime);
 
@@ -2336,7 +2336,10 @@ impl EnemyAi {
             // cone onto the arrow's interesting object so the detection
             // cone narrows along the threat axis.
             if self.base.interesting_object != 0 {
-                self.base.outbox.actor.focus = Some(self.base.interesting_object);
+                self.base
+                    .outbox
+                    .actor
+                    .set_focus(self.base.interesting_object);
             }
             self.hey_folks_look_there(pos, 200, ctx);
             if self.get_rank() == ProfileRank::Officer {
@@ -2415,7 +2418,7 @@ impl EnemyAi {
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
-                self.base.outbox.actor.focus = Some(obj);
+                self.base.outbox.actor.set_focus(obj);
                 if self.get_rank() == ProfileRank::Officer {
                     self.base.launch_timer(60, ctx.frame);
                 } else {
@@ -2442,7 +2445,7 @@ impl EnemyAi {
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.base.interesting_object = obj;
-                self.base.outbox.actor.focus = Some(obj);
+                self.base.outbox.actor.set_focus(obj);
                 self.set_state(AiState::Wondering, Substate::WonderingAleReactiontime);
                 self.react(parameters_ai::AI_FIRST_LOOK_TIME as u16, ctx, tick);
             }
@@ -2468,7 +2471,7 @@ impl EnemyAi {
         // Focus on the hint position — engage `EYES_STARE` with the
         // narrow stare cone so subsequent detection ticks cast a narrow
         // stare rather than the default look-forward cone.
-        self.base.outbox.actor.focus_point = Some(*pos);
+        self.base.outbox.actor.set_focus_point(*pos);
         self.base.face_position(*pos);
         self.base.launch_timer(100, ctx.frame);
     }
@@ -2494,7 +2497,7 @@ impl EnemyAi {
         // Focus on the reported point — engages `EYES_STARE`. Without
         // this the alerted soldier sweeps a default-angle cone and may
         // miss the enemy at the edge of the stare-cone.
-        self.base.outbox.actor.focus_point = Some(hint.seek_point);
+        self.base.outbox.actor.set_focus_point(hint.seek_point);
         self.base.face_entity(hint.who_tells_me, ctx);
         self.base.launch_timer(100, ctx.frame);
     }
@@ -2547,7 +2550,7 @@ impl EnemyAi {
         self.set_state(AiState::Seeking, Substate::SeekingCombatAlertReactiontime);
         self.base.seek_position = *pos;
         // Focus on the position — engages `EYES_STARE` before facing it.
-        self.base.outbox.actor.focus_point = Some(*pos);
+        self.base.outbox.actor.set_focus_point(*pos);
         self.base.face_position(*pos);
         self.react(
             parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16,
