@@ -136,7 +136,7 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
-        let (strike, profile_idx) = {
+        let profile_idx = {
             let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
                 panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
             });
@@ -146,12 +146,24 @@ impl EngineInner {
                 panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
             });
             actor.action_state = ActionState::WaitingSword;
-            (actor.active_melee.strike, profile_idx)
+            profile_idx
         };
 
         // RHElementActorHuman::Execute forecasts and warns only after
-        // PerformAction returns START. This may synchronously Think and draw
-        // RNG, so it belongs to the live owner slot rather than Instruct.
+        // PerformAction returns START. It passes
+        // GetSwordStrikeFromAnimation(GetAnimation()) to WarnForStrike, so a
+        // sprite-selected replacement row, rather than the requested command,
+        // identifies the strike defenders may recognize. This may
+        // synchronously Think and draw RNG, so it belongs to the live owner
+        // slot rather than Instruct.
+        let animation = self.live_actor_animation(attacker_id).unwrap_or_else(|| {
+            panic!("melee MotionState::Start owner {attacker_id:?} has no live animation")
+        });
+        let strike = sword_strike_from_animation(animation).unwrap_or_else(|| {
+            panic!(
+                "melee MotionState::Start owner {attacker_id:?} has non-strike live animation {animation:?}"
+            )
+        });
         let victims =
             self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
         self.warn_for_strike(sim, assets, attacker_id, &victims, strike);

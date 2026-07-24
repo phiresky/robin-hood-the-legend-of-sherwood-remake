@@ -2070,6 +2070,27 @@ fn strike_to_animation(strike: SwordStrike) -> crate::order::OrderType {
     }
 }
 
+/// Original `RHElementActorHuman::GetSwordStrikeFromAnimation`.
+///
+/// Strike startup may select a replacement animation (for example, a requested
+/// right strike can be rendered by the left-strike row). Reactive defenders
+/// observe that live animation, not the sequence command that requested it.
+fn sword_strike_from_animation(animation: crate::order::OrderType) -> Option<SwordStrike> {
+    use crate::order::OrderType;
+    match animation {
+        OrderType::StrikingStraightSword => Some(SwordStrike::A),
+        OrderType::StrikingStraightStrongSword => Some(SwordStrike::B),
+        OrderType::ExecutingSword => Some(SwordStrike::C),
+        OrderType::StrikingLeftSword => Some(SwordStrike::D),
+        OrderType::StrikingRightSword => Some(SwordStrike::E),
+        OrderType::StrikingSemiroundLeftSword => Some(SwordStrike::F),
+        OrderType::StrikingSemiroundRightSword => Some(SwordStrike::G),
+        OrderType::StrikingRoundLeftSword => Some(SwordStrike::H),
+        OrderType::StrikingRoundRightSword => Some(SwordStrike::I),
+        _ => None,
+    }
+}
+
 /// Convert an angle in radians to a 0-15 sector.
 ///
 /// Floor binning where sector `k` covers `[k·2π/16, (k+1)·2π/16)`.

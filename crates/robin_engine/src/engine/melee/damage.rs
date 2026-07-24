@@ -602,13 +602,20 @@ impl EngineInner {
             }
         }
 
-        // Soldier learning: bad sword strike experience.
+        // Soldier learning reads the attacker's *live* command, not the
+        // strike stored in this damage payload. ReceiveSwordDamage can be
+        // translated after the attacker has already selected its next
+        // strike, and Original deliberately memorizes that newer command:
+        // `MakeBadSwordstrikeExperience(pDamage->GetOrigin()->GetCommand())`.
+        // This happens for every sword-damage translation, including a
+        // parried/no-damage result; the learning helper itself rejects
+        // non-strike commands.
         if let Some(Entity::Soldier(_)) = self.world.entities.get(victim_id)
-            && attacker_id.is_some()
-            && !result.is_empty()
-            && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
+            && let Some(attacker_id) = attacker_id
+            && let Some(live_strike) =
+                crate::weapons::SwordStrike::from_command(self.actor_command(attacker_id))
         {
-            self.make_bad_sword_strike_experience(assets, victim_id, strike, true);
+            self.make_bad_sword_strike_experience(assets, victim_id, live_strike, true);
         }
 
         // Play posture-based hit reaction animation for non-lethal hits

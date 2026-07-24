@@ -950,7 +950,7 @@ impl EngineInner {
                     "EvaluateSwordfight strike proposal PC {pc_id:?} references missing target {target_id:?}"
                 )
             });
-            let actor = target.actor_data().unwrap_or_else(|| {
+            target.actor_data().unwrap_or_else(|| {
                 panic!(
                     "EvaluateSwordfight strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
                 )
@@ -958,16 +958,18 @@ impl EngineInner {
             let sprite = &target.element_data().sprite;
             use crate::order::OrderType as OT;
             let in_active_strike = matches!(
-                actor.old_action,
-                OT::StrikingStraightSword
-                    | OT::StrikingStraightStrongSword
-                    | OT::StrikingRightSword
-                    | OT::StrikingLeftSword
-                    | OT::StrikingRoundRightSword
-                    | OT::StrikingRoundLeftSword
-                    | OT::StrikingSemiroundRightSword
-                    | OT::StrikingSemiroundLeftSword
-                    | OT::StrikingDownSword
+                self.live_actor_animation(target_id),
+                Some(
+                    OT::StrikingStraightSword
+                        | OT::StrikingStraightStrongSword
+                        | OT::StrikingRightSword
+                        | OT::StrikingLeftSword
+                        | OT::StrikingRoundRightSword
+                        | OT::StrikingRoundLeftSword
+                        | OT::StrikingSemiroundRightSword
+                        | OT::StrikingSemiroundLeftSword
+                        | OT::StrikingDownSword
+                )
             );
             if !in_active_strike {
                 Some(1000i16)
@@ -1831,20 +1833,22 @@ impl EngineInner {
         // pattern as tick_enemy_sword_attacks.  The "opponent" here is the
         // attacker (the victim is considering a counter-strike against them).
         let opponent_time_limit: Option<i16> = self.get_entity(attacker_id).and_then(|e| {
-            let actor = e.actor_data()?;
+            e.actor_data()?;
             let sprite = &e.element_data().sprite;
             use crate::order::OrderType as OT;
             let in_active_strike = matches!(
-                actor.old_action,
-                OT::StrikingStraightSword
-                    | OT::StrikingStraightStrongSword
-                    | OT::StrikingRightSword
-                    | OT::StrikingLeftSword
-                    | OT::StrikingRoundRightSword
-                    | OT::StrikingRoundLeftSword
-                    | OT::StrikingSemiroundRightSword
-                    | OT::StrikingSemiroundLeftSword
-                    | OT::StrikingDownSword
+                self.live_actor_animation(attacker_id),
+                Some(
+                    OT::StrikingStraightSword
+                        | OT::StrikingStraightStrongSword
+                        | OT::StrikingRightSword
+                        | OT::StrikingLeftSword
+                        | OT::StrikingRoundRightSword
+                        | OT::StrikingRoundLeftSword
+                        | OT::StrikingSemiroundRightSword
+                        | OT::StrikingSemiroundLeftSword
+                        | OT::StrikingDownSword
+                )
             );
             if !in_active_strike {
                 return Some(1000i16);

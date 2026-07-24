@@ -97,6 +97,27 @@ pub const NUM_NORMAL_SWORD_STRIKES: usize = SwordStrike::Charge as usize; // 9
 pub const NUM_REAL_STRIKES: usize = 10;
 
 impl SwordStrike {
+    /// Convert a live actor command to the corresponding normal sword strike.
+    ///
+    /// Original combat-learning code reads `GetCommand()` from the attacker
+    /// when delayed damage is translated, so this conversion intentionally
+    /// does not consult the strike snapshotted in the damage element.
+    pub fn from_command(command: crate::element::Command) -> Option<Self> {
+        use crate::element::Command;
+        match command {
+            Command::SwordstrikeThrustA => Some(Self::A),
+            Command::SwordstrikeThrustB => Some(Self::B),
+            Command::SwordstrikeThrustC => Some(Self::C),
+            Command::SwordstrikeThrustD => Some(Self::D),
+            Command::SwordstrikeThrustE => Some(Self::E),
+            Command::SwordstrikeThrustF => Some(Self::F),
+            Command::SwordstrikeThrustG => Some(Self::G),
+            Command::SwordstrikeThrustH => Some(Self::H),
+            Command::SwordstrikeThrustI => Some(Self::I),
+            _ => None,
+        }
+    }
+
     /// Convert to the corresponding [`Command`](crate::element::Command) variant.
     pub fn to_command(self) -> crate::element::Command {
         use crate::element::Command;
