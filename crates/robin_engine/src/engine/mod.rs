@@ -1818,7 +1818,14 @@ impl EngineInner {
             SequenceState::InProgress => {
                 // Element is already the actor's current (e.g.
                 // `launch_single_order_sequence_stamped` promoted it
-                // after arbitration).  Accept.
+                // after arbitration). Accept it without comparing the
+                // element against itself: a postponed element can retain its
+                // original manager registration and gain a second one when
+                // its blocker releases it, so duplicate InstructOwner
+                // actions are possible in the same drain.
+                if self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx)) {
+                    return true;
+                }
             }
             SequenceState::Impossible
             | SequenceState::Postponed

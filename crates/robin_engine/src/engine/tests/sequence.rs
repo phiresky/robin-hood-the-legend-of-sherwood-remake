@@ -681,6 +681,33 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
 }
 
 #[test]
+fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let mut element = SequenceElement::new(1, Command::Move, Some(owner));
+    element.priority = SequencePriority::Normal;
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    assert!(engine.arbitrate_instruct(sequence, 0));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+}
+
+#[test]
 fn done_propagation_requires_the_current_order_identity() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

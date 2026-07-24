@@ -2863,7 +2863,23 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek_elem);
-        self.launch_sequence(sequence);
+        let seek_seq = self.launch_sequence(sequence);
+
+        // Translation remains deferred to SequenceManager::Hourglass, like
+        // Original LaunchSequenceElement. If the current blocker already owns
+        // a postponed chain, however, RHSequenceElement::Postpone arbitrates
+        // this newly registered seek against that chain before the blocker
+        // releases it. Preserve that nested admission now: a newer Normal
+        // input seek replaces an older postponed Preference strike instead of
+        // letting the stale strike resume and displace the input at manager
+        // tail.
+        let current_has_postponed = self
+            .current_sequence_element_for_actor(pc_id)
+            .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
+            .is_some_and(|element| element.cross_postponed.is_some());
+        if current_has_postponed {
+            self.arbitrate_instruct(seek_seq, 0);
+        }
     }
 
     /// Build a `Seek(dest) → DropAle` compound sequence and launch
@@ -3961,6 +3977,85 @@ mod tests {
                 antagonist: Some(id)
             } if *id == target_id
         ));
+    }
+
+    #[test]
+    fn newer_strike_seek_replaces_old_preference_behind_injury() {
+        use crate::sequence::{SequencePriority, SequenceState};
+
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+            profiles.characters[0].hth_weapon_id = 1;
+            let mut weapon = crate::profiles::HtHWeaponProfile::default();
+            weapon.thrusts[crate::weapons::SwordStrike::E as usize].maximal_distance = 60;
+            profiles.hth_weapons.push(weapon);
+        }
+        let sector = crate::position_interface::SectorHandle::new(0);
+        engine
+            .get_entity_mut(pc_id)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(sector);
+        let mut target = ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: Default::default(),
+        };
+        target.element.set_sector(sector);
+        let target_id = engine.add_entity(Entity::Civilian(target));
+
+        let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(pc_id));
+        injury.priority = SequencePriority::Injury;
+        let injury_seq = engine.orders.sequence_manager.launch_element(injury);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(injury_seq, 0);
+
+        let mut old_strike = SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustD,
+            Some(pc_id),
+            Some(target_id),
+        );
+        old_strike.priority = SequencePriority::Preference;
+        let old_strike_seq = engine.orders.sequence_manager.launch_element(old_strike);
+        engine.engine_postpone(injury_seq, 0, old_strike_seq, 0);
+
+        engine.apply_sword_strike_with_seek(&assets, pc_id, target_id, Command::SwordstrikeThrustE);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(old_strike_seq, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "Preference + newer Normal interrupts the older postponed strike"
+        );
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .get_element(injury_seq, 0)
+            .unwrap()
+            .cross_postponed
+            .expect("injury retains the newer seek");
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .get_element(replacement.0, replacement.1)
+            .unwrap();
+        assert_eq!(replacement.command, Command::Seek);
+        assert_eq!(replacement.state, SequenceState::Postponed);
     }
 
     fn minimal_script() -> crate::engine::types::MissionScript {
