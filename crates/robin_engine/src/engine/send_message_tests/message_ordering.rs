@@ -13,6 +13,111 @@ fn send_message_element(
 }
 
 #[test]
+fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animation() {
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let (mut engine, receiver, _) = engine_with_receiver();
+    let mut display = crate::engine::HostDisplayState::default();
+
+    engine
+        .get_entity_mut(receiver)
+        .expect("receiver")
+        .ai_controller_mut()
+        .expect("receiver NPC AI")
+        .script_locked = true;
+
+    let mut old_sequence = Sequence::new();
+    let mut old_animation = SequenceElement::new_generic(1, Command::PlayAnim, Some(receiver));
+    old_animation.set_property(
+        Field::AnimationId,
+        FieldValue::Animation(OrderType::TransitionLoweringSword),
+    );
+    old_sequence.append_element(old_animation);
+    old_sequence.append_element(SequenceElement::new_generic(
+        2,
+        Command::UnlockAi,
+        Some(receiver),
+    ));
+    let old_id = engine.launch_sequence(old_sequence);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(receiver),
+        Some((old_id, 0)),
+        "the old animation must be live before the replacement sequence arrives"
+    );
+
+    let mut replacement = Sequence::new();
+    replacement.append_element(SequenceElement::new_generic(
+        1,
+        Command::LockAi,
+        Some(receiver),
+    ));
+    let mut new_animation = SequenceElement::new_generic(2, Command::PlayAnim, Some(receiver));
+    new_animation.set_property(
+        Field::AnimationId,
+        FieldValue::Animation(OrderType::RaisingShield),
+    );
+    replacement.append_element(new_animation);
+    let replacement_id = engine.launch_sequence(replacement);
+    engine.drain_pending_immediate_actions_sync(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let manager = &engine.orders.sequence_manager;
+    assert_eq!(
+        manager
+            .get_element(old_id, 0)
+            .expect("old animation remains inspectable")
+            .state,
+        SequenceState::Interrupted
+    );
+    assert_eq!(
+        manager
+            .get_element(old_id, 1)
+            .expect("old unlock remains inspectable")
+            .state,
+        SequenceState::Interrupted,
+        "stopping the old animation must cascade across its trailing UnlockAi"
+    );
+    assert_eq!(
+        manager
+            .get_element(replacement_id, 0)
+            .expect("replacement lock remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        manager
+            .get_element(replacement_id, 1)
+            .expect("replacement animation remains inspectable")
+            .state,
+        SequenceState::InProgress
+    );
+    assert_eq!(
+        manager.current_element_for_actor(receiver),
+        Some((replacement_id, 1)),
+        "the new PlayAnim must become the actor's live command"
+    );
+
+    let ai = engine
+        .get_entity(receiver)
+        .expect("receiver")
+        .ai_controller()
+        .expect("receiver NPC AI");
+    assert!(ai.script_locked, "the replacement lock must remain held");
+    assert!(
+        !ai.outbox
+            .reentrant
+            .self_stimuli
+            .contains(&crate::ai::StimulusType::EventReturnToDuty),
+        "the interrupted old UnlockAi must not schedule ReturnToDuty"
+    );
+}
+
+#[test]
 fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

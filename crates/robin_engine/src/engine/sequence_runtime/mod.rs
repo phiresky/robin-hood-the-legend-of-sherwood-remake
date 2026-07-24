@@ -2294,36 +2294,6 @@ impl SpriteImmediateContext<'_> {
     }
 }
 
-struct AiLockImmediateContext<'a> {
-    entities: &'a mut crate::entities::Entities,
-    sequence_manager: &'a mut crate::sequence::SequenceManager,
-}
-
-impl AiLockImmediateContext<'_> {
-    fn dispatch(
-        &mut self,
-        owner: EntityId,
-        command: Command,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
-        let lock = command == Command::LockAi;
-        if let Some(entity) = self.entities.get_mut(owner)
-            && entity.is_npc()
-        {
-            let unconscious = entity.human_data().is_some_and(|human| human.unconscious);
-            if let Some(ai) = entity.ai_controller_mut() {
-                if lock {
-                    ai.script_lock(false, true);
-                } else if ai.script_locked {
-                    ai.script_unlock(unconscious);
-                }
-            }
-        }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
-    }
-}
-
 #[cfg(test)]
 struct UserLockImmediateContext<'a> {
     user_locked: &'a mut bool,

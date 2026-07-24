@@ -543,11 +543,43 @@ impl EngineInner {
                 self.actor_wait(owner);
             }
             Command::LockAi | Command::UnlockAi => {
-                AiLockImmediateContext {
-                    entities: &mut self.world.entities,
-                    sequence_manager: &mut self.orders.sequence_manager,
+                let from_lockai_command = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner)
+                    .is_some_and(|(current_seq, current_idx)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(current_seq, current_idx)
+                            .is_some_and(|element| element.command == Command::LockAi)
+                    });
+                let unconscious = self
+                    .get_entity(owner)
+                    .and_then(|entity| entity.human_data())
+                    .is_some_and(|human| human.unconscious);
+                if let Some(ai) = self
+                    .get_entity_mut(owner)
+                    .and_then(crate::element::Entity::ai_controller_mut)
+                {
+                    if cmd == Command::LockAi {
+                        // ScriptLockAI calls actor.Stop(NORMAL) while
+                        // the previously selected command is still
+                        // current. Suppress the controller's deferred
+                        // halt and perform that stop synchronously
+                        // below, before this zero-frame LockAI
+                        // terminates and registers its successor.
+                        ai.script_lock(false, true);
+                    } else if ai.script_locked {
+                        ai.script_unlock(unconscious);
+                    }
                 }
-                .dispatch(owner, cmd, seq_id, elem_idx);
+                if cmd == Command::LockAi && !from_lockai_command {
+                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
+                    self.dispatch_condolations(sim, assets);
+                }
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             _ => {
                 self.orders
