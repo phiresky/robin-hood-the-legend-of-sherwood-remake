@@ -3261,27 +3261,11 @@ impl EngineInner {
                     // completion/DoNextOrder. Sampling the current element
                     // here is intentional: WaitingSword callbacks above may
                     // have synchronously replaced it.
-                    let mut completed_wait_needs_idle_successor = false;
+                    let mut completed_execute_may_need_idle_successor = false;
                     if let Some(mut result) = execute_result.take() {
                         self.apply_actor_post_execute_wait_modifier(entity_id, &mut result);
-                        completed_wait_needs_idle_successor =
-                            result.motion == crate::sprite::MotionState::Terminated
-                                && self
-                                    .orders
-                                    .sequence_manager
-                                    .current_element_for_actor(entity_id)
-                                    .and_then(|(sequence, index)| {
-                                        self.orders
-                                            .sequence_manager
-                                            .get_element(sequence, index)
-                                    })
-                                    .is_some_and(|element| {
-                                        matches!(
-                                            element.command,
-                                            crate::element::Command::WaitTimer
-                                                | crate::element::Command::WaitFreeLift
-                                        )
-                                    });
+                        completed_execute_may_need_idle_successor =
+                            result.motion == crate::sprite::MotionState::Terminated;
                         self.stage_actor_execute_completion(entity_id, result, &mut outcomes);
                     }
 
@@ -3301,7 +3285,7 @@ impl EngineInner {
                     // Actor::Hourglass's idle Wait when the completed order
                     // left the owner empty. Its translated animation must be
                     // visible to the same-slot ActionChange callback.
-                    if completed_wait_needs_idle_successor {
+                    if completed_execute_may_need_idle_successor {
                         self.ensure_wait_element(entity_id);
                         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
                             .unwrap_or_else(|error| {
