@@ -186,6 +186,52 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 }
 
 #[test]
+fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
+    use crate::element::{Command, Posture};
+    use crate::order::{AiOrderIntent, OrderType};
+    use crate::sequence::{CascadeFlags, SequenceElement};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let outgoing =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let outgoing_seq = engine.orders.sequence_manager.launch_element(outgoing);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(outgoing_seq, 0);
+
+    engine.orders.pending_move_requests.push((
+        owner,
+        AiOrderIntent::new(OrderType::WalkingUpright, 90.0, 40.0),
+    ));
+    assert_eq!(engine.orders.pending_move_requests.len(), 1);
+
+    engine.orders.sequence_manager.set_halt_pending(true);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(outgoing_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.orders.sequence_manager.set_halt_pending(false);
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+
+    assert_eq!(
+        engine.orders.pending_move_requests.len(),
+        1,
+        "a Halt card suppresses Think and must not steal its caller's replacement Move"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .all(|sequence| sequence.id == outgoing_seq),
+        "the replacement must remain unregistered until its normal owner/manager boundary"
+    );
+}
+
+#[test]
 fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

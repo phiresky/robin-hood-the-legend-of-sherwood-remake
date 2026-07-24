@@ -320,10 +320,17 @@ impl EngineInner {
             .into();
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
+            let from_halt = dispatch.card.from_halt;
             self.send_condolation_card(sim, dispatch.card, assets);
-            self.drain_self_stimuli_for_npc(sim, owner, assets);
-            self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
-            self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
+            // A Halt card performs actor/human cleanup, but the NPC override
+            // returns before Think. It cannot causally produce any of these
+            // continuations, so do not let its empty callback steal
+            // replacement work which the Halt caller queued beforehand.
+            if !from_halt {
+                self.drain_self_stimuli_for_npc(sim, owner, assets);
+                self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
+                self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
+            }
             self.orders
                 .sequence_manager
                 .finish_pending_condolation(dispatch);
@@ -390,9 +397,12 @@ impl EngineInner {
         dispatch: crate::sequence::PendingCondolationDispatch,
     ) {
         let card_owner = dispatch.card.owner;
+        let from_halt = dispatch.card.from_halt;
         self.send_condolation_card(sim, dispatch.card, assets);
-        self.drain_self_stimuli_for_npc(sim, card_owner, assets);
-        self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
+        if !from_halt {
+            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+            self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
+        }
 
         // A condolence Think can issue GoTo for the next patrol leg. C++
         // LaunchSequenceElement immediately reaches the owner's Instruct
@@ -401,13 +411,15 @@ impl EngineInner {
         // queued move and drive its exact deferred InstructOwner action at
         // the same boundary. Other owners' FIFO positions remain untouched.
         let mut active_scripts = Vec::new();
-        self.dispatch_synchronous_owner_moves(sim, assets, card_owner, &mut active_scripts)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "condolation owner {} synchronous Move dispatch failed: {error:?}",
-                    card_owner.index()
-                )
-            });
+        if !from_halt {
+            self.dispatch_synchronous_owner_moves(sim, assets, card_owner, &mut active_scripts)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "condolation owner {} synchronous Move dispatch failed: {error:?}",
+                        card_owner.index()
+                    )
+                });
+        }
 
         // A SetState reached re-entrantly from SendCondolationCard belongs
         // inside that call. Close those cards before resuming this outer
