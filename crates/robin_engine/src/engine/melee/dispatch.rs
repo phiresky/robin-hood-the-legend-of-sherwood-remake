@@ -412,6 +412,9 @@ impl EngineInner {
                     id,
                 ),
             );
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
         } else {
             self.orders
                 .sequence_manager

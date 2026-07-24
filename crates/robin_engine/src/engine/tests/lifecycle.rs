@@ -4639,6 +4639,22 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
             .map(|order| order.order_type),
         Some(OrderType::TransitionLoweringSword)
     );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .map(|element| element.state),
+        Some(crate::sequence::SequenceState::InProgress),
+        "QuitSwordfight translation must expose the command as current before lowering executes"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((sequence, 0))
+    );
 }
 
 #[test]
