@@ -499,18 +499,7 @@ impl EngineInner {
             );
             // Honour check: a man of honour does not strike an
             // opponent in any of these animations.
-            let in_recovery = !alive
-                || matches!(
-                    pc.actor.old_action,
-                    crate::order::OrderType::BeingHitSword
-                        | crate::order::OrderType::ExtractingArrowSword
-                        | crate::order::OrderType::DyingSword
-                        | crate::order::OrderType::BeingDeadSword
-                        | crate::order::OrderType::FallingBackSword
-                        | crate::order::OrderType::BeingUnconsciousSword
-                        | crate::order::OrderType::BeingDeadFallenBackSword
-                        | crate::order::OrderType::StandingUpSword
-                );
+            let in_recovery = !alive || self.actor_is_in_sword_recovery(pc_id);
             // Compute eye-point Z for the 3D blip-sight check (PC as
             // viewer) and detection-point Z for `VisibilityQuery`
             // (PC as target).  PCs are never riders in the current
@@ -809,18 +798,7 @@ impl EngineInner {
             let seek_position =
                 MapPoint::new(enemy_ai.base.seek_position.x, enemy_ai.base.seek_position.y);
             // Honour check.
-            let in_recovery = !able_to_fight
-                || matches!(
-                    s.actor.old_action,
-                    crate::order::OrderType::BeingHitSword
-                        | crate::order::OrderType::ExtractingArrowSword
-                        | crate::order::OrderType::DyingSword
-                        | crate::order::OrderType::BeingDeadSword
-                        | crate::order::OrderType::FallingBackSword
-                        | crate::order::OrderType::BeingUnconsciousSword
-                        | crate::order::OrderType::BeingDeadFallenBackSword
-                        | crate::order::OrderType::StandingUpSword
-                );
+            let in_recovery = !able_to_fight || self.actor_is_in_sword_recovery(npc_id.into());
             // Whether the soldier is inside a building, for the
             // `alert_officer` layer-penalty gate.  Includes the
             // door-transit branch — see `entity_data_inside_building`.

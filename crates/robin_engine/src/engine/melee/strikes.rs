@@ -2175,25 +2175,11 @@ impl EngineInner {
             // Target must also be in a sword action state.  These are
             // two separate checks: animation for visual recovery, then
             // action state for logical sword readiness.
-            let (target_in_sword, target_in_recovery) = self
+            let target_in_sword = self
                 .get_entity(target_id)
-                .and_then(|e| e.actor_data().map(|a| (a.action_state, a.old_action)))
-                .map(|(action, old_action)| {
-                    let in_sword = action.is_sword();
-                    let in_recovery = matches!(
-                        old_action,
-                        crate::order::OrderType::BeingHitSword
-                            | crate::order::OrderType::ExtractingArrowSword
-                            | crate::order::OrderType::DyingSword
-                            | crate::order::OrderType::BeingDeadSword
-                            | crate::order::OrderType::FallingBackSword
-                            | crate::order::OrderType::BeingUnconsciousSword
-                            | crate::order::OrderType::BeingDeadFallenBackSword
-                            | crate::order::OrderType::StandingUpSword
-                    );
-                    (in_sword, in_recovery)
-                })
-                .unwrap_or((false, false));
+                .and_then(|e| e.actor_data())
+                .is_some_and(|actor| actor.action_state.is_sword());
+            let target_in_recovery = self.actor_is_in_sword_recovery(target_id);
             if target_in_recovery || !target_in_sword {
                 tracing::debug!(
                     npc = npc_id.index(), target = target_id.index(),
@@ -2298,16 +2284,15 @@ impl EngineInner {
             // unavailable).
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
-                    let actor = e.actor_data()?;
                     let sprite = &e.element_data().sprite;
                     // Only active strike animations (A-I) yield a
                     // strike-from-animation lookup; WaitingSword /
                     // MovingSword yield None → time_limit = 1000
                     // (permissive).  Check the actual animation
-                    // (`old_action`), not `action_state.is_sword()`.
+                    // (`GetAnimation()`), not `action_state.is_sword()`.
                     use crate::order::OrderType as OT;
                     let in_active_strike = matches!(
-                        actor.old_action,
+                        self.live_actor_animation(attack.target_id)?,
                         OT::StrikingStraightSword
                             | OT::StrikingStraightStrongSword
                             | OT::StrikingRightSword

@@ -1119,6 +1119,37 @@ impl EngineInner {
             .map(|(_, _, order)| order.order_type)
     }
 
+    /// Original `RHElementActor::GetAnimation()`: the live sequence order,
+    /// falling back to the sprite-driven animation while no order is selected.
+    ///
+    /// `ActorData::old_action` is not this value. It only retains the previous
+    /// animation for the next `ActionChange(new, old)` callback and may remain
+    /// `Invalid` throughout an otherwise visible animation.
+    pub(crate) fn live_actor_animation(&self, actor: EntityId) -> Option<crate::order::OrderType> {
+        self.actor_order_type(actor).or_else(|| {
+            self.get_entity(actor)
+                .filter(|entity| entity.kind().is_actor())
+                .map(|entity| entity.sprite().last_action)
+        })
+    }
+
+    pub(crate) fn actor_is_in_sword_recovery(&self, actor: EntityId) -> bool {
+        use crate::order::OrderType as OT;
+        self.live_actor_animation(actor).is_some_and(|animation| {
+            matches!(
+                animation,
+                OT::BeingHitSword
+                    | OT::ExtractingArrowSword
+                    | OT::DyingSword
+                    | OT::BeingDeadSword
+                    | OT::FallingBackSword
+                    | OT::BeingUnconsciousSword
+                    | OT::BeingDeadFallenBackSword
+                    | OT::StandingUpSword
+            )
+        })
+    }
+
     /// Render-time gate for the unconscious-stars titbit.
     ///
     /// Invoked from the titbit renderer to decide whether the stars

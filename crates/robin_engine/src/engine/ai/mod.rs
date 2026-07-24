@@ -1998,17 +1998,7 @@ impl EngineInner {
                 .sprite
                 .has_animation(crate::order::OrderType::WaitingShield);
             let is_shield_bearer = weapon_is_shield && has_shield_anim;
-            let in_recovery = matches!(
-                s.actor.old_action,
-                crate::order::OrderType::BeingHitSword
-                    | crate::order::OrderType::ExtractingArrowSword
-                    | crate::order::OrderType::DyingSword
-                    | crate::order::OrderType::BeingDeadSword
-                    | crate::order::OrderType::FallingBackSword
-                    | crate::order::OrderType::BeingUnconsciousSword
-                    | crate::order::OrderType::BeingDeadFallenBackSword
-                    | crate::order::OrderType::StandingUpSword
-            );
+            let in_recovery = self.actor_is_in_sword_recovery(EntityId::Soldier(SoldierId(handle)));
             let seek_position = Position {
                 x: enemy_ai_other.base.seek_position.x,
                 y: enemy_ai_other.base.seek_position.y,
@@ -2103,18 +2093,7 @@ impl EngineInner {
                 hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
                 hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
             );
-            let in_recovery = !alive
-                || matches!(
-                    pc.actor.old_action,
-                    crate::order::OrderType::BeingHitSword
-                        | crate::order::OrderType::ExtractingArrowSword
-                        | crate::order::OrderType::DyingSword
-                        | crate::order::OrderType::BeingDeadSword
-                        | crate::order::OrderType::FallingBackSword
-                        | crate::order::OrderType::BeingUnconsciousSword
-                        | crate::order::OrderType::BeingDeadFallenBackSword
-                        | crate::order::OrderType::StandingUpSword
-                );
+            let in_recovery = !alive || self.actor_is_in_sword_recovery(EntityId::Pc(PcId(handle)));
             let opponent_handles: Vec<u32> =
                 pc.human.opponents.iter().map(|id| id.index()).collect();
             let number_of_opponents = opponent_handles.len().min(u16::MAX as usize) as u16;

@@ -2588,6 +2588,37 @@ mod tests {
     }
 
     #[test]
+    fn sword_strike_honour_reads_live_animation_not_action_change_history() {
+        let mut engine = make_engine();
+        let (attacker, target) = make_enemy_strike_pair(&mut engine, true);
+        let assets = assets_with_sword_profile(7, 30);
+        engine.control.rng = SimulationRng::with_original_replay(Vec::new());
+        {
+            let target = engine.get_entity_mut(target).unwrap();
+            target.actor_data_mut().unwrap().old_action = OrderType::Invalid;
+            target.element_data_mut().sprite.last_action = OrderType::BeingHitSword;
+        }
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_enemy_sword_attacks(sim, &assets);
+        });
+
+        assert_eq!(
+            engine.control.rng.original_replay_cursor(),
+            Some(0),
+            "GetAnimation recovery rejection must precede strike selection"
+        );
+        assert!(
+            !engine
+                .get_entity(attacker)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .pending_sword_strike_consideration,
+            "the rejected reconsideration remains a one-shot event"
+        );
+    }
+
+    #[test]
     fn owner_scoped_sword_consideration_precedes_later_owner_rng() {
         let mut engine = make_engine();
         let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
