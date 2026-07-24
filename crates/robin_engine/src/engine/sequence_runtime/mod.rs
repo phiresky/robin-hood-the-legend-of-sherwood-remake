@@ -963,23 +963,6 @@ impl TurnCommandContext<'_> {
                     Command::GatherSoldiers => crate::order::OrderType::GatheringSoldiers,
                     _ => unreachable!(),
                 };
-                if command == Command::Point {
-                    let explicit_direction = self
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .and_then(|element| element.get_property(crate::sequence::Field::Direction))
-                        .and_then(|value| match value {
-                            crate::sequence::FieldValue::Integer(direction) => {
-                                Some(*direction as i16)
-                            }
-                            _ => None,
-                        });
-                    if let (Some(entity), Some(direction)) =
-                        (self.entities.get_mut(owner), explicit_direction)
-                    {
-                        entity.element_data_mut().set_direction_instantly(direction);
-                    }
-                }
                 self.push_order(seq_id, elem_idx, order_type, false);
             }
             _ => unreachable!("non-turn command passed to turn command context"),

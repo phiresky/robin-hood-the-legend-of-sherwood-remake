@@ -3834,6 +3834,27 @@ impl EngineInner {
                         _ => None,
                     }
                 });
+                let pointing_direction_goal = if cur_command == Some(Command::Point) {
+                    let direction = order_seq_elem
+                        .and_then(|(s, e)| {
+                            self.orders
+                                .sequence_manager
+                                .get_element(s, e)
+                                .and_then(|element| {
+                                    element.get_property(crate::sequence::Field::Direction)
+                                })
+                        })
+                        .and_then(|value| match value {
+                            crate::sequence::FieldValue::Integer(direction) => {
+                                Some(*direction as i16)
+                            }
+                            _ => None,
+                        })
+                        .expect("Point sequence is missing its integer Direction property");
+                    Some(direction)
+                } else {
+                    None
+                };
                 let driving_one_shot = matches!(cur_command, Some(cmd) if !matches!(
                     cmd,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
@@ -3927,6 +3948,16 @@ impl EngineInner {
                     let owner_is_pc = entity.is_pc();
                     let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
+                    if order_is_initialising
+                        && anim_type == OrderType::Pointing
+                        && let Some(direction) = pointing_direction_goal
+                    {
+                        // Original POINT translation only books the order.
+                        // Its first Execute tick sets the progressive goal,
+                        // then Turn() advances one sector before sprite
+                        // playback.
                         entity.element_data_mut().set_direction_goal(direction);
                     }
                     if order_is_initialising
@@ -4060,9 +4091,9 @@ impl EngineInner {
                                 // below via `wasp_still_turning`.
                                 | OrderType::GettingFreeFromWasp
                                 // NPC-only arms that call Turn() per-tick.
-                                // POINTING is booked with
-                                // set_direction_instantly so turn() is a no-op;
-                                // SEARCHING has no direction_goal writer yet
+                                // POINTING installs its authored direction
+                                // goal on the first Execute tick above.
+                                // SEARCHING has no direction_goal writer yet,
                                 // but the parity slot is required.
                                 | OrderType::Pointing
                                 | OrderType::Searching
