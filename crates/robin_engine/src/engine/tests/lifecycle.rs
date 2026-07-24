@@ -1135,6 +1135,7 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
 
     let sequence = engine.launch_turn_sequence_deferred_no_transitions(
         owner,
+        crate::element::Command::TurnFast,
         Some(9),
         0.0,
         0.0,
@@ -1146,6 +1147,7 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         .get_element(sequence, 0)
         .unwrap();
     assert_eq!(deferred.state, SequenceState::Todo);
+    assert_eq!(deferred.command, crate::element::Command::TurnFast);
     assert_eq!(deferred.posture_after_transition, Posture::Undefined);
     assert!(
         deferred.orders.is_empty(),
@@ -1160,6 +1162,7 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         .get_element(sequence, 0)
         .unwrap();
     assert_eq!(instructed.state, SequenceState::InProgress);
+    assert_eq!(instructed.command, crate::element::Command::TurnFast);
     assert_eq!(
         instructed
             .orders

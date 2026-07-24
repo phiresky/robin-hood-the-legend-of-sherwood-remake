@@ -371,6 +371,30 @@ fn face_position_with_context_resolves_original_sector_before_launch() {
     assert!(!orders[0].compute_direction);
 }
 
+#[test]
+fn fast_face_marks_the_turn_intent_without_changing_geometry() {
+    let ctx = face_to_ctx(crate::element::ActionState::Moving);
+    let target = Position {
+        x: ctx.position.x + 100.0,
+        y: ctx.position.y,
+        ..ctx.position
+    };
+    let mut ai = AiController::new(1);
+
+    ai.face_position_impl(target, &ctx, 0.0, true);
+    let orders = ai.take_pending_orders();
+
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
+    assert!(orders[0].fast_turn);
+    assert_eq!(
+        orders[0].explicit_direction,
+        Some(crate::position_interface::vector_to_sector_0_to_15_iso(
+            100.0, 0.0
+        ))
+    );
+}
+
 fn assert_same_direction_queues_turn(action_state: crate::element::ActionState) {
     let mut ai = AiController::new(1);
     let ctx = face_to_ctx(action_state);

@@ -1984,7 +1984,10 @@ impl EnemyAi {
             // `EventDone` when the animation completes; whichever fires first
             // wins.
             self.set_state(AiState::Attacking, Substate::AttackingReactiontimeTurning);
-            self.base.face_entity(enemy, ctx);
+            // Original explicitly calls Face(pEnemy, true) here: the alert
+            // reaction uses TurnFast, including when the sequence is deferred
+            // behind an attentive-mode transition.
+            self.base.face_entity_fast(enemy, ctx);
             self.base.launch_timer(20, ctx.frame);
         }
         tracing::trace!(

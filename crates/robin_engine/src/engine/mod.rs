@@ -1456,6 +1456,7 @@ impl EngineInner {
     pub(crate) fn launch_turn_sequence_deferred_no_transitions(
         &mut self,
         owner: EntityId,
+        command: crate::element::Command,
         explicit_direction: Option<i16>,
         target_x: f32,
         target_y: f32,
@@ -1464,7 +1465,7 @@ impl EngineInner {
         let seq_id = self
             .orders
             .sequence_manager
-            .launch_single_order_sequence_unchecked(owner, crate::element::Command::Turn);
+            .launch_single_order_sequence_unchecked(owner, command);
         if let Some(element) = self.orders.sequence_manager.get_element_mut(seq_id, 0) {
             let resolver = Self::priority_resolver(&self.world.entities);
             if element.priority == crate::sequence::SequencePriority::NotYetSet {

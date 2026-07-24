@@ -2920,7 +2920,13 @@ impl AiController {
     /// - `elevation_delta`: `target_elevation - ctx.elevation`. Pass
     ///   `0.0` for 2D-only faces. The target's elevation shifts the
     ///   effective dy before the aspect-ratio scale.
-    fn face_position_impl(&mut self, pos: Position, ctx: &AiContext, elevation_delta: f32) {
+    pub(super) fn face_position_impl(
+        &mut self,
+        pos: Position,
+        ctx: &AiContext,
+        elevation_delta: f32,
+        fast: bool,
+    ) {
         let dx = pos.x - ctx.position.x;
         let dy = (pos.y - ctx.position.y) + elevation_delta;
         let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
@@ -2944,16 +2950,15 @@ impl AiController {
             self.already_turned = true;
             return;
         }
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::face_direction(target_dir));
+        let mut intent = AiOrderIntent::face_direction(target_dir);
+        intent.fast_turn = fast;
+        self.outbox.actor.orders.push(intent);
     }
 
     /// Turn to face a position (2D — no elevation adjustment). Honours
     /// the `already_turned` same-frame short-circuit.
     pub fn face_position_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
-        self.face_position_impl(pos, ctx, 0.0);
+        self.face_position_impl(pos, ctx, 0.0, false);
     }
 
     /// Turn to face another entity. Feeds the target's elevation into
@@ -2967,7 +2972,16 @@ impl AiController {
         };
         let elevation_delta = view.elevation - ctx.elevation;
         let target_pos = view.position;
-        self.face_position_impl(target_pos, ctx, elevation_delta);
+        self.face_position_impl(target_pos, ctx, elevation_delta, false);
+    }
+
+    /// Turn quickly to face another entity (`Face(element, true)`).
+    pub fn face_entity_fast(&mut self, handle: NpcHandle, ctx: &AiContext) {
+        let Some(view) = ctx.entity_view(handle) else {
+            return;
+        };
+        let elevation_delta = view.elevation - ctx.elevation;
+        self.face_position_impl(view.position, ctx, elevation_delta, true);
     }
 
     // -- Self-stimuli --

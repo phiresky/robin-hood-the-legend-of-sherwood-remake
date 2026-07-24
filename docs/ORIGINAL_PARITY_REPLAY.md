@@ -24,7 +24,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current verified clean prefix is through frame 641. Increase this statement
+The current verified clean prefix is through frame 647. Increase this statement
 only after a normal first-divergence run has passed the next frame.
 
 ## Change ledger
@@ -112,7 +112,8 @@ only after a normal first-divergence run has passed the next frame.
 | Done | Frame-626 patrol detection threshold | With the visual alert channel and cached maximum corrected, Soldier 91's Enemy suspect accumulator follows Original's normal two-frame cadence: 981 at frame 625, 998 at frame 626, and 1015 at frame 627. Rust had crossed the threshold one frame early and synchronously fanned `EVENT_VIEW` across soldiers 89–93. | The two general detection fixes above align the threshold and patrol-wide transition without any actor, frame, or replay-specific condition. Replay matches through frame 636. |
 | Done | Frame-637 observe threshold | With one visible enemy and courage 45, Original compares three nearer friends against the floating threshold `1 + 1 * (0.045f * 45) = 3.025`, so Soldier 92 fights. Rust truncated the courage bonus to an integer before comparing and incorrectly allowed the soldier to observe. | The Lacklandist observe decision preserves Original's `f32` operation grouping through the comparison. Focused coverage proves three friends are insufficient while four are sufficient at this fractional boundary. |
 | Done | Frame-638 synchronous focus ordering | `BattleDecisions` first calls `Focus(NULL)`, then the Observe branch calls `Focus(primary_target)`. Original applies both immediately and ends in Follow mode with its extended view cone. Rust's deferred outbox retained both independent channels and applied unfocus last, collapsing Soldier 90's cone and spuriously launching the lost-enemy search with 18 RNG draws. | AI focus, focus-point, and unfocus writes now share a last-write-wins API mirroring synchronous call order. All call sites use it, and focused coverage exercises all three overwrite directions. Replay matches through frame 641. |
-| In progress | Frame-642 turn speed | Soldier 93 starts `TurnFast` in Original but `Turn` in Rust; all earlier compared state and RNG ordering match. | Trace the command's initiating handler and match Original's fast/normal turn selection without actor- or frame-specific logic. |
+| Done | Frame-642 fast reaction turn | Original's standard-distance `EventViewStandardProcedure` calls `Face(enemy, true)`. Soldier 93's turn waits behind an attentive-mode transition and becomes selected at frame 642 as `TurnFast`; Rust discarded the fast argument and eventually selected ordinary `Turn`. | Fast facing is represented on the generic AI turn intent and preserved through both immediate and deferred sequence launches. Focused tests cover intent geometry and a deferred fast turn surviving instruction with its direction and retained movement goal intact. Replay matches through frame 647. |
+| In progress | Frame-648 retained movement goal | Soldier 92 retains movement goal `(1022.93677, 1793.7484)` in Original while Rust clears it to zero; other compared state still matches. | Trace the interrupt/turn/order-completion boundary that owns the goal and apply Original's general retention rule. |
 | Open | Remaining trace | Passing an early prefix does not establish parity for later player interaction, combat, AI, effects, or mission scripting. | Continue first-divergence repair until all 1,469 frames pass, then run `--scan-all` as a second check and add further captures for behavioral coverage. |
 
 ## Workflow

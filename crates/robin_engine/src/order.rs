@@ -667,6 +667,9 @@ pub struct AiOrderIntent {
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
+    /// `Face(..., true)` requests the same turn geometry with a
+    /// `TurnFast` sequence command.
+    pub fast_turn: bool,
     /// Authored sector for `FaceTo(UWORD)`. Positional facing leaves this
     /// unset and derives the sector from `target_x/y` instead.
     pub explicit_direction: Option<i16>,
@@ -702,6 +705,7 @@ impl AiOrderIntent {
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,
+            fast_turn: false,
             explicit_direction: None,
             tolerance: 0.0,
             lock_ai: false,

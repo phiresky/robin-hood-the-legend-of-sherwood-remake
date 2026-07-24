@@ -6896,6 +6896,11 @@ impl EngineInner {
                     self.launch_ai_move(entity_id, &intent);
                 }
                 OrderType::Turning => {
+                    let turn_command = if intent.fast_turn {
+                        crate::element::Command::TurnFast
+                    } else {
+                        crate::element::Command::Turn
+                    };
                     let current_is_movement = self
                         .orders
                         .sequence_manager
@@ -6936,6 +6941,7 @@ impl EngineInner {
                         if defer_standalone_turn {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
+                                turn_command,
                                 direction,
                                 intent.target_x,
                                 intent.target_y,
@@ -6952,7 +6958,7 @@ impl EngineInner {
                             let order = intent.stamp(self.orders.allocate_order_id());
                             self.launch_single_order_sequence_stamped_ex(
                                 entity_id,
-                                crate::element::Command::Turn,
+                                turn_command,
                                 order,
                                 true,
                             );
@@ -6971,6 +6977,7 @@ impl EngineInner {
                         if defer_standalone_turn {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
+                                turn_command,
                                 intent.explicit_direction,
                                 intent.target_x,
                                 intent.target_y,
@@ -7001,7 +7008,7 @@ impl EngineInner {
                             let order = intent.stamp(self.orders.allocate_order_id());
                             self.launch_single_order_sequence_stamped_ex(
                                 entity_id,
-                                crate::element::Command::Turn,
+                                turn_command,
                                 order,
                                 true,
                             );
