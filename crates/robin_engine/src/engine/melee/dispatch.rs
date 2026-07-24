@@ -163,7 +163,13 @@ impl EngineInner {
         // 3+ fighters on our side, interrupt.  Otherwise launch a
         // movement element to nudge ourselves to the free slot before
         // raising the sword.
-        if let Some(opp) = opponent
+        let swordfight_prepared = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(is_swordfight_prepared);
+        if !swordfight_prepared
+            && let Some(opp) = opponent
             && opp != owner
             && let Some(jl_idx) = self
                 .orders
@@ -182,7 +188,20 @@ impl EngineInner {
                         .element_impossible(seq_id, elem_idx);
                     return;
                 }
-                TableFightMove::Ok | TableFightMove::Launched => {}
+                TableFightMove::Launched => {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(seq_id, elem_idx)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "EnterSwordfight element {seq_id:?}:{elem_idx} disappeared \
+                                 while preparing table movement"
+                            )
+                        });
+                    mark_swordfight_prepared(element);
+                }
+                TableFightMove::Ok => {}
             }
         }
 
@@ -1064,6 +1083,23 @@ impl EngineInner {
     }
 }
 
+fn is_swordfight_prepared(element: &crate::sequence::SequenceElement) -> bool {
+    matches!(
+        element.get_property(crate::sequence::Field::SwordfightPrepared),
+        Some(crate::sequence::FieldValue::Bool(true))
+    )
+}
+
+fn mark_swordfight_prepared(element: &mut crate::sequence::SequenceElement) {
+    let crate::sequence::SequenceElementData::Generic { properties } = &mut element.data else {
+        panic!("EnterSwordfight preparation requires a generic sequence element");
+    };
+    properties.insert(
+        crate::sequence::Field::SwordfightPrepared,
+        crate::sequence::FieldValue::Bool(true),
+    );
+}
+
 fn read_shield_danger_point(
     properties: &std::collections::HashMap<crate::sequence::Field, crate::sequence::FieldValue>,
 ) -> (
@@ -1090,5 +1126,28 @@ fn read_shield_danger_point(
             }),
         ),
         _ => (None, None),
+    }
+}
+
+#[cfg(test)]
+mod swordfight_preparation_tests {
+    use super::{is_swordfight_prepared, mark_swordfight_prepared};
+    use crate::element::Command;
+    use crate::sequence::{Field, FieldValue, SequenceElement};
+
+    #[test]
+    fn table_preparation_marker_is_persistent_and_legacy_missing_means_false() {
+        let mut element = SequenceElement::new_generic(1, Command::EnterSwordfight, None);
+        assert!(!is_swordfight_prepared(&element));
+
+        element.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
+        assert!(!is_swordfight_prepared(&element));
+
+        mark_swordfight_prepared(&mut element);
+        assert!(is_swordfight_prepared(&element));
+        assert!(matches!(
+            element.get_property(Field::SwordfightPrepared),
+            Some(FieldValue::Bool(true))
+        ));
     }
 }

@@ -294,15 +294,41 @@ impl EngineInner {
                     if needs_transition && is_deferred_sword_damage {
                         self.stamp_element_transition_state(owner, seq_id, elem_idx);
                     }
-                    if !self.arbitrate_instruct(seq_id, elem_idx) {
-                        continue;
-                    }
+                    // Original `RHElementActor::Instruct` generates the
+                    // incoming element's transition orders before comparing
+                    // priorities with the selected element.
                     if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
                         self.orders
                             .sequence_manager
                             .element_impossible(seq_id, elem_idx);
+                        self.dispatch_condolations(sim, assets);
                         continue;
                     }
+                    if !self.arbitrate_instruct(seq_id, elem_idx) {
+                        // Abandon/Impossible calls SetState synchronously in
+                        // Original too. Postpone produces no card, making this
+                        // drain a no-op for that arm.
+                        self.dispatch_condolations(sim, assets);
+                        continue;
+                    }
+                    // Original priority arbitration interrupts/postpones the
+                    // outgoing element through `SetState`, whose
+                    // `SendCondolationCard` callback completes synchronously
+                    // before `Instruct` continues into transition generation
+                    // and command translation for the incoming element.
+                    //
+                    // `SequenceManager` queues that callback to avoid
+                    // re-entrant borrows, so close the same stack boundary
+                    // here. In particular, an interrupted combat action's
+                    // EventDone/Reconsider RNG must run before incoming
+                    // damage translation and its damage/provoke RNG.
+                    self.orders
+                        .sequence_manager
+                        .begin_instruct_callback(owner, seq_id, elem_idx);
+                    self.dispatch_condolations(sim, assets);
+                    self.orders
+                        .sequence_manager
+                        .end_instruct_callback(owner, seq_id, elem_idx);
                     // Skip elements whose state moved to terminal /
                     // interrupted while an earlier action in this batch
                     // arbitrated against them. Without this, the loop

@@ -2082,6 +2082,18 @@ pub struct SequenceManager {
     /// (~5–15% depending on checker mode).
     actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
+    /// Temporary actor selection installed by `Instruct` while priority
+    /// arbitration's outgoing `SetState` callbacks run.
+    ///
+    /// Original assigns `RHElementActor::mpSequenceElement` to the incoming
+    /// element before interrupting/postponing the old one. The old element's
+    /// synchronous `SendCondolationCard` callback must therefore observe and
+    /// arbitrate against the incoming element even though it has not reached
+    /// `InProgress` yet. Entries only exist inside that callback boundary and
+    /// are empty at stable frame/save boundaries.
+    #[serde(default)]
+    actor_instructing: BTreeMap<EntityId, Vec<SequenceElementRef>>,
+
     /// Deferred queue of elements to start. Processed in `hourglass()`.
     /// Each entry is `(sequence id, element index within that sequence)`.
     /// Serialized so mid-frame snapshots (rollback / replay) preserve
@@ -2205,6 +2217,7 @@ impl SequenceManager {
             sequences: BTreeMap::new(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
+            actor_instructing: BTreeMap::new(),
             elements_to_go: VecDeque::new(),
             pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
@@ -2222,6 +2235,7 @@ impl SequenceManager {
     pub fn rebuild_indices(&mut self) {
         self.actor_live.clear();
         self.actor_in_progress.clear();
+        self.actor_instructing.clear();
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 let Some(owner) = elem.owner else {
@@ -2480,6 +2494,13 @@ impl SequenceManager {
         actor: I,
     ) -> Option<(SequenceId, usize)> {
         let actor = actor.into();
+        if let Some(elem_ref) = self
+            .actor_instructing
+            .get(&actor)
+            .and_then(|stack| stack.last())
+        {
+            return Some((elem_ref.sequence_id, elem_ref.element_index));
+        }
         let set = self.actor_in_progress.get(&actor)?;
         let mut refs = set.iter();
         let first = *refs.next()?;
@@ -2497,6 +2518,46 @@ impl SequenceManager {
             }
         }
         Some((first.sequence_id, first.element_index))
+    }
+
+    /// Select an incoming element while the outgoing element's synchronous
+    /// interruption callback runs. Nested Instruct calls use a stack because
+    /// Original temporarily replaces the actor pointer at each recursive
+    /// boundary.
+    pub(crate) fn begin_instruct_callback(
+        &mut self,
+        owner: EntityId,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) {
+        self.actor_instructing
+            .entry(owner)
+            .or_default()
+            .push(SequenceElementRef::new(sequence_id, element_index));
+    }
+
+    /// Close a matching [`Self::begin_instruct_callback`] boundary.
+    pub(crate) fn end_instruct_callback(
+        &mut self,
+        owner: EntityId,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) {
+        let expected = SequenceElementRef::new(sequence_id, element_index);
+        let stack = self
+            .actor_instructing
+            .get_mut(&owner)
+            .unwrap_or_else(|| panic!("missing Instruct callback selection for {owner:?}"));
+        let selected = stack
+            .pop()
+            .expect("Instruct callback selection stack is empty");
+        assert_eq!(
+            selected, expected,
+            "Instruct callback selection closed out of order"
+        );
+        if stack.is_empty() {
+            self.actor_instructing.remove(&owner);
+        }
     }
 
     /// Find the first in-progress element owned by `actor` that

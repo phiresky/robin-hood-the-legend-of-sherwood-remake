@@ -1609,7 +1609,8 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::M
 mod tests {
     use super::{soldier_piercing_protection, soldier_shield_dimensions};
     use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, Posture,
+        ActionState, ActorData, ActorPc, ActorSoldier, Camp, Command, ElementData, ElementKind,
+        Entity, HumanData, NpcData, Posture, SoldierData,
     };
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -1631,6 +1632,26 @@ mod tests {
             },
             human: HumanData::default(),
             pc: Default::default(),
+        })
+    }
+
+    fn make_enemy_soldier() -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: 50,
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                cached_camp: Camp::Lacklandists,
+                ..Default::default()
+            },
         })
     }
 
@@ -1758,6 +1779,73 @@ mod tests {
         assert_eq!(
             soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
             Some((22, 44))
+        );
+    }
+
+    #[test]
+    fn fallback_push_completion_queues_enter_swordfight_without_entering_inline() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_pc(Posture::Upright));
+        let victim = engine.add_entity(make_enemy_soldier());
+
+        let strike_sequence =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    Command::SwordstrikeThrustA,
+                    Some(attacker),
+                ));
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(strike_sequence, 0);
+        let mut active = crate::movement::ActiveMelee::new(
+            victim,
+            crate::weapons::SwordStrike::A,
+            Some(strike_sequence),
+            0,
+        );
+        active.frames_remaining = 1;
+        active.hit_applied = true;
+        let actor = engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.active_melee = active;
+        actor.pending_push_swordfight = vec![victim];
+
+        engine.tick_melee_completion_for(&sim, &assets, attacker);
+
+        assert!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents
+                .is_empty(),
+            "fallback completion must leave entry deferred to manager-tail dispatch"
+        );
+        let enter = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| element.command == Command::EnterSwordfight)
+            .expect("eligible fallback push victim should receive queued EnterSwordfight");
+        assert_eq!(enter.owner, Some(victim));
+        assert!(matches!(
+            enter.get_property(crate::sequence::Field::Opponent),
+            Some(crate::sequence::FieldValue::Element(id)) if *id == attacker
+        ));
+        assert_eq!(
+            enter.priority,
+            crate::sequence::SequencePriority::PostponeEverythingButInjuries
         );
     }
 
@@ -2804,7 +2892,7 @@ impl EngineInner {
     /// edge without moving unproven sweep/AI maintenance.
     pub(super) fn tick_melee_completion_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
@@ -2858,7 +2946,22 @@ impl EngineInner {
             std::mem::take(&mut actor.pending_push_swordfight)
         };
         for victim_id in pending_swordfights {
-            self.enter_swordfight(sim, assets, victim_id, attacker_id, true);
+            let attacker =
+                self.world.entities.get(attacker_id).unwrap_or_else(|| {
+                    panic!("push completion attacker {attacker_id:?} disappeared")
+                });
+            let victim = self
+                .world
+                .entities
+                .get(victim_id)
+                .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
+            if crate::engine::melee::should_enter_swordfight_after_strike(
+                attacker,
+                victim,
+                &assets.profile_manager,
+            ) {
+                self.queue_enter_swordfight_after_strike(victim_id, attacker_id);
+            }
         }
 
         match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {

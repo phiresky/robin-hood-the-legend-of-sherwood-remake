@@ -1127,7 +1127,7 @@ pub(crate) fn is_vip_from_profile(
 /// dragged into a sword fight with the attacker when the victim is not
 /// a civilian, is in the attacker's enemy camp, and neither side's
 /// "non-Robin can't touch a VIP" protection triggers.
-fn should_enter_swordfight_after_strike(
+pub(in crate::engine) fn should_enter_swordfight_after_strike(
     attacker: &Entity,
     victim: &Entity,
     profile_manager: &crate::profiles::ProfileManager,

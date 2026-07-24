@@ -465,6 +465,7 @@ impl EngineInner {
     /// restriction.
     ///
     /// Returns true if swordfight was entered.
+    #[cfg(test)]
     pub(crate) fn enter_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

@@ -816,6 +816,63 @@ fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
 }
 
 #[test]
+fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut outgoing = SequenceElement::new(1, Command::SwordstrikeSmalltalkLeft, Some(owner));
+    outgoing.priority = SequencePriority::Wait;
+    let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(outgoing_sequence, 0);
+
+    let mut incoming = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
+    incoming.priority = SequencePriority::Injury;
+    let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
+    assert!(engine.arbitrate_instruct(incoming_sequence, 0));
+
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, incoming_sequence, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((incoming_sequence, 0)),
+        "the outgoing SetState callback must observe incoming injury as selected"
+    );
+
+    let mut nested = SequenceElement::new(1, Command::Turn, Some(owner));
+    nested.priority = SequencePriority::Normal;
+    let nested_sequence = engine.orders.sequence_manager.launch_element(nested);
+    assert!(
+        !engine.arbitrate_instruct(nested_sequence, 0),
+        "recursive normal work must arbitrate against the selected injury"
+    );
+    assert_ne!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(nested_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+
+    engine
+        .orders
+        .sequence_manager
+        .end_instruct_callback(owner, incoming_sequence, 0);
+}
+
+#[test]
 fn done_propagation_requires_the_current_order_identity() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

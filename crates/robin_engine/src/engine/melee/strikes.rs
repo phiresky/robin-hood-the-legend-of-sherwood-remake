@@ -1601,7 +1601,11 @@ impl EngineInner {
     /// sequence-manager FIFO order; entering synchronously here would let the
     /// relationship/state reset run before the injury has interrupted the
     /// victim's old action.
-    fn queue_enter_swordfight_after_strike(&mut self, victim_id: EntityId, attacker_id: EntityId) {
+    pub(in crate::engine) fn queue_enter_swordfight_after_strike(
+        &mut self,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+    ) {
         let mut element = crate::sequence::SequenceElement::new_generic(
             1,
             crate::element::Command::EnterSwordfight,
