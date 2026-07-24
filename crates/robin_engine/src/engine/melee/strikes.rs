@@ -110,25 +110,6 @@ fn finish_falling_pushed_if_in_flight(entity: &mut Entity) -> bool {
     true
 }
 
-fn is_expected_non_attack_swordfight_substate(substate: crate::ai::Substate) -> bool {
-    matches!(
-        substate,
-        // ScriptUnlockAI in the original calls Think(EVENT_RETURN_TO_DUTY)
-        // even when the NPC is still a swordfight member. ReturnToDuty then
-        // legitimately selects DefaultGotoPost without first calling
-        // EndSwordfight, so this can persist while the scripted combat pair
-        // remains linked.
-        crate::ai::Substate::DefaultGotoPost
-            | crate::ai::Substate::AttackingSwordfightParade
-            | crate::ai::Substate::AttackingRunningToEnemy
-            | crate::ai::Substate::AttackingWalkingToEnemy
-            | crate::ai::Substate::AttackingChargingEnemy
-            | crate::ai::Substate::AttackingSwordfightStepBack
-            | crate::ai::Substate::AttackingApproachingNewEnemy
-            | crate::ai::Substate::AttackingMovingAroundOldEnemy
-    )
-}
-
 impl EngineInner {
     fn begin_selected_melee_motion(
         &mut self,
@@ -2137,98 +2118,42 @@ impl EngineInner {
         }
 
         let mut attacks: Vec<PendingAttack> = Vec::new();
-        let mut pending_weak_stunned: Vec<EntityId> = Vec::new();
-        // Tired-soldier `SwordstrikeTired` elements collected here and
-        // launched after the npc-iter loop ends — `launch_element` needs
-        // `&mut self` and we still hold an immutable borrow on
-        // `self.world.entities`.
-        let mut pending_tired: Vec<EntityId> = Vec::new();
-
         for (npc_id, soldier) in self.world.entities.soldiers() {
             if !pending_considerations.contains(&EntityId::from(npc_id)) {
                 continue;
             }
 
-            // Must be in swordfight substate and alive.
-            //
-            // Diagnose unexpected combat-state drift while accepting the
-            // original transition states enumerated by
-            // `is_expected_non_attack_swordfight_substate`.
-            if soldier.npc.ai_substate() != crate::ai::Substate::AttackingSwordfight {
-                let substate = soldier.npc.ai_substate();
-                if !soldier.human.opponents.is_empty()
-                    && !is_expected_non_attack_swordfight_substate(substate)
-                {
-                    tracing::warn!(
-                        npc = npc_id.index(),
-                        substate = ?substate,
-                        opponents = soldier.human.opponents.len(),
-                        "tick_enemy_sword_attacks: NPC in combat but wrong substate"
-                    );
-                }
-                continue;
-            }
-            if soldier.npc.life_points <= 0 || soldier.human.unconscious {
-                continue;
-            }
-
-            // Don't propose a second strike while one is still in flight.
-            // The latch also covers cancellation reconciliation for the
-            // explicit special-strike substate.
-            if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
-                && ai.pending_special_strike
-            {
-                continue;
-            }
-
-            // Check tiredness — if too tired, play weak animation
-            // instead.  Launch a SwordstrikeTired element; the
-            // dispatcher (tick.rs) wires the BeingWeakSword anim
-            // through `active_ai_anim` + `do_next_order`.
-            if soldier.human.tiredness >= TIREDNESS_WEAK_THRESHOLD {
-                pending_weak_stunned.push(npc_id.into());
-                let already_busy = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(npc_id)
-                    .and_then(|(s, e)| self.orders.sequence_manager.get_element(s, e))
-                    .map(|el| {
-                        !matches!(
-                            el.command,
-                            crate::element::Command::Wait | crate::element::Command::WaitTimer
-                        )
-                    })
-                    .unwrap_or(false);
-                if !already_busy {
-                    pending_tired.push(npc_id.into());
-                }
-                continue;
-            }
-
-            // Check cooldown
+            // ReconsiderSwordfight emitted this one-shot authorization at
+            // the exact point where Original calls ProposeGoodSwordStrike.
+            // Do not reapply polling-era owner state, cooldown, tiredness, or
+            // active-strike gates here: EventAfterCombatInjury can reach that
+            // point from any real swordfight substate (including Parade),
+            // and Original still performs the proposal before arbitration
+            // decides what work survives.
             let ai = match &soldier.npc.ai_brain {
                 crate::element::AiBrain::Enemy(ai) => ai,
                 _ => continue,
             };
-            if current_frame < ai.next_sword_strike_frame {
-                continue;
-            }
 
             let weapon_id = ai.hth_weapon_id;
-            let target_id = EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target));
-
-            // Validate target
-            let target_ok = self
+            let target_id = self
+                .world
+                .entities
+                .id_at_legacy_slot(ai.base.primary_target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "authorized sword-strike proposal owner {:?} requires missing principal opponent slot {}",
+                        EntityId::from(npc_id),
+                        ai.base.primary_target
+                    )
+                });
+            let target = self
                 .get_entity(target_id)
-                .map(|e| {
-                    e.is_human()
-                        && !e.is_dead()
-                        && !e.human_data().map(|h| h.unconscious).unwrap_or(true)
-                })
-                .unwrap_or(false);
-            if !target_ok {
-                continue;
-            }
+                .unwrap_or_else(|| panic!("resolved principal opponent {target_id:?} disappeared"));
+            assert!(
+                target.is_human(),
+                "authorized sword-strike principal opponent {target_id:?} is not human"
+            );
 
             // Honour — don't hit an enemy in a recovery animation.
             // Target must also be in a sword action state.  These are
@@ -2237,7 +2162,11 @@ impl EngineInner {
             let target_in_sword = self
                 .get_entity(target_id)
                 .and_then(|e| e.actor_data())
-                .is_some_and(|actor| actor.action_state.is_sword());
+                .unwrap_or_else(|| {
+                    panic!("sword-strike principal opponent {target_id:?} requires actor data")
+                })
+                .action_state
+                .is_sword();
             let target_in_recovery = self.actor_is_in_sword_recovery(target_id);
             if target_in_recovery || !target_in_sword {
                 tracing::debug!(
@@ -2248,12 +2177,16 @@ impl EngineInner {
             }
 
             let spi = soldier.soldier.soldier_profile_index;
-            let sp = assets.profile_manager.get_soldier(spi);
-            let fa = sp.map(|p| p.fighting).unwrap_or(50);
-            let is_rank = sp
-                .map(|p| p.rank == crate::profiles::ProfileRank::Soldier)
-                .unwrap_or(true);
-            let ba = soldier.npc.ai_brain.base().map_or(0, |a| a.blood_alcohol);
+            let sp = assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
+                panic!(
+                    "authorized sword-strike owner {:?} requires missing soldier profile {}",
+                    EntityId::from(npc_id),
+                    spi
+                )
+            });
+            let fa = sp.fighting;
+            let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
+            let ba = ai.base.blood_alcohol;
 
             attacks.push(PendingAttack {
                 soldier_id: npc_id.into(),
@@ -2282,58 +2215,23 @@ impl EngineInner {
             });
         }
 
-        // Launch deferred SwordstrikeTired elements for soldiers who
-        // crossed the tiredness threshold this tick.  The dispatcher
-        // in `tick.rs` wires the BeingWeakSword anim through
-        // `active_ai_anim`.
-        for npc_id in pending_tired {
-            let elem = crate::sequence::SequenceElement::new(
-                1,
-                crate::element::Command::SwordstrikeTired,
-                Some(npc_id),
-            );
-            self.launch_element(elem);
-        }
-
         // Process attacks — launch SwordstrikeThrust* sequence
         // elements as Interaction(1, command, this,
         // principal_opponent).
-        // Add weak/stunned star titbits (event-driven creation, deferred
-        // to avoid borrow conflict with the npc_ids loop above).
-        for id in pending_weak_stunned {
-            self.add_weak_stunned_combat(id);
-        }
-
         for mut attack in attacks {
             let distance =
                 entity_distance(&self.world.entities, attack.soldier_id, attack.target_id);
 
-            // Check melee range using weapon profile
-            let in_range = assets
+            // Select the best strike using ProposeGoodSwordStrike logic.
+            let attacker_profile = assets
                 .profile_manager
                 .get_hth_weapon(attack.weapon_id)
-                .map(|profile| {
-                    let max = profile.distance[2] as f32; // MAXIMAL range
-                    distance <= max
-                })
-                .unwrap_or(distance <= 50.0);
-
-            if !in_range {
-                continue;
-            }
-
-            // Skip if the soldier already has an active strike in progress
-            let already_striking = self
-                .get_entity(attack.soldier_id)
-                .and_then(|e| e.actor_data())
-                .map(|a| a.active_melee.is_active())
-                .unwrap_or(false);
-            if already_striking {
-                continue;
-            }
-
-            // Select the best strike using ProposeGoodSwordStrike logic.
-            let attacker_profile = assets.profile_manager.get_hth_weapon(attack.weapon_id);
+                .unwrap_or_else(|| {
+                    panic!(
+                        "authorized sword-strike proposal owner {:?} requires missing HtH weapon {}",
+                        attack.soldier_id, attack.weapon_id
+                    )
+                });
 
             // ── Sprite timing ──────────────────────────────────────────
             // Compute opponent_time_limit from target's sprite.
@@ -2469,34 +2367,51 @@ impl EngineInner {
                 })
                 .collect();
 
-            let strike = if let Some(att_prof) = attacker_profile {
-                let ctx = crate::combat::StrikeSelectionContext {
-                    attacker_profile: att_prof,
-                    fighting_ability: attack.fighting_ability,
-                    blood_alcohol: attack.blood_alcohol,
-                    is_rank_soldier: attack.is_rank_soldier,
-                    attacker_direction: attack.attacker_direction,
-                    attacker_elevation: attack.attacker_elevation,
-                    attacker_camp: attack.attacker_camp,
-                    is_swordfighting: true,
-                    opponent_time_limit,
-                    strike_startup_frames: attacker_sprite_frames,
-                    parry_startup_frames: parry_startup,
-                    is_npc: true,
-                };
-                match crate::combat::propose_good_sword_strike(
-                    sim,
-                    &ctx,
-                    &nearby,
-                    &mut attack.boredom,
-                    false,
-                ) {
-                    Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
-                    _ => None,
-                }
-            } else {
-                None
+            let ctx = crate::combat::StrikeSelectionContext {
+                attacker_profile,
+                fighting_ability: attack.fighting_ability,
+                blood_alcohol: attack.blood_alcohol,
+                is_rank_soldier: attack.is_rank_soldier,
+                attacker_direction: attack.attacker_direction,
+                attacker_elevation: attack.attacker_elevation,
+                attacker_camp: attack.attacker_camp,
+                is_swordfighting: true,
+                opponent_time_limit,
+                strike_startup_frames: attacker_sprite_frames,
+                parry_startup_frames: parry_startup,
+                is_npc: true,
             };
+            let strike = match crate::combat::propose_good_sword_strike(
+                sim,
+                &ctx,
+                &nearby,
+                &mut attack.boredom,
+                false,
+            ) {
+                Some(crate::combat::ProposedCombatAction::Strike(s)) => Some(s),
+                _ => None,
+            };
+
+            // ProposeGoodSwordStrike mutates its boredom history even when no
+            // viable strike is selected, so persist it before branching on
+            // the proposal result.
+            let Entity::Soldier(soldier) = self
+                .world
+                .entities
+                .get_mut(attack.soldier_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "sword-strike proposal owner {:?} disappeared during selection",
+                        attack.soldier_id
+                    )
+                })
+            else {
+                panic!(
+                    "sword-strike proposal owner {:?} changed entity kind",
+                    attack.soldier_id
+                );
+            };
+            soldier.human.sword_strike_boredom = attack.boredom;
 
             let strike = match strike {
                 Some(s) => s,
@@ -2539,12 +2454,11 @@ impl EngineInner {
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.begin_special_strike();
+                ai.base.stop_all();
             }
             self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
-            self.stop_owner(
-                attack.soldier_id,
-                crate::sequence::SequencePriority::Preference,
-            );
+            self.apply_pending_ai_halt(attack.soldier_id);
+            self.dispatch_condolations_for_owner_boundary(sim, attack.soldier_id, assets);
 
             // War-cry remarks for thrusts C/F/G/H/I.  Placed after
             // the state-set + stop-all so the say-order is correct.
@@ -2596,13 +2510,6 @@ impl EngineInner {
             seq.append_element(strike_elem);
 
             self.launch_sequence(seq);
-
-            // Write back boredom state. The next-strike gate is set when
-            // `reconcile_special_strike` observes that this sequence has
-            // finished — equivalent to firing EventDone and a 20-frame timer.
-            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(attack.soldier_id) {
-                soldier.human.sword_strike_boredom = attack.boredom;
-            }
 
             tracing::debug!(
                 soldier = ?attack.soldier_id,
@@ -2909,16 +2816,6 @@ mod tests {
         ActorData, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
-
-    #[test]
-    fn default_goto_post_is_valid_while_script_unlock_leaves_opponents_linked() {
-        assert!(is_expected_non_attack_swordfight_substate(
-            crate::ai::Substate::DefaultGotoPost
-        ));
-        assert!(!is_expected_non_attack_swordfight_substate(
-            crate::ai::Substate::DefaultOnPost
-        ));
-    }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
         let mut element = ElementData {

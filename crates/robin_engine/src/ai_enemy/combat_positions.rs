@@ -2492,6 +2492,7 @@ impl EnemyAi {
                     GotoFlags::SWORD,
                     ctx,
                 );
+                return;
             }
         }
 

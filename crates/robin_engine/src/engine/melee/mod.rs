@@ -2684,6 +2684,55 @@ mod tests {
     }
 
     #[test]
+    fn event_authorized_parade_reconsideration_reaches_strike_proposal() {
+        let mut engine = make_engine();
+        let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+        let assets = assets_with_sword_profile(7, 30);
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            soldier.npc.ai_brain.base_mut().unwrap().current_substate =
+                crate::ai::Substate::AttackingSwordfightParade;
+            soldier.human.tiredness = TIREDNESS_WEAK_THRESHOLD;
+            let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
+                unreachable!()
+            };
+            ai.next_sword_strike_frame = u32::MAX;
+            soldier.element.sprite.scripts =
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_done: 0,
+                    frame_ids: vec![0],
+                    delays: vec![1],
+                    distances: vec![0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                    sound_ids: vec![0],
+                    ..Default::default()
+                }]);
+            soldier.element.sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+        engine.control.rng = SimulationRng::with_original_replay(vec![85]);
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+        });
+
+        assert_eq!(
+            engine.control.rng.original_replay_cursor(),
+            Some(1),
+            "ReconsiderSwordfight already passed Original's state, cooldown, and tiredness gates"
+        );
+        assert!(
+            !engine
+                .get_entity(attacker)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .pending_sword_strike_consideration
+        );
+    }
+
+    #[test]
     fn deferred_combat_insult_depends_on_inline_strike_result() {
         fn install_minimal_sprite(engine: &mut EngineInner, attacker: EntityId) {
             let sprite = &mut engine

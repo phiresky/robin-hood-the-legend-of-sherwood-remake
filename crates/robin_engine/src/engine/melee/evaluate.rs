@@ -1829,15 +1829,15 @@ impl EngineInner {
             })
             .collect();
 
-        // Compute opponent_time_limit from the attacker's sprite — same
-        // pattern as tick_enemy_sword_attacks.  The "opponent" here is the
-        // attacker (the victim is considering a counter-strike against them).
-        let opponent_time_limit: Option<i16> = self.get_entity(attacker_id).and_then(|e| {
+        // ProposeGoodSwordStrike always times the defender's principal
+        // opponent, which need not be the hitter that triggered this
+        // reactive warning.
+        let opponent_time_limit: Option<i16> = self.get_entity(principal_opponent).and_then(|e| {
             e.actor_data()?;
             let sprite = &e.element_data().sprite;
             use crate::order::OrderType as OT;
             let in_active_strike = matches!(
-                self.live_actor_animation(attacker_id),
+                self.live_actor_animation(principal_opponent),
                 Some(
                     OT::StrikingStraightSword
                         | OT::StrikingStraightStrongSword
