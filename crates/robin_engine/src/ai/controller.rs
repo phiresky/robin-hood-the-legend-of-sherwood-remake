@@ -249,7 +249,9 @@ pub struct AiController {
     /// Maximum visibility across all enemy detectables this frame.
     /// Set by the engine detection tick. Used by `DefaultLookingShadow`
     /// to decide whether to keep watching.
-    pub max_visibility: f32,
+    /// Original `muwMaximalVisibility`: the greatest integer sharpness
+    /// computed during the current detection refresh.
+    pub max_visibility: u32,
 
     // -- Cached engine state for say() / forbidden remarks --
     /// Current frame counter, set by the engine before think().
@@ -367,7 +369,7 @@ impl Default for AiController {
             stare_remaining: 0,
             initial_position: Position::default(),
             initial_view_direction: 0,
-            max_visibility: 0.0,
+            max_visibility: 0,
             cached_frame: 0,
             cached_in_building: false,
         }

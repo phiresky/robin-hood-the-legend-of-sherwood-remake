@@ -156,7 +156,7 @@ impl EnemyAi {
                 // detection tick; if it drops to 0 the target is fully
                 // hidden again.
                 if stimulus_type == StimulusType::EventTimer {
-                    if self.base.max_visibility > 0.0 {
+                    if self.base.max_visibility > 0 {
                         // Target still partially visible — keep looking
                         self.base.launch_timer(10, ctx.frame);
                     } else {

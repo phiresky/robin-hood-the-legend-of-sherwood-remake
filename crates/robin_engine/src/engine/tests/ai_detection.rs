@@ -3621,7 +3621,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     ai.base.current_substate = Substate::DefaultOnPost;
     ai.current_task_priority = task_priority::NONE;
     ai.base.locks_flag_field = AiLockFlags::BUSY;
-    ai.base.max_visibility = 0.75;
+    ai.base.max_visibility = 15;
 
     crate::sim_rng::with_seed(0xA013_D00F, |sim| engine.tick_enemy_ai(sim, &assets));
 
@@ -3657,7 +3657,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         "the door-only optical return must not scan or decay Enemy suspects"
     );
     assert_eq!(observer.npc.maximal_detection_suspect, 0);
-    assert_eq!(ai.base.max_visibility, 0.0);
+    assert_eq!(ai.base.max_visibility, 0);
 }
 
 #[test]
@@ -5204,6 +5204,56 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
             "{blocker:?} must preserve the Original falling-edge semantics"
         );
     }
+}
+
+#[test]
+fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
+    use crate::ai::AlertLevel;
+    use crate::element::{DetectableType, Entity, EyeStatus};
+
+    let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+    // Observer slot 0 has Original creation order 31, so modified frame 33
+    // closes the modulo-2 PC cadence.
+    engine.control.frame_counter = 2;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("closed-cadence observer exists")
+    else {
+        panic!("closed-cadence observer changed kind")
+    };
+    observer
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("closed-cadence observer retains AI state")
+        .view_alert_status = AlertLevel::Green;
+    observer.npc.eye_status = EyeStatus::LookForward;
+    for (kind, list) in observer.npc.detectable_lists.iter_mut().enumerate() {
+        if kind == DetectableType::Enemy as usize {
+            list.retain(|detectable| detectable.element == Some(pc_id));
+        } else {
+            list.clear();
+        }
+    }
+    let detectable = observer.npc.detectable_lists[DetectableType::Enemy as usize]
+        .first_mut()
+        .expect("closed-cadence observer tracks PC");
+    detectable.last_visibility = 1.0;
+    detectable.seen_now = true;
+    detectable.seen_last_frame = true;
+
+    crate::sim_rng::with_seed(0xA013_1A10, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::ai_controller)
+        .expect("closed-cadence observer retains AI state");
+    assert_eq!(
+        ai.max_visibility,
+        u32::from(crate::ai_vision::BASE_VIEW_SPEED),
+        "Original maximizes integer sharpness after cached visibility reuse"
+    );
 }
 
 #[test]

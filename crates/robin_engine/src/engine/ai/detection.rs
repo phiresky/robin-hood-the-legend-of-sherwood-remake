@@ -124,6 +124,16 @@ struct SoldierSightContext {
     ignore_bodies: bool,
 }
 
+fn lacklandist_visibility_refresh_always(
+    eye_status: crate::element::EyeStatus,
+    view_alert_status: crate::ai::AlertLevel,
+) -> bool {
+    matches!(
+        eye_status,
+        crate::element::EyeStatus::Stare | crate::element::EyeStatus::Follow
+    ) || view_alert_status != crate::ai::AlertLevel::Green
+}
+
 impl SoldierSightContext {
     fn from_npc_viewer(
         npc_id: EntityId,
@@ -203,7 +213,10 @@ impl SoldierSightContext {
                 .map(|actor| actor.action_state)
                 .unwrap_or(crate::element::ActionState::Waiting),
             sector: entity.element_data().sector(),
-            alert_status: ai.current_music_alert_status,
+            // ComputeVisibility's refresh-always gate reads the view
+            // parameters, not the independently tracked music alert. Shadow
+            // sightings deliberately raise only the latter.
+            alert_status: ai.view_alert_status,
             blipped: entity.element_data().blipped,
             position_map,
             camp,
@@ -1191,7 +1204,7 @@ impl EngineInner {
             {
                 npc.maximal_detection_suspect = 0;
                 if let Some(ai) = npc.ai_brain.base_mut() {
-                    ai.max_visibility = 0.0;
+                    ai.max_visibility = 0;
                 }
             }
 
@@ -1536,10 +1549,8 @@ impl EngineInner {
         // Lacklandist ComputeVisibility lets Stare / Follow and non-Green
         // alert status bypass the per-entry cadence. Original's Royalist arm
         // never consults this flag and remains strictly modulo-16.
-        let lacklandist_refresh_always = matches!(
-            eye_status,
-            crate::element::EyeStatus::Stare | crate::element::EyeStatus::Follow
-        ) || !matches!(alert_status, crate::ai::AlertLevel::Green);
+        let lacklandist_refresh_always =
+            lacklandist_visibility_refresh_always(eye_status, alert_status);
         // InstantDetection is camp-wide in the Original: Royalists always
         // commit Enemy sightings, while Lacklandists accumulate in the
         // sleeping/default/wondering states.
@@ -1689,7 +1700,7 @@ impl EngineInner {
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
-            let mut max_visibility_raw: f32 = 0.0;
+            let mut max_sharpness: u32 = 0;
             let viewer_in_building = viewer_building_sector.is_some();
 
             for det in detectables.iter_mut() {
@@ -1999,9 +2010,12 @@ impl EngineInner {
                 if gate_open {
                     det.last_visibility = visibility;
                 }
-                if visibility_raw > max_visibility_raw {
-                    max_visibility_raw = visibility_raw;
-                }
+                // Original updates `muwMaximalVisibility` from the integer
+                // sharpness returned after ComputeVisibility has reused a
+                // detectable's cached visibility on closed-cadence frames.
+                // Using `visibility_raw` here would falsely report zero every
+                // other frame and can end a shadow investigation early.
+                max_sharpness = max_sharpness.max(sharpness);
             }
 
             // Write back the beggar-trick flag if a mid-transition
@@ -2032,7 +2046,7 @@ impl EngineInner {
                 // Maximum-visibility tracker — used by
                 // DefaultLookingShadow to keep watching while the
                 // target is still partially visible.
-                enemy_ai.base.max_visibility = max_visibility_raw;
+                enemy_ai.base.max_visibility = max_sharpness;
 
                 // Pre-resolve target metadata (position, posture,
                 // animation) from the pc_snapshots cache when the
@@ -3580,6 +3594,7 @@ impl EngineInner {
         let gate_open = ctx.refresh_always || ctx.modified_frame.is_multiple_of(frequency);
 
         let mut sum_of_sharpnesses: u32 = 0;
+        let mut max_sharpness: u32 = 0;
 
         // (1) Per-detectable visibility pass.
         for det in soldier.npc.detectable_lists[kind_idx].iter_mut() {
@@ -3661,6 +3676,7 @@ impl EngineInner {
 
             let sharpness = (ctx.view_speed as f32 * visibility) as u32;
             let is_visible = sharpness > 0;
+            max_sharpness = max_sharpness.max(sharpness);
 
             if !det.seen_last_frame {
                 sum_of_sharpnesses = sum_of_sharpnesses.saturating_add(sharpness);
@@ -3670,6 +3686,13 @@ impl EngineInner {
             if gate_open {
                 det.last_visibility = visibility;
             }
+        }
+
+        // `muwMaximalVisibility` spans the complete outer detectable-type
+        // loop, not only Enemy entries. Preserve the Enemy maximum installed
+        // by the preceding pass and fold this type's post-cache sharpness in.
+        if let Some(ai) = soldier.npc.ai_brain.base_mut() {
+            ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
 
         // (2) Snapshot the suspect accumulator. Original
@@ -3825,6 +3848,7 @@ impl EngineInner {
         });
 
         let mut sum_of_sharpnesses: u32 = 0;
+        let mut max_sharpness: u32 = 0;
 
         for det in soldier.npc.detectable_lists[obj_idx].iter_mut() {
             let Some(target_id) = det.element else {
@@ -3868,6 +3892,7 @@ impl EngineInner {
 
             let sharpness = (ctx.view_speed as f32 * visibility) as u32;
             let is_visible = sharpness > 0;
+            max_sharpness = max_sharpness.max(sharpness);
             if !det.seen_last_frame {
                 sum_of_sharpnesses = sum_of_sharpnesses.saturating_add(sharpness);
             }
@@ -3875,6 +3900,10 @@ impl EngineInner {
             if gate_open {
                 det.last_visibility = visibility;
             }
+        }
+
+        if let Some(ai) = soldier.npc.ai_brain.base_mut() {
+            ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
 
         let suspects_after =
@@ -4149,5 +4178,24 @@ mod tests {
             ));
             assert!(shadow_seen_last_frame);
         }
+    }
+
+    #[test]
+    fn visibility_refresh_gate_uses_view_alert_channel() {
+        use crate::ai::AlertLevel;
+        use crate::element::EyeStatus;
+
+        assert!(!lacklandist_visibility_refresh_always(
+            EyeStatus::LookForward,
+            AlertLevel::Green,
+        ));
+        assert!(lacklandist_visibility_refresh_always(
+            EyeStatus::LookForward,
+            AlertLevel::Yellow,
+        ));
+        assert!(lacklandist_visibility_refresh_always(
+            EyeStatus::Stare,
+            AlertLevel::Green,
+        ));
     }
 }
