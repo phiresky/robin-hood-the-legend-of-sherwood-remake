@@ -3654,38 +3654,53 @@ impl SequenceManager {
     /// Stop all active and pending sequence elements owned by `owner` whose
     /// priority is weak enough to be pre-empted by `stop_priority`.
     ///
-    /// Calls [`Sequence::stop_element`] on the first in-progress element
-    /// per sequence owned by `owner` (skipping the default wait
+    /// Calls [`Sequence::stop_element`] on the live in-progress and postponed
+    /// elements owned by `owner` (skipping only the in-progress default wait
     /// element), then runs [`Self::stop_pending_elements`] for the
-    /// not-yet-launched queue.  `stop_element`'s recursion already walks
-    /// the next/postponed chains.
+    /// not-yet-launched queue. `RHElementActor::Stop` calls `Stop` on the
+    /// actor's current element, whose postponed chain remains reachable even
+    /// while a terminating injury's condolence callback is running. Rust must
+    /// therefore include directly cross-postponed actor work as well as the
+    /// ordinary same-sequence postponed chain.
     pub fn stop_owner(
         &mut self,
         owner: EntityId,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
-        // Stop the owner's currently running element(s). Scan for
-        // InProgress elements owned by the actor and let
-        // `stop_element` handle the priority check + cascade.
+        // Stop the owner's currently running or postponed element(s). A
+        // postponed element can be the actor work hidden underneath the
+        // terminating injury whose condolence callback called StopAll.
+        // Waiting until that injury's continuation resumes the element is too
+        // late: it can then preempt the replacement Wait installed by StopAll.
         let mut targets: Vec<(SequenceId, usize)> = Vec::new();
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 if elem.owner == Some(owner)
-                    && elem.state == SequenceState::InProgress
-                    && elem.command != Command::Wait
+                    && matches!(
+                        elem.state,
+                        SequenceState::InProgress | SequenceState::Postponed
+                    )
+                    // Only the actor's current default wait is exempt in the
+                    // original. A postponed Wait is real queued actor work.
+                    && !(elem.state == SequenceState::InProgress
+                        && elem.command == Command::Wait)
                     // `RHSequenceElement::Stop` deliberately keeps an
                     // in-progress movement alive so its rewritten
                     // walking/running-to-waiting transition can play.
                     // `stop_movement_for_owner` has already interrupted
                     // movement actions without a transition arm; anything
                     // still InProgress here is the preserved transition.
-                    && !elem.data.is_movement()
+                    // Postponed movement has no transition to preserve and
+                    // base `RHSequenceElement::Stop` interrupts it.
+                    && !(elem.state == SequenceState::InProgress
+                        && elem.data.is_movement())
                 {
                     targets.push((*seq_id, elem_idx));
                 }
             }
         }
+        let mut stopped = Vec::new();
         for (seq_id, elem_idx) in targets {
             let effects_vec = self
                 .sequences
@@ -3694,6 +3709,33 @@ impl SequenceManager {
                 .unwrap_or_default();
             for effects in effects_vec {
                 self.process_effects(seq_id, effects);
+            }
+            if self
+                .get_element(seq_id, elem_idx)
+                .is_some_and(|elem| elem.state == SequenceState::Interrupted)
+            {
+                stopped.push((seq_id, elem_idx));
+            }
+        }
+
+        // A directly targeted cross-postponed element is not necessarily
+        // reached through its blocker's `Sequence::stop_element` recursion.
+        // Remove the now-dead links just as the original Stop method nulls its
+        // postponed pointer after recursively interrupting it.
+        if !stopped.is_empty() {
+            for (seq_id, seq) in &mut self.sequences {
+                for elem in &mut seq.elements {
+                    if let Some(postponed_idx) = elem.postponed_element_index
+                        && stopped.contains(&(*seq_id, postponed_idx))
+                    {
+                        elem.postponed_element_index = None;
+                    }
+                    if let Some(cross) = elem.cross_postponed
+                        && stopped.contains(&cross)
+                    {
+                        elem.cross_postponed = None;
+                    }
+                }
             }
         }
 
@@ -4951,6 +4993,48 @@ mod tests {
             "continuation resumes after the preserved front order"
         );
         assert_eq!(continuation.orders.front().unwrap().target_x, 20.0);
+    }
+
+    #[test]
+    fn stop_owner_interrupts_actor_work_postponed_by_injury() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+
+        // A preference action is current until an injury postpones it.
+        let mut parry = make_simple_element(1, Command::ParrySword, Some(owner));
+        parry.priority = SequencePriority::Preference;
+        let parry_seq = mgr.launch_element(parry);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(parry_seq, 0);
+        mgr.postpone_element(parry_seq, 0);
+
+        // During the injury's terminal condolence callback, Actor::Stop sees
+        // the injury as current in the original and recursively stops the
+        // postponed parry. Model the cross-sequence postponed link explicitly.
+        let mut injury = make_simple_element(1, Command::ReceiveSwordDamage, Some(owner));
+        injury.priority = SequencePriority::Injury;
+        let injury_seq = mgr.launch_element(injury);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(injury_seq, 0);
+        mgr.get_element_mut(injury_seq, 0).unwrap().cross_postponed = Some((parry_seq, 0));
+
+        mgr.stop_owner(owner, SequencePriority::Preference, &|elem| elem.priority);
+
+        assert_eq!(
+            mgr.get_element(injury_seq, 0).unwrap().state,
+            SequenceState::InProgress,
+            "Preference StopAll must not interrupt the stronger injury callback"
+        );
+        assert_eq!(
+            mgr.get_element(parry_seq, 0).unwrap().state,
+            SequenceState::Interrupted,
+            "the parry hidden underneath the injury must not resume after StopAll"
+        );
+        assert_eq!(
+            mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
+            None,
+            "the injury must not retain a resumable link to stopped actor work"
+        );
     }
 
     #[test]
