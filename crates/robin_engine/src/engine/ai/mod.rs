@@ -2779,7 +2779,21 @@ impl EngineInner {
                     sector: sector_final,
                     level: layer_final,
                 };
-                ai.initial_view_direction = direction_final.rem_euclid(16) as u16;
+                // `StoreInitialPositionParameters` stores a direction vector
+                // with `SetSector0to15(GetDirection())` (default aspect 1),
+                // while return-to-post later calls `FaceTo(vector)`, which
+                // bins it with `GetSector0to15(ASPECT_RATIO)`. Those two
+                // operations deliberately do not round-trip diagonal body
+                // sectors (for example body sector 2 becomes view sector 1).
+                // Keep the controller's discrete cache equal to that later
+                // FaceTo result; storing the body sector directly made an NPC
+                // believe it was already facing its authored post direction.
+                let initial_view_vector =
+                    crate::shadow_polygon::sector_to_direction(direction_final);
+                ai.initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
+                    initial_view_vector[0] * crate::position_interface::ASPECT_RATIO,
+                    initial_view_vector[1],
+                ) as u16;
                 if patrol_path_opt.is_some() && patrol_path_ok {
                     ai.patrol_path = patrol_path_opt;
                     ai.has_patrol_path = true;
@@ -9716,6 +9730,19 @@ impl EngineInner {
             };
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+            // Original `RHElementActor::GetAnimation()` reads the current
+            // order and returns `RHNONANIMATION_END` when `mpOrder` is null.
+            // A self-stimulus commonly runs immediately after an order has
+            // terminated (notably ScriptUnlockAI -> EventReturnToDuty), while
+            // `Sprite::last_action` still names the animation that just
+            // finished. Recompute this for every recursive stimulus because
+            // the preceding one may install or terminate another order.
+            let live_animation = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(npc_id)
+                .map(|(_, _, order)| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd);
             let ctx = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                     panic!("re-entrant self-Think NPC {} disappeared", npc_id.index())
@@ -9736,6 +9763,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
+                ctx.self_animation = live_animation;
                 ctx
             };
             let stimulus = crate::ai::Stimulus::new(stimulus_type);

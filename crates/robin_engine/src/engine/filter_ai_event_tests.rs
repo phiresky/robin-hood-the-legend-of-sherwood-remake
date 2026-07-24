@@ -380,6 +380,81 @@ fn filter_allows_when_actor_has_no_filter_override() {
     );
 }
 
+#[test]
+fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() {
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let (mut engine, _, _, _) = build_engine();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let actor = engine
+        .world
+        .entities
+        .npc_ids()
+        .find(|&id| {
+            engine
+                .get_entity(id)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.script_class == "NoOverride")
+        })
+        .expect("NoOverride soldier");
+
+    {
+        let entity = engine.get_entity_mut(actor).expect("NoOverride soldier");
+        entity
+            .position_iface_mut()
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(2));
+        entity.element_data_mut().sprite.last_action = crate::order::OrderType::RaisingShield;
+        let ai = entity.ai_controller_mut().expect("soldier AI");
+        ai.me = actor.index();
+        ai.initial_view_direction = 1;
+        ai.current_state = crate::ai::AiState::Default;
+        ai.current_substate = crate::ai::Substate::DefaultOnPost;
+        ai.fire_self_stimulus(crate::ai::StimulusType::EventReturnToDuty);
+    }
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(actor)
+            .is_none(),
+        "the just-completed animation has no live order even though the sprite retains its row"
+    );
+
+    engine.drain_self_stimuli_for_npc(&sim, actor, &assets);
+
+    let ai = engine
+        .get_entity(actor)
+        .expect("NoOverride soldier")
+        .ai_controller()
+        .expect("soldier AI");
+    assert_eq!(
+        ai.current_substate,
+        crate::ai::Substate::DefaultGotoPostTurn,
+        "GetAnimation() must read NonanimationEnd and take GoTo's already-at-post path"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor)
+            .and_then(|(sequence, index)| engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, index))
+            .map(|element| element.command),
+        Some(crate::element::Command::Turn),
+        "ReturnToDuty must advance directly to the initial-view Turn, not launch a zero-distance Move"
+    );
+    assert_eq!(
+        engine
+            .get_entity(actor)
+            .expect("NoOverride soldier")
+            .position_iface()
+            .get_direction_goal(),
+        crate::position_interface::Direction::from_raw(1)
+    );
+}
+
 /// Actors with no bound script instance at all pass through
 /// unfiltered.  (Most shipped actors aren't scripted.)
 #[test]
@@ -5842,6 +5917,45 @@ fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
         npc_custom_values(&engine, civilian)[4],
         101,
         "the bound actor VM must receive Default's AI_STATE_CHANGE callback during InitOneAI"
+    );
+}
+
+#[test]
+fn initialization_caches_the_aspect_adjusted_initial_view_direction() {
+    let mut engine = EngineInner::new();
+    let diagonal = engine.add_entity(make_scripted_civilian(""));
+    let cardinal = engine.add_entity(make_scripted_civilian(""));
+    engine
+        .get_entity_mut(diagonal)
+        .expect("diagonal civilian")
+        .position_iface_mut()
+        .set_direction_instantly(crate::position_interface::Direction::from_raw(2));
+    engine
+        .get_entity_mut(cardinal)
+        .expect("cardinal civilian")
+        .position_iface_mut()
+        .set_direction_instantly(crate::position_interface::Direction::from_raw(4));
+
+    engine.initialize(&mut LevelAssets::new());
+
+    let initial_view = |actor| {
+        engine
+            .get_entity(actor)
+            .expect("initialized civilian")
+            .ai_controller()
+            .expect("civilian AI")
+            .initial_view_direction
+    };
+    assert_eq!(
+        initial_view(diagonal),
+        1,
+        "StoreInitialPositionParameters uses aspect 1 for the vector, but FaceTo bins that \
+         vector with ASPECT_RATIO"
+    );
+    assert_eq!(
+        initial_view(cardinal),
+        4,
+        "the aspect conversion must preserve cardinal authored directions"
     );
 }
 
