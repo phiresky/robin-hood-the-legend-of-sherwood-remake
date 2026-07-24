@@ -142,6 +142,11 @@ impl From<TracePoint> for MapPoint {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
+    BoxSelect {
+        first: TracePoint,
+        second: TracePoint,
+        append: bool,
+    },
     GroupMove {
         actors: Vec<TraceEntityId>,
         destination: TracePoint,
@@ -170,6 +175,7 @@ enum TraceCommand {
         pc: TraceEntityId,
         append: bool,
     },
+    UnselectAllPcs,
     SelectAction {
         pc: TraceEntityId,
         original_action: u32,
@@ -180,8 +186,21 @@ enum TraceCommand {
 }
 
 impl TraceCommand {
-    fn into_player_command(self, entity_map: &EntityMap) -> PlayerCommand {
-        match self {
+    fn into_player_command(self, entity_map: &EntityMap) -> Option<PlayerCommand> {
+        Some(match self {
+            Self::BoxSelect {
+                first,
+                second,
+                append,
+            } => {
+                // The Original records the root drag gesture and then records
+                // each resolved nested selection message as another command.
+                // Replaying both would apply selection (and its speech/echo
+                // side effects) twice. Keep accepting the gesture metadata,
+                // but replay only the following resolved commands.
+                let _ = (first, second, append);
+                return None;
+            }
             Self::GroupMove {
                 actors,
                 destination,
@@ -232,6 +251,7 @@ impl TraceCommand {
                 pc_id: entity_map.translate(pc),
                 append,
             },
+            Self::UnselectAllPcs => PlayerCommand::UnselectAllPcs,
             Self::SelectAction {
                 pc,
                 original_action,
@@ -242,7 +262,7 @@ impl TraceCommand {
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
                 pc_id: entity_map.translate(entity),
             },
-        }
+        })
     }
 }
 
@@ -714,12 +734,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
         for command in frame.commands.drain(..) {
-            engine.apply_command(
-                &mut display,
-                &mut input,
-                &assets,
-                &command.into_player_command(map),
-            );
+            if let Some(command) = command.into_player_command(map) {
+                engine.apply_command(&mut display, &mut input, &assets, &command);
+            }
         }
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass(&mut display, &assets, &mut dev)
