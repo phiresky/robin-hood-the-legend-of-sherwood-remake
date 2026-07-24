@@ -106,6 +106,86 @@ fn condolation_reenters_think_before_dispatch_returns() {
 }
 
 #[test]
+fn halt_condolation_clears_only_the_selected_movement_goal() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::OrderType;
+    use crate::sequence::{CascadeFlags, SequenceElement};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let movement_seq = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_seq, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
+        entity
+            .position_iface_mut()
+            .set_map_goal(MapPoint::new(70.0, 80.0));
+    }
+
+    // An unrelated card for the same owner can be delivered while the
+    // movement remains selected (for example, postponed parallel work).
+    // Actor-base SendCondolationCard compares mpSequenceElement identity
+    // before detaching the current movement.
+    let unrelated_seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(unrelated_seq, 0);
+    engine.orders.sequence_manager.set_halt_pending(true);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(unrelated_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.orders.sequence_manager.set_halt_pending(false);
+    engine.dispatch_condolations(sim, &LevelAssets::new());
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity.actor_data().unwrap().active_movement,
+        ActiveMovement::new(movement_seq, 0)
+    );
+    assert_eq!(
+        entity.position_iface().map_goal(),
+        MapPoint::new(70.0, 80.0),
+        "an unrelated halt card must not detach the selected movement"
+    );
+
+    engine.orders.sequence_manager.set_halt_pending(true);
+    engine
+        .orders
+        .sequence_manager
+        .element_interrupted(movement_seq, 0, CascadeFlags::NEXT_LEVEL);
+    engine.orders.sequence_manager.set_halt_pending(false);
+    engine.dispatch_condolations(sim, &LevelAssets::new());
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity.actor_data().unwrap().active_movement,
+        ActiveMovement::none(),
+        "the selected movement's halt card detaches active movement"
+    );
+    assert_eq!(
+        entity.position_iface().map_goal(),
+        MapPoint::ZERO,
+        "actor-base halt cleanup clears the selected movement goal before the NPC halt guard"
+    );
+}
+
+#[test]
 fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

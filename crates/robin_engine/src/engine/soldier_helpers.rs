@@ -531,6 +531,24 @@ impl EngineInner {
             npc.wasp_victim = false;
         }
 
+        // Actor-base `SendCondolationCard` clears the sprite movement goal
+        // and detaches `mpSequenceElement` / `mpOrder` when the card belongs
+        // to the actor's currently selected element. This happens before the
+        // NPC override checks `mbInsideHaltMethod`. For movement, Rust's
+        // `active_movement` is the exact selected element identity; ordinary
+        // order exhaustion performs the same cleanup synchronously in
+        // `do_next_order`, before detaching that tracker.
+        if let Some(entity) = self.world.entities.get_mut(owner)
+            && let Some(actor) = entity.actor_data_mut()
+            && actor.active_movement.sequence_id == Some(seq_id)
+            && actor.active_movement.element_index == elem_idx as usize
+        {
+            actor.active_movement.clear();
+            entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
+
         // When a movement element with the MAP flag terminates, toggle
         // `active` / `in_honolulu` / anti-collision based on whether
         // the actor's current map position is inside the playable map
