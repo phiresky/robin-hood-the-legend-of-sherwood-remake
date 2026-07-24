@@ -203,6 +203,114 @@ fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
 }
 
 #[test]
+fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut movement = SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(owner),
+        OrderType::WalkingUpright,
+    );
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::Freezing,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    engine
+        .orders
+        .failed_path_requests
+        .push(crate::engine::movement::FailedPathRequest {
+            owner,
+            seq_id: movement_sequence,
+            elem_idx: 0,
+            first_fail_frame: 0,
+        });
+
+    let mut blocker = SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner));
+    blocker.priority = SequencePriority::PostponeEverythingButInjuries;
+    let blocker_sequence = engine.orders.sequence_manager.launch_element(blocker);
+
+    engine.engine_postpone(blocker_sequence, 0, movement_sequence, 0);
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(movement_sequence, 0)
+        .expect("postponed movement remains registered");
+    assert_eq!(movement.state, SequenceState::Postponed);
+    assert_eq!(
+        movement.command,
+        Command::Move,
+        "postponed MoveWaiting must be translated again when it resumes"
+    );
+    assert!(
+        movement.orders.is_empty(),
+        "postponed movement must discard its pathfinder freezing order"
+    );
+    assert!(
+        engine.orders.failed_path_requests.is_empty(),
+        "postponing MoveWaiting must cancel its pathfinder failure bookkeeping"
+    );
+}
+
+#[test]
+fn postponing_resolved_movement_restores_untranslated_move() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::WalkingUpright,
+        100.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+
+    let mut blocker = SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner));
+    blocker.priority = SequencePriority::PostponeEverythingButInjuries;
+    let blocker_sequence = engine.orders.sequence_manager.launch_element(blocker);
+
+    engine.engine_postpone(blocker_sequence, 0, movement_sequence, 0);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("postponed movement remains registered")
+            .command,
+        Command::Move,
+        "postponed MoveOk must discard its translated path and translate again on resume"
+    );
+}
+
+#[test]
 fn post_seek_handoff_clears_selected_movement_goal() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
