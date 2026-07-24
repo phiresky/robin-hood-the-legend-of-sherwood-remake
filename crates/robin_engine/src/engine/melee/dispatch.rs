@@ -359,23 +359,28 @@ impl EngineInner {
     /// Transitions the entity out of sword-fighting action state.
     pub(crate) fn dispatch_quit_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let queue_lower = if let Some(entity) = self.world.entities.get_mut(owner)
+        let queue_lower = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.action_state.is_sword());
+
+        // The explicit command owns the visible transition. Relationship
+        // cleanup itself must not lower the sword, and action state stays
+        // sword-ready until the transition order actually starts.
+        self.quit_swordfight(sim, assets, owner);
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
-            // Queue lowering-sword animation if in sword state.
-            let was_sword = actor.action_state.is_sword();
-            if was_sword {
-                actor.action_state = ActionState::Waiting;
-            }
             actor.active_melee.clear();
-            was_sword
-        } else {
-            false
-        };
+        }
         if queue_lower {
             let id = self.orders.allocate_order_id();
             self.orders.sequence_manager.push_order_on(
@@ -388,10 +393,11 @@ impl EngineInner {
                     id,
                 ),
             );
+        } else {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
     }
 
     // ─── Parry ──────────────────────────────────────────────────────

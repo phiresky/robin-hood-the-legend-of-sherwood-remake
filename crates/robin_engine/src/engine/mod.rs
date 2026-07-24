@@ -2093,7 +2093,7 @@ impl EngineInner {
     /// is already `done`, the postpone short-circuits to TERMINATED
     /// instead of installing the cross-element link.
     pub(super) fn propagate_done_to_current_orders(&mut self) {
-        let done_actors: Vec<crate::element::EntityId> = self
+        let done_actors: Vec<(crate::element::EntityId, u32)> = self
             .world
             .entities
             .actors()
@@ -2102,11 +2102,14 @@ impl EngineInner {
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(entity_id.into())
+                .then_some((
+                    entity_id.into(),
+                    entity.element_data().sprite.last_processed_order_id,
+                ))
             })
             .collect();
 
-        for entity_id in done_actors {
+        for (entity_id, processed_order_id) in done_actors {
             let Some((seq_id, elem_idx)) = self
                 .orders
                 .sequence_manager
@@ -2119,6 +2122,7 @@ impl EngineInner {
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
                 && let Some(order) = elem.orders.front_mut()
+                && order.order_id.get() == processed_order_id
             {
                 order.done = true;
             }

@@ -3787,6 +3787,85 @@ impl EngineInner {
         }
     }
 
+    /// Mirror the Human Execute guard on the logical sword-movement
+    /// non-animations. A stale sword move can still reach its owner slot after
+    /// the actor's final opponent has gone away; unless the movement was
+    /// explicitly forced, Original aborts that element and submits one
+    /// QuitSwordfight command before it ever calls FaceOpponent/PerformMotion.
+    fn abort_orphaned_sword_movement(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) -> bool {
+        let should_abort = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .filter(|element| {
+                element.owner == Some(owner)
+                    && element.data.is_movement()
+                    && !element.priority.is_non_interruptable()
+            })
+            .and_then(|element| {
+                let order = element.current_order()?;
+                if order.order_id != selected.order_id
+                    || !matches!(
+                        order.order_type,
+                        OrderType::WalkingWithSword | OrderType::RunningWithSword
+                    )
+                {
+                    return None;
+                }
+                let flags = match element.data {
+                    crate::sequence::SequenceElementData::Movement { flags, .. } => flags,
+                    _ => unreachable!("movement element changed data kind during sword guard"),
+                };
+                Some(!flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT))
+            })
+            .unwrap_or(false)
+            && self
+                .world
+                .entities
+                .get(owner)
+                .and_then(|entity| entity.human_data())
+                .is_some_and(|human| human.opponents.is_empty());
+        if !should_abort {
+            return false;
+        }
+
+        // Retire and clean the old movement first. This ensures the
+        // replacement QuitSwordfight cannot be postponed behind the very
+        // element whose Execute arm just rejected itself.
+        self.stop_owner_active_mechanics(owner);
+        self.orders
+            .sequence_manager
+            .element_impossible(selected.seq_id, selected.elem_idx);
+        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "orphaned sword movement owner {owner:?} failed to retire rejected movement: {error:?}"
+                )
+            });
+        let lowering_id = self.orders.allocate_order_id();
+        self.launch_single_order_sequence_stamped_ex(
+            owner,
+            crate::element::Command::QuitSwordfight,
+            crate::order::Order::new(OrderType::TransitionLoweringSword, 0.0, 0.0, lowering_id),
+            false,
+        );
+
+        // Original immediately sends EVENT_QUIT_SWORDFIGHT from this guard;
+        // PCs intentionally have no AI receiver.
+        self.dispatch_ai_stimulus(
+            owner,
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+        );
+        true
+    }
+
     pub(super) fn tick_entity_movement_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3828,6 +3907,13 @@ impl EngineInner {
             selected_command,
             Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
         ) {
+            return;
+        }
+        if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
+            // LaunchSequenceElement registers the replacement for the later
+            // sequence-manager phase. It must not execute at this actor
+            // boundary: Original exposes QuitSwordfight as the current
+            // command for one frame before its lowering order starts.
             return;
         }
         if self.actors_frozen() {
@@ -8239,6 +8325,188 @@ impl EngineInner {
             .element_in_progress(seq_id, elem_idx);
 
         MovePathOutcome::Success
+    }
+}
+
+#[cfg(test)]
+mod orphaned_sword_movement_tests {
+    use super::*;
+    use crate::element::{
+        ActionState, ActorData, ActorPc, Command, ElementData, ElementKind, Entity, HumanData,
+        PcData, Posture,
+    };
+    use crate::order::Order;
+    use crate::sequence::{
+        MoveFlags, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
+    };
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn install_sword_movement(
+        force: bool,
+    ) -> (
+        EngineInner,
+        EntityId,
+        crate::sequence::SequenceId,
+        std::num::NonZeroU32,
+        MapPoint,
+    ) {
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let destination = MapPoint::new(140.0, 100.0);
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position_map(start);
+
+        let script = SpriteScript {
+            action_id: OrderType::WalkingSword as u16,
+            action_done: 0,
+            average_speed: 10.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 10,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![10],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WalkingSword as usize] = 0;
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(start);
+
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: ActionState::MovingSword,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingWithSword,
+        );
+        movement.priority = SequencePriority::Normal;
+        movement.orders.push_back(Order::new(
+            OrderType::WalkingWithSword,
+            destination.x,
+            destination.y,
+            order_id,
+        ));
+        let SequenceElementData::Movement { flags, .. } = &mut movement.data else {
+            unreachable!("new_movement must create movement data")
+        };
+        if force {
+            *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
+        }
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        (engine, owner, sequence, order_id, start)
+    }
+
+    #[test]
+    fn nonforced_sword_movement_without_opponents_aborts_before_motion_and_quits_once() {
+        let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(false);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        let owner_entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            owner_entity.element_data().position_map(),
+            start,
+            "the rejected sword movement must not reach PerformMotion"
+        );
+        assert_ne!(
+            owner_entity.element_data().sprite.last_processed_order_id,
+            order_id.get(),
+            "the rejected order must not initialize the sprite"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible
+        );
+        let quit_count = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| {
+                element.owner == Some(owner) && element.command == Command::QuitSwordfight
+            })
+            .count();
+        assert_eq!(
+            quit_count, 1,
+            "one rejected Execute invocation must launch exactly one QuitSwordfight"
+        );
+    }
+
+    #[test]
+    fn forced_sword_movement_without_opponents_still_performs_motion() {
+        let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(true);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        let owner_entity = engine.get_entity(owner).unwrap();
+        assert_ne!(
+            owner_entity.element_data().position_map(),
+            start,
+            "FORCE_SWORD_MOVEMENT must retain the movement Execute path"
+        );
+        assert_eq!(
+            owner_entity.element_data().sprite.last_processed_order_id,
+            order_id.get()
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::InProgress
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .all(|element| {
+                    element.owner != Some(owner) || element.command != Command::QuitSwordfight
+                }),
+            "forced movement must not launch QuitSwordfight"
+        );
     }
 }
 

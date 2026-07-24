@@ -567,7 +567,7 @@ impl EngineInner {
                             );
                         }
                         Command::QuitSwordfight => {
-                            self.dispatch_quit_swordfight(owner, seq_id, elem_idx);
+                            self.dispatch_quit_swordfight(sim, assets, owner, seq_id, elem_idx);
                         }
 
                         // ── Parry commands ──────────────────────

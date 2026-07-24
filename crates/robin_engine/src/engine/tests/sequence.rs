@@ -681,6 +681,106 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
 }
 
 #[test]
+fn done_propagation_requires_the_current_order_identity() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{CascadeFlags, SequenceElement};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let stale_order_id = engine.orders.allocate_order_id();
+    let mut interrupted = SequenceElement::new_generic(1, Command::Generic, Some(owner));
+    interrupted.orders.push_back(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        stale_order_id,
+    ));
+    let interrupted_sequence = engine.orders.sequence_manager.launch_element(interrupted);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(interrupted_sequence, 0);
+    engine.orders.sequence_manager.element_interrupted(
+        interrupted_sequence,
+        0,
+        CascadeFlags::empty(),
+    );
+
+    let replacement_order_id = engine.orders.allocate_order_id();
+    let mut replacement = SequenceElement::new_generic(1, Command::Generic, Some(owner));
+    replacement.orders.push_back(Order::new(
+        OrderType::WaitingAlerted,
+        0.0,
+        0.0,
+        replacement_order_id,
+    ));
+    let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(replacement_sequence, 0);
+
+    {
+        let sprite = &mut engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .sprite;
+        sprite.last_motion_state = Some(MotionState::Done);
+        sprite.last_processed_order_id = stale_order_id.get();
+    }
+    engine.propagate_done_to_current_orders();
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .get_element(replacement_sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .done,
+        "a stale Done reported by the interrupted order must not complete its replacement"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_motion_state,
+        None,
+        "the stale transient result must still be consumed"
+    );
+
+    {
+        let sprite = &mut engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .sprite;
+        sprite.last_motion_state = Some(MotionState::Done);
+        sprite.last_processed_order_id = replacement_order_id.get();
+    }
+    engine.propagate_done_to_current_orders();
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(replacement_sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .done,
+        "Done from the currently dispatched order ID must still propagate"
+    );
+}
+
+#[test]
 fn pc_shoot_bow_queues_behind_live_bow_animation_order() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

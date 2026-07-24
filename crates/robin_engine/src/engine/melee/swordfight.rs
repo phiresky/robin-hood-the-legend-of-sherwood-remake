@@ -278,7 +278,7 @@ impl EngineInner {
     pub(crate) fn evaluate_opponents(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        _assets: &LevelAssets,
         entity_id: EntityId,
     ) {
         let count = self
@@ -288,7 +288,14 @@ impl EngineInner {
             .unwrap_or(0);
 
         if count == 0 {
-            self.quit_swordfight(sim, assets, entity_id);
+            // C++ `EvaluateOpponents` launches the explicit command;
+            // relationship teardown alone does not own the visible
+            // lowering-sword transition.
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                Command::QuitSwordfight,
+                Some(entity_id),
+            ));
         } else if count >= 2 {
             self.choose_principal_opponent(sim, entity_id);
         }
@@ -984,7 +991,13 @@ impl EngineInner {
         true
     }
 
-    /// Quit swordfight: remove this entity from all opponents' lists.
+    /// Remove this entity from every swordfight relationship.
+    ///
+    /// This mirrors C++ `RHElementActorHuman::QuitSwordFight`: despite
+    /// its name, the method only unlinks opponents and performs PC/AI
+    /// bookkeeping. It does not mutate a survivor's action state or
+    /// launch the visible lowering-sword transition; the explicit
+    /// `Command::QuitSwordfight` dispatcher owns that.
     pub(crate) fn quit_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1010,9 +1023,10 @@ impl EngineInner {
             // (`compute_relative_fighting_ability(own, 0)` returns
             // 50).
             self.recompute_relative_fighting_ability(*opp_id, assets);
-            // If the opponent has no more opponents, they also quit:
-            // clear sword state, re-enable PC actions, clear PC melee
-            // target.
+            // If the opponent has no more opponents, mirror the
+            // relationship/UI side effects of their recursive C++
+            // `QuitSwordFight` call. Do not alter their current action
+            // or launch a lowering transition here.
             let opp_count = self
                 .world
                 .entities
@@ -1021,52 +1035,7 @@ impl EngineInner {
                 .map(|h| h.opponents.len())
                 .unwrap_or(0);
             if opp_count == 0 {
-                let pending_order = if let Some(entity) = self.world.entities.get_mut(*opp_id) {
-                    let order_type = if let Some(actor) = entity.actor_data_mut() {
-                        if actor.action_state.is_sword() {
-                            // Walking-animation swap: if
-                            // mid-stride with sword, keep
-                            // walking but switch to non-sword
-                            // animation.
-                            match actor.action_state {
-                                ActionState::MovingSword => {
-                                    actor.action_state = ActionState::Moving;
-                                }
-                                ActionState::MovingFastSword => {
-                                    actor.action_state = ActionState::MovingFast;
-                                }
-                                _ => {
-                                    actor.action_state = ActionState::Waiting;
-                                }
-                            }
-                            // Any residual strike state must go; otherwise
-                            // tick_melee_strikes keeps driving the sprite
-                            // on the stale strike animation each frame, and
-                            // the idle / walking anim in animation.rs /
-                            // tick_entity_movement never runs.  The visible
-                            // symptom is Robin freezing on one frame of a
-                            // combat animation after combat ends.
-                            actor.active_melee.clear();
-                            // Queue lowering-sword transition animation.
-                            Some(crate::order::OrderType::TransitionLoweringSword)
-                        } else if actor.action_state.is_shield() {
-                            // Shield bearer leaving combat: lower shield.
-                            match actor.action_state {
-                                ActionState::MovingShield => {
-                                    actor.action_state = ActionState::Moving;
-                                }
-                                _ => {
-                                    actor.action_state = ActionState::Waiting;
-                                }
-                            }
-                            actor.shield_face_point = None;
-                            Some(crate::order::OrderType::LoweringShield)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
+                if let Some(entity) = self.world.entities.get_mut(*opp_id) {
                     // Re-enable PC actions and clear melee target
                     // for orphaned PCs.  `opp_count == 0` means
                     // this PC's opponents list is empty, so
@@ -1080,17 +1049,6 @@ impl EngineInner {
                         pc.melee_target = None;
                         pc.enable_all_actions_temp(false);
                     }
-                    order_type
-                } else {
-                    None
-                };
-                if let Some(ot) = pending_order {
-                    let id = self.orders.allocate_order_id();
-                    self.launch_single_order_sequence_stamped(
-                        *opp_id,
-                        Command::QuitSwordfight,
-                        crate::order::Order::new(ot, 0.0, 0.0, id),
-                    );
                 }
                 // When the opponent list becomes empty and the entity
                 // is a soldier, pump EventQuitSwordfight through
@@ -1134,48 +1092,10 @@ impl EngineInner {
             .map(|e| e.is_dead())
             .unwrap_or(false);
 
-        // Always clear the entity's own opponent list
-        // (unconditionally).  Per the audit, the previous
-        // "pending_order_2" duplicate of this block was dead work —
-        // after the first pass set the action state to Waiting, the
-        // second pass's `is_sword`/`is_shield` checks always failed.
-        let pending_order_self = if let Some(entity) = self.world.entities.get_mut(entity_id) {
-            let order_type = if !entity_is_dead {
-                if let Some(actor) = entity.actor_data_mut() {
-                    if actor.action_state.is_sword() {
-                        // Walking animation swap: keep moving if mid-stride.
-                        match actor.action_state {
-                            ActionState::MovingSword => {
-                                actor.action_state = ActionState::Moving;
-                            }
-                            ActionState::MovingFastSword => {
-                                actor.action_state = ActionState::MovingFast;
-                            }
-                            _ => {
-                                actor.action_state = ActionState::Waiting;
-                            }
-                        }
-                        Some(crate::order::OrderType::TransitionLoweringSword)
-                    } else if actor.action_state.is_shield() {
-                        match actor.action_state {
-                            ActionState::MovingShield => {
-                                actor.action_state = ActionState::Moving;
-                            }
-                            _ => {
-                                actor.action_state = ActionState::Waiting;
-                            }
-                        }
-                        actor.shield_face_point = None;
-                        Some(crate::order::OrderType::LoweringShield)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+        // Always clear the entity's own opponent list. Relationship
+        // cleanup deliberately leaves its current action and sequence
+        // untouched.
+        if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(human) = entity.human_data_mut() {
                 human.opponents.clear();
                 human.opponent_jump_lines.clear();
@@ -1189,17 +1109,6 @@ impl EngineInner {
                 // saved slot is still permitted.
                 pc.enable_all_actions_temp(false);
             }
-            order_type
-        } else {
-            None
-        };
-        if let Some(ot) = pending_order_self {
-            let id = self.orders.allocate_order_id();
-            self.launch_single_order_sequence_stamped(
-                entity_id,
-                Command::QuitSwordfight,
-                crate::order::Order::new(ot, 0.0, 0.0, id),
-            );
         }
 
         // When a non-dead soldier voluntarily quits a swordfight,

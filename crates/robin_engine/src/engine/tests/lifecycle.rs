@@ -936,7 +936,11 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
-    engine.get_entity_mut(owner).unwrap().element_data_mut().active = false;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
 
     assert!(
         engine
@@ -1093,7 +1097,10 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         executed_transition,
         "a transition selected as GenericAnimation must not be suppressed merely because its element carries Movement data"
     );
-    assert_eq!(engine.get_entity(owner).unwrap().sprite().last_action, transition);
+    assert_eq!(
+        engine.get_entity(owner).unwrap().sprite().last_action,
+        transition
+    );
     assert_eq!(
         engine
             .get_entity(owner)
@@ -4269,4 +4276,108 @@ fn post_initialize_waits_for_post_refresh_stage() {
     assert!(second_post_initialize_effects.is_none());
     assert_eq!(engine.control.frame_counter, 1);
     assert!(engine.scripts.mission.as_ref().unwrap().post_initialized);
+}
+#[test]
+fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let survivor = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    {
+        let survivor_entity = engine.get_entity_mut(survivor).unwrap();
+        survivor_entity.actor_data_mut().unwrap().action_state =
+            crate::element::ActionState::WaitingSword;
+        survivor_entity.human_data_mut().unwrap().opponents = vec![victim];
+        survivor_entity.pc_data_mut().unwrap().melee_target = Some(victim);
+    }
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.actor_data_mut().unwrap().action_state =
+            crate::element::ActionState::WaitingSword;
+        victim_entity.human_data_mut().unwrap().opponents = vec![survivor];
+        *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
+    }
+
+    engine.quit_swordfight(&sim, &assets, victim);
+
+    let survivor_entity = engine.get_entity(survivor).unwrap();
+    assert!(survivor_entity.human_data().unwrap().opponents.is_empty());
+    assert_eq!(
+        survivor_entity.actor_data().unwrap().action_state,
+        crate::element::ActionState::WaitingSword,
+        "death cleanup must not lower the surviving opponent's sword"
+    );
+    assert_eq!(survivor_entity.pc_data().unwrap().melee_target, None);
+    assert_eq!(
+        engine.orders.sequence_manager.sequences_iter().count(),
+        0,
+        "relationship-only cleanup must not synthesize a QuitSwordfight command"
+    );
+}
+
+#[test]
+fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    {
+        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        owner_entity.actor_data_mut().unwrap().action_state =
+            crate::element::ActionState::WaitingSword;
+        owner_entity.human_data_mut().unwrap().opponents = vec![opponent];
+    }
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![owner];
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::QuitSwordfight,
+            Some(owner),
+        ));
+    engine.dispatch_quit_swordfight(&sim, &assets, owner, sequence, 0);
+
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .opponents
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
+        crate::element::ActionState::WaitingSword,
+        "translation must not switch to Waiting before lowering-sword START"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .and_then(|element| element.current_order())
+            .map(|order| order.order_type),
+        Some(OrderType::TransitionLoweringSword)
+    );
 }

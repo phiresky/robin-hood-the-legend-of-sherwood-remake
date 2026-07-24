@@ -2843,12 +2843,8 @@ impl EngineInner {
             return;
         };
 
-        let mut seek_elem = SequenceElement::new_movement(
-            1,
-            Command::Seek,
-            Some(pc_id),
-            OrderType::RunningWithSword,
-        );
+        let mut seek_elem =
+            SequenceElement::new_movement(1, Command::Seek, Some(pc_id), OrderType::RunningUpright);
         let mut post_seek = Sequence::new();
         post_seek.append_element(strike_elem);
         if let SequenceElementData::Movement {
@@ -2861,7 +2857,7 @@ impl EngineInner {
         {
             *element = Some(target_id);
             *tolerance = target_distance;
-            *flags |= MoveFlags::SEEK | MoveFlags::FORCE_SWORD_MOVEMENT;
+            *flags |= MoveFlags::SEEK;
             *post_seek_sequence = Some(Box::new(post_seek));
         }
 
@@ -3890,6 +3886,81 @@ mod tests {
             SequenceElementData::Movement { tolerance, .. } => *tolerance,
             other => panic!("expected movement seek element, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sword_strike_seek_uses_ordinary_upright_movement_without_force_sword() {
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+            profiles.characters[0].hth_weapon_id = 1;
+            let mut weapon = crate::profiles::HtHWeaponProfile::default();
+            weapon.thrusts[crate::weapons::SwordStrike::D as usize].maximal_distance = 60;
+            profiles.hth_weapons.push(weapon);
+        }
+
+        let sector = crate::position_interface::SectorHandle::new(0);
+        engine
+            .get_entity_mut(pc_id)
+            .expect("test PC exists")
+            .element_data_mut()
+            .set_sector(sector);
+        let mut target = ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: Default::default(),
+        };
+        target.element.set_sector(sector);
+        let target_id = engine.add_entity(Entity::Civilian(target));
+
+        engine.apply_sword_strike_with_seek(&assets, pc_id, target_id, Command::SwordstrikeThrustD);
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("strike seek sequence was launched");
+        assert_eq!(sequence.len(), 1);
+        let seek = sequence.get(0).expect("seek element exists");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            action,
+            element,
+            tolerance,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &seek.data
+        else {
+            panic!("strike seek must be a movement element");
+        };
+        assert_eq!(*action, crate::order::OrderType::RunningUpright);
+        assert_eq!(*element, Some(target_id));
+        assert_eq!(*tolerance, 54.0);
+        assert!(flags.contains(MoveFlags::SEEK));
+        assert!(!flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT));
+
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("strike seek retains its post-seek strike");
+        assert_eq!(post_seek.len(), 1);
+        let strike = post_seek.get(0).expect("post-seek strike exists");
+        assert_eq!(strike.command, Command::SwordstrikeThrustD);
+        assert_eq!(strike.owner, Some(pc_id));
+        assert!(matches!(
+            &strike.data,
+            SequenceElementData::Interaction {
+                antagonist: Some(id)
+            } if *id == target_id
+        ));
     }
 
     fn minimal_script() -> crate::engine::types::MissionScript {

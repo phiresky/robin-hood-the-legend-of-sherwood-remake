@@ -235,6 +235,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lowering_sword_start_restores_upright_waiting_state() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Crouched,
+                ..Default::default()
+            },
+            actor: crate::element::ActorData {
+                action_state: ActionState::WaitingSword,
+                ..Default::default()
+            },
+            human: Default::default(),
+            pc: Default::default(),
+        });
+
+        apply_active_animation_start_state_side_effect(
+            &mut pc,
+            OrderType::TransitionLoweringSword,
+            MotionState::Start,
+        );
+
+        assert_eq!(pc.element_data().posture, Posture::Upright);
+        assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+    }
+
     fn civilian_actor() -> Entity {
         Entity::Civilian(ActorCivilian {
             element: ElementData {
@@ -1949,6 +1975,13 @@ fn apply_active_animation_start_state_side_effect(
             entity.set_posture(Posture::Upright);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
+        (OrderType::TransitionLoweringSword, MotionState::Start) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
             }
             return;
         }
