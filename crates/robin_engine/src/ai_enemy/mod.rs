@@ -3613,7 +3613,7 @@ impl EnemyAi {
         }
 
         let mut nearest: HumanHandle = 0;
-        let mut min_distance: u32 = 65432; // ∞ sentinel
+        let mut min_distance: u16 = 65432; // Original `oo` sentinel
 
         for &enemy in &self.list_them {
             if enemy == 0 {
@@ -3629,15 +3629,24 @@ impl EnemyAi {
                 continue;
             }
 
-            // Use engine-populated squared distances, fall back to
-            // large sentinel if not found (enemy added by friend's
-            // primary target, no direct visibility).
-            let mut distance = tick
-                .enemy_sq_distances
-                .iter()
-                .find(|&&(h, _)| h == enemy)
-                .map(|&(_, d)| (d as f32).sqrt() as u32)
-                .unwrap_or(10000);
+            // Original GetNewPrimaryTarget reads every persistent Them-list
+            // pointer's live position. Detection snapshots are intentionally
+            // incomplete on timer/reach/cross-NPC dispatches and therefore
+            // cannot be used as a distance cache here.
+            let target = ctx.entity_view(enemy).unwrap_or_else(|| {
+                panic!(
+                    "GetNewPrimaryTarget owner {} has required Them-list entry {} missing from the live entity view",
+                    self.base.me, enemy
+                )
+            });
+            let dx = target.position.x - ctx.position.x;
+            let dy = (target.position.y - ctx.position.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let max_norm = dx.abs().max(dy.abs());
+            if max_norm > f32::from(min_distance) {
+                continue;
+            }
+            let mut distance = (dx * dx + dy * dy).sqrt() as u16;
 
             // Penalize already-targeted enemies.
             let mult = if let Some(map) = mult_override {
@@ -3651,10 +3660,9 @@ impl EnemyAi {
             };
 
             if flags.contains(PrimaryTargetFlags::UNOCCUPIED_PREFERRED) {
-                distance += 100 * mult;
-            }
-            if flags.contains(PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED) {
-                distance += 10000 * mult;
+                distance = distance.wrapping_add((100_u16).wrapping_mul(mult as u16));
+            } else if flags.contains(PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED) {
+                distance = distance.wrapping_add((10_000_u16).wrapping_mul(mult as u16));
             }
 
             if distance < min_distance {
@@ -5089,14 +5097,31 @@ mod tests {
     }
 
     #[test]
-    fn get_new_primary_target_picks_nearest() {
+    fn get_new_primary_target_uses_live_positions_when_timer_snapshot_is_incomplete() {
         let mut ai = EnemyAi::new(1);
-        let ctx = AiContext::default();
-        let tick = AiPerTickData::stub();
-        ai.list_them.push(10);
-        ai.list_them.push(20);
-        // VIPS_ALLOWED bypasses IsAllowedToAttack so both candidates are eligible.
-        let target = ai.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, &ctx, &tick);
-        assert!(target == 10 || target == 20); // Either is valid with placeholder distances
+        ai.list_them = vec![198, 199];
+        let mut views = AiEntityViewMap::new();
+        views.insert(198, soldier_view(test_position(100.0, 0.0)));
+        views.insert(199, soldier_view(test_position(110.0, 0.0)));
+        let ctx = AiContext {
+            position: test_position(0.0, 0.0),
+            camp: Camp::Lacklandists,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        // Off-detection timer contexts historically cached only the old
+        // primary target. Original still scores every persistent list entry
+        // from its live position.
+        tick.enemy_sq_distances = vec![(198, 10_000)];
+        tick.primary_target_multiplicity = vec![(198, 1)];
+
+        let target = ai.get_new_primary_target(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+            &ctx,
+            &tick,
+        );
+
+        assert_eq!(target, 199);
     }
 }
