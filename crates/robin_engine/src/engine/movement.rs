@@ -5370,8 +5370,14 @@ impl EngineInner {
                 remaining_distance = dist,
                 "movement Execute result"
             );
-            if let Some((posture, action_state)) =
-                movement_execute_state_effect(order_action, state_effect_motion)
+            // Transition motion can still change from InProgress to
+            // Terminated in the TILL_LAST_FRAME arrival handling below.
+            // Original applies the Execute switch's state side effect after
+            // PerformMotion returns that final result, before Proceed rewrites
+            // the diagnostic motion for a successor order.
+            if !is_transition_anim
+                && let Some((posture, action_state)) =
+                    movement_execute_state_effect(order_action, state_effect_motion)
             {
                 movement_state_effects.push((entity_id, posture, action_state));
             }
@@ -5543,6 +5549,11 @@ impl EngineInner {
                     if next_destination_same_action.is_some() {
                         motion_state = MotionState::Terminated;
                     }
+                }
+                if let Some((posture, action_state)) =
+                    movement_execute_state_effect(order_action, motion_state)
+                {
+                    movement_state_effects.push((entity_id, posture, action_state));
                 }
                 if matches!(motion_state, MotionState::Terminated) {
                     // TillLastFrame can exhaust its animation before its
@@ -8631,6 +8642,164 @@ mod orphaned_sword_movement_tests {
                     element.owner != Some(owner) || element.command != Command::QuitSwordfight
                 }),
             "forced movement must not launch QuitSwordfight"
+        );
+    }
+}
+
+#[cfg(test)]
+mod movement_transition_state_tests {
+    use super::*;
+    use crate::element::{
+        ActionState, ActorData, ActorPc, Command, ElementData, ElementKind, Entity, HumanData,
+        PcData, Posture,
+    };
+    use crate::order::Order;
+    use crate::sequence::{SequenceElement, SequencePriority};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[test]
+    fn same_action_transition_arrival_applies_terminated_state_before_advancing() {
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let first_destination = MapPoint::new(101.5, 100.0);
+        let second_destination = MapPoint::new(110.0, 100.0);
+        let transition = OrderType::TransitionWaitingUprightRunningUpright;
+
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 2,
+            average_speed: 1.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 4,
+            frame_ids: vec![1, 2, 3, 4],
+            delays: vec![0; 4],
+            distances: vec![1; 4],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+            sound_ids: vec![0; 4],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(start);
+
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let first_order_id = engine.orders.allocate_order_id();
+        let second_order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        movement.priority = SequencePriority::Normal;
+        movement.orders.push_back(Order::new(
+            transition,
+            first_destination.x,
+            first_destination.y,
+            first_order_id,
+        ));
+        movement.orders.push_back(Order::new(
+            transition,
+            second_destination.x,
+            second_destination.y,
+            second_order_id,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::Waiting,
+            "a nonterminal startup-transition tick must retain Waiting"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_id,
+            first_order_id
+        );
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::Waiting,
+            "the transition remains nonterminal while its turning slowdown leaves the goal ahead"
+        );
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::MovingFast,
+            "arrival changed InProgress to Terminated after PerformMotion, so the transition Execute side effect must observe the final state"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_id,
+            second_order_id,
+            "the terminated transition must advance to its same-action successor"
         );
     }
 }
