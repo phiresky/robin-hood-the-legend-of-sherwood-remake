@@ -509,7 +509,7 @@ pub const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
 /// `INVERSE_ASPECT_RATIO`, = `cos(55°)` exactly — matches the
 /// game's 55°-from-vertical camera tilt.  Used by box-shaped
 /// pre-filters that build extents directly in raw map coordinates.
-pub const ASPECT_RATIO: f32 = 1.0 / INVERSE_ASPECT_RATIO;
+pub const ASPECT_RATIO: f32 = 0.573_576_45;
 
 // ── Per-domain aspect ratios ─────────────
 //
@@ -1675,6 +1675,10 @@ pub struct AnticollisionData {
 ///
 /// Sector 0 = north (negative Y), increasing clockwise.
 pub fn vector_to_sector_0_to_15(x: f32, y: f32) -> i16 {
+    vector_to_sector_0_to_15_with_aspect(x, y, 1.0)
+}
+
+fn vector_to_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> i16 {
     if x == 0.0 && y == 0.0 {
         return 0;
     }
@@ -1685,8 +1689,11 @@ pub fn vector_to_sector_0_to_15(x: f32, y: f32) -> i16 {
     const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
     const TAN_PI_EIGHTH: f32 = 0.414_213_57;
 
-    let mut rotated_x = x * COS_PI_SIXTEENTH - y * SIN_PI_SIXTEENTH;
-    let mut rotated_y = x * SIN_PI_SIXTEENTH + y * COS_PI_SIXTEENTH;
+    // Preserve Original's left-associative f32 operation order. Scaling Y by
+    // the reciprocal before calling the aspect-1 classifier is algebraically
+    // equivalent but can choose the other sector for exact boundary vectors.
+    let mut rotated_x = x * COS_PI_SIXTEENTH * aspect_ratio - y * SIN_PI_SIXTEENTH;
+    let mut rotated_y = x * SIN_PI_SIXTEENTH * aspect_ratio + y * COS_PI_SIXTEENTH;
     let west = rotated_x < 0.0;
     if west {
         rotated_x = -rotated_x;
@@ -1733,7 +1740,7 @@ pub fn vector_to_direction(x: f32, y: f32) -> Direction {
 /// flight direction, etc).
 #[inline]
 pub fn vector_to_sector_0_to_15_iso(x: f32, y: f32) -> i16 {
-    vector_to_sector_0_to_15(x, y * INVERSE_ASPECT_RATIO)
+    vector_to_sector_0_to_15_with_aspect(x, y, ASPECT_RATIO)
 }
 
 /// Isometric-space 2D vector squared-norm: `X² + (Y / ASPECT_RATIO)²`.
@@ -2113,6 +2120,15 @@ mod tests {
         assert_eq!(vector_to_sector_0_to_15(0.0, 1.0), 8);
         // West
         assert_eq!(vector_to_sector_0_to_15(-1.0, 0.0), 12);
+    }
+
+    #[test]
+    fn test_iso_sector_matches_original_for_shallow_frame_1121_vector() {
+        let dx = 63.314_94_f32;
+        let dy = 7.342_773_4_f32;
+
+        assert_eq!(vector_to_sector_0_to_15(dx, dy), 4);
+        assert_eq!(vector_to_sector_0_to_15_iso(dx, dy), 5);
     }
 
     #[test]

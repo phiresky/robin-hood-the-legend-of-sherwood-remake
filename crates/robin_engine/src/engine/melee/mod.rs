@@ -1213,15 +1213,15 @@ fn direction_to<F: Into<EntityId>, T: Into<EntityId>>(
 ) -> i16 {
     let from = from.into();
     let to = to.into();
-    let pos_a = match entities.get(from) {
-        Some(e) => e.element_data().position_map(),
-        None => return 0,
-    };
-    let pos_b = match entities.get(to) {
-        Some(e) => e.element_data().position_map(),
-        None => return 0,
-    };
-    crate::position_interface::vector_to_sector_0_to_15(pos_b.x - pos_a.x, pos_b.y - pos_a.y)
+    let pos_a = entities
+        .get(from)
+        .unwrap_or_else(|| panic!("melee direction source {from:?} must exist"))
+        .ground_position();
+    let pos_b = entities
+        .get(to)
+        .unwrap_or_else(|| panic!("melee direction target {to:?} must exist"))
+        .ground_position();
+    crate::position_interface::vector_to_sector_0_to_15_iso(pos_b.x - pos_a.x, pos_b.y - pos_a.y)
 }
 
 /// Sector to unit vector with isometric Y scaling.  Thin alias over
@@ -3617,6 +3617,17 @@ mod tests {
             human.opponents = vec![current, pc];
             human.opponent_jump_lines = vec![None, None];
         }
+        engine
+            .get_entity_mut(pc)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(8);
+        let direction_before_dispatch = engine.get_entity(pc).unwrap().element_data().direction();
+        let direction_goal_before_dispatch = engine
+            .get_entity(pc)
+            .unwrap()
+            .position_iface()
+            .get_direction_goal();
 
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(crate::sequence::SequenceElement::new_interaction(
@@ -3652,6 +3663,20 @@ mod tests {
             action_state_before_dispatch,
             "Instruct must not apply the Execute MotionState::Start WaitingSword transition"
         );
+        assert_eq!(
+            engine.get_entity(pc).unwrap().element_data().direction(),
+            direction_before_dispatch,
+            "strike translation must leave facing to the following Execute call"
+        );
+        assert_eq!(
+            engine
+                .get_entity(pc)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal(),
+            direction_goal_before_dispatch,
+            "strike translation must not install the Execute-time facing goal"
+        );
 
         assert_eq!(
             engine
@@ -3673,6 +3698,29 @@ mod tests {
             vec![pc, current],
             "the attacker is also promoted as the target's principal opponent"
         );
+    }
+
+    #[test]
+    fn melee_direction_uses_original_aspect_ratio_classifier() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 663.552_37,
+                y: 1755.932_5,
+                z: 0.0,
+            },
+            None,
+        ));
+        let target = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 726.867_3,
+                y: 1763.275_3,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        assert_eq!(direction_to(&engine.world.entities, attacker, target), 5);
     }
 
     #[test]

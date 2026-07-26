@@ -682,10 +682,6 @@ impl EngineInner {
                 obstacles,
             )
         {
-            let direction = direction_to(&self.world.entities, attacker_id, victim_id);
-            if let Some(entity) = self.get_entity_mut(attacker_id) {
-                entity.element_data_mut().set_direction_instantly(direction);
-            }
             if let Some(profile_idx) = profile_idx {
                 self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
             }

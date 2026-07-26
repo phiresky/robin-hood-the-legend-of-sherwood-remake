@@ -70,8 +70,6 @@ impl EngineInner {
             }
         }
 
-        // Face the target
-        let dir = direction_to(&self.world.entities, owner, target);
         let anim = strike_to_animation(strike);
         // Read target position for the animation order
         let (tx, ty) = self
@@ -85,7 +83,6 @@ impl EngineInner {
             .unwrap_or((0.0, 0.0));
 
         if let Some(entity) = self.world.entities.get_mut(owner) {
-            entity.element_data_mut().set_direction_instantly(dir);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
                 actor.clear_path();
