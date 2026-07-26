@@ -32,6 +32,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::EntityId;
+use std::collections::HashSet;
 
 use super::EngineInner;
 
@@ -56,6 +57,13 @@ impl EngineInner {
     /// values carry over untouched.
     pub(crate) fn process_corpse_intersection_updates(&mut self) {
         let mut transitions: Vec<(EntityId, bool)> = Vec::new();
+        // Reconstruct the lying population that existed at the start of the
+        // actor pass. Original calls UpdateIntersectingCorpses synchronously
+        // from each SetPosture, so a later actor's new lying posture is not
+        // visible to an earlier actor's callback. The Rust scan observes all
+        // final postures at once; this staged set restores creation-order
+        // visibility while retaining the centralized posture tracker.
+        let mut logically_lying: HashSet<EntityId> = HashSet::new();
 
         for (entity_id, entity) in self.world.entities.humans_mut() {
             let is_lying = entity.element_data().posture.is_lying();
@@ -68,17 +76,31 @@ impl EngineInner {
                     // triggering an update.  Serialized flags stay
                     // authoritative across save/load.
                     human.last_is_lying_for_corpse_intersection = Some(is_lying);
+                    if is_lying {
+                        logically_lying.insert(entity_id.into());
+                    }
                 }
                 Some(prev) if prev != is_lying => {
+                    if prev {
+                        logically_lying.insert(entity_id.into());
+                    }
                     human.last_is_lying_for_corpse_intersection = Some(is_lying);
                     transitions.push((entity_id.into(), is_lying));
                 }
-                _ => {}
+                Some(true) => {
+                    logically_lying.insert(entity_id.into());
+                }
+                Some(false) => {}
             }
         }
 
         for (id, b_added) in transitions {
-            self.update_intersecting_corpses(id, b_added);
+            if b_added {
+                logically_lying.insert(id);
+            } else {
+                logically_lying.remove(&id);
+            }
+            self.update_intersecting_corpses_with_snapshot(id, b_added, Some(&logically_lying));
         }
     }
 
@@ -97,7 +119,17 @@ impl EngineInner {
     /// *other* corpse they stay small; otherwise the recursive
     /// `update_intersecting_corpses(_, true)` call on each of them
     /// restores the normal radius.
+    #[cfg(test)]
     pub(crate) fn update_intersecting_corpses(&mut self, corpse: EntityId, b_added: bool) {
+        self.update_intersecting_corpses_with_snapshot(corpse, b_added, None);
+    }
+
+    fn update_intersecting_corpses_with_snapshot(
+        &mut self,
+        corpse: EntityId,
+        b_added: bool,
+        logically_lying: Option<&HashSet<EntityId>>,
+    ) {
         // Snapshot the corpse's spatial keys; also the sector so we
         // can skip the whole operation inside buildings.
         let Some(entity) = self.get_entity(corpse) else {
@@ -127,6 +159,7 @@ impl EngineInner {
                 corpse_layer,
                 corpse_pos,
                 /* candidate_small_flag */ false,
+                logically_lying,
             );
 
             if !victims.is_empty() {
@@ -147,10 +180,11 @@ impl EngineInner {
                 corpse_layer,
                 corpse_pos,
                 /* candidate_small_flag */ true,
+                logically_lying,
             );
 
             for id in neighbours {
-                self.update_intersecting_corpses(id, true);
+                self.update_intersecting_corpses_with_snapshot(id, true, logically_lying);
             }
 
             if let Some(entity) = self.get_entity_mut(corpse) {
@@ -174,6 +208,7 @@ impl EngineInner {
         corpse_layer: u16,
         corpse_pos: MapPoint,
         candidate_small_flag: bool,
+        logically_lying: Option<&HashSet<EntityId>>,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
         for (id, actor) in self.world.entities.humans() {
@@ -187,7 +222,11 @@ impl EngineInner {
                 continue;
             }
             let ed = actor.element_data();
-            if !ed.posture.is_lying() {
+            let candidate_id = EntityId::from(id);
+            let is_logically_lying = logically_lying
+                .map(|lying| lying.contains(&candidate_id))
+                .unwrap_or_else(|| ed.posture.is_lying());
+            if !is_logically_lying {
                 continue;
             }
             if ed.layer() != corpse_layer {
@@ -199,7 +238,7 @@ impl EngineInner {
             let dx = ed.position_map().x - corpse_pos.x;
             let dy = ed.position_map().y - corpse_pos.y;
             if dx * dx + dy * dy < INTERSECT_SQ_DIST {
-                out.push(id.into());
+                out.push(candidate_id);
             }
         }
         out
@@ -564,6 +603,46 @@ mod tests {
                 .unwrap()
                 .last_is_lying_for_corpse_intersection,
             Some(true)
+        );
+    }
+
+    #[test]
+    fn simultaneous_falls_preserve_owner_order_intersection_visibility() {
+        let mut engine = EngineInner::new();
+        let mut first = civilian_at(100.0, 100.0, Posture::Upright, 1);
+        first.human.last_is_lying_for_corpse_intersection = Some(false);
+        let mut second = civilian_at(110.0, 100.0, Posture::Upright, 1);
+        second.human.last_is_lying_for_corpse_intersection = Some(false);
+        let first = engine.add_entity(Entity::Civilian(first));
+        let second = engine.add_entity(Entity::Civilian(second));
+
+        engine
+            .get_entity_mut(first)
+            .unwrap()
+            .set_posture(Posture::Dead);
+        engine
+            .get_entity_mut(second)
+            .unwrap()
+            .set_posture(Posture::Dead);
+        engine.process_corpse_intersection_updates();
+
+        assert!(
+            engine
+                .get_entity(first)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius,
+            "the later fall must discover the already-processed earlier corpse"
+        );
+        assert!(
+            engine
+                .get_entity(second)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius,
+            "replaying both final postures at once must not clear the later corpse"
         );
     }
 }
