@@ -545,8 +545,13 @@ impl EnemyAi {
             if f.soldier_profile_pride >= my_pride {
                 continue;
             }
-            // Is this soldier about to charge our primary target?
-            if f.is_swordfighting && f.primary_target == self.base.primary_target {
+            // Original tests the broad `_ANY_SWORDFIGHT_SUBSTATE_` AI
+            // family here, not the actor's physical sword relationship.
+            // Approaching allies (RunningToEnemy/WalkingToEnemy/Charging)
+            // already count as committed to the same target.
+            if is_any_swordfight_substate(f.current_substate)
+                && f.primary_target == self.base.primary_target
+            {
                 return true;
             }
             // Is this soldier observing (near our target)? Requires

@@ -788,6 +788,7 @@ pub(crate) fn is_any_swordfight_substate(substate: u32) -> bool {
             || s == Substate::AttackingWalkingToEnemy as u32
             || s == Substate::AttackingChargingEnemy as u32
             || s == Substate::AttackingSwordfight as u32
+            || s == Substate::AttackingSwordfightSpecialStrike as u32
             || s == Substate::AttackingSwordfightParade as u32
             || s == Substate::AttackingApproachingNewEnemy as u32
             || s == Substate::AttackingSwordfightStepBack as u32
@@ -1332,5 +1333,23 @@ mod required_combat_input_tests {
             &crate::profiles::ProfileManager::new(),
             50,
         );
+    }
+}
+
+#[cfg(test)]
+mod swordfight_substate_tests {
+    use super::*;
+
+    #[test]
+    fn broad_swordfight_family_includes_approach_and_special_strike() {
+        assert!(is_any_swordfight_substate(
+            crate::ai::Substate::AttackingRunningToEnemy as u32
+        ));
+        assert!(is_any_swordfight_substate(
+            crate::ai::Substate::AttackingSwordfightSpecialStrike as u32
+        ));
+        assert!(!is_any_swordfight_substate(
+            crate::ai::Substate::AttackingTooProudToAttack as u32
+        ));
     }
 }
