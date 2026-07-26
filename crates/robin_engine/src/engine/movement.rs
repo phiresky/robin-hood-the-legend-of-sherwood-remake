@@ -341,6 +341,14 @@ fn movement_execute_visible_motion(
     motion
 }
 
+/// Original `mulWaitTime--` uses an unsigned 32-bit counter. A stationary
+/// entity seek deliberately wraps zero to `UINT_MAX`; the signed refresh gate
+/// then continues to regard the wrapped values as elapsed.
+#[inline]
+fn age_seek_refresh_wait(wait: u32) -> u32 {
+    wait.wrapping_sub(1)
+}
+
 fn is_in_place_movement_transition(order: OrderType) -> bool {
     matches!(
         order,
@@ -4820,9 +4828,7 @@ impl EngineInner {
             if ft.target_id.is_some() && !(tolerance_arrival && ft.has_post_seek) {
                 let actor = entity.actor_data_mut().expect("movement owner is actor");
                 let wait_before = actor.seek_refresh_wait;
-                if actor.seek_refresh_wait > 0 {
-                    actor.seek_refresh_wait -= 1;
-                }
+                actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
                 tracing::trace!(
                     entity = ?entity_id,
                     wait_before,
@@ -9241,6 +9247,13 @@ mod line_jump_tests {
             ),
             Some((crate::element::Posture::Upright, ActionState::Moving))
         );
+    }
+
+    #[test]
+    fn entity_seek_refresh_countdown_preserves_original_unsigned_wrap() {
+        assert_eq!(age_seek_refresh_wait(25), 24);
+        assert_eq!(age_seek_refresh_wait(0), u32::MAX);
+        assert_eq!(age_seek_refresh_wait(u32::MAX), u32::MAX - 1);
     }
 
     #[test]

@@ -10,7 +10,8 @@
 //! this pre-owner scan rebuilds a fresh single-element seek sequence
 //! bound to the target's *current* position, sets the previous movement
 //! element to interrupted, and launches the new sequence at info
-//! priority.
+//! priority. The Original tests the unsigned counter through a signed cast,
+//! so zero and wrapped high-bit values are all considered expired.
 //!
 //! Runs once per tick for every actor holding an `InProgress` movement
 //! element with a populated `element` (target) field and the
@@ -35,6 +36,11 @@ use crate::order::OrderType;
 use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
 };
+
+#[inline]
+fn seek_refresh_wait_elapsed(wait: u32) -> bool {
+    (wait as i32) <= 0
+}
 
 pub(crate) struct ResolvedEntitySeek {
     pub(crate) destination: MapPoint,
@@ -269,9 +275,11 @@ impl crate::engine::EngineInner {
             };
             let target_pos = target_entity.element_data().position_map();
 
-            // Countdown gate — when still >0, just decrement and skip
-            // (collected below via `decrement_only`).
-            if actor.seek_refresh_wait > 0 {
+            // Original stores this as ULONG but tests expiry through
+            // `(SLONG)mulWaitTime <= 0`. Wrapped high-bit values therefore
+            // remain expired rather than delaying refresh for another 2^32
+            // owner ticks.
+            if !seek_refresh_wait_elapsed(actor.seek_refresh_wait) {
                 continue;
             }
             let last = actor.last_seek_target_position;
@@ -667,6 +675,15 @@ mod tests {
     use crate::movement::ActiveMovement;
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElementData, SequenceState};
+
+    #[test]
+    fn seek_refresh_expiry_uses_original_signed_view_of_unsigned_counter() {
+        assert!(!seek_refresh_wait_elapsed(25));
+        assert!(!seek_refresh_wait_elapsed(1));
+        assert!(seek_refresh_wait_elapsed(0));
+        assert!(seek_refresh_wait_elapsed(u32::MAX));
+        assert!(seek_refresh_wait_elapsed(i32::MIN as u32));
+    }
 
     fn test_pc_at(x: f32, y: f32, sector: u16) -> Entity {
         let mut pc = ActorPc {
