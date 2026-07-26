@@ -90,59 +90,6 @@ pub(super) fn soldier_movement_animation(
     }
 }
 
-/// A non-movement sequence may begin by playing the exit transition for the
-/// actor's still-current moving action state. Original explicitly distinguishes
-/// this from the same order inside `RHSequenceElementMovement`: the former is
-/// driven by ordinary `Execute`/`PerformAction`, even though the actor remains
-/// `MOVING` until the transition completes.
-fn is_nonmovement_exit_from_moving(anim: OrderType) -> bool {
-    matches!(
-        anim,
-        OrderType::TransitionWalkingUprightWaitingUpright
-            | OrderType::TransitionRunningUprightWaitingUpright
-            | OrderType::TransitionWalkingAlertedWaitingAlerted
-            | OrderType::TransitionRunningAlertedWaitingAlerted
-            | OrderType::TransitionWalkingCrouchedWaitingCrouched
-            // ENTER_SWORDFIGHT directly books this order even when a
-            // Soldier is still MovingFast. Its Soldier Execute override
-            // plays the raise while retaining the moving action state and
-            // changes to WaitingSword only when the animation is done.
-            | OrderType::TransitionRaisingSword
-            // A non-sword GoTo from MovingSword/MovingFastSword prepends an
-            // explicit QuitSwordfight element. Its lowering order is ordinary
-            // Human Execute work and must start before the successor movement,
-            // even though the outgoing action-state enum still says moving.
-            | OrderType::TransitionLoweringSword
-    )
-}
-
-/// Commands whose selected non-movement order supersedes a stale movement
-/// action state. Sequence priority has already chosen these injury/lethal
-/// elements over movement; Original then calls their ordinary `Execute`
-/// regardless of whether the interrupted actor still says Moving,
-/// MovingSword, or MovingShield.
-fn is_movement_interrupting_command(command: Command) -> bool {
-    matches!(
-        command,
-        Command::ReceiveSwordDamage
-            | Command::ReceiveArrowDamage
-            | Command::ReceiveStoneDamage
-            | Command::ReceiveHitDamage
-            | Command::ReceiveDamage
-            | Command::ReceiveMobileDamage
-            | Command::ReceiveNet
-            | Command::SwordstrikeTired
-            | Command::GetKilledAtBottom
-    )
-}
-
-fn is_stationary_wait_command(command: Command) -> bool {
-    matches!(
-        command,
-        Command::Wait | Command::WaitTimer | Command::WaitFreeLift
-    )
-}
-
 fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
     let (dx, dy) = if matches!(owner, Entity::Soldier(_)) {
         let from = owner.element_data().position_map();
@@ -163,35 +110,6 @@ mod tests {
         ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementFx, ElementKind, Entity, FxData,
     };
     use crate::engine::EngineInner;
-
-    #[test]
-    fn generic_execute_accepts_nonmovement_exit_from_moving_state() {
-        assert!(is_nonmovement_exit_from_moving(
-            OrderType::TransitionWalkingUprightWaitingUpright
-        ));
-        assert!(is_nonmovement_exit_from_moving(
-            OrderType::TransitionRunningAlertedWaitingAlerted
-        ));
-        assert!(!is_nonmovement_exit_from_moving(
-            OrderType::TransitionWaitingUprightWalkingUpright
-        ));
-        assert!(!is_nonmovement_exit_from_moving(OrderType::Turning));
-        assert!(is_nonmovement_exit_from_moving(
-            OrderType::TransitionRaisingSword
-        ));
-        assert!(is_nonmovement_exit_from_moving(
-            OrderType::TransitionLoweringSword
-        ));
-        assert!(is_movement_interrupting_command(
-            Command::ReceiveSwordDamage
-        ));
-        assert!(is_movement_interrupting_command(Command::ReceiveNet));
-        assert!(!is_movement_interrupting_command(Command::Wait));
-        assert!(is_stationary_wait_command(Command::Wait));
-        assert!(is_stationary_wait_command(Command::WaitTimer));
-        assert!(is_stationary_wait_command(Command::WaitFreeLift));
-        assert!(!is_stationary_wait_command(Command::Move));
-    }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
         let mut entity = Entity::Soldier(ActorSoldier {
@@ -3499,28 +3417,20 @@ impl EngineInner {
         // `self.orders.sequence_manager` while iterating `self.world.entities`.
         let mut completion_outcomes = AnimCompletionOutcomes::default();
         let mut execute_result = None;
-        let nonmovement_exit_from_moving = self
+        // Original dispatches the selected `mpOrder` through ordinary
+        // Execute regardless of the actor's stale action-state enum. Only an
+        // order stored in `RHSequenceElementMovement` belongs to the separate
+        // movement driver. This distinction covers movement-exit animations,
+        // injuries, waits, and interactions without a command allowlist.
+        let selected_nonmovement_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
-            .and_then(|(seq_id, elem_idx, order)| {
+            .and_then(|(seq_id, elem_idx, _order)| {
                 self.orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
-                    .map(|element| {
-                        !element.data.is_movement()
-                            && (is_nonmovement_exit_from_moving(order.order_type)
-                                || is_movement_interrupting_command(element.command)
-                                // A stationary wait selected after movement
-                                // completion must execute immediately even
-                                // while the actor's action-state enum still
-                                // names the just-finished movement. Original
-                                // dispatches from the selected order, so a
-                                // WAIT/WAIT_TIMER using WaitingSword performs
-                                // its first swordfight evaluation (and, for a
-                                // timer, countdown tick) in this owner slot.
-                                || is_stationary_wait_command(element.command))
-                    })
+                    .map(|element| !element.data.is_movement())
             })
             .unwrap_or(false);
         let (
@@ -3549,7 +3459,7 @@ impl EngineInner {
                         | crate::element::ActionState::MovingFastSword
                         | crate::element::ActionState::MovingShield
                 ))
-                && !nonmovement_exit_from_moving
+                && !selected_nonmovement_order
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
@@ -3836,7 +3746,7 @@ impl EngineInner {
                             | crate::element::ActionState::MovingFastSword
                             | crate::element::ActionState::MovingShield
                     ))
-                    && !nonmovement_exit_from_moving
+                    && !selected_nonmovement_order
                 {
                     break 'actor;
                 }
