@@ -372,18 +372,11 @@ impl EnemyAi {
             }
         }
 
-        // Clean up them list — remove dead/unable enemies
-        // Refresh `list_them` from the tick's detection snapshot so a
-        // dispatch arriving with populated `enemy_sq_distances` (e.g.
-        // the timer path's primary_target seed in engine/ai.rs:5898)
-        // replaces a stale empty list.  Without this `battle_decisions`
-        // reads the residual list, sees zero visible enemies, and
-        // bails to `return_to_duty` — the "second guy detected me but
-        // stood there" reactiontime ping-pong.  Carries primary_target
-        // across when the tick snapshot doesn't include it (handled
-        // inside `reinitialize_them_list`).
-        self.reinitialize_them_list(ctx, tick);
-
+        // BattleDecisions consumes the persistent Them list. Original only
+        // rebuilds that list at explicit perception/state-machine call sites
+        // (for example EVENT_VIEW and TooProud entry); it does not refresh it
+        // here. This matters when a deferred timer snapshot contains fewer
+        // enemies than the last view event.
         self.list_them.retain(|&h| h != 0); // basic cleanup
 
         // `num_enemies_i_can_see` is captured BEFORE friend-seen enemies
@@ -2502,6 +2495,23 @@ impl EnemyAi {
 mod tests {
     use super::*;
 
+    fn pc_view() -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Pc(crate::element::ActorPc {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                life_points: 100,
+                ..Default::default()
+            },
+        });
+        crate::ai_entity_view::entity_view_from_entity(&entity, false, None, None)
+    }
+
     #[test]
     fn reconsider_approach_uses_raw_truncated_map_distance() {
         let soldier = Position {
@@ -2530,5 +2540,53 @@ mod tests {
         // nearer friends are therefore insufficient; four are sufficient.
         assert!(!enough_nearer_friends_to_observe(3, 1, 45));
         assert!(enough_nearer_friends_to_observe(4, 1, 45));
+    }
+
+    #[test]
+    fn battle_decisions_preserves_enemy_list_from_last_explicit_rebuild() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.primary_target = 198;
+        ai.list_them = vec![198, 199];
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(198, pc_view());
+        views.insert(199, pc_view());
+        assert!(views[&198].is_able_to_fight);
+        assert!(views[&199].is_able_to_fight);
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            entity_views: std::sync::Arc::new(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_sq_distances = vec![(198, 100)];
+        tick.nearby_fighters = vec![
+            FighterSnapshot {
+                handle: 198,
+                position: Position::default(),
+                is_able_to_fight: true,
+                is_pc: true,
+                ..Default::default()
+            },
+            FighterSnapshot {
+                handle: 199,
+                position: Position {
+                    x: 20.0,
+                    ..Position::default()
+                },
+                is_able_to_fight: true,
+                is_pc: true,
+                ..Default::default()
+            },
+        ];
+
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+
+        assert!(
+            ai.list_them.contains(&199),
+            "BattleDecisions must not replace the persistent list with its tick snapshot"
+        );
     }
 }
