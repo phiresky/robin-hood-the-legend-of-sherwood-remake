@@ -1177,22 +1177,12 @@ pub fn begin_hit(
         target: Some(target_id),
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Hitting, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face the target.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity
-        .element_data_mut()
-        .set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15(dx, dy));
 
     BeginResult::Started
 }
@@ -2812,6 +2802,75 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    #[test]
+    fn hit_translation_preserves_live_movement_state_and_facing() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        let attacker = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let retained_goal = MapPoint::new(70.0, 80.0);
+        {
+            let entity = entities.get_mut(attacker).unwrap();
+            entity.element_data_mut().set_direction_instantly(8);
+            entity.position_iface_mut().set_map_goal(retained_goal);
+            entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        }
+        entities
+            .get_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 0.0));
+
+        let mut manager = SequenceManager::new();
+        let seq_id =
+            launch_ability_element(&mut manager, crate::element::Command::HitCmd, attacker);
+        let mut next_id = 1;
+        assert_eq!(
+            begin_hit(
+                &mut entities,
+                &mut manager,
+                attacker,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+
+        let attacker = entities.get(attacker).unwrap();
+        assert_eq!(
+            attacker.actor_data().unwrap().action_state,
+            ActionState::Moving
+        );
+        assert_eq!(attacker.element_data().direction(), 8);
+        assert_eq!(attacker.position_iface().map_goal(), retained_goal);
+        let order = manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        assert_eq!(order.order_type, OrderType::Hitting);
+        assert!(!order.compute_direction);
     }
 
     #[test]

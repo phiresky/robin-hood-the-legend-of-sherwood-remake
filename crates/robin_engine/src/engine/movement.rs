@@ -349,6 +349,18 @@ fn age_seek_refresh_wait(wait: u32) -> u32 {
     wait.wrapping_sub(1)
 }
 
+fn original_final_path_metadata(
+    raw_waypoint_count: usize,
+    tolerance: f32,
+    antagonist: Option<EntityId>,
+) -> (f32, Option<EntityId>) {
+    if raw_waypoint_count > 1 {
+        (tolerance, antagonist)
+    } else {
+        (0.0, None)
+    }
+}
+
 fn is_in_place_movement_transition(order: OrderType) -> bool {
     matches!(
         order,
@@ -5966,11 +5978,10 @@ impl EngineInner {
 
                     if start_post_seek {
                         actor.clear_path();
-                        actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
-                            crate::element::ActionState::WaitingSword
-                        } else {
-                            crate::element::ActionState::Waiting
-                        };
+                        // Original StartPostSeekSequence terminates the seek
+                        // and launches the interaction without rewriting the
+                        // actor state. The interaction's generated transition
+                        // owns any later Moving→Waiting change.
                         actor.active_movement.clear();
                         actor.active_door_pass = None;
                         if is_sword_motion && let Some(human) = entity.human_data_mut() {
@@ -8349,6 +8360,13 @@ impl EngineInner {
         } else {
             elem_antagonist
         };
+        // ProcessPathRequests only stamps tolerance and antagonist when the
+        // raw C++ path contains more than one point. Decide this before
+        // removing a leading source waypoint: raw [source, goal] emits one
+        // order with metadata, while a direct raw [goal] order keeps the
+        // RHOrder constructor defaults.
+        let (final_order_tolerance, final_order_antagonist) =
+            original_final_path_metadata(waypoints.len(), elem_tolerance, antagonist);
 
         // `use_first_point` handling: the emission loop starts at
         // index 0 if set, otherwise 1.
@@ -8394,9 +8412,9 @@ impl EngineInner {
                     elem,
                     &waypoints,
                     move_action,
-                    elem_tolerance,
+                    final_order_tolerance,
                     reverse,
-                    antagonist,
+                    final_order_antagonist,
                     next_order_id,
                 );
             }
@@ -9254,6 +9272,20 @@ mod line_jump_tests {
         assert_eq!(age_seek_refresh_wait(25), 24);
         assert_eq!(age_seek_refresh_wait(0), u32::MAX);
         assert_eq!(age_seek_refresh_wait(u32::MAX), u32::MAX - 1);
+    }
+
+    #[test]
+    fn final_path_metadata_depends_on_raw_waypoint_count() {
+        let antagonist = Some(EntityId::Pc(crate::entity_id::PcId(9)));
+
+        assert_eq!(
+            original_final_path_metadata(1, 28.9, antagonist),
+            (0.0, None)
+        );
+        assert_eq!(
+            original_final_path_metadata(2, 28.9, antagonist),
+            (28.9, antagonist)
+        );
     }
 
     #[test]

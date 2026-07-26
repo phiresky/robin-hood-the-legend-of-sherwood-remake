@@ -1815,9 +1815,28 @@ impl EngineInner {
     }
 
     fn interaction_action_distance(&self, actor: EntityId, command: Command) -> Option<f32> {
-        match command_action_distance_animation(command) {
+        let distance = match command_action_distance_animation(command) {
             Some(animation) => self.actor_action_distance(actor, animation),
             None => Some(interaction_distance(command)),
+        }?;
+        // These Original input paths explicitly cast GetActionDistance to
+        // UWORD before constructing AddInteractionWithSeek. Other
+        // action-distance paths (notably DropAle and ClimbUpOnShoulders)
+        // intentionally retain their fractional value.
+        if matches!(
+            command,
+            Command::StrangleCmd
+                | Command::HealCmd
+                | Command::HitCmd
+                | Command::UseLever
+                | Command::WakeUp
+                | Command::TakeCorpse
+                | Command::SearchCmd
+                | Command::TieCmd
+        ) {
+            Some((distance as u16) as f32)
+        } else {
+            Some(distance)
         }
     }
 
@@ -4347,7 +4366,7 @@ mod tests {
     }
 
     #[test]
-    fn mapped_interaction_seek_tolerance_uses_sprite_action_distance() {
+    fn mapped_interaction_seek_tolerance_uses_uword_sprite_action_distance() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
@@ -4360,14 +4379,14 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::Searching,
-            crate::coordinates::SpriteLocalPoint::new(19.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(19.75, 0.0),
             crate::coordinates::SpriteAnchor::new(0.0, 0.0),
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
         engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
 
-        assert!((first_seek_tolerance(&engine) - 19.0).abs() < 0.001);
+        assert_eq!(first_seek_tolerance(&engine), 19.0);
     }
 
     #[test]
