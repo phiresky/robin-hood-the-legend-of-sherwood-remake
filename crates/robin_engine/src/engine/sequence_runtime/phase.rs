@@ -197,6 +197,20 @@ impl EngineInner {
             return;
         }
 
+        // Original `Translate(SEEK)` builds a separate concrete movement,
+        // interrupts the still-selected transient Seek, and only then launches
+        // that replacement. Its synchronous condolence card clears the old
+        // sprite goal while preserving the increment from this frame's actor
+        // pass. Rust flattens the wrapper into this element, so reproduce that
+        // selected-Seek side effect before preparing its concrete path. The
+        // first movement order installs its own goal when Execute runs on the
+        // next actor tick.
+        if is_seek && let Some(entity) = self.get_entity_mut(owner) {
+            entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
+
         self.dispatch_prepared_move_instruction(
             sim,
             assets,

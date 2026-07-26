@@ -44,6 +44,30 @@ pub(crate) struct ResolvedEntitySeek {
 }
 
 impl crate::engine::EngineInner {
+    /// Prepare a selected Seek for the terminal `SetState` used by Original's
+    /// `RefreshSeek` overloads. Original sends the actor's condolence card
+    /// synchronously before launching any replacement, so the still-selected
+    /// Seek clears `PositionGoalMap`. Rust queues that card and eagerly
+    /// detaches active mechanics; preserve the same observable cleanup at the
+    /// exact RefreshSeek boundary.
+    fn stop_selected_seek_for_refresh(
+        &mut self,
+        owner: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) {
+        if self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+            == Some((seq_id, elem_idx))
+            && let Some(entity) = self.get_entity_mut(owner)
+        {
+            entity.position_iface_mut().set_map_goal(MapPoint::ZERO);
+        }
+        self.stop_owner_active_mechanics(owner);
+    }
+
     /// Resolve the destination/tolerance/speed tuple for an entity-target
     /// seek.  Handles USE_POINT, moving-target chase speed, shield-danger
     /// offset, and authorized-position snapping.
@@ -326,7 +350,7 @@ impl crate::engine::EngineInner {
         }
 
         let Some(resolved) = self.resolve_entity_seek(owner, target, flags, tolerance) else {
-            self.stop_owner_active_mechanics(owner);
+            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -501,7 +525,7 @@ impl crate::engine::EngineInner {
             // impossible silently when FindAutorizedPosition fails.
             // The unable-to-do bark belongs to AppendMoveToSequence's
             // gate-path failure below.
-            self.stop_owner_active_mechanics(owner);
+            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -551,7 +575,7 @@ impl crate::engine::EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.stop_owner_active_mechanics(owner);
+            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -565,7 +589,7 @@ impl crate::engine::EngineInner {
             .map(|seq| seq.elements)
             .unwrap_or_default();
 
-        self.stop_owner_active_mechanics(owner);
+        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
             elem_idx,
@@ -611,8 +635,9 @@ impl crate::engine::EngineInner {
     /// Shared tail of both `RefreshSeek` overloads: interrupt the
     /// actor's current movement element and launch a fresh single-
     /// element seek sequence at info priority.  The
-    /// `stop_owner_active_mechanics` call cancels any in-flight path
-    /// request belonging to the interrupted element.
+    /// selected-seek cleanup cancels any in-flight path request belonging to
+    /// the interrupted element and clears its old sprite goal before the
+    /// replacement becomes current.
     pub(super) fn relaunch_seek_replacement(
         &mut self,
         owner: EntityId,
@@ -620,7 +645,7 @@ impl crate::engine::EngineInner {
         elem_idx: usize,
         new_elem: SequenceElement,
     ) {
-        self.stop_owner_active_mechanics(owner);
+        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
             elem_idx,
@@ -735,6 +760,73 @@ mod tests {
                 .unwrap()
                 .state,
             SequenceState::InProgress
+        );
+    }
+
+    #[test]
+    fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacement() {
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+        let stale_goal = MapPoint::new(70.0, 80.0);
+
+        let seek =
+            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+        let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_seq, 0);
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(seek_seq, 0);
+            entity.position_iface_mut().set_map_goal(stale_goal);
+        }
+
+        let replacement =
+            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+        engine.relaunch_seek_replacement(owner, seek_seq, 0, replacement);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            MapPoint::ZERO,
+            "Original's synchronous selected-Seek condolence clears the old sprite goal"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_movement,
+            ActiveMovement::none()
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seek_seq, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted
+        );
+
+        let replacement_seq = SequenceId(seek_seq.0 + 1);
+        let replacement = engine
+            .orders
+            .sequence_manager
+            .get_element(replacement_seq, 0)
+            .expect("replacement Seek should remain queued for dispatch");
+        assert_eq!(replacement.command, Command::Seek);
+        assert_eq!(replacement.state, SequenceState::Todo);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .is_registered_to_go(replacement_seq, 0)
         );
     }
 }

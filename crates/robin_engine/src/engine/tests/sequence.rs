@@ -354,6 +354,88 @@ fn post_seek_handoff_clears_selected_movement_goal() {
 }
 
 #[test]
+fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let stale_goal = MapPoint::new(70.0, 80.0);
+
+    let mut outgoing =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
+    outgoing.priority = SequencePriority::Normal;
+    outgoing.posture_after_transition = Posture::Upright;
+    outgoing.orders.push_back(Order::new(
+        OrderType::RunningUpright,
+        stale_goal.x,
+        stale_goal.y,
+        engine.orders.allocate_order_id(),
+    ));
+    let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(outgoing_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement =
+            ActiveMovement::new(outgoing_sequence, 0);
+        let position = entity.position_iface_mut();
+        position.set_move_box(crate::coordinates::MoveBox::from_coords(
+            -5.0, -5.0, 5.0, 5.0,
+        ));
+        position.set_map_goal(stale_goal);
+    }
+
+    let new_goal = MapPoint::new(100.0, 0.0);
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+    seek.priority = SequencePriority::Normal;
+    if let SequenceElementData::Movement {
+        destination, flags, ..
+    } = &mut seek.data
+    {
+        *destination = new_goal;
+        *flags |= crate::sequence::MoveFlags::SEEK;
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let seek_sequence = engine.orders.sequence_manager.launch_element(seek);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "Original interrupts its selected transient Seek before launching the concrete movement"
+    );
+    let seek = engine
+        .orders
+        .sequence_manager
+        .get_element(seek_sequence, 0)
+        .expect("flattened concrete Seek movement remains selected");
+    assert_eq!(seek.state, SequenceState::InProgress);
+    assert_eq!(seek.command, Command::MoveOk);
+    assert!(
+        seek.current_order().is_some(),
+        "the concrete movement is prepared, but its first Execute must install the new sprite goal"
+    );
+}
+
+#[test]
 fn parry_sword_queues_transition_and_hold_orders() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;
