@@ -912,7 +912,6 @@ impl EngineInner {
             pc.element_data().position_map().x,
             pc.element_data().position_map().y,
         );
-        let attacker_layer = pc.element_data().layer();
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
         let attacker_profile = assets
             .profile_manager
@@ -994,7 +993,11 @@ impl EngineInner {
                 if eid == pc_id {
                     return None;
                 }
-                if !is_possible_sword_strike_victim(
+                let elem = e.element_data();
+                if !elem.active {
+                    return None;
+                }
+                let eligible_for_regular_strikes = is_possible_sword_strike_victim(
                     &self.world.entities,
                     pc_id,
                     e,
@@ -1002,18 +1005,9 @@ impl EngineInner {
                     &assets.profile_manager,
                     &self.world.fast_grid,
                     obstacles,
-                ) {
-                    return None;
-                }
-                let elem = e.element_data();
-                if elem.layer() != attacker_layer {
-                    return None;
-                }
+                );
                 let vdx = elem.position_map().x - attacker_pos.0;
                 let vdy = (elem.position_map().y - attacker_pos.1) * inv_aspect;
-                if vdx.abs().max(vdy.abs()) > 150.0 {
-                    return None;
-                }
                 let dist = (vdx * vdx + vdy * vdy).sqrt();
                 let sector = crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
                 let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
@@ -1028,6 +1022,7 @@ impl EngineInner {
                     .map(|a| a.action_state == ActionState::MovingSword)
                     .unwrap_or(false);
                 Some(crate::combat::NearbyVictim {
+                    eligible_for_regular_strikes,
                     dx: vdx,
                     dy_stretched: vdy,
                     distance: dist,
@@ -1428,7 +1423,6 @@ impl EngineInner {
                 pc_elevation,
                 mut pc_boredom,
                 pc_pos,
-                pc_layer,
                 principal_opponent,
             ) = {
                 let Some(entity) = self.world.entities.get(victim_id) else {
@@ -1446,21 +1440,11 @@ impl EngineInner {
                     .map(|h| h.sword_strike_boredom.clone())
                     .unwrap_or_default();
                 let pos = entity.element_data().position_map();
-                let layer = entity.element_data().layer();
                 let principal = match entity {
                     Entity::Pc(pc) => pc.pc.melee_target,
                     _ => None,
                 };
-                (
-                    wid,
-                    camp,
-                    dir,
-                    elev,
-                    boredom,
-                    (pos.x, pos.y),
-                    layer,
-                    principal,
-                )
+                (wid, camp, dir, elev, boredom, (pos.x, pos.y), principal)
             };
 
             let pc_profile =
@@ -1509,7 +1493,11 @@ impl EngineInner {
                     if eid == victim_id {
                         return None;
                     }
-                    if !is_possible_sword_strike_victim(
+                    let elem = e.element_data();
+                    if !elem.active {
+                        return None;
+                    }
+                    let eligible_for_regular_strikes = is_possible_sword_strike_victim(
                         &self.world.entities,
                         victim_id,
                         e,
@@ -1517,18 +1505,9 @@ impl EngineInner {
                         &assets.profile_manager,
                         &self.world.fast_grid,
                         obstacles,
-                    ) {
-                        return None;
-                    }
-                    let elem = e.element_data();
-                    if elem.layer() != pc_layer {
-                        return None;
-                    }
+                    );
                     let vdx = elem.position_map().x - pc_pos.0;
                     let vdy = (elem.position_map().y - pc_pos.1) * inv_aspect;
-                    if vdx.abs().max(vdy.abs()) > 150.0 {
-                        return None;
-                    }
                     let dist = (vdx * vdx + vdy * vdy).sqrt();
                     let sector =
                         crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
@@ -1544,6 +1523,7 @@ impl EngineInner {
                         .map(|a| a.action_state == ActionState::MovingSword)
                         .unwrap_or(false);
                     Some(crate::combat::NearbyVictim {
+                        eligible_for_regular_strikes,
                         dx: vdx,
                         dy_stretched: vdy,
                         distance: dist,
@@ -1765,26 +1745,31 @@ impl EngineInner {
         // `INVERSE_SWORDFIGHT_ASPECT_RATIO` (= 1.0 in the shipping
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        let obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
         let nearby: Vec<crate::combat::NearbyVictim> = self
             .world
             .entities
             .humans()
             .filter_map(|(eid, e)| {
-                if eid == victim_id || !e.is_active() || e.is_dead() {
-                    return None;
-                }
-                if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                if eid == victim_id || !e.is_active() {
                     return None;
                 }
                 let elem = e.element_data();
-                if elem.layer() != victim_layer {
-                    return None;
-                }
+                let eligible_for_regular_strikes = is_possible_sword_strike_victim(
+                    &self.world.entities,
+                    victim_id,
+                    e,
+                    eid,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                );
                 let vdx = elem.position_map().x - victim_pos.x;
                 let vdy = (elem.position_map().y - victim_pos.y) * inv_aspect;
-                if vdx.abs().max(vdy.abs()) > 150.0 {
-                    return None;
-                }
                 let dist = (vdx * vdx + vdy * vdy).sqrt();
                 let sector = crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
                 let def_wid = match e {
@@ -1809,6 +1794,7 @@ impl EngineInner {
                     .map(|a| a.action_state == ActionState::MovingSword)
                     .unwrap_or(false);
                 Some(crate::combat::NearbyVictim {
+                    eligible_for_regular_strikes,
                     dx: vdx,
                     dy_stretched: vdy,
                     distance: dist,

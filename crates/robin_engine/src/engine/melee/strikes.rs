@@ -2111,7 +2111,6 @@ impl EngineInner {
             is_rank_soldier: bool,
             attacker_direction: i16,
             attacker_camp: crate::element::Camp,
-            attacker_layer: u16,
             attacker_pos: (f32, f32),
             attacker_elevation: f32,
             boredom: Vec<u16>,
@@ -2197,7 +2196,6 @@ impl EngineInner {
                 is_rank_soldier: is_rank,
                 attacker_direction: soldier.element.direction(),
                 attacker_camp: soldier.soldier.cached_camp,
-                attacker_layer: soldier.element.layer(),
                 attacker_pos: {
                     // Use ground position (includes elevation).
                     let map = &soldier.element.position_map();
@@ -2310,7 +2308,11 @@ impl EngineInner {
                     if eid == attack.soldier_id {
                         return None;
                     }
-                    if !is_possible_sword_strike_victim(
+                    let elem = e.element_data();
+                    if !elem.active {
+                        return None;
+                    }
+                    let eligible_for_regular_strikes = is_possible_sword_strike_victim(
                         &self.world.entities,
                         attack.soldier_id,
                         e,
@@ -2318,18 +2320,9 @@ impl EngineInner {
                         &assets.profile_manager,
                         &self.world.fast_grid,
                         obstacles,
-                    ) {
-                        return None;
-                    }
-                    let elem = e.element_data();
-                    if elem.layer() != attack.attacker_layer {
-                        return None;
-                    }
+                    );
                     let vdx = elem.position_map().x - attack.attacker_pos.0;
                     let vdy = (elem.position_map().y - attack.attacker_pos.1) * inv_aspect;
-                    if vdx.abs().max(vdy.abs()) > 150.0 {
-                        return None;
-                    }
                     let dist = (vdx * vdx + vdy * vdy).sqrt();
                     let sector =
                         crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
@@ -2347,6 +2340,7 @@ impl EngineInner {
                         .map(|a| a.action_state == ActionState::MovingSword)
                         .unwrap_or(false);
                     Some(crate::combat::NearbyVictim {
+                        eligible_for_regular_strikes,
                         dx: vdx,
                         dy_stretched: vdy,
                         distance: dist,

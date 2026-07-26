@@ -136,6 +136,13 @@ fn is_movement_interrupting_command(command: Command) -> bool {
     )
 }
 
+fn is_stationary_wait_command(command: Command) -> bool {
+    matches!(
+        command,
+        Command::Wait | Command::WaitTimer | Command::WaitFreeLift
+    )
+}
+
 fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
     let (dx, dy) = if matches!(owner, Entity::Soldier(_)) {
         let from = owner.element_data().position_map();
@@ -180,6 +187,10 @@ mod tests {
         ));
         assert!(is_movement_interrupting_command(Command::ReceiveNet));
         assert!(!is_movement_interrupting_command(Command::Wait));
+        assert!(is_stationary_wait_command(Command::Wait));
+        assert!(is_stationary_wait_command(Command::WaitTimer));
+        assert!(is_stationary_wait_command(Command::WaitFreeLift));
+        assert!(!is_stationary_wait_command(Command::Move));
     }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
@@ -3505,13 +3516,10 @@ impl EngineInner {
                                 // while the actor's action-state enum still
                                 // names the just-finished movement. Original
                                 // dispatches from the selected order, so a
-                                // WAIT_TIMER using WaitingSword performs its
-                                // first swordfight evaluation and countdown
-                                // tick in this owner slot.
-                                || matches!(
-                                    element.command,
-                                    Command::WaitTimer | Command::WaitFreeLift
-                                ))
+                                // WAIT/WAIT_TIMER using WaitingSword performs
+                                // its first swordfight evaluation (and, for a
+                                // timer, countdown tick) in this owner slot.
+                                || is_stationary_wait_command(element.command))
                     })
             })
             .unwrap_or(false);

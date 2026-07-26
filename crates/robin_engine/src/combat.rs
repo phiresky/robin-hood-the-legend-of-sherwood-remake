@@ -933,6 +933,12 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 /// by the caller from the entity list. Positions are relative to the
 /// attacker, with Y stretched by `INVERSE_SWORDFIGHT_ASPECT_RATIO`.
 pub struct NearbyVictim<'a> {
+    /// Whether Original's `IsPossibleSwordStrikeVictim` accepts this human.
+    /// Lateral strike collection deliberately ignores this predicate and
+    /// scans every active human; straight strikes use their separate
+    /// principal-opponent collector, while the remaining damaging families
+    /// require regular eligibility.
+    pub eligible_for_regular_strikes: bool,
     /// Relative X (victim.x - attacker.x).
     pub dx: f32,
     /// Relative Y, stretched for isometric (dy * INVERSE_SWORDFIGHT_ASPECT_RATIO).
@@ -977,6 +983,7 @@ fn is_victim_in_strike_arc(
     let thrust = &profile.thrusts[strike as usize];
     let min_d = thrust.minimal_distance as f32;
     let max_d = thrust.maximal_distance as f32;
+    let max_norm = victim.dx.abs().max(victim.dy_stretched.abs());
 
     match thrust.kind {
         // Straight strikes only hit the principal opponent (when swordfighting).
@@ -997,7 +1004,7 @@ fn is_victim_in_strike_arc(
         // end = facing + initial. L→R: begin = facing - initial,
         // end = facing + final.
         WeaponThrustKind::Lateral => {
-            if victim.distance < min_d || victim.distance > max_d {
+            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1023,6 +1030,9 @@ fn is_victim_in_strike_arc(
         // map-space unit vector. The half-width is `repulsion / 2`, not
         // the full repulsion.
         WeaponThrustKind::PushAside => {
+            if max_norm >= 150.0 {
+                return false;
+            }
             let dir_angle = sector_to_angle(attacker_direction);
             let fx_raw = dir_angle.sin();
             let fy_raw = -dir_angle.cos() * ASPECT_RATIO;
@@ -1046,7 +1056,7 @@ fn is_victim_in_strike_arc(
         // benign; L→R uses `-initial` and the 180° arc extends in the +π
         // direction from there.
         WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
-            if victim.distance < min_d || victim.distance > max_d {
+            if max_norm >= 150.0 || victim.distance < min_d || victim.distance > max_d {
                 return false;
             }
             let dir_angle = sector_to_angle(attacker_direction);
@@ -1077,11 +1087,11 @@ fn is_victim_in_strike_arc(
 
         // Circle: omnidirectional, distance-only.
         WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-            // MaxNorm < 150 quick reject is already done by caller, then
-            // distance <= max_d. Min distance not checked for circles.
+            // Original applies a strict MaxNorm < 150 quick reject, then
+            // distance <= max_d. Min distance is not checked for circles.
             // The walking-enemy tolerance is not applied in this
             // damage-estimation context.
-            victim.distance <= max_d
+            max_norm < 150.0 && victim.distance <= max_d
         }
     }
 }
@@ -1167,6 +1177,14 @@ fn estimate_damage_of_sword_strike(
     let mut num_victims: i16 = 0;
 
     for victim in nearby {
+        let thrust_kind = ctx.attacker_profile.thrusts[strike as usize].kind;
+        if !matches!(
+            thrust_kind,
+            WeaponThrustKind::Straight | WeaponThrustKind::Assault | WeaponThrustKind::Lateral
+        ) && !victim.eligible_for_regular_strikes
+        {
+            continue;
+        }
         // Strike selection uses the no-warn-AI arc check.
         if !is_victim_in_strike_arc(
             attacker_profile,
@@ -1490,6 +1508,55 @@ mod tests {
             energy: 5,
         };
         p
+    }
+
+    #[test]
+    fn lateral_estimation_keeps_active_humans_rejected_by_regular_filter() {
+        let mut profile = make_hth_profile();
+        profile.thrusts[SwordStrike::B as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Lateral,
+            direction: WeaponThrustDirection::LeftToRight,
+            minimal_distance: 0,
+            maximal_distance: 100,
+            initial_angle: 0,
+            final_angle: 0,
+            cutting: 10,
+            ..Default::default()
+        };
+        let ctx = StrikeSelectionContext {
+            attacker_profile: &profile,
+            fighting_ability: 100,
+            blood_alcohol: 0,
+            is_rank_soldier: true,
+            attacker_direction: 0,
+            attacker_elevation: 0.0,
+            attacker_camp: Camp::Lacklandists,
+            is_swordfighting: true,
+            opponent_time_limit: None,
+            strike_startup_frames: None,
+            parry_startup_frames: None,
+            is_npc: true,
+        };
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: false,
+            dx: 20.0,
+            dy_stretched: 0.0,
+            distance: 20.0,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 0,
+            elevation: 0.0,
+            life_points: 0,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert_eq!(
+            estimate_damage_of_sword_strike(&ctx, SwordStrike::B, false, &[victim]),
+            (0, -1),
+            "the lateral collector's broad active-human scan must still veto friendly corpses"
+        );
     }
 
     // ── Life points ────────────────────────────────────────────────
