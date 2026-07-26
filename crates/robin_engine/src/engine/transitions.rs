@@ -1917,28 +1917,18 @@ fn make_final_action_transition_soldier(
     owner: EntityId,
     flags: EA,
 ) -> bool {
-    // Read `will_be_attentive` instead of `attentive` so a second
-    // element launched while an `EnterAttentiveMode` transition is
-    // still animating doesn't re-queue the same animation.  `attentive`
-    // only flips after the sprite completes; `will_be_attentive` flips
-    // synchronously inside `set_soldier_attentive_mode` the moment the
-    // command is accepted, which is the correct "has the soldier
-    // already committed to alerted?" query for launch-time transition
-    // decisions.  Regression test
-    // `mid_transition_soldier_no_double_alert` documents the actual
-    // "lean-forward plays twice" bug this prevents.
-    let will_be_attentive = engine
-        .get_entity(owner)
-        .and_then(|e| e.enemy_ai())
-        .map(|e| e.will_be_attentive)
-        .unwrap_or(false);
+    // Original tests the soldier's current `mbAttentive` pose here, not
+    // the desired `mbWillBeAttentive` target. The distinction is observable
+    // when a queued LeaveAttentiveMode is translated after its preceding
+    // enter transition has completed: will-be is already false, while the
+    // actor is actually attentive and needs no redundant enter animation.
     let attentive = engine
         .get_entity(owner)
         .and_then(|e| e.enemy_ai())
         .map(|e| e.attentive)
         .unwrap_or(false);
 
-    if flags.contains(EA::MUST_BE_ALERTED) && !will_be_attentive {
+    if flags.contains(EA::MUST_BE_ALERTED) && !attentive {
         // Enter-attentive-mode transition: queue the matching
         // waiting→alerted transition animation so the soldier enters
         // the alerted pose before the command's real orders run.
@@ -2531,19 +2521,13 @@ mod tests {
         );
     }
 
-    /// Regression: a soldier mid-transition to alerted (i.e.
-    /// `will_be_attentive=true, attentive=false` — the animation has
-    /// been queued but hasn't completed yet) must NOT re-queue the
-    /// alerted transition when a second MUST_BE_ALERTED element is
-    /// launched in the same window.  This was the root cause of the
-    /// "lean-forward plays twice when a guard spots the PC" bug: the
-    /// ENTER_ATTENTIVE_MODE element queued anim #1 via Translate, then
-    /// ENTER_SWORDFIGHT launched and `generate_transition` saw
-    /// `attentive=false` and queued anim #2 via
-    /// MakeFinalActionTransition.  Checking `will_be_attentive` (which
-    /// flips synchronously in `set_soldier_attentive_mode`) fixes it.
+    /// Original's final-transition test reads the current attentive pose,
+    /// not the already-committed target. A direct call while an enter
+    /// transition is still pending therefore inserts the alerted transition.
+    /// Normal sequence arbitration prevents such a successor from being
+    /// instructed before the preceding enter animation completes.
     #[test]
-    fn mid_transition_soldier_no_double_alert() {
+    fn mid_transition_soldier_uses_current_attentive_pose() {
         let mut engine = EngineInner::new();
         let mut e = make_soldier(P::Upright, AS::Waiting, false);
         if let Entity::Soldier(s) = &mut e
@@ -2560,9 +2544,71 @@ mod tests {
 
         let orders = orders_for(&engine, seq, idx);
         assert!(
-            !orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
-            "mid-transition soldier should not re-queue the alerted anim, got {:?}",
+            orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
+            "current non-attentive pose must request the alerted animation, got {:?}",
             orders
+        );
+    }
+
+    /// A leave request queued behind an in-progress enter transition is
+    /// translated only after the enter completes. At that point Original
+    /// reads the soldier's now-live attentive pose and books the leave
+    /// animation directly, without replaying the enter animation first.
+    #[test]
+    fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, false));
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::LevelAssets::default();
+
+        let enter = engine.launch_element(SequenceElement::new(
+            1,
+            Command::EnterAttentiveMode,
+            Some(owner),
+        ));
+        engine
+            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
+            .expect("enter-attentive instruction should drain");
+        engine.orders.sequence_manager.element_in_progress(enter, 0);
+
+        if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
+            enemy.will_be_attentive = false;
+        }
+        let leave = engine.launch_element(SequenceElement::new(
+            1,
+            Command::LeaveAttentiveMode,
+            Some(owner),
+        ));
+        engine
+            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
+            .expect("postponed leave instruction should drain");
+
+        let leave_element = engine
+            .orders
+            .sequence_manager
+            .get_element(leave, 0)
+            .expect("leave element should remain registered while postponed");
+        assert_eq!(
+            leave_element.state,
+            crate::sequence::SequenceState::Postponed
+        );
+        assert!(
+            leave_element.orders.is_empty(),
+            "postponing must discard launch-time transition orders"
+        );
+
+        if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
+            enemy.attentive = true;
+        }
+        engine.orders.sequence_manager.element_terminated(enter, 0);
+
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        assert_eq!(
+            orders_for(&engine, leave, 0),
+            vec![OrderType::TransitionWaitingAlertedWaitingUpright],
+            "resumed leave must use the completed enter transition's live attentive pose"
         );
     }
 

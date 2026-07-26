@@ -399,7 +399,7 @@ struct DumpOptions {
     entities: Vec<TraceEntityId>,
 }
 
-const AUTOMATIC_DUMP_PRIOR_FRAMES: usize = 10;
+const AUTOMATIC_DUMP_PRIOR_FRAMES: usize = 32;
 
 struct RollingDumpFrame {
     engine: Engine,
@@ -2110,14 +2110,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn automatic_dump_window_retains_ten_prior_frames_and_current_frame() {
+    fn automatic_dump_window_retains_configured_prior_frames_and_current_frame() {
         let mut frames = VecDeque::new();
-        for frame in 0..20 {
+        for frame in 0..50 {
             push_rolling_window(&mut frames, frame);
         }
         assert_eq!(
             frames.into_iter().collect::<Vec<_>>(),
-            (9..20).collect::<Vec<_>>()
+            (17..50).collect::<Vec<_>>()
         );
     }
 }
