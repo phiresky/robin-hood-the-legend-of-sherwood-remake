@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{collections::BTreeMap, collections::BTreeSet};
+use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
@@ -35,7 +35,7 @@ struct TraceHeader {
     synchronous_pathfinding: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
@@ -399,6 +399,21 @@ struct DumpOptions {
     entities: Vec<TraceEntityId>,
 }
 
+const AUTOMATIC_DUMP_PRIOR_FRAMES: usize = 10;
+
+struct RollingDumpFrame {
+    engine: Engine,
+    frame_before: u64,
+    frame_after: u64,
+    selected_pcs: Vec<TraceEntityId>,
+    rng_draws: TraceRngBatch,
+    resolved_commands: serde_json::Value,
+    rng_start: usize,
+    expected_rng_end: usize,
+    actual_rng_end: usize,
+    differences: Vec<String>,
+}
+
 impl DumpOptions {
     fn includes(&self, frame: u64) -> bool {
         (self.from_frame..=self.through_frame).contains(&frame)
@@ -660,6 +675,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
     let mut active_http_step = None;
+    let automatic_dump_enabled = dump.is_none() && !scan_all;
+    let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
 
     if let Some(port) = http_server {
         robin_rs::http_server::start_global(port)
@@ -841,17 +858,43 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &engine,
                 map,
                 &frame,
-                resolved_commands,
+                resolved_commands.clone(),
                 rng_start,
                 rng_end,
                 actual_rng_end,
                 &differences,
             );
         }
+        if automatic_dump_enabled {
+            push_rolling_window(
+                &mut rolling_dump,
+                RollingDumpFrame {
+                    engine: engine.diagnostic_snapshot_without_original_rng_replay(),
+                    frame_before: frame.frame_before,
+                    frame_after: frame.frame_after,
+                    selected_pcs: frame.selected_pcs.clone(),
+                    rng_draws: frame.rng_draws.clone(),
+                    resolved_commands,
+                    rng_start,
+                    expected_rng_end: rng_end,
+                    actual_rng_end,
+                    differences: differences.clone(),
+                },
+            );
+        }
         // Preserve the complete divergent frame in --dump-jsonl before
         // stopping on an RNG cursor mismatch. RNG ordering failures are often
         // precisely where the broad engine snapshot is most useful.
         if actual_rng_end != rng_end {
+            if automatic_dump_enabled {
+                write_automatic_rolling_dump(
+                    &rolling_dump,
+                    &trace_path,
+                    &header,
+                    map,
+                    frame.frame_after,
+                );
+            }
             let sites = engine
                 .original_rng_replay_sites(rng_start..actual_rng_end)
                 .expect("original RNG site history unexpectedly disabled");
@@ -894,6 +937,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
             for difference in differences.iter().take(40) {
                 eprintln!("  {difference}");
+            }
+            if automatic_dump_enabled {
+                write_automatic_rolling_dump(
+                    &rolling_dump,
+                    &trace_path,
+                    &header,
+                    map,
+                    frame.frame_after,
+                );
             }
             if http_server.is_some() {
                 eprintln!(
@@ -1184,6 +1236,40 @@ fn write_engine_dump_frame(
     actual_rng_end: usize,
     differences: &[String],
 ) {
+    let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
+    write_engine_dump_snapshot_frame(
+        writer,
+        options,
+        &diagnostic_engine,
+        entity_map,
+        frame.frame_before,
+        frame.frame_after,
+        &frame.selected_pcs,
+        &frame.rng_draws,
+        resolved_commands,
+        rng_start,
+        expected_rng_end,
+        actual_rng_end,
+        differences,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_engine_dump_snapshot_frame(
+    writer: &mut BufWriter<File>,
+    options: &DumpOptions,
+    diagnostic_engine: &Engine,
+    entity_map: &EntityMap,
+    frame_before: u64,
+    frame_after: u64,
+    selected_pcs: &[TraceEntityId],
+    rng_draws: &TraceRngBatch,
+    resolved_commands: serde_json::Value,
+    rng_start: usize,
+    expected_rng_end: usize,
+    actual_rng_end: usize,
+    differences: &[String],
+) {
     let mapped_entities = options
         .entities
         .iter()
@@ -1203,8 +1289,7 @@ fn write_engine_dump_frame(
         .iter()
         .map(|original| entity_map.translate(*original).index() as usize)
         .collect::<BTreeSet<_>>();
-    let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
-    let mut engine_value = serde_to_json_value(&diagnostic_engine);
+    let mut engine_value = serde_to_json_value(diagnostic_engine);
     if !selected_rust_indices.is_empty() {
         let entities = engine_value
             .get_mut("world")
@@ -1222,17 +1307,17 @@ fn write_engine_dump_frame(
         &serde_json::json!({
             "schema": "robin-parity-engine-dump.v1",
             "type": "frame",
-            "frame_before": frame.frame_before,
-            "frame_after": frame.frame_after,
+            "frame_before": frame_before,
+            "frame_after": frame_after,
             "input": {
                 "resolved_commands": resolved_commands,
-                "selected_pcs": frame.selected_pcs,
+                "selected_pcs": selected_pcs,
             },
             "rng": {
                 "cursor_before": rng_start,
                 "expected_cursor_after": expected_rng_end,
                 "actual_cursor_after": actual_rng_end,
-                "original_frame_draws": frame.rng_draws,
+                "original_frame_draws": rng_draws,
                 "engine_original_replay_stream_omitted": true,
             },
             "entity_mapping": mapped_entities,
@@ -1240,6 +1325,81 @@ fn write_engine_dump_frame(
             "engine": engine_value,
         }),
     );
+}
+
+fn push_rolling_window<T>(frames: &mut VecDeque<T>, frame: T) {
+    frames.push_back(frame);
+    let capacity = AUTOMATIC_DUMP_PRIOR_FRAMES + 1;
+    while frames.len() > capacity {
+        frames.pop_front();
+    }
+}
+
+fn write_automatic_rolling_dump(
+    frames: &VecDeque<RollingDumpFrame>,
+    trace_path: &std::path::Path,
+    header: &TraceHeader,
+    entity_map: &EntityMap,
+    divergent_frame: u64,
+) -> PathBuf {
+    assert!(
+        !frames.is_empty(),
+        "automatic parity dump requires at least one captured frame"
+    );
+    let prefix = format!("robin-parity-divergence-frame-{divergent_frame}-");
+    let temporary = tempfile::Builder::new()
+        .prefix(&prefix)
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("create unique automatic parity dump");
+    let (file, path) = temporary
+        .keep()
+        .expect("persist unique automatic parity dump");
+    let mut writer = BufWriter::new(file);
+    let first_frame = frames.front().expect("rolling dump has a first frame");
+    let last_frame = frames.back().expect("rolling dump has a last frame");
+    let options = DumpOptions {
+        path: path.clone(),
+        from_frame: first_frame.frame_after,
+        through_frame: last_frame.frame_after,
+        entities: Vec::new(),
+    };
+    write_jsonl_record(
+        &mut writer,
+        &serde_json::json!({
+            "schema": "robin-parity-engine-dump.v1",
+            "type": "header",
+            "source_trace": trace_path,
+            "mission": header.mission,
+            "rng_seed": header.rng_seed,
+            "frame_range": {
+                "from": options.from_frame,
+                "through": options.through_frame,
+            },
+            "entity_filter": options.entities,
+            "automatic_rolling_window": true,
+        }),
+    );
+    for frame in frames {
+        write_engine_dump_snapshot_frame(
+            &mut writer,
+            &options,
+            &frame.engine,
+            entity_map,
+            frame.frame_before,
+            frame.frame_after,
+            &frame.selected_pcs,
+            &frame.rng_draws,
+            frame.resolved_commands.clone(),
+            frame.rng_start,
+            frame.expected_rng_end,
+            frame.actual_rng_end,
+            &frame.differences,
+        );
+    }
+    writer.flush().expect("flush automatic parity dump");
+    eprintln!("automatic parity engine dump: {}", path.display());
+    path
 }
 
 fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_json::Value) {
@@ -1943,4 +2103,21 @@ fn compare_point_with_absolute_tolerance(
         actual.y,
         absolute_tolerance,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_dump_window_retains_ten_prior_frames_and_current_frame() {
+        let mut frames = VecDeque::new();
+        for frame in 0..20 {
+            push_rolling_window(&mut frames, frame);
+        }
+        assert_eq!(
+            frames.into_iter().collect::<Vec<_>>(),
+            (9..20).collect::<Vec<_>>()
+        );
+    }
 }
