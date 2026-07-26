@@ -317,12 +317,12 @@ fn movement_execute_state_effect(
 
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
 ///
-/// Entity-target `PerformSeek` consumes a walking sprite's initial `START`
-/// result and returns `IN_PROGRESS`; point seeks return the raw result. This
-/// matters because walking and sword-walking update their action state only
-/// when their Execute switch observes `START`. Running upright is deliberately
+/// Entity-target `PerformSeek` consumes non-terminal sprite results and returns
+/// `IN_PROGRESS`; point seeks return the raw result. This matters because the
+/// caller's Execute switch must not observe either a raw `START` or `DONE`
+/// while the seek wrapper remains active. Running upright is deliberately
 /// excluded: its Original Execute arm sets `MOVING_FAST` unconditionally after
-/// `PerformSeek`.
+/// `PerformSeek`, irrespective of the returned motion state.
 fn movement_execute_visible_motion(
     order: OrderType,
     motion: MotionState,
@@ -333,15 +333,8 @@ fn movement_execute_visible_motion(
         return MotionState::Terminated;
     }
     if entity_target_seek
-        && matches!(motion, MotionState::Start)
-        && matches!(
-            order,
-            OrderType::WalkingUpright
-                | OrderType::WalkingAlerted
-                | OrderType::WalkingCrouched
-                | OrderType::WalkingWithSword
-                | OrderType::RunningWithSword
-        )
+        && !matches!(motion, MotionState::Terminated)
+        && !matches!(order, OrderType::RunningUpright)
     {
         return MotionState::InProgress;
     }
@@ -5341,12 +5334,13 @@ impl EngineInner {
             // Execute arm does not enter the Moving action state. Our
             // position update is staged below; fold that imminent arrival
             // into the state-effect result now.
+            let entity_target_seek = active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
+                && ft.target_id.is_some();
             let state_effect_motion = movement_execute_visible_motion(
                 order_action,
                 motion_state,
                 !is_transition_anim && dist <= speed,
-                active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
-                    && ft.target_id.is_some(),
+                entity_target_seek,
             );
             // The initiative handoff belongs to the Human Execute START arm,
             // so it observes entity-target PerformSeek's wrapper result just
@@ -5550,8 +5544,14 @@ impl EngineInner {
                         motion_state = MotionState::Terminated;
                     }
                 }
+                let transition_effect_motion = movement_execute_visible_motion(
+                    order_action,
+                    motion_state,
+                    false,
+                    entity_target_seek,
+                );
                 if let Some((posture, action_state)) =
-                    movement_execute_state_effect(order_action, motion_state)
+                    movement_execute_state_effect(order_action, transition_effect_motion)
                 {
                     movement_state_effects.push((entity_id, posture, action_state));
                 }
@@ -9191,6 +9191,55 @@ mod line_jump_tests {
             ),
             MotionState::Start,
             "running upright sets MovingFast after PerformSeek unconditionally"
+        );
+    }
+
+    #[test]
+    fn entity_seek_hides_transition_done_until_wrapper_termination() {
+        use crate::element::ActionState;
+        use crate::sprite::MotionState;
+
+        let visible = movement_execute_visible_motion(
+            OrderType::TransitionRunningUprightWalkingUpright,
+            MotionState::Done,
+            false,
+            true,
+        );
+        assert_eq!(visible, MotionState::InProgress);
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::TransitionRunningUprightWalkingUpright,
+                visible,
+            ),
+            None,
+            "raw sprite DONE must not change a live entity seek from MovingFast to Moving"
+        );
+        assert_eq!(
+            movement_execute_visible_motion(
+                OrderType::TransitionRunningUprightWalkingUpright,
+                MotionState::Terminated,
+                false,
+                true,
+            ),
+            MotionState::Terminated,
+            "the Execute switch must observe the seek wrapper's terminal result"
+        );
+        assert_eq!(
+            movement_execute_visible_motion(
+                OrderType::TransitionRunningUprightWalkingUpright,
+                MotionState::Done,
+                false,
+                false,
+            ),
+            MotionState::Done,
+            "ordinary and point movement expose the sprite's DONE result"
+        );
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::TransitionRunningUprightWalkingUpright,
+                MotionState::Terminated,
+            ),
+            Some((crate::element::Posture::Upright, ActionState::Moving))
         );
     }
 
