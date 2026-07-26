@@ -3014,6 +3014,84 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
+        let pending_hit_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Hit)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Hit initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Hit initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Hit initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_hit_init {
+            let attacker_ground = self
+                .get_entity(actor_id)
+                .expect("Hit owner vanished during initialization")
+                .ground_position();
+            let victim_ground = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| {
+                    panic!("Hit victim {victim_id:?} vanished during initialization")
+                })
+                .ground_position();
+            let facing = crate::position_interface::vector_to_sector_0_to_15(
+                victim_ground.x - attacker_ground.x,
+                victim_ground.y - attacker_ground.y,
+            );
+            // Original HITTING initialization changes only the progressive
+            // direction goal, before checking whether the interaction remains
+            // valid. The later Turn call owns the current-direction change.
+            self.get_entity_mut(actor_id)
+                .expect("Hit owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Hit owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::HitCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Hit element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Hit,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+        }
+
         let pending_strangle_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)

@@ -2152,6 +2152,15 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
+    // HITTING turns progressively toward the live antagonist after its
+    // Execute-time initialization installed the goal. Keep the first sprite
+    // frame frozen until alignment, just like RHANIMATION_HITTING's
+    // `Turn() ? RHPROGRESSION_FROZEN_FIRST_FRAME : default` branch.
+    let frame_progression = if kind == AbilityKind::Hit && entity.position_iface_mut().turn() {
+        crate::sprite::FrameProgression::FrozenFirstFrame
+    } else {
+        crate::sprite::FrameProgression::Default
+    };
     let direction = u16::try_from(entity.element_data().direction())
         .unwrap_or_else(|_| panic!("{kind:?} owner {entity_id:?} has invalid animation direction"));
 
@@ -2165,7 +2174,7 @@ pub fn tick_ability(
             order_id,
             order_type,
             direction,
-            crate::sprite::FrameProgression::Default,
+            frame_progression,
             false,
         )
     };
@@ -2871,6 +2880,59 @@ mod tests {
             .unwrap();
         assert_eq!(order.order_type, OrderType::Hitting);
         assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn hit_turns_before_advancing_its_first_animation_frame() {
+        let mut entities = Entities::new();
+        for _ in 0..2 {
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })));
+        }
+        let attacker = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        {
+            let entity = entities.get_mut(attacker).unwrap();
+            entity.element_data_mut().set_direction_instantly(1);
+            entity.element_data_mut().set_direction_goal(4);
+            entity.position_iface_mut().deviated = false;
+        }
+
+        let mut manager = SequenceManager::new();
+        let seq_id =
+            launch_ability_element(&mut manager, crate::element::Command::HitCmd, attacker);
+        let mut next_id = 1;
+        assert_eq!(
+            begin_hit(
+                &mut entities,
+                &mut manager,
+                attacker,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+        let sim = crate::sim_rng::test_context();
+
+        for expected_direction in [2, 3, 4] {
+            assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
+            let entity = entities.get(attacker).unwrap();
+            assert_eq!(entity.element_data().direction(), expected_direction);
+            assert_eq!(
+                entity.element_data().sprite.current_frame,
+                0,
+                "Hitting must remain on its first frame while Turn reports progress"
+            );
+        }
     }
 
     #[test]
