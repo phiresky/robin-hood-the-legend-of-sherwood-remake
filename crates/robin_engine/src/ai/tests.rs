@@ -213,6 +213,28 @@ fn goto_dont_stop_suppresses_movement_transitions() {
 }
 
 #[test]
+fn ordinary_goto_from_sword_state_carries_ordered_quit_prefix() {
+    let mut ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingWithSword);
+    ctx.self_action_state = crate::element::ActionState::MovingSword;
+    let destination = Position {
+        x: 200.0,
+        y: 200.0,
+        ..ctx.position
+    };
+    let mut ai = AiController::new(1);
+
+    ai.go_to(destination, GotoFlags::RUN, &ctx);
+
+    let orders = ai.take_pending_orders();
+    assert_eq!(orders.len(), 1);
+    assert!(orders[0].quit_swordfight_before_move);
+    assert!(
+        !ai.outbox.actor.quit_swordfight,
+        "GoTo teardown belongs to the movement sequence, not the standalone relationship effect"
+    );
+}
+
+#[test]
 fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
     let order = AiController::make_move_order(
         &Position {

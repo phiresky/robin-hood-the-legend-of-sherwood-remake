@@ -681,6 +681,13 @@ pub struct AiOrderIntent {
     /// Movement speed multiplier copied onto generated movement sequence elements.
     pub speed_factor: f32,
     pub no_halt: bool,
+    /// Original `RHArtificialIntelligence::GoTo` prepends a
+    /// `QuitSwordfight` element to the same sequence when an actor in a
+    /// sword action state receives a non-sword movement. Keeping this on the
+    /// intent preserves that sequence barrier through the deferred engine
+    /// drain.
+    #[serde(default)]
+    pub quit_swordfight_before_move: bool,
     /// Cached selected-movement goal that survives an implicit GoTo
     /// replacement until the new movement installs a concrete order.
     pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
@@ -717,6 +724,7 @@ impl AiOrderIntent {
             move_flags: 0,
             speed_factor: 1.0,
             no_halt: false,
+            quit_swordfight_before_move: false,
             retained_movement_goal: None,
             antagonist: None,
             find_accessible: false,

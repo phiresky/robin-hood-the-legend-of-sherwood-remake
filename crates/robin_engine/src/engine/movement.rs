@@ -3648,8 +3648,13 @@ impl EngineInner {
         };
 
         let action = intent.order_type;
+        let move_level = if intent.quit_swordfight_before_move {
+            2
+        } else {
+            1
+        };
         let mut elem = crate::sequence::SequenceElement::new_movement(
-            1,
+            move_level,
             crate::element::Command::Move,
             Some(entity_id),
             action,
@@ -3681,6 +3686,13 @@ impl EngineInner {
         // condolence call sites that require re-entrant dispatch explicitly
         // take this exact deferred action immediately after this returns.
         let mut sequence = crate::sequence::Sequence::new();
+        if intent.quit_swordfight_before_move {
+            sequence.append_element(crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::QuitSwordfight,
+                Some(entity_id),
+            ));
+        }
         sequence.append_element(elem);
         let sequence_id = self.launch_sequence(sequence);
 

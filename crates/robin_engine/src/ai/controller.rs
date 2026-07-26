@@ -2753,12 +2753,11 @@ impl AiController {
         // move is launched. Centralised here so every caller benefits
         // — the engine drain processes these intents before
         // `launch_pending_orders_for_npc` runs the move.
-        self.apply_goto_action_state_teardown(flags, ctx);
+        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
 
-        self.outbox
-            .actor
-            .orders
-            .push(Self::make_move_order(&destination, flags));
+        let mut order = Self::make_move_order(&destination, flags);
+        order.quit_swordfight_before_move = quit_swordfight_before_move;
+        self.outbox.actor.orders.push(order);
     }
 
     /// Prepend the action-state teardown for a launching GoTo / GoNear /
@@ -2774,8 +2773,9 @@ impl AiController {
     /// Shield is also handled here: an actor mid-shield-raise that
     /// receives a `GoTo` first prepends a `Command::LowerShield` element
     /// so the shield drops before the move launches.
-    fn apply_goto_action_state_teardown(&mut self, flags: GotoFlags, ctx: &AiContext) {
+    fn apply_goto_action_state_teardown(&mut self, flags: GotoFlags, ctx: &AiContext) -> bool {
         let action_state = ctx.self_action_state;
+        let mut quit_swordfight_before_move = false;
         if flags.contains(GotoFlags::SWORD) {
             // GOTO_SWORD branch — already-in-sword is a no-op,
             // otherwise prepend ENTER_SWORDFIGHT without an opponent.
@@ -2784,9 +2784,12 @@ impl AiController {
                 self.outbox.actor.enter_swordfight_jump_line = None;
             }
         } else if action_state.is_sword() {
-            // Leaving a sword fight to walk somewhere without
-            // GOTO_SWORD — sheath first.
-            self.outbox.actor.quit_swordfight = true;
+            // Leaving a sword fight to walk somewhere without GOTO_SWORD:
+            // the engine must put QuitSwordfight and Move in one ordered
+            // sequence. A standalone outbox effect would clear relationships
+            // and then let the independent movement preempt the lowering
+            // animation in the same drain.
+            quit_swordfight_before_move = true;
         } else if action_state == crate::element::ActionState::Menacing {
             // Drop the menace pose before walking.
             self.outbox.actor.stop_menace = true;
@@ -2800,6 +2803,7 @@ impl AiController {
         if action_state.is_shield() {
             self.outbox.actor.lower_shield = true;
         }
+        quit_swordfight_before_move
     }
 
     /// Low-level movement primitive (speed variant) — see
@@ -2832,9 +2836,10 @@ impl AiController {
             self.already_on_point = true;
             return;
         }
-        self.apply_goto_action_state_teardown(flags, ctx);
+        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.speed_factor = speed;
+        order.quit_swordfight_before_move = quit_swordfight_before_move;
         self.outbox.actor.orders.push(order);
     }
 
@@ -2893,9 +2898,10 @@ impl AiController {
             return;
         }
 
-        self.apply_goto_action_state_teardown(flags, ctx);
+        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.tolerance = effective_distance as f32;
+        order.quit_swordfight_before_move = quit_swordfight_before_move;
         self.outbox.actor.orders.push(order);
     }
 

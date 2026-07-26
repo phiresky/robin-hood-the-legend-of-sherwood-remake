@@ -128,6 +128,14 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     )?;
+                } else if command == Command::QuitSwordfight {
+                    // A GoTo issued from a sword action state is one
+                    // Original sequence: QuitSwordfight followed by Move.
+                    // Condolence and waypoint-script owner boundaries drive
+                    // the first element synchronously, just like the normal
+                    // hourglass dispatcher; the movement remains behind the
+                    // lowering animation until this element completes.
+                    self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index);
                 } else if matches!(
                     command,
                     Command::SwordstrikeSmalltalkLeft

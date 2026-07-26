@@ -108,6 +108,11 @@ fn is_nonmovement_exit_from_moving(anim: OrderType) -> bool {
             // plays the raise while retaining the moving action state and
             // changes to WaitingSword only when the animation is done.
             | OrderType::TransitionRaisingSword
+            // A non-sword GoTo from MovingSword/MovingFastSword prepends an
+            // explicit QuitSwordfight element. Its lowering order is ordinary
+            // Human Execute work and must start before the successor movement,
+            // even though the outgoing action-state enum still says moving.
+            | OrderType::TransitionLoweringSword
     )
 }
 
@@ -166,6 +171,9 @@ mod tests {
         assert!(!is_nonmovement_exit_from_moving(OrderType::Turning));
         assert!(is_nonmovement_exit_from_moving(
             OrderType::TransitionRaisingSword
+        ));
+        assert!(is_nonmovement_exit_from_moving(
+            OrderType::TransitionLoweringSword
         ));
         assert!(is_movement_interrupting_command(
             Command::ReceiveSwordDamage
