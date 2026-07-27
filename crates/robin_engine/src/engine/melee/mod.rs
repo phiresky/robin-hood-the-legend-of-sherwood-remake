@@ -2475,6 +2475,72 @@ mod tests {
             .count()
     }
 
+    #[test]
+    fn hit_translation_defers_flight_facing_until_first_execute() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 30.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        {
+            let position = engine.get_entity_mut(victim).unwrap().position_iface_mut();
+            position.set_direction_instantly(crate::position_interface::Direction::from_raw(5));
+            position.set_move_box(crate::coordinates::MoveBox::from_coords(
+                -5.0, -5.0, 5.0, 5.0,
+            ));
+        }
+
+        let element =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
+        let seq_id = engine.launch_element(element);
+        engine.dispatch_hit_fall_animation(
+            &LevelAssets::default(),
+            victim,
+            Some(attacker),
+            false,
+            (seq_id, 0),
+        );
+
+        let queued = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .orders
+            .back()
+            .unwrap();
+        assert_eq!(queued.order_type, OrderType::FallingHitUpright);
+        assert_eq!(queued.antagonist, Some(attacker));
+        assert!(!queued.compute_direction);
+        let queued_type = queued.order_type;
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(victim_entity.element_data().direction(), 5);
+        assert!(victim_entity.actor_data().unwrap().active_flight.is_none());
+
+        engine.initialize_hit_flight(victim, Some(attacker), queued_type);
+
+        assert_ne!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .element_data()
+                .direction(),
+            5
+        );
+    }
+
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();

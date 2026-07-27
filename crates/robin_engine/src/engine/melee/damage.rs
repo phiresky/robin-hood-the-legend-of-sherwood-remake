@@ -1294,14 +1294,13 @@ impl EngineInner {
         // standalone FALLING_BACK_* order that the Original never creates.
     }
 
-    /// Plays the `FALLING_HIT_*` animation appropriate to the victim's
-    /// posture and action state.  For non-harder hits, also sets up
-    /// an `ActiveFlight` that carries the victim 30 map units away
-    /// from the antagonist — validated via
-    /// `is_straight_movement_authorized` with 100/75/50/25% fractional
-    /// fallback (matching the take-off helper).  The combat animation
-    /// is marked `SequencePriority::NonInterruptable` so concurrent
-    /// damage can't clobber it mid-flight.
+    /// TranslateHitDamage selects and appends the `FALLING_HIT_*` order.
+    ///
+    /// This deliberately does not initialize non-hard flight state.
+    /// Original `TranslateHitDamage` only stores the antagonist and an
+    /// order with `bComputeDirection = false`; `ExecuteFallingHit` samples
+    /// the live positions, changes facing, and calls `ReadyForTakeOff` when
+    /// that order first executes.
     pub(super) fn dispatch_hit_fall_animation(
         &mut self,
         assets: &LevelAssets,
@@ -1311,17 +1310,14 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
         // Read victim posture + action state to pick the right animation.
-        let (victim_posture, victim_action, victim_pos, victim_layer, victim_move_box) = {
+        let (victim_posture, victim_action) = {
             let v = match self.get_entity(victim_id) {
                 Some(e) => e,
                 None => return,
             };
             let posture = v.element_data().posture;
             let action = v.actor_data().map(|a| a.action_state).unwrap_or_default();
-            let pos = v.element_data().position_map();
-            let layer = v.element_data().layer();
-            let mb = *v.position_iface().get_move_box();
-            (posture, action, pos, layer, mb)
+            (posture, action)
         };
 
         // Early-out: posture is already falling, carried, or dead —
@@ -1331,166 +1327,21 @@ impl EngineInner {
             None => return,
         };
 
-        // Compute the flight vector: 30 units away from the antagonist,
-        // or 30 units opposite the victim's current facing if there's
-        // no antagonist.
-        let (flight_x, flight_y) = if !is_harder_hit {
-            // When the antagonist is a human currently in the
-            // rider-charging animation, the flight vector follows the
-            // rider's facing (slammed forward along the charge path)
-            // rather than the radial victim_pos − attacker_pos vector.
-            let charging_rider_dir: Option<u16> = attacker_id
-                .and_then(|id| self.get_entity(id))
-                .and_then(|e| {
-                    let is_rider = e.soldier_data().map(|s| s.rider).unwrap_or(false);
-                    let is_charging = e
-                        .actor_data()
-                        .map(|a| a.active_rider_charge.is_some())
-                        .unwrap_or(false);
-                    if is_rider && is_charging {
-                        Some(e.element_data().direction() as u16)
-                    } else {
-                        None
-                    }
-                });
-
-            let attacker_pos = attacker_id
-                .and_then(|id| self.get_entity(id))
-                .map(|e| e.element_data().position_map());
-            let (dx, dy) = if let Some(rider_dir) = charging_rider_dir {
-                sector_to_vector_iso(rider_dir, ASPECT_RATIO)
-            } else if let Some(ap) = attacker_pos {
-                let dx = victim_pos.x - ap.x;
-                let dy = victim_pos.y - ap.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist < 0.01 {
-                    // Antagonist is on top of us — fall back from facing.
-                    let victim_dir = self
-                        .get_entity(victim_id)
-                        .map(|e| e.element_data().direction())
-                        .unwrap_or(0);
-                    let back = ((victim_dir as u16) + 8) % 16;
-                    sector_to_vector_iso(back, ASPECT_RATIO)
-                } else {
-                    (dx / dist, dy / dist)
-                }
-            } else {
-                // No antagonist, fly opposite current direction.
-                let victim_dir = self
-                    .get_entity(victim_id)
-                    .map(|e| e.element_data().direction())
-                    .unwrap_or(0);
-                let back = ((victim_dir as u16) + 8) % 16;
-                sector_to_vector_iso(back, ASPECT_RATIO)
-            };
-            // Scale unit vector to 30 units.
-            (dx * 30.0, dy * 30.0)
-        } else {
-            (0.0, 0.0)
-        };
-
-        // Validate the flight destination with fractional fallback.
-        let (goal_x, goal_y) = if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
-            let pt_start = victim_pos;
-            let mut gx = victim_pos.x;
-            let mut gy = victim_pos.y;
-            for &frac in &[1.0f32, 0.75, 0.5, 0.25] {
-                let try_x = victim_pos.x + flight_x * frac;
-                let try_y = victim_pos.y + flight_y * frac;
-                let pt_try = crate::coordinates::MapPoint::new(try_x, try_y);
-                if self.world.fast_grid.is_straight_movement_authorized(
-                    pt_start,
-                    pt_try,
-                    victim_layer,
-                    &victim_move_box,
-                ) {
-                    gx = try_x;
-                    gy = try_y;
-                    break;
-                }
-            }
-            (gx, gy)
-        } else {
-            (victim_pos.x, victim_pos.y)
-        };
-
-        // Flight duration from the sprite's per-frame delay sum:
-        // walk the delay table and use the total tick count rather
-        // than the raw frame count.
-        let frames = {
-            let from_sprite = self
-                .get_entity(victim_id)
-                .map(|entity| {
-                    let sprite = entity.sprite();
-                    let concrete_anim = crate::engine::animation::sprite_anim_for_order(
-                        sprite,
-                        anim,
-                        entity.is_pc(),
-                    );
-                    sprite.ready_for_takeoff_ticks_for_anim(concrete_anim)
-                })
-                .unwrap_or(0);
-            if from_sprite > 1 { from_sprite } else { 8 }
-        };
-
-        // Set direction so the sprite flies back-first
-        // ((flightSector + 8) % 16).
-        let facing_sector = if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
-            let fs = crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
-            (fs + 8) % 16
-        } else {
-            self.get_entity(victim_id)
-                .map(|e| e.element_data().direction())
-                .unwrap_or(0)
-        };
-
-        if let Some(entity) = self.world.entities.get_mut(victim_id) {
-            entity
-                .element_data_mut()
-                .set_direction_instantly(facing_sector);
-            // Set both direction goal and current direction so the
-            // body sprite faces back-first immediately rather than
-            // rotating into the flight pose.
-            if entity.actor_data().is_some() {
-                entity.position_iface_mut().set_direction_instantly(
-                    crate::position_interface::Direction::from_raw(facing_sector as i32),
-                );
-            }
-        }
-        // Drive the FALLING_HIT_* animation as the next order on the
-        // active damage element, marking the element
-        // NonInterruptable.  Posture (Flying/Moving on Start;
-        // Lying/DeadBack on Terminated) and ApplyDominoEffect are
-        // applied via the active_ai_anim handler + active_flight
-        // tick.
-        self.queue_damage_anim(victim_id, damage_element, anim);
-        // ActiveFlight is applied unconditionally (it's separate from
-        // animation state — the per-frame flight tick reads it).
-        if !is_harder_hit
-            && let Some(entity) = self.world.entities.get_mut(victim_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            let dx = goal_x - victim_pos.x;
-            let dy = goal_y - victim_pos.y;
-            if (dx.abs() > 0.01 || dy.abs() > 0.01) && frames > 0 {
-                actor.active_flight = Some(crate::element::ActiveFlight {
-                    increment_x: dx / frames as f32,
-                    increment_y: dy / frames as f32,
-                    goal_x,
-                    goal_y,
-                    frames_remaining: frames,
-                    antagonist: attacker_id,
-                    ..Default::default()
-                });
-            }
-        }
+        let (dseq, didx) = damage_element;
+        let id = self.orders.allocate_order_id();
+        let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
+        order.compute_direction = false;
+        order.antagonist = attacker_id;
+        self.orders
+            .sequence_manager
+            .push_order_on(dseq, didx, order);
 
         tracing::debug!(
             victim = ?victim_id,
             attacker = ?attacker_id,
             ?anim,
             harder = is_harder_hit,
-            "Hit fall animation dispatched"
+            "Hit fall animation queued"
         );
 
         // The default arm of the hit-damage path unconditionally
@@ -1500,6 +1351,131 @@ impl EngineInner {
         // separate roll after death/unconscious posture, but a
         // non-fatal hit on a slope must roll too.
         self.try_queue_roll(assets, victim_id, damage_element);
+    }
+
+    /// Initialize a non-hard `FALLING_HIT_*` order on its first Execute.
+    ///
+    /// This is the `IsInitialisation()` body of Original
+    /// `ExecuteFallingHit`: it samples live actor positions, sets the
+    /// back-first facing, and prepares the flight. Translation must not call
+    /// it because the victim's creation slot may already have run this frame.
+    pub(crate) fn initialize_hit_flight(
+        &mut self,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        anim: OrderType,
+    ) {
+        if !matches!(
+            anim,
+            OrderType::FallingHitUpright
+                | OrderType::FallingHitWithBow
+                | OrderType::FallingHitWithSword
+                | OrderType::FallingHitCrouched
+        ) {
+            return;
+        }
+
+        let (victim_pos, victim_layer, victim_move_box, victim_dir, frames) = {
+            let victim = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} is missing"));
+            let sprite_anim = crate::engine::animation::sprite_anim_for_order(
+                victim.sprite(),
+                anim,
+                victim.is_pc(),
+            );
+            let ticks = victim
+                .sprite()
+                .ready_for_takeoff_ticks_for_anim(sprite_anim);
+            (
+                victim.element_data().position_map(),
+                victim.element_data().layer(),
+                *victim.position_iface().get_move_box(),
+                victim.element_data().direction(),
+                if ticks > 1 { ticks } else { 8 },
+            )
+        };
+
+        // A charging rider throws along its facing. Every other antagonist
+        // throws radially away from its live position.
+        let charging_rider_dir =
+            attacker_id
+                .and_then(|id| self.get_entity(id))
+                .and_then(|attacker| {
+                    let rider = attacker
+                        .soldier_data()
+                        .map(|soldier| soldier.rider)
+                        .unwrap_or(false);
+                    let charging = attacker
+                        .actor_data()
+                        .is_some_and(|actor| actor.active_rider_charge.is_some());
+                    (rider && charging).then_some(attacker.element_data().direction() as u16)
+                });
+        let attacker_pos = attacker_id
+            .and_then(|id| self.get_entity(id))
+            .map(|attacker| attacker.element_data().position_map());
+        let (unit_x, unit_y) = if let Some(rider_dir) = charging_rider_dir {
+            sector_to_vector_iso(rider_dir, ASPECT_RATIO)
+        } else if let Some(attacker_pos) = attacker_pos {
+            let dx = victim_pos.x - attacker_pos.x;
+            let dy = victim_pos.y - attacker_pos.y;
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance < 0.01 {
+                sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO)
+            } else {
+                (dx / distance, dy / distance)
+            }
+        } else {
+            sector_to_vector_iso((victim_dir as u16 + 8) % 16, ASPECT_RATIO)
+        };
+        let flight_x = unit_x * 30.0;
+        let flight_y = unit_y * 30.0;
+
+        let mut goal_x = victim_pos.x;
+        let mut goal_y = victim_pos.y;
+        for fraction in [1.0f32, 0.75, 0.5, 0.25] {
+            let candidate = crate::coordinates::MapPoint::new(
+                victim_pos.x + flight_x * fraction,
+                victim_pos.y + flight_y * fraction,
+            );
+            if self.world.fast_grid.is_straight_movement_authorized(
+                victim_pos,
+                candidate,
+                victim_layer,
+                &victim_move_box,
+            ) {
+                goal_x = candidate.x;
+                goal_y = candidate.y;
+                break;
+            }
+        }
+
+        let flight_sector = crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
+        let facing_sector = (flight_sector + 8) % 16;
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim_id)
+            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"));
+        victim.position_iface_mut().set_direction_instantly(
+            crate::position_interface::Direction::from_raw(facing_sector as i32),
+        );
+        let dx = goal_x - victim_pos.x;
+        let dy = goal_y - victim_pos.y;
+        if dx.abs() > 0.01 || dy.abs() > 0.01 {
+            victim
+                .actor_data_mut()
+                .expect("falling-hit victim lost actor data")
+                .active_flight = Some(crate::element::ActiveFlight {
+                increment_x: dx / frames as f32,
+                increment_y: dy / frames as f32,
+                goal_x,
+                goal_y,
+                frames_remaining: frames,
+                antagonist: attacker_id,
+                ..Default::default()
+            });
+        }
     }
 
     /// Per-frame net-capture execute handler.

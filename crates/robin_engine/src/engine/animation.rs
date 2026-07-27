@@ -3783,6 +3783,36 @@ impl EngineInner {
             )
         };
 
+        // TranslateHitDamage only appends a FALLING_HIT_* order. Original
+        // ExecuteFallingHit samples live geometry and calls ReadyForTakeOff
+        // under IsInitialisation(), so actors whose creation slot has already
+        // passed retain their old facing and no flight state until next frame.
+        let initial_hit_flight = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .map(|(_, _, order)| (order.order_type, order.antagonist))
+            })
+            .flatten()
+            .filter(|(anim, _)| {
+                matches!(
+                    anim,
+                    OrderType::FallingHitUpright
+                        | OrderType::FallingHitWithBow
+                        | OrderType::FallingHitWithSword
+                        | OrderType::FallingHitCrouched
+                )
+            });
+        if let Some((anim, antagonist)) = initial_hit_flight {
+            self.initialize_hit_flight(entity_id, antagonist, anim);
+        }
+
         // RHElementActorHuman's eight dying/falling arms run
         // FindPlaceToDie under IsInitialisation() immediately before
         // PerformAction. Do this before borrowing the actor for the generic
