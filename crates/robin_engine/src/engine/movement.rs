@@ -5342,9 +5342,20 @@ impl EngineInner {
             // pre-motion tolerance branch without calling PerformMotion.
             // Besides avoiding displacement, this preserves the prior sprite
             // action and suppresses START-owned side effects such as combat
-            // initiative transfer.
+            // initiative transfer. When StartPostSeekSequence succeeds the
+            // wrapper returns TERMINATED, however; the surrounding Execute
+            // arm must still observe that result so a pending movement-end
+            // transition applies its terminal posture/action-state effect
+            // before the interaction is instructed.
             let (mut motion_state, mut frame_dist_raw) = if tolerance_arrival {
-                (MotionState::InProgress, 0.0)
+                (
+                    if ft.has_post_seek {
+                        MotionState::Terminated
+                    } else {
+                        MotionState::InProgress
+                    },
+                    0.0,
+                )
             } else {
                 // Entity-target PerformSeek tests its successful tolerance
                 // branch before the ordinary Turn/PerformMotion block. Do
@@ -5478,6 +5489,16 @@ impl EngineInner {
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, state_effect_motion)
             {
+                movement_state_effects.push((entity_id, posture, action_state));
+            }
+            if is_transition_anim
+                && tolerance_arrival
+                && let Some((posture, action_state)) =
+                    movement_execute_state_effect(order_action, state_effect_motion)
+            {
+                // PerformSeek's successful pre-motion post-seek branch skips
+                // the transition sprite call, but its TERMINATED result still
+                // returns through the surrounding transition Execute arm.
                 movement_state_effects.push((entity_id, posture, action_state));
             }
 
