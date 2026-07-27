@@ -30,11 +30,77 @@
 //!    table-swordfight and other line-goal moves emitted through
 //!    `GoalShape::Line` / `AppendMoveToLineToSequence` equivalents.
 
-use crate::element::{ActionState, Command, EntityId, Posture};
+use crate::coordinates::MapPoint;
+use crate::element::{ActionState, Command, DoorPassStep, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceId, SequenceState};
+use std::collections::VecDeque;
 
 use super::EngineInner;
+
+/// Apply the Original's `InsertTransitionStart` algorithm to the lazy
+/// door-pass tail. The C++ engine stores these sub-orders directly in the
+/// movement sequence; the port retains them separately until launch.
+fn insert_door_pass_start_transition(
+    steps: &mut VecDeque<DoorPassStep>,
+    point_start: MapPoint,
+    animation_to_replace: OrderType,
+    animation_transition: OrderType,
+    distance_transition: f32,
+) {
+    let mut distance_remaining = if distance_transition == 0.0 {
+        0.01
+    } else {
+        distance_transition
+    };
+    let mut point = point_start;
+    let mut index = 0;
+
+    while index < steps.len() {
+        let mut insert_destination = None;
+        if let DoorPassStep::Walk {
+            destination,
+            action,
+            ..
+        } = &mut steps[index]
+        {
+            if *action == animation_to_replace {
+                let movement = *destination - point;
+                let norm = movement.length();
+                if norm >= distance_remaining {
+                    let destination = if norm != 0.0 {
+                        point + movement.scale(distance_remaining / norm)
+                    } else {
+                        point
+                    };
+                    insert_destination = Some(destination);
+                } else {
+                    distance_remaining -= norm;
+                    *action = animation_transition;
+                }
+            }
+
+            if *destination != MapPoint::ZERO {
+                point = *destination;
+            }
+        }
+
+        if let Some(destination) = insert_destination {
+            steps.insert(
+                index,
+                DoorPassStep::Walk {
+                    destination,
+                    action: animation_transition,
+                    reverse: false,
+                    compute_direction: true,
+                    tolerance: 0.0,
+                },
+            );
+            return;
+        }
+        index += 1;
+    }
+}
 
 impl EngineInner {
     /// Upgrade walking to running for `entity`.
@@ -66,6 +132,7 @@ impl EngineInner {
         let touched = self.sequence_manager_has_movement(entity);
         if touched {
             self.orders.sequence_manager.make_fast(entity);
+            self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity);
         }
     }
@@ -80,6 +147,50 @@ impl EngineInner {
             self.orders.sequence_manager.make_slow(entity);
             self.after_make_rewrite(sim, entity);
         }
+    }
+
+    fn make_active_door_pass_fast(&mut self, entity: EntityId) {
+        let Some(owner) = self.get_entity(entity) else {
+            return;
+        };
+        let position = owner.element_data().position_map();
+        let action_state = owner
+            .actor_data()
+            .expect("movement owner is not an actor")
+            .action_state;
+        let transition = match action_state {
+            ActionState::Moving => OrderType::TransitionWalkingUprightRunningUpright,
+            ActionState::Waiting | ActionState::Bored => {
+                OrderType::TransitionWaitingUprightRunningUpright
+            }
+            _ => return,
+        };
+        let transition_distance = f32::from(owner.sprite().distance_for_animation(transition));
+        let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut()) else {
+            return;
+        };
+        let Some(pass) = actor.active_door_pass.as_mut() else {
+            return;
+        };
+
+        for step in pass.steps.iter_mut() {
+            let DoorPassStep::Walk { action, .. } = step else {
+                continue;
+            };
+            *action = match *action {
+                OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
+                OrderType::WalkingWithSword => OrderType::RunningWithSword,
+                OrderType::WalkingWithShield => OrderType::RunningUpright,
+                other => other,
+            };
+        }
+        insert_door_pass_start_transition(
+            &mut pass.steps,
+            position,
+            OrderType::RunningUpright,
+            transition,
+            transition_distance,
+        );
     }
 
     /// Stand the actor up (rewrite crouched movement orders upright).
