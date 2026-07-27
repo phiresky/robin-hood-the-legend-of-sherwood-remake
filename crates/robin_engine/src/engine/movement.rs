@@ -6558,24 +6558,6 @@ impl EngineInner {
         // transition order blocks subsequent orders until its sprite
         // animation completes.
         for (seq_id, elem_idx, order) in transition_pushes {
-            if self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.command == crate::element::Command::PassDoor)
-                && let Some(owner) = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .and_then(|elem| elem.owner)
-            {
-                super::door_pass::apply_door_pass_continue_state(
-                    &mut self.world.entities,
-                    &self.world.fast_grid,
-                    owner,
-                    order.order_type,
-                );
-            }
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
