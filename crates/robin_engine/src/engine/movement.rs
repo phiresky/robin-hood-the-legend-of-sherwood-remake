@@ -4469,6 +4469,7 @@ impl EngineInner {
         // abort signal and must be marked Impossible after the entity
         // borrow ends.
         let mut blocked_impossible: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
+        let mut door_pass_transition_start_effects: Vec<EntityId> = Vec::new();
         let mut door_pass_transition_done_effects: Vec<EntityId> = Vec::new();
         let mut door_pass_transition_completion_effects: Vec<EntityId> = Vec::new();
         let mut post_seek_arrivals: Vec<(EntityId, crate::sequence::SequenceId, usize)> =
@@ -5331,6 +5332,16 @@ impl EngineInner {
                 executed_pc_movement_actions.push((entity_id, order_action));
             }
             if door_pass_anim.is_some()
+                && matches!(motion_state, MotionState::Start)
+                && matches!(
+                    anim,
+                    OrderType::TransitionClimbingLadderUpWaitingCrouched
+                        | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
+                )
+            {
+                door_pass_transition_start_effects.push(entity_id);
+            }
+            if door_pass_anim.is_some()
                 && matches!(motion_state, MotionState::Done)
                 && matches!(
                     anim,
@@ -5340,6 +5351,8 @@ impl EngineInner {
                         | OrderType::TransitionWaitingCrouchedClimbingWallDown
                         | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
                         | OrderType::TransitionClimbingWallDownWaitingUpright
+                        | OrderType::TransitionClimbingLadderUpWaitingCrouched
+                        | OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
                 )
             {
                 door_pass_transition_done_effects.push(entity_id);
@@ -6386,6 +6399,9 @@ impl EngineInner {
                     actor.action_state = action_state;
                 }
             }
+        }
+        for entity_id in door_pass_transition_start_effects {
+            self.apply_door_pass_transition_start_side_effects(assets, entity_id);
         }
         for entity_id in door_pass_transition_done_effects {
             self.apply_door_pass_transition_done_side_effects(assets, entity_id);

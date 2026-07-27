@@ -4514,8 +4514,65 @@ impl EngineInner {
                     }
                 }
             }
+            OT::TransitionClimbingLadderUpWaitingCrouched
+            | OT::TransitionClimbingLadderUpWaitingUprightAlerted => {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
+                    entity.set_posture(if is_pc {
+                        Posture::Crouched
+                    } else {
+                        Posture::Upright
+                    });
+                    if let Some(actor) = entity.actor_data_mut() {
+                        actor.action_state = ActionState::Waiting;
+                    }
+                }
+            }
             _ => {}
         }
+    }
+
+    pub(super) fn apply_door_pass_transition_start_side_effects(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        use crate::coordinates::MapPoint;
+        use crate::order::OrderType as OT;
+
+        let (door_index, action) = self
+            .get_entity(entity_id)
+            .and_then(|entity| entity.actor_data())
+            .and_then(|actor| {
+                actor
+                    .active_door_pass
+                    .as_ref()
+                    .map(|pass| (pass.door_index, pass.current_action))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "queued PassDoor transition START effect for {entity_id:?} has no active pass"
+                )
+            });
+        assert!(
+            matches!(
+                action,
+                OT::TransitionClimbingLadderUpWaitingCrouched
+                    | OT::TransitionClimbingLadderUpWaitingUprightAlerted
+            ),
+            "queued PassDoor ladder START effect for {entity_id:?} has action {action:?}"
+        );
+
+        let door = required_canonical_door(
+            &self.script_domains.interactables.doors,
+            door_index,
+            "PassDoor transition START",
+        );
+        let midpoint = MapPoint::new(door.point_mid.x, door.point_mid.y);
+        // These two ladder-exit transition Execute arms align the actor to
+        // the gate midpoint on raw RHMOTION_START.  This is a positional
+        // alignment only: the later PassingDoor order remains responsible
+        // for changing sector/layer membership.
+        self.set_transition_position_map_and_compute_position_all(assets, entity_id, midpoint);
     }
 
     fn set_transition_position_map_and_compute_position_all(
@@ -4531,7 +4588,7 @@ impl EngineInner {
             None,
             None,
             Some(point),
-            "wall transition",
+            "door transition",
         );
     }
 
