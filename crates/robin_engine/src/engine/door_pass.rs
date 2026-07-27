@@ -1047,7 +1047,6 @@ impl PassDoorLaunchContext<'_> {
         order.tolerance = tolerance;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-        apply_door_pass_continue_state(self.entities, self.fast_grid, entity_id, action);
         let actor = self
             .entities
             .get_mut(entity_id)
@@ -1057,12 +1056,6 @@ impl PassDoorLaunchContext<'_> {
                     "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
                 )
             });
-        actor.action_state = match action {
-            OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
-            OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
-            OrderType::RunningUpright => crate::element::ActionState::MovingFast,
-            _ => crate::element::ActionState::Moving,
-        };
         actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
         actor.passing_door_directly = active_door_pass.direct;
         actor.active_door_pass = Some(active_door_pass);

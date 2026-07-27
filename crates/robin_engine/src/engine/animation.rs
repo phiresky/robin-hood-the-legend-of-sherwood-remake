@@ -3566,7 +3566,7 @@ impl EngineInner {
         // order stored in `RHSequenceElementMovement` belongs to the separate
         // movement driver. This distinction covers movement-exit animations,
         // injuries, waits, and interactions without a command allowlist.
-        let selected_nonmovement_order = self
+        let selected_generic_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
@@ -3574,7 +3574,10 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
-                    .map(|element| !element.data.is_movement())
+                    .map(|element| {
+                        !element.data.is_movement()
+                            || matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
+                    })
             })
             .unwrap_or(false);
         let (
@@ -3603,7 +3606,7 @@ impl EngineInner {
                         | crate::element::ActionState::MovingFastSword
                         | crate::element::ActionState::MovingShield
                 ))
-                && !selected_nonmovement_order
+                && !selected_generic_order
             {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
@@ -3920,7 +3923,7 @@ impl EngineInner {
                             | crate::element::ActionState::MovingFastSword
                             | crate::element::ActionState::MovingShield
                     ))
-                    && !selected_nonmovement_order
+                    && !selected_generic_order
                 {
                     break 'actor;
                 }
