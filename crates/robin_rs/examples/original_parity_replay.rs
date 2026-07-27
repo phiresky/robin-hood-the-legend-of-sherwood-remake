@@ -264,16 +264,22 @@ enum TraceCommand {
         actor: TraceEntityId,
         target: TraceEntityId,
         original_command: u16,
+        #[serde(default)]
+        original_command_name: Option<String>,
         running: bool,
     },
     LaunchSelfAbility {
         actor: TraceEntityId,
         original_command: u16,
+        #[serde(default)]
+        original_command_name: Option<String>,
     },
     SwordStrike {
         actor: TraceEntityId,
         target: TraceEntityId,
         original_command: u16,
+        #[serde(default)]
+        original_command_name: Option<String>,
         with_seek: bool,
     },
     SelectPc {
@@ -404,29 +410,44 @@ impl TraceCommand {
                 actor,
                 target,
                 original_command,
+                original_command_name,
                 running,
             } => PlayerCommand::LaunchInteraction {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
-                command: original_command_to_rust(original_command),
+                command: decode_original_command(
+                    original_command,
+                    original_command_name.as_deref(),
+                    schema,
+                ),
                 running,
             },
             Self::LaunchSelfAbility {
                 actor,
                 original_command,
+                original_command_name,
             } => PlayerCommand::LaunchSelfAbility {
                 actor: entity_map.translate(actor),
-                command: original_command_to_rust(original_command),
+                command: decode_original_command(
+                    original_command,
+                    original_command_name.as_deref(),
+                    schema,
+                ),
             },
             Self::SwordStrike {
                 actor,
                 target,
                 original_command,
+                original_command_name,
                 with_seek,
             } => PlayerCommand::SwordStrikeCmd {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
-                command: original_command_to_rust(original_command),
+                command: decode_original_command(
+                    original_command,
+                    original_command_name.as_deref(),
+                    schema,
+                ),
                 with_seek,
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
@@ -460,6 +481,46 @@ impl TraceCommand {
             },
         })
     }
+}
+
+fn decode_original_command(value: u16, name: Option<&str>, schema: u32) -> Command {
+    match name {
+        Some(name) => command_from_stable_name(name),
+        None if schema == 2 => original_command_to_rust(value),
+        None => panic!("schema {schema} RHcommand {value} lacks a stable semantic name"),
+    }
+}
+
+fn command_from_stable_name(name: &str) -> Command {
+    let rust_name = match name {
+        "camera_jumpto" => "CameraJumpTo".to_owned(),
+        // Original calls the low-level rolling movement ROLL and the
+        // contextual player ability JUMP. Rust's historical names are Jump
+        // and JumpCmd respectively.
+        "roll" => "Jump".to_owned(),
+        "jump" => "JumpCmd".to_owned(),
+        "search" => "SearchCmd".to_owned(),
+        "hit" => "HitCmd".to_owned(),
+        "heal" => "HealCmd".to_owned(),
+        "eat" => "EatCmd".to_owned(),
+        "tie" => "TieCmd".to_owned(),
+        "strangle" => "StrangleCmd".to_owned(),
+        "whistle" => "WhistleCmd".to_owned(),
+        "launch_postseek" => "LaunchPostSeek".to_owned(),
+        "launch_quickaction" => "LaunchQuickAction".to_owned(),
+        other => other
+            .split('_')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                    None => String::new(),
+                }
+            })
+            .collect(),
+    };
+    serde_json::from_value(serde_json::Value::String(rust_name))
+        .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
 /// Convert only legacy values whose semantic names have been verified against
@@ -571,6 +632,8 @@ struct TraceActor {
     action_state: u32,
     animation: u32,
     command: u16,
+    #[serde(default)]
+    command_name: Option<String>,
     motion_state: u32,
     wait_time: u32,
 }
@@ -1080,7 +1143,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("after Rust frame 1", &engine, &frame, map);
         }
 
-        let differences = compare_frame(&engine, &frame, map);
+        let differences = compare_frame(&engine, &frame, map, header.schema);
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -2120,7 +2183,12 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
     }
 }
 
-fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) -> Vec<String> {
+fn compare_frame(
+    engine: &Engine,
+    frame: &TraceFrame,
+    entity_map: &EntityMap,
+    schema: u32,
+) -> Vec<String> {
     let mut differences = Vec::new();
     let selected: Vec<EntityId> = frame
         .selected_pcs
@@ -2273,7 +2341,14 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 &mut differences,
                 id,
                 "actor.command",
-                original_active_command_to_rust(expected_actor.command),
+                match expected_actor.command_name.as_deref() {
+                    Some(name) => command_from_stable_name(name),
+                    None if schema == 2 => original_active_command_to_rust(expected_actor.command),
+                    None => panic!(
+                        "schema {schema} actor RHcommand {} lacks a stable semantic name",
+                        expected_actor.command
+                    ),
+                },
                 engine.actor_command(id),
             );
         }
@@ -2446,6 +2521,9 @@ mod tests {
     fn original_equip_bow_command_maps_by_semantic_name() {
         assert_eq!(original_active_command_to_rust(29), Command::EquipBow);
         assert_eq!(Action::from(TraceAction::Bow), Action::Bow);
+        assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
+        assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
+        assert_eq!(command_from_stable_name("roll"), Command::Jump);
     }
 
     #[test]
