@@ -699,9 +699,9 @@ pub struct ActorData {
     pub active_flight: Option<ActiveFlight>,
 
     // -- Lift climb state --
-    /// If the actor is currently mid-climb on a wall-or-ladder lift sector,
-    /// which sector and which direction. Set at WAIT_FREE_LIFT entry,
-    /// cleared on the corresponding door-pass exit. Used by
+    /// If the actor currently owns a ladder-lift reservation, which sector
+    /// and which direction. Set at WAIT_FREE_LIFT entry (wall routes do not
+    /// contain that action), cleared on the corresponding door-pass exit. Used by
     /// `translate_ladder_wall_fall` to decrement the sector occupancy
     /// counter when a climber gets shoved off.
     pub active_lift: Option<ActiveLiftClimb>,

@@ -4837,6 +4837,14 @@ impl EngineInner {
         // coin pickup, remarks, blood-alcohol bump).
         let sides = outcomes.execute_sides;
 
+        for _pc_id in sides.stature_change_end {
+            self.orders.messenger.send(crate::messenger::Message::new(
+                crate::messenger::MessageType::Simple(
+                    crate::messenger::SimpleMessage::StatureChangeEnd,
+                ),
+            ));
+        }
+
         for (entity_id, anim_type) in sides.weak_stunned_start {
             self.add_weak_stunned_combat(
                 entity_id,

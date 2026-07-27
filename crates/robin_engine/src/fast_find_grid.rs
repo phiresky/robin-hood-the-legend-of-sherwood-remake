@@ -797,10 +797,11 @@ impl LiftRuntimeState {
             self.occupied_downwards = true;
             self.wait_time = 100;
         } else {
-            self.occupants = self
-                .occupants
-                .checked_sub(1)
-                .expect("cannot release an unoccupied downward lift");
+            // The Original decrements its UWORD and then interprets the
+            // result as signed, clamping an underflowed zero back to zero.
+            // Wall routes deliberately exercise that behavior because,
+            // unlike ladder routes, they do not reserve the lift first.
+            self.occupants = self.occupants.saturating_sub(1);
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -816,10 +817,9 @@ impl LiftRuntimeState {
             self.occupied_upwards = true;
             self.wait_time = 80;
         } else {
-            self.occupants = self
-                .occupants
-                .checked_sub(1)
-                .expect("cannot release an unoccupied upward lift");
+            // See `set_occupied_downwards`: an unmatched release is an
+            // intentional no-op in the Original's counter arithmetic.
+            self.occupants = self.occupants.saturating_sub(1);
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -3361,15 +3361,37 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "cannot release an unoccupied downward lift")]
-    fn downward_lift_release_requires_a_live_reservation() {
-        LiftRuntimeState::default().set_occupied_downwards(false);
+    fn downward_lift_release_clamps_an_unreserved_wall_route_to_zero() {
+        let mut lift = LiftRuntimeState {
+            occupied_downwards: true,
+            occupied_upwards: true,
+            wait_time: 100,
+            ..LiftRuntimeState::default()
+        };
+
+        lift.set_occupied_downwards(false);
+
+        assert_eq!(lift.occupants, 0);
+        assert!(!lift.occupied_downwards);
+        assert!(!lift.occupied_upwards);
+        assert_eq!(lift.wait_time, 0);
     }
 
     #[test]
-    #[should_panic(expected = "cannot release an unoccupied upward lift")]
-    fn upward_lift_release_requires_a_live_reservation() {
-        LiftRuntimeState::default().set_occupied_upwards(false);
+    fn upward_lift_release_clamps_an_unreserved_wall_route_to_zero() {
+        let mut lift = LiftRuntimeState {
+            occupied_downwards: true,
+            occupied_upwards: true,
+            wait_time: 80,
+            ..LiftRuntimeState::default()
+        };
+
+        lift.set_occupied_upwards(false);
+
+        assert_eq!(lift.occupants, 0);
+        assert!(!lift.occupied_downwards);
+        assert!(!lift.occupied_upwards);
+        assert_eq!(lift.wait_time, 0);
     }
 
     fn make_grid_with_line() -> FastFindGrid {

@@ -267,6 +267,41 @@ mod tests {
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
     }
 
+    #[test]
+    fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
+        for motion in [MotionState::Done, MotionState::Terminated] {
+            let mut pc = Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    posture: Posture::Crouched,
+                    ..Default::default()
+                },
+                actor: crate::element::ActorData {
+                    action_state: ActionState::Waiting,
+                    ..Default::default()
+                },
+                human: Default::default(),
+                pc: Default::default(),
+            });
+
+            apply_active_animation_start_state_side_effect(
+                &mut pc,
+                OrderType::TransitionCrouchingUp,
+                motion,
+            );
+            assert_eq!(pc.element_data().posture, Posture::Upright);
+            assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+
+            apply_active_animation_start_state_side_effect(
+                &mut pc,
+                OrderType::TransitionCrouchingDown,
+                motion,
+            );
+            assert_eq!(pc.element_data().posture, Posture::Crouched);
+            assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+        }
+    }
+
     fn civilian_actor() -> Entity {
         Entity::Civilian(ActorCivilian {
             element: ElementData {
@@ -1496,6 +1531,10 @@ pub(super) struct ExecuteSideOutcomes {
     /// PCs leaving cape/tree disguise remove their Hidden titbit when
     /// the transition reaches DONE.
     pub hidden_titbit_removals: Vec<EntityId>,
+    /// PCs whose crouch posture transition reached DONE or TERMINATED.
+    /// Original forwards the unparameterized stature-change notification
+    /// from both terminal switch arms.
+    pub stature_change_end: Vec<EntityId>,
 }
 
 /// Apply the soldier-specific side effects triggered on each motion-state
@@ -2131,6 +2170,20 @@ fn apply_active_animation_start_state_side_effect(
             OrderType::TransitionWalkingCrouchedWaitingCrouched,
             MotionState::Done | MotionState::Terminated,
         ) => {
+            entity.set_posture(Posture::Crouched);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (OrderType::TransitionCrouchingUp, MotionState::Done | MotionState::Terminated) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (OrderType::TransitionCrouchingDown, MotionState::Done | MotionState::Terminated) => {
             entity.set_posture(Posture::Crouched);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
@@ -4227,6 +4280,8 @@ impl EngineInner {
                                 | OrderType::UnlockingTrap
                                 | OrderType::BeingUnconsciousSword
                                 | OrderType::TransitionCarryingCorpseWaitingUpright
+                                | OrderType::TransitionCrouchingUp
+                                | OrderType::TransitionCrouchingDown
                                 | OrderType::TransitionWaitingUprightClimbingWallUp
                                 | OrderType::TransitionClimbingWallUpWaitingCrouched
                                 | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
@@ -4449,6 +4504,19 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                         );
+                        if entity.is_pc()
+                            && matches!(
+                                anim_type,
+                                OrderType::TransitionCrouchingUp
+                                    | OrderType::TransitionCrouchingDown
+                            )
+                            && matches!(motion_state, MotionState::Done | MotionState::Terminated)
+                        {
+                            completion_outcomes
+                                .execute_sides
+                                .stature_change_end
+                                .push(entity_id);
+                        }
                         apply_taking_net_side_effect(
                             anim_type,
                             motion_state,

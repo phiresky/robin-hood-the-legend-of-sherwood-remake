@@ -1106,7 +1106,7 @@ impl EngineInner {
         // ── First trigger: perform the layer/sector change ──
 
         // Snapshot door data before mutable borrows.
-        let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
+        let (target_layer, target_sector_num, _door_type, is_lift_high, door_point_out) = {
             let door = self
                 .script_domains
                 .interactables
@@ -1318,15 +1318,10 @@ impl EngineInner {
                         .unwrap_or(false)
                 {
                     let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
-                    st.occupants = st.occupants.checked_sub(1).unwrap_or_else(|| {
-                        panic!(
-                            "PassDoor owner {entity_id:?} left unoccupied lift sector {cur_sector_num} through door {door_index}"
-                        )
-                    });
-                    if st.occupants == 0 {
-                        st.occupied_upwards = false;
-                        st.occupied_downwards = false;
-                        st.wait_time = 0;
+                    if is_lift_high {
+                        st.set_occupied_upwards(false);
+                    } else {
+                        st.set_occupied_downwards(false);
                     }
                 }
                 // Clear the actor's active_lift marker — they're no
