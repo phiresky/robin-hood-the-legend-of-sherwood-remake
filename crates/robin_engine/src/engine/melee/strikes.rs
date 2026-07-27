@@ -81,35 +81,6 @@ fn is_falling_flight_order(order_type: crate::order::OrderType) -> bool {
     )
 }
 
-/// Apply the state boundary owned by `ExecuteFallingPushed` when its flight
-/// terminates before the animation driver has observed the same terminal
-/// motion event.
-///
-/// Falling-hit flights use `(Flying, Moving)`, while pushed flights use
-/// `(Flying, WaitingSword)`, so the pair identifies the pushed execute path
-/// without adding a second serialized flight-kind flag. If the animation
-/// driver already applied its wrapper-specific landing state, this is a
-/// no-op and does not overwrite that wrapper result.
-fn finish_falling_pushed_if_in_flight(entity: &mut Entity) -> bool {
-    let is_falling_pushed = entity.element_data().posture == Posture::Flying
-        && entity
-            .actor_data()
-            .is_some_and(|actor| actor.action_state == ActionState::WaitingSword);
-    if !is_falling_pushed {
-        return false;
-    }
-
-    entity.set_posture(if entity.is_dead() {
-        Posture::DeadBack
-    } else {
-        Posture::Lying
-    });
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = ActionState::WaitingSword;
-    }
-    true
-}
-
 impl EngineInner {
     fn begin_selected_melee_motion(
         &mut self,
@@ -1407,6 +1378,7 @@ impl EngineInner {
             attacker_id: EntityId,
             attacker_pos: (f32, f32),
             sweep: crate::movement::SweepState,
+            rotation_complete_on_entry: bool,
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
@@ -1424,6 +1396,7 @@ impl EngineInner {
                 sweeps.push(ActiveSweep {
                     attacker_id: entity_id.into(),
                     attacker_pos: (pos.x, pos.y),
+                    rotation_complete_on_entry: sweep_rotation_complete(sweep),
                     sweep: sweep.clone(),
                 });
             }
@@ -1568,12 +1541,21 @@ impl EngineInner {
             if let Some(entity) = self.world.entities.get_mut(active.attacker_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
-                let keep_for_rotation = true_sweep_still_rotating(&active.sweep);
+                let true_sweep = matches!(
+                    active.sweep.strike_kind,
+                    WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
+                );
+                // An incomplete true sweep remains live while rotating. If
+                // this tick's tail reaches the final angle, the same rule
+                // retains it once more so the next Execute call can present
+                // that terminal direction before clearing it.
+                let keep_for_terminal_execute = true_sweep && !active.rotation_complete_on_entry;
                 // Circle effects test victims before their tail advance. If
                 // that advance reaches the final angle, retain pending
-                // victims for the next Hourglass so the final sector is
-                // observable before the state is cleared.
-                if active.sweep.pending_victims.is_empty() && !keep_for_rotation {
+                // victims and true-circle rotation state for the next
+                // Hourglass so the final sector is observable before the
+                // state is cleared.
+                if active.sweep.pending_victims.is_empty() && !keep_for_terminal_execute {
                     actor.sweep_state = None;
                 } else {
                     actor.sweep_state = Some(active.sweep);
@@ -1693,15 +1675,25 @@ impl EngineInner {
             // driven by a plane) is preserved exactly as before.
             let tracks_z = flight.increment_z != 0.0 || flight.obstacle.is_some();
 
-            if flight.frames_remaining <= 1 {
-                // Final frame — snap to goal position / layer /
-                // sector on landing.
-                let is_falling_pushed = flight.antagonist.is_some()
-                    && entity.element_data().posture == Posture::Flying
-                    && entity
-                        .actor_data()
-                        .is_some_and(|actor| actor.action_state == ActionState::WaitingSword);
-                if tracks_z || is_falling_pushed {
+            if flight.frames_remaining == 0 {
+                // Combat falls retain their flight state at the geometric
+                // goal until the sprite reports TERMINATED. The animation
+                // handler changes posture first; only then does Original
+                // apply the goal obstacle/layer/sector and refresh script
+                // sectors.
+                if flight.antagonist.is_some() && entity.element_data().posture != Posture::Flying {
+                    entity.element_data_mut().set_layer(flight.goal_layer);
+                    entity.element_data_mut().set_sector(flight.goal_sector);
+                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
+                    refresh_script_sectors = true;
+                    entity.actor_data_mut().unwrap().active_flight = None;
+                }
+            } else if flight.frames_remaining == 1 {
+                // PerformFlight's final non-zero increment reaches the goal,
+                // but does not perform the terminal landing bookkeeping.
+                // Zero the increments so the following DONE hold frame does
+                // not repeat movement or domino checks.
+                if tracks_z || flight.antagonist.is_some() {
                     entity
                         .position_iface_mut()
                         .set_position(crate::coordinates::WorldPoint3D {
@@ -1709,9 +1701,6 @@ impl EngineInner {
                             y: flight.goal_y + flight.goal_z,
                             z: flight.goal_z,
                         });
-                    entity.element_data_mut().set_layer(flight.goal_layer);
-                    entity.element_data_mut().set_sector(flight.goal_sector);
-                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
                 } else {
                     entity
                         .element_data_mut()
@@ -1721,12 +1710,24 @@ impl EngineInner {
                         });
                 }
                 if flight.antagonist.is_some() {
-                    refresh_script_sectors = true;
+                    let active = entity
+                        .actor_data_mut()
+                        .unwrap()
+                        .active_flight
+                        .as_mut()
+                        .unwrap();
+                    active.frames_remaining = 0;
+                    active.increment_x = 0.0;
+                    active.increment_y = 0.0;
+                    active.increment_z = 0.0;
+                } else {
+                    // Non-combat translations have no wrapper termination
+                    // event that owns a later landing edge.
+                    entity.element_data_mut().set_layer(flight.goal_layer);
+                    entity.element_data_mut().set_sector(flight.goal_sector);
+                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
+                    entity.actor_data_mut().unwrap().active_flight = None;
                 }
-                if is_falling_pushed {
-                    finish_falling_pushed_if_in_flight(entity);
-                }
-                entity.actor_data_mut().unwrap().active_flight = None;
             } else {
                 // Advance by increment.  The per-frame increment in
                 // 3D is `(goal - position) / frames_of_flight`, so
@@ -2849,7 +2850,7 @@ mod tests {
     }
 
     #[test]
-    fn fatal_push_flight_terminates_dead_back_waiting_sword_and_updates_sector() {
+    fn fatal_push_goal_preserves_flying_pose_until_animation_terminates() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();
@@ -2858,18 +2859,43 @@ mod tests {
         engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
-        assert_eq!(victim.element_data().posture, Posture::DeadBack);
+        assert_eq!(victim.element_data().posture, Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+        assert_eq!(
+            victim.element_data().position_map(),
+            MapPoint::new(15.0, 20.0)
+        );
+        assert_eq!(victim.element_data().layer(), 1);
+        assert_eq!(victim.element_data().sector(), SectorHandle::new(2));
+        assert_eq!(
+            victim
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .unwrap()
+                .frames_remaining,
+            0
+        );
+
+        // The animation completion pass owns this transition. Its posture
+        // change lets the following PerformFlight tail apply landing
+        // metadata and clear the retained flight.
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .set_posture(Posture::DeadBack);
+        engine.tick_push_flights(sim, &LevelAssets::default());
+        let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().layer(), 3);
         assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
         assert!(victim.actor_data().unwrap().active_flight.is_none());
     }
 
     #[test]
-    fn knockout_push_flight_terminates_lying_waiting_sword() {
+    fn knockout_push_goal_preserves_flying_pose_until_animation_terminates() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut entity = falling_pushed_soldier(false);
@@ -2880,10 +2906,19 @@ mod tests {
         engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
-        assert_eq!(victim.element_data().posture, Posture::Lying);
+        assert_eq!(victim.element_data().posture, Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword
+        );
+        assert_eq!(
+            victim
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .unwrap()
+                .frames_remaining,
+            0
         );
     }
 

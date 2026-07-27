@@ -741,15 +741,9 @@ impl Sprite {
     /// Get the total tick count for an animation action — the sum of
     /// per-frame `wait_time` delays across every frame in the row.
     ///
-    /// The raw frame count from `num_frames_for_anim` returns how many
-    /// sprite frames exist, but the engine advances through each frame
-    /// `wait_time` game ticks at a time — so the number of physics
-    /// ticks the animation spans is the sum of the delays, not the
-    /// raw count.
-    ///
-    /// Used by `ActiveFlight` set-up code (push, roll, hit-fall,
-    /// ladder-wall fall) so the flight's per-frame increment is
-    /// paced to match how long the sprite actually plays.
+    /// Used by animation-driven mechanics such as rolling and ladder-wall
+    /// falls. Original `ReadyForTakeOff` callers use the distinct exact
+    /// helper below.
     pub fn total_ticks_for_anim(&self, action: OrderType) -> u16 {
         let Some(row) = self.row_for_action(action) else {
             return 0;
@@ -765,6 +759,27 @@ impl Sprite {
             // tick (the next frame tick fires), so clamp.
             let step = delay.max(1) as u32;
             total = total.saturating_add(step);
+        }
+        total.min(u16::MAX as u32) as u16
+    }
+
+    /// Exact `RHSprite::ReadyForTakeOff(RHFLIGHTSTYLE_DEFAULT)` duration.
+    ///
+    /// The Original starts at one tick and adds `GetWaitTime + 1` for
+    /// every sprite frame except the last.  Hit and pushed falls use this
+    /// duration; other animation-driven mechanics retain their own timing.
+    pub fn ready_for_takeoff_ticks_for_anim(&self, action: OrderType) -> u16 {
+        let Some(row) = self.row_for_action(action) else {
+            return 0;
+        };
+        let scripts = self.current_scripts();
+        let Some(script) = scripts.get(row as usize) else {
+            return 0;
+        };
+        let mut total: u32 = 1;
+        let nonterminal_frames = script.frame_ids.len().saturating_sub(1);
+        for &delay in script.delays.iter().take(nonterminal_frames) {
+            total = total.saturating_add(delay as u32 + 1);
         }
         total.min(u16::MAX as u32) as u16
     }
@@ -2046,6 +2061,18 @@ mod tests {
         assert_eq!(s.current_frame, 0);
         assert_eq!(s.frame_count, 0xFFFF);
         assert_eq!(s.last_action, OrderType::NonanimationEnd);
+    }
+
+    #[test]
+    fn ready_for_takeoff_duration_uses_legacy_frame_timing() {
+        let sprite = make_test_sprite();
+
+        // Four frames with wait time two:
+        // 1 + (2 + 1) + (2 + 1) + (2 + 1) = 10.
+        assert_eq!(
+            sprite.ready_for_takeoff_ticks_for_anim(OrderType::WaitingUprightBored),
+            10
+        );
     }
 
     #[test]

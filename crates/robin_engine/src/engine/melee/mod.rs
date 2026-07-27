@@ -2956,8 +2956,20 @@ mod tests {
                 .actor_data()
                 .unwrap()
                 .sweep_state
+                .is_some(),
+            "the tick that reaches the final angle must retain it for the terminal Execute call"
+        );
+
+        engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
                 .is_none(),
-            "empty true-circle sweep should clear once the rotation reaches the final angle"
+            "empty true-circle sweep should clear after presenting its terminal angle"
         );
     }
 

@@ -2233,7 +2233,7 @@ fn apply_pc_taking_side_effect(
 ///
 /// Identity for everything else (most order types play their own
 /// sprite anim).
-fn sprite_anim_for_order(
+pub(crate) fn sprite_anim_for_order(
     sprite: &crate::sprite::Sprite,
     effective_anim: OrderType,
     owner_is_pc: bool,

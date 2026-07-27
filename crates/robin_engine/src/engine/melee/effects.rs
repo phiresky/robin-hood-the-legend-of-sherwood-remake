@@ -973,9 +973,15 @@ impl EngineInner {
             let falling_anim = anims.map(|a| a.falling);
             let from_sprite = falling_anim
                 .and_then(|anim| {
-                    victim
-                        .map(|e| e.sprite())
-                        .map(|s| s.total_ticks_for_anim(anim))
+                    victim.map(|entity| {
+                        let sprite = entity.sprite();
+                        let concrete_anim = crate::engine::animation::sprite_anim_for_order(
+                            sprite,
+                            anim,
+                            entity.is_pc(),
+                        );
+                        sprite.ready_for_takeoff_ticks_for_anim(concrete_anim)
+                    })
                 })
                 .unwrap_or(0);
             if from_sprite > 1 { from_sprite } else { 8u16 }

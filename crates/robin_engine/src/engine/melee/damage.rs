@@ -1420,8 +1420,15 @@ impl EngineInner {
         let frames = {
             let from_sprite = self
                 .get_entity(victim_id)
-                .map(|e| e.sprite())
-                .map(|s| s.total_ticks_for_anim(anim))
+                .map(|entity| {
+                    let sprite = entity.sprite();
+                    let concrete_anim = crate::engine::animation::sprite_anim_for_order(
+                        sprite,
+                        anim,
+                        entity.is_pc(),
+                    );
+                    sprite.ready_for_takeoff_ticks_for_anim(concrete_anim)
+                })
                 .unwrap_or(0);
             if from_sprite > 1 { from_sprite } else { 8 }
         };
