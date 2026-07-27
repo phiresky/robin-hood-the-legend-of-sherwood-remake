@@ -479,6 +479,53 @@ fn parry_sword_queues_transition_and_hold_orders() {
 }
 
 #[test]
+fn parry_sword_terminates_when_either_parry_is_already_active() {
+    use crate::element::{ActionState, Command, Posture};
+
+    for (action_state, command, low) in [
+        (ActionState::ParryingSword, Command::ParrySword, false),
+        (ActionState::ParryingSwordLow, Command::ParrySword, false),
+        (ActionState::ParryingSword, Command::ParrySwordLow, true),
+        (ActionState::ParryingSwordLow, Command::ParrySwordLow, true),
+    ] {
+        let mut engine = EngineInner::new();
+        let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+        engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = action_state;
+
+        let seq_id =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    command,
+                    Some(soldier),
+                ));
+        engine.dispatch_parry_sword(soldier, low, seq_id, 0);
+
+        let elem = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("parry element remains available for its condolence");
+        assert_eq!(
+            elem.state,
+            crate::sequence::SequenceState::Terminated,
+            "{command:?} must terminate from {action_state:?}"
+        );
+        assert!(
+            elem.orders.is_empty(),
+            "an already-active parade must not receive another hold order"
+        );
+    }
+}
+
+#[test]
 fn stop_parry_sword_queues_exit_transition() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

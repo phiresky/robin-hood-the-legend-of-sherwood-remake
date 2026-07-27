@@ -456,22 +456,30 @@ impl EngineInner {
             return;
         }
 
-        if !matches!(
+        if matches!(
             actor.action_state,
             ActionState::ParryingSword | ActionState::ParryingSwordLow
         ) {
-            let transition = if low {
-                crate::order::OrderType::TransitionWaitingSwordParryingSwordLow
-            } else {
-                crate::order::OrderType::TransitionWaitingSwordParryingSword
-            };
-            let id = self.orders.allocate_order_id();
-            self.orders.sequence_manager.push_order_on(
-                seq_id,
-                elem_idx,
-                crate::order::Order::new(transition, 0.0, 0.0, id),
-            );
+            // Original terminates either parry command immediately when any
+            // parade is already active. It does not append another hold
+            // order, even when the requested low/normal variant differs.
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            return;
         }
+
+        let transition = if low {
+            crate::order::OrderType::TransitionWaitingSwordParryingSwordLow
+        } else {
+            crate::order::OrderType::TransitionWaitingSwordParryingSword
+        };
+        let id = self.orders.allocate_order_id();
+        self.orders.sequence_manager.push_order_on(
+            seq_id,
+            elem_idx,
+            crate::order::Order::new(transition, 0.0, 0.0, id),
+        );
 
         let hold = if low {
             crate::order::OrderType::ParryingLowSword
