@@ -5154,7 +5154,13 @@ impl EngineInner {
             let fast_sword_motion = action_state == crate::element::ActionState::MovingFastSword
                 || order_action == OrderType::RunningWithSword
                 || door_pass_anim == Some(OrderType::RunningWithSword);
-            let fast_climb_motion = is_fast_climb_action(anim);
+            // Fast climb is a non-animation dispatch token: the Original
+            // executes the ordinary climb sprite motion twice.  Lift
+            // translation above may therefore turn an already-authored fast
+            // token into its ordinary sprite action; retain the dispatch
+            // semantics from the sequence order itself.
+            let fast_climb_motion =
+                is_fast_climb_action(order_action) || is_fast_climb_action(anim);
             let motion_method = if is_transition_anim {
                 MotionMethod::TillLastFrame
             } else if fast_sword_motion {
