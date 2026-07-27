@@ -203,7 +203,12 @@ fn is_galopp_decision_frame(current_frame: u16, frame_count: u16) -> bool {
         frame_count > 0,
         "selected RunningUpright rider-charge animation has no frames"
     );
-    current_frame == frame_count - 1 || (frame_count >= 2 && current_frame == frame_count / 2 - 1)
+    // Original compares WORD values in an arithmetic expression, so C++
+    // promotes them to signed int. In particular, a one-frame animation's
+    // midpoint expression is -1 rather than an unsigned underflow.
+    let current_frame = i32::from(current_frame);
+    let frame_count = i32::from(frame_count);
+    current_frame == frame_count / 2 - 1 || current_frame == frame_count - 1
 }
 
 fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
