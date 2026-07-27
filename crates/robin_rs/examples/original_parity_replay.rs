@@ -34,9 +34,99 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 struct TraceHeader {
     mission: String,
+    proto_level: String,
     rng_seed: u64,
     schema: u32,
     synchronous_pathfinding: bool,
+    campaign: TraceCampaign,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceCampaign {
+    version: u32,
+    values: Vec<i32>,
+    ares: i8,
+    missions: Vec<TraceCampaignMission>,
+    accessible_mission_indices: Vec<usize>,
+    pending_accessible_mission_indices: Vec<usize>,
+    last_mission_index: Option<usize>,
+    current_mission_index: Option<usize>,
+    next_mission_index: Option<usize>,
+    blazon_mission_index: Option<usize>,
+    last_played_mission_indices: Vec<usize>,
+    last_pseudo_mission_status: u32,
+    last_pseudo_mission_id: u32,
+    characters: Vec<TraceCampaignCharacter>,
+    gang_indices: Vec<usize>,
+    reservist_indices: Vec<usize>,
+    mission_team_indices: Vec<usize>,
+    peasant_names: Vec<String>,
+    reservists_are_back: bool,
+    collected_relics: Vec<u32>,
+    production_sectors: Vec<TraceProductionSector>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceCampaignMission {
+    profile_index: u32,
+    profile_id: u32,
+    mission: String,
+    proto_level: String,
+    age: u16,
+    blazon_price: u16,
+    status: u32,
+    ares_state_succeeded: i8,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceCampaignCharacter {
+    profile_index: u32,
+    profile_name: String,
+    instanced: bool,
+    status: TracePcStatus,
+}
+
+#[derive(Debug, Deserialize)]
+struct TracePcStatus {
+    hand_to_hand: TraceSkill,
+    bow: TraceSkill,
+    life_points: i16,
+    in_coma: bool,
+    ales: u16,
+    arrows: u16,
+    apples: u16,
+    rations: u16,
+    stones: u16,
+    wasp_nests: u16,
+    nets: u16,
+    plants: u16,
+    purses: u16,
+    name: String,
+    beam_me_index_in_sherwood: i16,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceSkill {
+    capacity: u32,
+    experience: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceProductionSector {
+    r#type: u32,
+    speed: u16,
+    amount: u16,
+    produced_amount: u16,
+    max_amount_reached: bool,
+    occupants: Vec<TraceProductionOccupant>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceProductionOccupant {
+    character_index: usize,
+    x: TraceFloat,
+    y: TraceFloat,
+    obstacle: u16,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -911,9 +1001,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         (options, BufWriter::new(file))
     });
     let header = read_trace_header(&trace_path);
-    assert!(
-        matches!(header.schema, 2 | 3),
-        "unsupported parity trace schema {}",
+    assert_eq!(
+        header.schema, 4,
+        "unsupported parity trace schema {}; campaign-complete schema 4 is required",
         header.schema
     );
     let rng_domain_classifier = RngDomainClassifier::for_schema(header.schema);
@@ -980,7 +1070,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         all_rng_draws.len() >= prefix_end,
         "RNG pre-scan is shorter than prefix"
     );
-    let (mut engine, assets, host, background) = initialize_demo_engine(&header, all_rng_draws);
+    let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws);
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
     assert_eq!(
@@ -1910,7 +2000,257 @@ fn difference_field(difference: &str) -> &str {
         .map_or("other", |(field, _)| field)
 }
 
-fn initialize_demo_engine(
+fn restore_campaign(
+    trace: &TraceCampaign,
+    profiles: &robin_engine::profiles::ProfileManager,
+) -> robin_engine::campaign::Campaign {
+    use robin_engine::campaign::{Campaign, CampaignValue, PcDescription};
+    use robin_engine::mission::{Mission, MissionStatus};
+    use robin_engine::pc_status::{HumanStatus, PcStatus, Skill};
+    use robin_engine::profiles::CharacterProfileIdx;
+    use robin_engine::sector_production::{Occupant, SectorProduction, Type};
+
+    assert_eq!(trace.version, 1, "unsupported campaign snapshot version");
+    const VALUE_KEYS: [CampaignValue; 27] = [
+        CampaignValue::Amulets,
+        CampaignValue::Ransom,
+        CampaignValue::Score,
+        CampaignValue::Blazon,
+        CampaignValue::LivingSoldiers,
+        CampaignValue::DeadSoldiers,
+        CampaignValue::MissionLength,
+        CampaignValue::Custom1,
+        CampaignValue::Custom2,
+        CampaignValue::Custom3,
+        CampaignValue::Custom4,
+        CampaignValue::Custom5,
+        CampaignValue::Custom6,
+        CampaignValue::Custom7,
+        CampaignValue::Custom8,
+        CampaignValue::Custom9,
+        CampaignValue::Custom10,
+        CampaignValue::Custom11,
+        CampaignValue::Custom12,
+        CampaignValue::Custom13,
+        CampaignValue::Custom14,
+        CampaignValue::Custom15,
+        CampaignValue::Custom16,
+        CampaignValue::Custom17,
+        CampaignValue::Custom18,
+        CampaignValue::Custom19,
+        CampaignValue::Custom20,
+    ];
+    assert_eq!(
+        trace.values.len(),
+        VALUE_KEYS.len(),
+        "campaign value table has the wrong cardinality"
+    );
+
+    let mut campaign = Campaign::default();
+    for (key, value) in VALUE_KEYS.into_iter().zip(trace.values.iter().copied()) {
+        campaign.values[key] = value;
+    }
+    campaign.ares = trace.ares;
+    campaign.missions = trace
+        .missions
+        .iter()
+        .map(|source| {
+            let profile = profiles
+                .missions
+                .get(source.profile_index as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "campaign mission profile index {} is out of range",
+                        source.profile_index
+                    )
+                });
+            assert_eq!(profile.id, source.profile_id, "mission profile ID mismatch");
+            assert!(
+                profile
+                    .mission_filename
+                    .eq_ignore_ascii_case(&source.mission)
+                    && profile
+                        .proto_level_filename
+                        .eq_ignore_ascii_case(&source.proto_level),
+                "mission profile {} names disagree with trace {}/{}",
+                source.profile_index,
+                source.mission,
+                source.proto_level
+            );
+            Mission {
+                age: source.age,
+                blazon_price: source.blazon_price,
+                status: match source.status {
+                    0 => MissionStatus::Available,
+                    1 => MissionStatus::Won,
+                    2 => MissionStatus::Lost,
+                    other => panic!("invalid campaign mission status {other}"),
+                },
+                profile_idx: Some(source.profile_index),
+                ares_state_override: (source.ares_state_succeeded != profile.ares_state_succeeded)
+                    .then_some(source.ares_state_succeeded),
+            }
+        })
+        .collect();
+    let mission_count = campaign.missions.len();
+    let validate_mission_index = |index: usize| {
+        assert!(
+            index < mission_count,
+            "campaign mission index {index} is out of range {mission_count}"
+        );
+        index
+    };
+    campaign.accessible_mission_indices = trace
+        .accessible_mission_indices
+        .iter()
+        .copied()
+        .map(validate_mission_index)
+        .collect();
+    campaign.pending_accessible_mission_indices = trace
+        .pending_accessible_mission_indices
+        .iter()
+        .copied()
+        .map(validate_mission_index)
+        .collect();
+    campaign.last_mission_idx = trace.last_mission_index.map(validate_mission_index);
+    campaign.current_mission_idx = trace.current_mission_index.map(validate_mission_index);
+    campaign.next_mission_idx = trace.next_mission_index.map(validate_mission_index);
+    campaign.blazon_mission_idx = trace.blazon_mission_index.map(validate_mission_index);
+    campaign.last_played_mission_indices = trace
+        .last_played_mission_indices
+        .iter()
+        .copied()
+        .map(validate_mission_index)
+        .collect();
+    campaign.last_pseudo_mission_status = match trace.last_pseudo_mission_status {
+        0 => MissionStatus::Available,
+        1 => MissionStatus::Won,
+        2 => MissionStatus::Lost,
+        other => panic!("invalid last pseudo mission status {other}"),
+    };
+    campaign.last_pseudo_mission_id = trace.last_pseudo_mission_id;
+
+    campaign.characters = trace
+        .characters
+        .iter()
+        .map(|source| {
+            let profile = profiles
+                .characters
+                .get(source.profile_index as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "campaign character profile index {} is out of range",
+                        source.profile_index
+                    )
+                });
+            assert_eq!(
+                profile.profile_name, source.profile_name,
+                "character profile name mismatch"
+            );
+            PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(source.profile_index)),
+                instanced: source.instanced,
+                status: PcStatus {
+                    human_status: HumanStatus {
+                        hand_to_hand: Skill {
+                            capacity: source.status.hand_to_hand.capacity,
+                            experience: source.status.hand_to_hand.experience,
+                        },
+                        bow: Skill {
+                            capacity: source.status.bow.capacity,
+                            experience: source.status.bow.experience,
+                        },
+                    },
+                    life_points: source.status.life_points,
+                    in_coma: source.status.in_coma,
+                    num_ales: source.status.ales,
+                    num_arrows: source.status.arrows,
+                    num_apples: source.status.apples,
+                    num_rations: source.status.rations,
+                    num_stones: source.status.stones,
+                    num_wasp_nests: source.status.wasp_nests,
+                    num_nets: source.status.nets,
+                    num_plants: source.status.plants,
+                    num_purses: source.status.purses,
+                    name: source.status.name.clone(),
+                    name_override: None,
+                    beam_me_index_in_sherwood: source.status.beam_me_index_in_sherwood,
+                },
+            }
+        })
+        .collect();
+    let character_count = campaign.characters.len();
+    let validate_character_index = |index: usize| {
+        assert!(
+            index < character_count,
+            "campaign character index {index} is out of range {character_count}"
+        );
+        index
+    };
+    campaign.gang_indices = trace
+        .gang_indices
+        .iter()
+        .copied()
+        .map(validate_character_index)
+        .collect();
+    campaign.reservist_indices = trace
+        .reservist_indices
+        .iter()
+        .copied()
+        .map(validate_character_index)
+        .collect();
+    campaign.mission_team_indices = trace
+        .mission_team_indices
+        .iter()
+        .copied()
+        .map(validate_character_index)
+        .collect();
+    campaign.peasant_names = trace.peasant_names.clone();
+    campaign.reservists_are_back = trace.reservists_are_back;
+    campaign.collected_relics = trace.collected_relics.clone();
+    campaign.production_sectors = trace
+        .production_sectors
+        .iter()
+        .map(|source| SectorProduction {
+            prod_type: match source.r#type {
+                0 => Type::MakeArrow,
+                1 => Type::MakePurse,
+                2 => Type::MakeStone,
+                3 => Type::MakeApple,
+                4 => Type::MakeAle,
+                5 => Type::MakeLamblegg,
+                6 => Type::MakePlant,
+                7 => Type::MakeNet,
+                8 => Type::MakeWaspNest,
+                9 => Type::TrainBow,
+                10 => Type::TrainHandToHand,
+                11 => Type::Heal,
+                12 => Type::Relic,
+                other => panic!("invalid campaign production type {other}"),
+            },
+            script_zone: None,
+            speed: source.speed,
+            production_points: Vec::new(),
+            occupants: source
+                .occupants
+                .iter()
+                .map(|occupant| Occupant {
+                    pc_description_idx: validate_character_index(occupant.character_index),
+                    x: occupant.x.value(),
+                    y: occupant.y.value(),
+                    obstacle: occupant.obstacle,
+                })
+                .collect(),
+            amount: source.amount,
+            produced_amount: source.produced_amount,
+            max_amount_reached: source.max_amount_reached,
+        })
+        .collect();
+
+    campaign
+}
+
+fn initialize_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
 ) -> (
@@ -1919,11 +2259,6 @@ fn initialize_demo_engine(
     Host,
     robin_engine::engine::level_loading::PreDecodedBackground,
 ) {
-    assert_eq!(
-        header.mission, "Dem_Lei_MP",
-        "TODO: support mission setup other than the Leicester demo"
-    );
-
     let mut pm = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open(
         "Data/Configuration/profile.cpf",
@@ -1931,21 +2266,27 @@ fn initialize_demo_engine(
     )
     .expect("open profile.cpf");
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
+
+    let campaign = restore_campaign(&header.campaign, &pm);
+    let mission_idx = campaign
+        .current_mission_idx
+        .expect("recorded campaign has no current mission");
+    let current_profile = campaign.missions[mission_idx].profile(&pm);
+    assert!(
+        current_profile
+            .mission_filename
+            .eq_ignore_ascii_case(&header.mission)
+            && current_profile
+                .proto_level_filename
+                .eq_ignore_ascii_case(&header.proto_level),
+        "trace header mission/proto {}/{} disagrees with campaign current mission {}/{}",
+        header.mission,
+        header.proto_level,
+        current_profile.mission_filename,
+        current_profile.proto_level_filename
+    );
+
     let profiles = Arc::new(pm);
-
-    let mut campaign = robin_engine::campaign::Campaign::new();
-    campaign.reset(
-        &profiles,
-        robin_engine::player_profile::DifficultyLevel::Medium,
-    );
-    campaign.create_gang_from_pcs(
-        "RJMT",
-        &profiles,
-        robin_engine::player_profile::DifficultyLevel::Medium,
-    );
-    campaign.add_all_to_mission_team();
-    campaign.current_mission_idx = Some(1);
-
     let mut assets = LevelAssets::new();
     assets.profile_manager = profiles.clone();
     let mut host = Host::scratch(1024.0, 768.0);
@@ -1954,7 +2295,7 @@ fn initialize_demo_engine(
         .expect("initialize sprite bank");
     assets.bank_signature = host.frame_holder.signature();
 
-    let mission_name = campaign.missions[1]
+    let mission_name = campaign.missions[mission_idx]
         .profile(&profiles)
         .mission_filename
         .clone();

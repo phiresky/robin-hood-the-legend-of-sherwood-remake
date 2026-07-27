@@ -8,10 +8,14 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Trace: `original-code/parity-traces/original-demo-rng-baseline.jsonl`
-- Mission: `Dem_Lei_MP` / Leicester demo, 25 simulation ticks per second
-- Size: 1 header, 1 startup RNG-prefix record, and 1,469 gameplay frames
-- Original trace schema: 2
+- Required Original trace schema: 4
+- Required start state: a complete versioned campaign snapshot captured before
+  engine construction, including progression, mission state, gang/reservists/
+  mission team, character status and inventory, persistent production state,
+  relics, names, values, and campaign pointers encoded as stable indices
+- Compatibility: schemas 1–3 are deliberately rejected. Their mission-name
+  bootstrap cannot reconstruct an arbitrary campaign and can silently create a
+  plausible but different world.
 - Inputs: resolved game commands, applied on their recorded simulation frames
 - Start point: mission start; menu and raw input-device behavior are out of scope
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
@@ -24,8 +28,9 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-Both the normal first-divergence replay and the complete `--scan-all` pass match
-all 1,469 recorded gameplay frames.
+The first schema-4 expansion recording is pending. The schema-2/3 sessions
+below remain historical evidence for completed parity corrections, but are not
+accepted by the current replay runner.
 
 The current expansion trace is
 `original-code/parity-traces/original-demo-little-john-domino.jsonl`: schema 2,
@@ -48,7 +53,7 @@ reachability cache, whereas Rust performed the exact obstacle test. The cache
 has been removed from the Original; the next schema-3 capture supersedes this
 session for parity work after frame 451.
 
-The current schema-3 capture is
+The final schema-3 capture was
 `original-code/parity-traces/original-demo-schema3-session-3.jsonl`: 2,279
 contiguous gameplay frames (0 through 2,278), 6,197 simulation RNG draws
 including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
@@ -60,6 +65,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
+| Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 captures a neutral JSON campaign snapshot immediately before engine initialization and writes it into the trace header after initialization RNG has accumulated into the normal prefix. Rust requires schema 4, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Per-NPC records also expose all detection accumulators, maximum visibility, view/alert status, and every detectable's target, visibility, and edge latches, avoiding one-off instrumentation when a hidden perception total diverges. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3`, `a97c9dd`, and `8310b3e`. |
 | Done | Hidden validity and LOS diagnostics | Session 2 could not directly explain why Original rejected PC 198's frame-452 bow command: the target's hidden state, authoritative ammunition, identity gates, and the visibility query that maintained the hidden state were absent from the snapshot. | Schema 3 now records `blipped`, human camp/unconscious/VIP/civilian state, all nine PC inventory counters, and every opaque 3D reachability query with bit-exact endpoints, result, cache metadata, exact blocking reason, and blocker geometry where applicable. Original commits: `a9404d5` and `c6f83ca`. |
 | Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
