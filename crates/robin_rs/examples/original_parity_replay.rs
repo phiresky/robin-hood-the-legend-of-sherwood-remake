@@ -547,7 +547,7 @@ impl TraceCommand {
                 goal_layer,
             } => {
                 let destination: MapPoint = destination.into();
-                let goal_sector = if schema >= 6 {
+                let goal_override = if schema >= 6 {
                     let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
                         panic!("schema-{schema} group-move has negative sector index {goal_sector}")
                     });
@@ -568,11 +568,45 @@ impl TraceCommand {
                         })
                         .collect::<Vec<_>>();
                     match candidates.as_slice() {
-                        [sector] => sector.sector_number,
-                        [] => panic!(
-                            "schema-{schema} group-move raw sector index {raw_index} has no motion \
-                             area at {destination:?} on layer {goal_layer}"
-                        ),
+                        [sector] => Some((sector.sector_number, goal_layer)),
+                        [] => {
+                            let containing = engine
+                                .fast_grid()
+                                .level
+                                .sectors
+                                .iter()
+                                .filter(|sector| {
+                                    sector.layer == goal_layer && sector.contains_point(destination)
+                                })
+                                .collect::<Vec<_>>();
+                            match containing.as_slice() {
+                                [sector]
+                                    if sector.sector_type.is_door()
+                                        || sector.sector_type.is_jump() =>
+                                {
+                                    // Preserve semantic overlay selection.
+                                    // Re-running the ordinary spatial lookup
+                                    // lets perform_group_move use its canonical
+                                    // door/jump routing instead of collapsing
+                                    // the hit to an underlying motion area.
+                                    None
+                                }
+                                _ => panic!(
+                                    "schema-{schema} group-move raw sector index {raw_index} has no \
+                                     motion area at {destination:?} on layer {goal_layer}; containing \
+                                     semantic sectors: {:?}",
+                                    containing
+                                        .iter()
+                                        .map(|sector| (
+                                            sector.sector_number,
+                                            sector.sector_type,
+                                            sector.underlying_sector,
+                                            sector.door_index,
+                                        ))
+                                        .collect::<Vec<_>>()
+                                ),
+                            }
+                        }
                         many => panic!(
                             "schema-{schema} group-move raw sector index {raw_index} is ambiguous \
                              at {destination:?} on layer {goal_layer}: {:?}",
@@ -582,7 +616,7 @@ impl TraceCommand {
                         ),
                     }
                 } else {
-                    SectorNumber::new(goal_sector)
+                    Some((SectorNumber::new(goal_sector), goal_layer))
                 };
                 PlayerCommand::GroupMove {
                     actors: actors
@@ -592,7 +626,7 @@ impl TraceCommand {
                     destination,
                     running,
                     show_marker,
-                    goal_override: Some((goal_sector, goal_layer)),
+                    goal_override,
                 }
             }
             Self::LaunchInteraction {
