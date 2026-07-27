@@ -59,16 +59,16 @@ impl crate::engine::EngineInner {
     fn stop_selected_seek_for_refresh(
         &mut self,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        _seq_id: SequenceId,
+        _elem_idx: usize,
     ) {
-        if self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)
-            == Some((seq_id, elem_idx))
-            && let Some(entity) = self.get_entity_mut(owner)
-        {
+        // The initial Translate(SEEK) wrapper is semantically selected in
+        // Original before it reaches RefreshSeek, but Rust deliberately
+        // leaves ordered elements Todo until concrete movement dispatch.
+        // Therefore manager `current_element_for_actor` cannot recognize the
+        // initial wrapper here; the explicit sequence identity supplied by
+        // every caller is the authoritative selected Seek.
+        if let Some(entity) = self.get_entity_mut(owner) {
             entity.position_iface_mut().set_map_goal(MapPoint::ZERO);
         }
         self.stop_owner_active_mechanics(owner);
@@ -368,8 +368,12 @@ impl crate::engine::EngineInner {
             self.send_seek_stop_to_npc(target);
         }
 
+        // RefreshSeek's transient selected Seek is replaced by the concrete
+        // movement built by AppendMoveToSequence. Keep it as Move + SEEK
+        // flags rather than another Seek wrapper, otherwise ordered dispatch
+        // would recursively lower the replacement again.
         let mut new_elem =
-            SequenceElement::new_movement(1, crate::element::Command::Seek, Some(owner), action);
+            SequenceElement::new_movement(1, crate::element::Command::Move, Some(owner), action);
         if let SequenceElementData::Movement {
             flags: f,
             element,
@@ -800,7 +804,7 @@ mod tests {
         }
 
         let replacement =
-            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
         engine.relaunch_seek_replacement(owner, seek_seq, 0, replacement);
 
         assert_eq!(
@@ -837,7 +841,7 @@ mod tests {
             .sequence_manager
             .get_element(replacement_seq, 0)
             .expect("replacement Seek should remain queued for dispatch");
-        assert_eq!(replacement.command, Command::Seek);
+        assert_eq!(replacement.command, Command::Move);
         assert_eq!(replacement.state, SequenceState::Todo);
         assert!(
             engine

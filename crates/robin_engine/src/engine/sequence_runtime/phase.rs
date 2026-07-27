@@ -197,18 +197,30 @@ impl EngineInner {
             return;
         }
 
-        // Original `Translate(SEEK)` builds a separate concrete movement,
-        // interrupts the still-selected transient Seek, and only then launches
-        // that replacement. Its synchronous condolence card clears the old
-        // sprite goal while preserving the increment from this frame's actor
-        // pass. Rust flattens the wrapper into this element, so reproduce that
-        // selected-Seek side effect before preparing its concrete path. The
-        // first movement order installs its own goal when Execute runs on the
-        // next actor tick.
-        if is_seek && let Some(entity) = self.get_entity_mut(owner) {
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        // Original `Translate(SEEK) -> RefreshSeek` does not flatten the
+        // transient Seek into its concrete movement. It interrupts the
+        // selected wrapper, then appends a freshly-built movement to the
+        // sequence-manager's live FIFO. Keeping those as distinct elements is
+        // required for faithful state/cascade ownership even when other
+        // elements are already queued for this actor.
+        if is_seek {
+            let Some(replacement_data) = self
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .map(|element| element.data.clone())
+            else {
+                return;
+            };
+            let mut replacement = crate::sequence::SequenceElement::new_movement(
+                1,
+                Command::Move,
+                Some(owner),
+                action,
+            );
+            replacement.data = replacement_data;
+            self.relaunch_seek_replacement(owner, sequence_id, element_index, replacement);
+            return;
         }
 
         self.dispatch_prepared_move_instruction(

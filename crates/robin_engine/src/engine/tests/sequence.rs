@@ -422,15 +422,23 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
         MapPoint::ZERO,
         "Original interrupts its selected transient Seek before launching the concrete movement"
     );
-    let seek = engine
+    let transient_seek = engine
         .orders
         .sequence_manager
         .get_element(seek_sequence, 0)
-        .expect("flattened concrete Seek movement remains selected");
-    assert_eq!(seek.state, SequenceState::InProgress);
-    assert_eq!(seek.command, Command::MoveOk);
+        .expect("transient Seek wrapper remains inspectable");
+    assert_eq!(transient_seek.state, SequenceState::Interrupted);
+
+    let concrete_sequence = crate::sequence::SequenceId(seek_sequence.0 + 1);
+    let concrete_seek = engine
+        .orders
+        .sequence_manager
+        .get_element(concrete_sequence, 0)
+        .expect("concrete seek movement should be launched separately");
+    assert_eq!(concrete_seek.state, SequenceState::InProgress);
+    assert_eq!(concrete_seek.command, Command::MoveOk);
     assert!(
-        seek.current_order().is_some(),
+        concrete_seek.current_order().is_some(),
         "the concrete movement is prepared, but its first Execute must install the new sprite goal"
     );
 }
