@@ -338,6 +338,11 @@ fn actor_line_crossing_eligible(
     posture != crate::element::Posture::Flying && !human_is_carried && inside_map
 }
 
+#[inline]
+fn stationary_motion_waits(speed: f32, tolerance_arrival: bool, distance: f32) -> bool {
+    speed <= 0.0 && !tolerance_arrival && distance > f32::EPSILON
+}
+
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
 ///
 /// Entity-target `PerformSeek` consumes non-terminal sprite results and returns
@@ -5793,11 +5798,14 @@ impl EngineInner {
                 continue;
             }
 
-            // Zero-distance animation ticks are still real PerformSeek
-            // calls.  The pre-motion tolerance branch must be allowed to
-            // finish the seek even though there is no sprite displacement
-            // to commit this frame.
-            if speed <= 0.0 && !tolerance_arrival {
+            // Zero-distance animation ticks are still real PerformSeek /
+            // PerformMotion calls. The pre-motion tolerance branch and an
+            // ordinary order whose destination already equals the actor's
+            // position both complete without sprite displacement. In
+            // particular, a freshly initialized exact-position walk returns
+            // TERMINATED in Original on that first Execute. Only defer a
+            // genuinely stationary motion that has not reached its goal.
+            if stationary_motion_waits(speed, tolerance_arrival, dist) {
                 continue;
             }
 
@@ -9306,6 +9314,22 @@ mod line_jump_tests {
             ),
             MotionState::Start,
             "running upright sets MovingFast after PerformSeek unconditionally"
+        );
+    }
+
+    #[test]
+    fn exact_goal_motion_does_not_wait_for_nonzero_animation_speed() {
+        assert!(
+            !stationary_motion_waits(0.0, false, 0.0),
+            "an exact-position walk must reach the shared arrival tail on its first Execute"
+        );
+        assert!(
+            stationary_motion_waits(0.0, false, 1.0),
+            "a stationary motion away from its goal must remain current"
+        );
+        assert!(
+            !stationary_motion_waits(0.0, true, 1.0),
+            "a pre-motion seek-tolerance arrival must complete without displacement"
         );
     }
 
