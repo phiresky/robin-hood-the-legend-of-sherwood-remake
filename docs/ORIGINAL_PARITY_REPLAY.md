@@ -37,7 +37,7 @@ target was not recorded. Expected after-state must not be fed back into replay,
 so this session cannot provide authoritative parity coverage after that point;
 the next schema-3 capture supersedes it.
 
-The current schema-3 capture is
+The superseded schema-3 session-2 capture is
 `original-code/parity-traces/original-demo-schema3-session-2.jsonl`: 1,814
 contiguous gameplay frames (0 through 1,813), 5,353 simulation RNG draws, 550
 audio RNG draws, and 130 resolved commands. It exercises the stable semantic
@@ -47,6 +47,14 @@ Original visibility had reused a result from its lossy 2,000-entry
 reachability cache, whereas Rust performed the exact obstacle test. The cache
 has been removed from the Original; the next schema-3 capture supersedes this
 session for parity work after frame 451.
+
+The current schema-3 capture is
+`original-code/parity-traces/original-demo-schema3-session-3.jsonl`: 2,279
+contiguous gameplay frames (0 through 2,278), 6,197 simulation RNG draws
+including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
+6,426 exact opaque visibility queries. All visibility queries correctly report
+`cache_hit: false`. Both the normal first-divergence replay and the independent
+`--scan-all` pass match the whole recording.
 
 ## Change ledger
 
