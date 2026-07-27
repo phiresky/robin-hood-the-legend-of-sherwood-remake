@@ -577,8 +577,15 @@ impl EngineInner {
                     current_direction,
                     &assets.hiking_paths,
                 );
+                // AssignNewPatrolPath synchronously runs
+                // Think(EVENT_RETURN_TO_DUTY), including GoTo and its
+                // LaunchSequenceElement call. Normal-priority Move does not
+                // call Go/Instruct inline, though: it remains registered for
+                // SequenceManager::Hourglass after the entity loop. Close the
+                // AI callback now, then materialize its pending Move sequence
+                // without instructing or executing it early.
                 self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
-                self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
+                self.drain_pending_move_requests_for_owner(owner);
                 Ok(0)
             }
         }
