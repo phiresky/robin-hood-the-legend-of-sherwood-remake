@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
 use robin_engine::coordinates::MapPoint;
+use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
 use robin_engine::graphic_config::TextureScaleMode;
@@ -244,6 +245,19 @@ impl From<TracePoint> for MapPoint {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct TracePoint3 {
+    x: TraceFloat,
+    y: TraceFloat,
+    z: TraceFloat,
+}
+
+impl From<TracePoint3> for WorldPoint3D {
+    fn from(value: TracePoint3) -> Self {
+        Self::new(value.x.value(), value.y.value(), value.z.value())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
@@ -293,6 +307,13 @@ enum TraceCommand {
         action: Option<TraceAction>,
         #[serde(default)]
         original_action: Option<u32>,
+    },
+    OrientActionAt {
+        action: TraceAction,
+        original_action: u32,
+        actor: TraceEntityId,
+        mouse_map: TracePoint,
+        target: TracePoint3,
     },
     MakePcFast {
         entity: TraceEntityId,
@@ -476,6 +497,18 @@ impl TraceCommand {
                     action,
                 }
             }
+            Self::OrientActionAt {
+                action,
+                original_action: _,
+                actor,
+                mouse_map,
+                target,
+            } => PlayerCommand::PerformResolvedOrientation {
+                pc_id: entity_map.translate(actor),
+                action: action.into(),
+                mouse_map: mouse_map.into(),
+                target: target.into(),
+            },
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
                 pc_id: entity_map.translate(entity),
             },
@@ -2524,6 +2557,38 @@ mod tests {
         assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
         assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
         assert_eq!(command_from_stable_name("roll"), Command::Jump);
+    }
+
+    #[test]
+    fn schema_three_resolved_orientation_is_bit_exact() {
+        let command: TraceCommand = serde_json::from_value(serde_json::json!({
+            "type": "orient_action_at",
+            "action": "bow",
+            "original_action": 1,
+            "actor": {"kind": "pc", "index": 198},
+            "mouse_map": {
+                "x": {"bits": 1065353216, "value": 1.0},
+                "y": {"bits": 1073741824, "value": 2.0}
+            },
+            "target": {
+                "x": {"bits": 1077936128, "value": 3.0},
+                "y": {"bits": 1082130432, "value": 4.0},
+                "z": {"bits": 1084227584, "value": 5.0}
+            }
+        }))
+        .unwrap();
+        let TraceCommand::OrientActionAt {
+            action,
+            mouse_map,
+            target,
+            ..
+        } = command
+        else {
+            panic!("wrong trace command variant");
+        };
+        assert!(matches!(action, TraceAction::Bow));
+        assert_eq!(MapPoint::from(mouse_map), MapPoint::new(1.0, 2.0));
+        assert_eq!(WorldPoint3D::from(target), WorldPoint3D::new(3.0, 4.0, 5.0));
     }
 
     #[test]

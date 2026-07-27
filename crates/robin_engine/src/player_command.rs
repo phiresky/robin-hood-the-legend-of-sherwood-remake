@@ -9,7 +9,7 @@
 //! and command types determined at resolution time.  During replay,
 //! the same commands are applied verbatim without re-resolving.
 
-use crate::coordinates::{MapPoint, ScreenPoint};
+use crate::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
 use crate::profiles::Action;
@@ -357,6 +357,14 @@ pub enum PlayerCommand {
     /// reproduce the same direction updates.
     PerformOrientation {
         mouse_map: MapPoint,
+    },
+    /// Apply a cursor-independent orientation operation already resolved by
+    /// an authoritative input producer.
+    PerformResolvedOrientation {
+        pc_id: EntityId,
+        action: Action,
+        mouse_map: MapPoint,
+        target: WorldPoint3D,
     },
 
     // ── Cheats ───────────────────────────────────────────────────

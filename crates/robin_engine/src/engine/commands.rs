@@ -697,6 +697,14 @@ impl EngineInner {
             PerformOrientation { mouse_map } => {
                 self.perform_orientation(assets, *mouse_map);
             }
+            PerformResolvedOrientation {
+                pc_id,
+                action,
+                mouse_map,
+                target,
+            } => {
+                self.perform_resolved_orientation(assets, *pc_id, *action, *mouse_map, *target);
+            }
 
             // ── Cheats ──────────────────────────────────────────
             SetGoldenEyeMode { on } => {
@@ -3720,6 +3728,20 @@ mod tests {
         }));
 
         (engine, assets, pc_id)
+    }
+
+    #[test]
+    fn resolved_throw_orientation_targets_only_the_recorded_pc() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Stone, 1)]);
+        let target = WorldPoint3D::new(0.0, 100.0, 0.0);
+
+        engine.perform_resolved_orientation(&assets, pc_id, Action::Stone, MapPoint::ZERO, target);
+
+        let element = engine.get_entity(pc_id).unwrap().element_data();
+        assert_eq!(
+            i16::from(element.sprite.position_iface.get_direction_goal().as_u8()),
+            crate::position_interface::vector_to_sector_0_to_15_iso(target.x, target.y)
+        );
     }
 
     fn setup_pc_engine_with_split_profile_and_status(

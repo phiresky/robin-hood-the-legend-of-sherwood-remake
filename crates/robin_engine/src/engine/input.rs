@@ -2643,6 +2643,17 @@ impl EngineInner {
         assets: &LevelAssets,
         target_3d: crate::coordinates::WorldPoint3D,
     ) {
+        for pc_id in self.players.seats[0].selection.clone() {
+            self.turn_pc_in_bow_aim(assets, pc_id, target_3d);
+        }
+    }
+
+    fn turn_pc_in_bow_aim(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        target_3d: crate::coordinates::WorldPoint3D,
+    ) {
         use crate::element::{ActionState, Command};
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
@@ -2653,90 +2664,66 @@ impl EngineInner {
             y: bow_ground_y(target_3d),
         };
 
-        let ids = self.players.seats[0].selection.clone();
-        let mut raise_lower: Vec<(EntityId, Command)> = Vec::new();
-
-        for pc_id in ids {
-            // Read-only gates first so we can consult `self` without
-            // holding a mutable borrow of `self.world.entities`.
-            let Some(entity) = self.get_entity(pc_id) else {
-                continue;
-            };
-            let Some(actor) = entity.actor_data() else {
-                continue;
-            };
-            let action_state = actor.action_state;
-            if !matches!(
-                action_state,
-                ActionState::AimingWithBow | ActionState::AimingWithBowUp
-            ) {
-                continue;
-            }
-
-            let current_anim = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(pc_id)
-                .map(|(_, _, o)| o.order_type);
-            if !matches!(
-                current_anim,
-                Some(
-                    OrderType::AimingWithBow
-                        | OrderType::AimingWithBowUp
-                        | OrderType::AimingWithBowAnonymous
-                        | OrderType::AimingWithBowUpAnonymous
-                )
-            ) {
-                continue;
-            }
-
-            if self
-                .orders
-                .sequence_manager
-                .element_is_about_to_be_launched(pc_id, Command::ShootBow)
-            {
-                continue;
-            }
-
-            let pos = entity.element_data().position();
-            let dx = ground_pt.x - pos.x;
-            let dy = ground_pt.y - bow_ground_y(pos);
-
-            // C++ turns toward ptFocusHotSpot before AimWithBowAt()
-            // resolves Normal vs Long.  The bow LOS check uses the
-            // shooter's current facing to compute the hand/bow point,
-            // so keep this order or upward/long aim can be evaluated
-            // from the previous direction.
-            if (dx != 0.0 || dy != 0.0)
-                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id)
-            {
-                pc.element
-                    .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
-                pc.element.sprite.position_iface.turn();
-            }
-
-            // C++ `AimWithBowAt` ignores the reachability return value
-            // from `CanShootWithBowAt` and uses the resolved shoot type
-            // anyway.  This still raises for out-of-range/blocked long
-            // shots so the aiming pose tracks the hovered point.
-            let (_bow_status, shoot_mode) =
-                self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
-            match (action_state, shoot_mode, current_anim) {
-                (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
-                    raise_lower.push((pc_id, Command::RaiseBow));
-                }
-                (
-                    ActionState::AimingWithBowUp,
-                    ShootMode::Normal,
-                    Some(OrderType::AimingWithBowUp),
-                ) => {
-                    raise_lower.push((pc_id, Command::LowerBow));
-                }
-                _ => {}
-            }
+        // Read-only gates first so we can consult `self` without holding a
+        // mutable borrow of `self.world.entities`.
+        let entity = self
+            .get_entity(pc_id)
+            .unwrap_or_else(|| panic!("resolved orientation PC {pc_id:?} is missing"));
+        let actor = entity
+            .actor_data()
+            .unwrap_or_else(|| panic!("resolved orientation owner {pc_id:?} is not an actor"));
+        let action_state = actor.action_state;
+        if !matches!(
+            action_state,
+            ActionState::AimingWithBow | ActionState::AimingWithBowUp
+        ) {
+            return;
         }
 
-        for (pc_id, cmd) in raise_lower {
+        let current_anim = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, o)| o.order_type);
+        if !matches!(
+            current_anim,
+            Some(
+                OrderType::AimingWithBow
+                    | OrderType::AimingWithBowUp
+                    | OrderType::AimingWithBowAnonymous
+                    | OrderType::AimingWithBowUpAnonymous
+            )
+        ) || self
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(pc_id, Command::ShootBow)
+        {
+            return;
+        }
+
+        let pos = entity.element_data().position();
+        let dx = ground_pt.x - pos.x;
+        let dy = ground_pt.y - bow_ground_y(pos);
+        if (dx != 0.0 || dy != 0.0)
+            && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id)
+        {
+            pc.element
+                .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
+            pc.element.sprite.position_iface.turn();
+        }
+
+        let (_bow_status, shoot_mode) =
+            self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
+        let command = match (action_state, shoot_mode, current_anim) {
+            (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
+                Some(Command::RaiseBow)
+            }
+            (ActionState::AimingWithBowUp, ShootMode::Normal, Some(OrderType::AimingWithBowUp)) => {
+                Some(Command::LowerBow)
+            }
+            _ => None,
+        };
+        if let Some(cmd) = command {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(pc_id));
             self.launch_element(elem);
         }
@@ -2745,131 +2732,164 @@ impl EngineInner {
     /// Throw-projectile branch (apple/stone/net/wasp-nest/purse):
     /// turn selected PCs not already playing a throw animation.
     fn turn_selected_pcs_throw(&mut self, ground_pt: GroundPoint) {
+        for pc_id in self.players.seats[0].selection.clone() {
+            self.turn_pc_throw(pc_id, ground_pt);
+        }
+    }
+
+    fn turn_pc_throw(&mut self, pc_id: EntityId, ground_pt: GroundPoint) {
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
 
-        let ids = self.players.seats[0].selection.clone();
-        for pc_id in ids {
-            // Skip when a throw animation is the front order of the
-            // actor's current sequence element.
-            let current_anim = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(pc_id)
-                .map(|(_, _, o)| o.order_type);
-            if matches!(
-                current_anim,
-                Some(
-                    OrderType::ThrowingApple
-                        | OrderType::ThrowingStone
-                        | OrderType::ThrowingNet
-                        | OrderType::ThrowingWaspNest
-                        | OrderType::ThrowingPurse
-                )
-            ) {
-                continue;
-            }
-            let Some(entity) = self.world.entities.get_mut(pc_id) else {
-                continue;
-            };
-            let Entity::Pc(pc) = entity else {
-                continue;
-            };
-            let pos = pc.element.position_map();
-            let dx = ground_pt.x - pos.x;
-            let dy = ground_pt.y - pos.y;
-            if dx == 0.0 && dy == 0.0 {
-                continue;
-            }
-            // Delta is world-space (ground-position to 3d mouse
-            // point); set the direction goal and rotate one step.
-            pc.element
-                .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
-            pc.element.sprite.position_iface.turn();
+        let current_anim = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, o)| o.order_type);
+        if matches!(
+            current_anim,
+            Some(
+                OrderType::ThrowingApple
+                    | OrderType::ThrowingStone
+                    | OrderType::ThrowingNet
+                    | OrderType::ThrowingWaspNest
+                    | OrderType::ThrowingPurse
+            )
+        ) {
+            return;
         }
+        let entity = self
+            .world
+            .entities
+            .get_mut(pc_id)
+            .unwrap_or_else(|| panic!("resolved orientation PC {pc_id:?} is missing"));
+        let Entity::Pc(pc) = entity else {
+            panic!("resolved orientation owner {pc_id:?} is not a PC");
+        };
+        let pos = pc.element.position_map();
+        let dx = ground_pt.x - pos.x;
+        let dy = ground_pt.y - pos.y;
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        pc.element
+            .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
+        pc.element.sprite.position_iface.turn();
     }
 
     /// HelpClimb branch: carrier flips 180°, climber faces the goal.
     fn turn_selected_pcs_help_climb(&mut self, mouse_map: MapPoint) {
+        for pc_id in self.players.seats[0].selection.clone() {
+            self.turn_pc_help_climb(pc_id, mouse_map);
+        }
+    }
+
+    fn turn_pc_help_climb(&mut self, pc_id: EntityId, mouse_map: MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15;
 
-        let ids = self.players.seats[0].selection.clone();
-        for pc_id in ids {
-            let Some(entity) = self.world.entities.get_mut(pc_id) else {
-                continue;
-            };
-            let Entity::Pc(pc) = entity else {
-                continue;
-            };
-            let pos = pc.element.position_map();
-            let dx = mouse_map.x - pos.x;
-            let dy = mouse_map.y - pos.y;
-            if dx == 0.0 && dy == 0.0 {
-                continue;
-            }
-            let posture = pc.element.posture;
-            let action_state = pc.actor.action_state;
-            let raw_dir = vector_to_sector_0_to_15(dx, dy);
-            let transition_active = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(pc_id)
-                .map(|(_, _, o)| {
-                    matches!(
-                        o.order_type,
-                        OrderType::TransitionHelpingClimbingDown
-                            | OrderType::TransitionHelpingClimbingUp
-                    )
-                })
-                .unwrap_or(false);
-            if posture == Posture::OnShoulders
-                && matches!(action_state, ActionState::Waiting | ActionState::Bored)
-                && !transition_active
-            {
-                // Carrier sets direction-goal only; the rotation is
-                // performed by the animation (no `turn()`).
-                pc.element.set_direction_goal((raw_dir + 8) & 15);
-            } else if posture != Posture::OnShoulders && posture != Posture::HelpingToClimb {
-                // Climber sets goal then advances one step toward it
-                // per frame.
-                pc.element.set_direction_goal(raw_dir);
-                pc.element.sprite.position_iface.turn();
-            }
+        let transition_active = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, o)| {
+                matches!(
+                    o.order_type,
+                    OrderType::TransitionHelpingClimbingDown
+                        | OrderType::TransitionHelpingClimbingUp
+                )
+            })
+            .unwrap_or(false);
+        let entity = self
+            .world
+            .entities
+            .get_mut(pc_id)
+            .unwrap_or_else(|| panic!("resolved orientation PC {pc_id:?} is missing"));
+        let Entity::Pc(pc) = entity else {
+            panic!("resolved orientation owner {pc_id:?} is not a PC");
+        };
+        let pos = pc.element.position_map();
+        let dx = mouse_map.x - pos.x;
+        let dy = mouse_map.y - pos.y;
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        let posture = pc.element.posture;
+        let action_state = pc.actor.action_state;
+        let raw_dir = vector_to_sector_0_to_15(dx, dy);
+        if posture == Posture::OnShoulders
+            && matches!(action_state, ActionState::Waiting | ActionState::Bored)
+            && !transition_active
+        {
+            pc.element.set_direction_goal((raw_dir + 8) & 15);
+        } else if posture != Posture::OnShoulders && posture != Posture::HelpingToClimb {
+            pc.element.set_direction_goal(raw_dir);
+            pc.element.sprite.position_iface.turn();
         }
     }
 
     /// Beggar branch: upright + idle PCs face the mouse.
     fn turn_selected_pcs_beggar(&mut self, mouse_map: MapPoint) {
+        for pc_id in self.players.seats[0].selection.clone() {
+            self.turn_pc_beggar(pc_id, mouse_map);
+        }
+    }
+
+    fn turn_pc_beggar(&mut self, pc_id: EntityId, mouse_map: MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::position_interface::vector_to_sector_0_to_15;
 
-        let ids = self.players.seats[0].selection.clone();
-        for pc_id in ids {
-            let Some(entity) = self.world.entities.get_mut(pc_id) else {
-                continue;
-            };
-            let Entity::Pc(pc) = entity else {
-                continue;
-            };
-            let pos = pc.element.position_map();
-            let dx = mouse_map.x - pos.x;
-            let dy = mouse_map.y - pos.y;
-            if dx == 0.0 && dy == 0.0 {
-                continue;
+        let entity = self
+            .world
+            .entities
+            .get_mut(pc_id)
+            .unwrap_or_else(|| panic!("resolved orientation PC {pc_id:?} is missing"));
+        let Entity::Pc(pc) = entity else {
+            panic!("resolved orientation owner {pc_id:?} is not a PC");
+        };
+        let pos = pc.element.position_map();
+        let dx = mouse_map.x - pos.x;
+        let dy = mouse_map.y - pos.y;
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        if pc.element.posture == Posture::Upright
+            && matches!(
+                pc.actor.action_state,
+                ActionState::Waiting | ActionState::Bored
+            )
+        {
+            pc.element
+                .set_direction_goal(vector_to_sector_0_to_15(dx, dy));
+            pc.element.sprite.position_iface.turn();
+        }
+    }
+
+    pub(crate) fn perform_resolved_orientation(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+        mouse_map: MapPoint,
+        target: crate::coordinates::WorldPoint3D,
+    ) {
+        use crate::profiles::Action;
+
+        match action {
+            Action::Bow => self.turn_pc_in_bow_aim(assets, pc_id, target),
+            Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
+                self.turn_pc_throw(
+                    pc_id,
+                    GroundPoint {
+                        x: target.x,
+                        y: target.y,
+                    },
+                );
             }
-            if pc.element.posture == Posture::Upright
-                && matches!(
-                    pc.actor.action_state,
-                    ActionState::Waiting | ActionState::Bored
-                )
-            {
-                // Set direction goal + rotate one step per frame.
-                pc.element
-                    .set_direction_goal(vector_to_sector_0_to_15(dx, dy));
-                pc.element.sprite.position_iface.turn();
-            }
+            Action::HelpToClimb => self.turn_pc_help_climb(pc_id, mouse_map),
+            Action::Beggar => self.turn_pc_beggar(pc_id, mouse_map),
+            other => panic!("unsupported resolved orientation action {other:?}"),
         }
     }
 }

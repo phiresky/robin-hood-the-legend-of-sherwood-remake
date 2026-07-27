@@ -30,11 +30,12 @@ all 1,469 recorded gameplay frames.
 The current expansion trace is
 `original-code/parity-traces/original-demo-little-john-domino.jsonl`: schema 2,
 7,248 gameplay frames, and 20,765 filtered simulation RNG draws. It is
-logically isomorphic through frame 531. Frame 532 exposes a schema-2 capture
-gap rather than an engine result: continuous bow orientation changed PC 198's
-facing and launched `RaiseBow`, but the resolved 3D cursor target was not
-recorded. Schema 3 is being extended to record all continuous resolved
-orientation work before this session is recaptured.
+logically isomorphic through frame 531. Frame 532 exposes an irrecoverable
+schema-2 capture gap rather than an engine result: continuous bow orientation
+changed PC 198's facing and launched `RaiseBow`, but the resolved 3D cursor
+target was not recorded. Expected after-state must not be fed back into replay,
+so this session cannot provide authoritative parity coverage after that point;
+the next schema-3 capture supersedes it.
 
 ## Change ledger
 
@@ -48,7 +49,7 @@ orientation work before this session is recaptured.
 | Done | Isomorphic identity | Original and Rust IDs and hidden startup objects differ, while the logical world is equivalent. | The runner constructs a mission-start entity bijection from kind, stable data, and creation order. Original's hidden 31-object prefix is retained where creation order is itself gameplay state, such as staggered detection. |
 | Done | Trace command decoding | Raw mouse/keyboard behavior is not under test. | Recorded resolved commands are translated through the entity bijection; unsupported command values and malformed or non-contiguous traces fail loudly. |
 | Done | Stable action and command names | Schema 2 stored bare action/command ordinals. The replay confused semantic `RHACTION_BOW = 1` with portrait slot 1, and rebuilt Rust/Original command enums have intentional ordinal differences. | Original schema 3 records stable semantic action names (`da51753`) and command names for actor state and resolved commands (`f7acb56`), retaining ordinals only for diagnostics and rejecting unknown values. Rust now has a semantic `SelectResolvedAction` command; schema-2 decoding remains explicit and source-verified. |
-| In progress | Continuous resolved orientation | Original `PerformOrientation` continuously derives bow aim, throwable facing, help-climb facing, and beggar facing from the cursor without forwarding a messenger command. Schema 2 therefore cannot reproduce PC 198's frame-532 `RaiseBow` transition. | Record the already-resolved actor/action/target operation on every gated mutation in schema 3, then replay it through the existing deterministic orientation routines. Never infer it from the expected after-state of an old trace. |
+| Done | Continuous resolved orientation | Original `PerformOrientation` continuously derives bow aim, throwable facing, help-climb facing, and beggar facing from the cursor without forwarding a messenger command. Schema 2 therefore cannot reproduce PC 198's frame-532 `RaiseBow` transition. | Original schema 3 now emits a bit-exact `orient_action_at` record for each actor immediately before every live gated mutation, including semantic action, resolved 3D target, and map cursor (`867eb4e`). Rust applies that cursor-independent operation to only the mapped PC through the ordinary bow/throw/help/beggar orientation behavior. The old raw orientation event was removed to prevent duplicate application or focus re-resolution. Focused tests cover schema decoding and targeted throw facing. |
 | Done | Enum/state representation | The trace exposed a missing Original discriminant rather than an ID mismatch. | Added the missing discriminant and made the compared logical state representable without substituting fake values. |
 | Done | Sequence callbacks and owner boundaries | Original sequence completion, condolence cards, and re-entrant AI callbacks can execute synchronously before an outer dispatch returns. | Sequence effects now preserve callback FIFO order and owner-local synchronous boundaries, including nested condolations. Regression tests cover callback/condolation ordering. |
 | Done | `GOTO_DONTSTOP` and waypoint patrol | Patrol setup and continuation differed before visible movement. | Matched Original flag handling, AI callback/lifecycle behavior, and waypoint-route advancement. |
