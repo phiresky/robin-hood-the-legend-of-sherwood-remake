@@ -518,7 +518,12 @@ impl From<TraceAction> for Action {
 }
 
 impl TraceCommand {
-    fn into_player_command(self, entity_map: &EntityMap, schema: u32) -> Option<PlayerCommand> {
+    fn into_player_command(
+        self,
+        entity_map: &EntityMap,
+        engine: &Engine,
+        schema: u32,
+    ) -> Option<PlayerCommand> {
         Some(match self {
             Self::BoxSelect {
                 first,
@@ -540,16 +545,56 @@ impl TraceCommand {
                 show_marker,
                 goal_sector,
                 goal_layer,
-            } => PlayerCommand::GroupMove {
-                actors: actors
-                    .into_iter()
-                    .map(|id| entity_map.translate(id))
-                    .collect(),
-                destination: destination.into(),
-                running,
-                show_marker,
-                goal_override: Some((SectorNumber::new(goal_sector), goal_layer)),
-            },
+            } => {
+                let destination: MapPoint = destination.into();
+                let goal_sector = if schema >= 6 {
+                    let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
+                        panic!("schema-{schema} group-move has negative sector index {goal_sector}")
+                    });
+                    // Schema 6 records the Original's heterogeneous
+                    // fast-grid sector-array index, which Rust does not
+                    // retain. Resolve its isomorphic motion area from the
+                    // other authoritative command fields.
+                    let candidates = engine
+                        .fast_grid()
+                        .level
+                        .sectors
+                        .iter()
+                        .filter(|sector| {
+                            sector.layer == goal_layer
+                                && sector.sector_type.is_motion()
+                                && sector.sector_type.is_area()
+                                && sector.contains_point(destination)
+                        })
+                        .collect::<Vec<_>>();
+                    match candidates.as_slice() {
+                        [sector] => sector.sector_number,
+                        [] => panic!(
+                            "schema-{schema} group-move raw sector index {raw_index} has no motion \
+                             area at {destination:?} on layer {goal_layer}"
+                        ),
+                        many => panic!(
+                            "schema-{schema} group-move raw sector index {raw_index} is ambiguous \
+                             at {destination:?} on layer {goal_layer}: {:?}",
+                            many.iter()
+                                .map(|sector| sector.sector_number)
+                                .collect::<Vec<_>>(),
+                        ),
+                    }
+                } else {
+                    SectorNumber::new(goal_sector)
+                };
+                PlayerCommand::GroupMove {
+                    actors: actors
+                        .into_iter()
+                        .map(|id| entity_map.translate(id))
+                        .collect(),
+                    destination,
+                    running,
+                    show_marker,
+                    goal_override: Some((goal_sector, goal_layer)),
+                }
+            }
             Self::LaunchInteraction {
                 actor,
                 target,
@@ -1220,7 +1265,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
         for command in frame.commands.drain(..) {
-            if let Some(command) = command.into_player_command(map, header.schema) {
+            if let Some(command) = command.into_player_command(map, &engine, header.schema) {
                 engine.apply_command(&mut display, &mut input, &assets, &command);
             }
         }

@@ -2323,37 +2323,16 @@ impl EngineInner {
                             .add_mark(dest.x, dest.y, pc_effective_layer);
                     }
                 }
-                _ => {
-                    // No gate path — fall back to direct move.  On a
-                    // door click the raw formation slot stands in for
-                    // the snap result.
-                    let snap_res = if is_door_click {
-                        Some(*dest)
-                    } else {
-                        self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
-                    };
-                    let snapped = match snap_res {
-                        Some(pt) => pt,
-                        None => {
-                            // FindAuthorizedPosition failure on the
-                            // circular/fallback path fires
-                            // HERO_UNABLE_TO_DO_SOMETHING and skips the PC.
-                            self.hero_speaking(
-                                assets,
-                                *pc_id,
-                                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                            );
-                            continue;
-                        }
-                    };
-                    self.issue_move_order(*pc_id, snapped, run);
-                    if show_marker && !is_door_click {
-                        self.feedback.ground_mark.add_mark(
-                            snapped.x,
-                            snapped.y,
-                            pc_effective_layer,
-                        );
-                    }
+                None => {
+                    // RHSequence::AppendMoveToSequence reports an
+                    // unreachable cross-sector destination and returns
+                    // without appending a direct MOVE when gate routing
+                    // fails.
+                    self.hero_speaking(
+                        assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
                 }
             }
         }
@@ -3755,58 +3734,6 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
-    }
-
-    /// Issue a movement order for a specific entity to a map position.
-    ///
-    /// Routes through the sequence-element path: builds an
-    /// `AiOrderIntent` on the fly and delegates to `launch_ai_move`,
-    /// which launches a `Command::Move` element → `tick.rs`'s Move
-    /// dispatch populates per-waypoint orders + runs
-    /// `post_process_path`.  Used by PC right-click gate-fallback
-    /// (movement.rs:788) when cross-sector routing has failed and we
-    /// want a simple same-sector walk.
-    pub(crate) fn issue_move_order(&mut self, entity_id: EntityId, dest: MapPoint, run: bool) {
-        self.issue_move_order_ex(entity_id, dest, run, 0);
-    }
-
-    /// Issue a movement order with extra movement flags.
-    ///
-    /// `move_flags` carries `MoveFlags` bits (e.g. `RIDER_CHARGE`) from the
-    /// AI decision through pathfinding to the actor's movement state.
-    /// Routes through the sequence-element path by building an
-    /// `AiOrderIntent` on the fly and delegating to `launch_ai_move`.
-    pub(crate) fn issue_move_order_ex(
-        &mut self,
-        entity_id: EntityId,
-        dest: MapPoint,
-        run: bool,
-        move_flags: u16,
-    ) {
-        // Check if entity is swordfighting — use sword walk animation.
-        // Movement elements carry the animation from the caller;
-        // swordfight seeks use the walking-with-sword non-animation.
-        let is_swordfighting = self
-            .get_entity(entity_id)
-            .and_then(|e| e.human_data())
-            .map(|h| !h.opponents.is_empty())
-            .unwrap_or(false);
-        let action = if is_swordfighting {
-            if run {
-                OrderType::RunningWithSword
-            } else {
-                OrderType::WalkingWithSword
-            }
-        } else if run {
-            OrderType::RunningUpright
-        } else {
-            OrderType::WalkingUpright
-        };
-
-        let mut intent = crate::order::AiOrderIntent::new(action, dest.x, dest.y);
-        intent.move_flags = move_flags;
-        intent.no_halt = true; // callers handle halt themselves when they want it
-        self.launch_ai_move(entity_id, &intent);
     }
 
     /// Execute the selected movement arm for one live actor owner.
