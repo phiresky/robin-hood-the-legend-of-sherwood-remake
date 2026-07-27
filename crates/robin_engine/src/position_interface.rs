@@ -52,13 +52,17 @@ impl PlaneZCoeffs {
     /// `z = (bz * y + az * x + dz) / (1 - bz)`
     #[inline]
     pub fn compute_z(&self, x: f32, y: f32) -> f32 {
-        (self.bz * y + self.az * x + self.dz) / (1.0 - self.bz)
+        // The 32-bit Original evaluates this whole expression in x87
+        // extended precision and stores only the result as FLOAT.
+        (((self.bz as f64) * (y as f64) + (self.az as f64) * (x as f64) + (self.dz as f64))
+            / (1.0 - self.bz as f64)) as f32
     }
 
     /// Compute Z-increment for a map-space movement `(dx, dy)`.
     #[inline]
     pub fn compute_z_increment(&self, dx: f32, dy: f32) -> f32 {
-        (self.bz * dy + self.az * dx) / (1.0 - self.bz)
+        (((self.bz as f64) * (dy as f64) + (self.az as f64) * (dx as f64)) / (1.0 - self.bz as f64))
+            as f32
     }
 
     /// Derive the iso-corrected coefficients from three world-space
@@ -91,20 +95,34 @@ impl PlaneZCoeffs {
         let [p0, p1, p2] = *points;
         let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
         let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-        let nx = v1[1] * v2[2] - v1[2] * v2[1];
-        let ny = v1[2] * v2[0] - v1[0] * v2[2];
-        let nz = v1[0] * v2[1] - v1[1] * v2[0];
+        // `mU`/`mV` are stored FLOAT vectors, but the 32-bit Original then
+        // keeps the inlined InitializeAll cross product, normalization,
+        // homogeneous equation, and Z-equation conversion in x87 registers.
+        // f64 reproduces that excess precision on modern targets.
+        let v1 = v1.map(f64::from);
+        let v2 = v2.map(f64::from);
+        let p0 = p0.map(f64::from);
+        let mut nx = v1[1] * v2[2] - v2[1] * v1[2];
+        let mut ny = v1[2] * v2[0] - v2[2] * v1[0];
+        let mut nz = v1[0] * v2[1] - v2[0] * v1[1];
         if nz.abs() < 1e-9 {
             return Self {
                 az: 0.0,
                 bz: 0.0,
-                dz: (p0[2] + p1[2] + p2[2]) / 3.0,
+                dz: ((p0[2] + f64::from(p1[2]) + f64::from(p2[2])) / 3.0) as f32,
             };
         }
+
+        let norm = (nx * nx + ny * ny + nz * nz).sqrt();
+        nx /= norm;
+        ny /= norm;
+        nz /= norm;
+        let d = -p0[0] * nx - p0[1] * ny - p0[2] * nz;
+        let k = -1.0 / nz;
         Self {
-            az: -nx / nz,
-            bz: -ny / nz,
-            dz: p0[2] + (nx * p0[0] + ny * p0[1]) / nz,
+            az: (nx * k) as f32,
+            bz: (ny * k) as f32,
+            dz: (d * k) as f32,
         }
     }
 }
@@ -1919,6 +1937,38 @@ mod tests {
         // At map (5, 10) the plane resolves z = 0.5 * 10 / 0.5 = 10
         // (i.e. world_y = 20 → world_z = 10).
         assert!((coeffs.compute_z(5.0, 10.0) - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn plane_coefficients_and_projection_match_original_x87_rounding() {
+        let pts = [
+            [
+                f32::from_bits(0x440c_a539),
+                f32::from_bits(0x44fd_fbe4),
+                f32::from_bits(0x4316_0042),
+            ],
+            [
+                f32::from_bits(0x42db_66b4),
+                f32::from_bits(0x44ef_68a9),
+                f32::from_bits(0x3a83_126f),
+            ],
+            [
+                f32::from_bits(0x441a_c40e),
+                f32::from_bits(0x44f4_f65d),
+                f32::from_bits(0x4316_0042),
+            ],
+        ];
+
+        let coeffs = PlaneZCoeffs::from_plane_points(&pts);
+        assert_eq!(coeffs.az.to_bits(), 0x3e8d_246a);
+        assert_eq!(coeffs.bz.to_bits(), 0x3e5c_e9d4);
+        assert_eq!(coeffs.dz.to_bits(), 0xc3dd_b756);
+        assert_eq!(
+            coeffs
+                .compute_z(f32::from_bits(0x4320_0706), f32::from_bits(0x44ea_06e8))
+                .to_bits(),
+            0x40bb_1f73
+        );
     }
 
     #[test]
