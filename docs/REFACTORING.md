@@ -76,6 +76,8 @@ remaining behavior-sensitive work. Completed migration plans are summarized in
    across Original creation/FIFO order without a documented adaptation.
 6. Missing required IDs, assets, scripts and snapshot fields produce a
    contextual error or panic. They never become false, zero, empty or default.
+   When zero is a valid authored value (including map layer 0), represent
+   absence separately rather than overloading zero as a sentinel.
 7. GPU, device and external audio resources remain host owned. Deterministic
    presentation state remains in the Engine when rollback or gameplay observes
    it.
