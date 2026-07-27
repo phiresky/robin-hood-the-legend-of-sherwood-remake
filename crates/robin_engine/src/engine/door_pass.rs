@@ -1817,6 +1817,7 @@ mod tests {
         ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData,
         PcData, SoldierData,
     };
+    use crate::engine::movement::DoorPassAdvance;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
 
     fn make_soldier(sector: Option<u16>) -> Entity {
@@ -2088,6 +2089,181 @@ mod tests {
             });
             assert_eq!(translated_exit, Some(expected_exit));
         }
+    }
+
+    #[test]
+    fn wall_transition_and_passing_door_use_separate_owner_slots() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .has_climb = true;
+        install_lift_sector(&mut engine, LiftType::Wall);
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftLow,
+            sector_in: crate::sector::SectorNumber::new(42),
+            ..default_door()
+        };
+        engine.script_domains.interactables.doors.push(door.clone());
+        let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+
+        let mut door_triggers = Vec::new();
+        let mut select_triggers = Vec::new();
+        let transition = {
+            let actor = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            EngineInner::advance_door_pass(
+                actor,
+                owner,
+                &mut door_triggers,
+                &mut select_triggers,
+                &mut engine.orders.next_order_id,
+            )
+        };
+        let DoorPassAdvance::Continue {
+            destination,
+            action,
+            reverse,
+            compute_direction,
+            tolerance,
+        } = transition
+        else {
+            panic!("low direct wall pass must schedule its climb transition: {transition:?}");
+        };
+        assert_eq!(action, OrderType::TransitionWaitingUprightClimbingWallUp);
+        let mut transition_order = crate::order::Order::new(
+            action,
+            destination.x,
+            destination.y,
+            engine.orders.allocate_order_id(),
+        );
+        transition_order.reverse = reverse;
+        transition_order.compute_direction = compute_direction;
+        transition_order.tolerance = tolerance;
+        assert!(door_triggers.is_empty());
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .element_data()
+                .sector(),
+            crate::position_interface::SectorHandle::new(7)
+        );
+
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(seq_id, 0, transition_order.clone());
+        engine.do_next_order(seq_id, 0);
+
+        bind_single_animation(
+            &mut engine,
+            owner,
+            OrderType::TransitionWaitingUprightClimbingWallUp,
+        );
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite
+                .position_iface
+                .set_sector(crate::position_interface::SectorHandle::new(7));
+            sprite.last_processed_order_id = transition_order.order_id.get();
+            sprite.last_action = OrderType::TransitionWaitingUprightClimbingWallUp;
+            sprite.current_row = 0;
+            sprite.current_frame = 2;
+            sprite.frame_count = 9;
+            sprite
+                .position_iface
+                .set_map_goal(crate::coordinates::MapPoint::new(
+                    transition_order.target_x,
+                    transition_order.target_y,
+                ));
+            sprite.position_iface.compute_increment_all(false);
+            let actor = entity.actor_data_mut().unwrap();
+            actor.action_state = crate::element::ActionState::Moving;
+        }
+
+        // The terminal transition slot applies its OnWall state and installs
+        // PassingDoor, but does not execute the topology callback.
+        engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(crate::engine::movement::MovementOwnerSelection {
+                seq_id,
+                elem_idx: 0,
+                order_id: transition_order.order_id,
+            }),
+        );
+
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(
+            entity.element_data().posture,
+            crate::element::Posture::OnWall
+        );
+        assert_eq!(
+            entity.element_data().sector(),
+            crate::position_interface::SectorHandle::new(7),
+            "transition completion must leave topology on the source side"
+        );
+        let passing_order = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .clone();
+        assert_eq!(passing_order.order_type, OrderType::PassingDoor);
+        let position_before = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .element_data()
+            .position_map();
+
+        engine.tick_entity_movement_owner(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            Some(crate::engine::movement::MovementOwnerSelection {
+                seq_id,
+                elem_idx: 0,
+                order_id: passing_order.order_id,
+            }),
+        );
+
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(
+            entity.element_data().sector(),
+            crate::position_interface::SectorHandle::new(42)
+        );
+        assert_eq!(entity.element_data().position_map(), position_before);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::ClimbingWallUp,
+            "PassingDoor's slot may install, but must not execute, the climb successor"
+        );
     }
 
     #[test]

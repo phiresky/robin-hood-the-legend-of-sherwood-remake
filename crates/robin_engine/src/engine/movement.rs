@@ -409,6 +409,10 @@ pub(super) enum DoorPassAdvance {
     Paused {
         transition_order: crate::order::Order,
     },
+    /// A non-animation `PassingDoor` action point is ready. It must be
+    /// installed as the next real actor order so it consumes its own owner
+    /// slot, just like the Original order chain.
+    ActionPoint { order: crate::order::Order },
     /// No more steps remain; the door pass is complete and the caller
     /// should tear down path / active-movement state.
     Done {
@@ -4498,6 +4502,7 @@ impl EngineInner {
         // borrow ends.
         let mut blocked_impossible: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
         let mut door_pass_transition_done_effects: Vec<EntityId> = Vec::new();
+        let mut door_pass_transition_completion_effects: Vec<EntityId> = Vec::new();
         let mut post_seek_arrivals: Vec<(EntityId, crate::sequence::SequenceId, usize)> =
             Vec::new();
         // Elevation-line crossings detected during this tick. Dispatched
@@ -4822,6 +4827,69 @@ impl EngineInner {
                 // RHElementActor::Execute arm returns IN_PROGRESS without
                 // touching the sprite; this token has no destination-backed
                 // motion state to initialize or validate.
+                continue;
+            }
+
+            if order_action == OrderType::PassingDoor {
+                let eid = entity_id;
+                let actor = entity
+                    .actor_data_mut()
+                    .expect("door-pass action point owner is not an actor");
+                let dp = actor.active_door_pass.as_mut().unwrap_or_else(|| {
+                    panic!("door-pass action point {order_action:?} for {eid:?} has no active pass")
+                });
+                let trigger_num = dp.triggers_fired;
+                dp.triggers_fired += 1;
+                door_triggers.push((eid, dp.door_index, dp.direct, trigger_num));
+
+                let advance = Self::advance_door_pass(
+                    actor,
+                    eid,
+                    &mut door_triggers,
+                    &mut select_triggers,
+                    &mut self.orders.next_order_id,
+                );
+                match advance {
+                    DoorPassAdvance::Continue {
+                        destination,
+                        action,
+                        reverse,
+                        compute_direction,
+                        tolerance,
+                    } => {
+                        let order_id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
+                        let mut order = crate::order::Order::new(
+                            action,
+                            destination.x,
+                            destination.y,
+                            order_id,
+                        );
+                        order.reverse = reverse;
+                        order.compute_direction = compute_direction;
+                        order.tolerance = tolerance;
+                        transition_pushes.push((move_seq_id, move_elem_idx, order));
+                    }
+                    DoorPassAdvance::Paused { transition_order } => {
+                        transition_pushes.push((move_seq_id, move_elem_idx, transition_order));
+                    }
+                    DoorPassAdvance::ActionPoint { order } => {
+                        transition_pushes.push((move_seq_id, move_elem_idx, order));
+                    }
+                    DoorPassAdvance::Done { completed } => {
+                        if let Some((door_index, direct)) = completed {
+                            completed_door_passes.push((eid, door_index, direct));
+                        }
+                        actor.clear_path();
+                        actor.active_movement.clear();
+                        actor.active_door_pass = None;
+                    }
+                    DoorPassAdvance::NoActive => {
+                        panic!(
+                            "door-pass action point {order_action:?} for {eid:?} lost its active pass"
+                        );
+                    }
+                }
+                order_pops.push((move_seq_id, move_elem_idx));
                 continue;
             }
 
@@ -5547,6 +5615,20 @@ impl EngineInner {
                 {
                     movement_state_effects.push((entity_id, posture, action_state));
                 }
+                if door_pass_anim.is_some()
+                    && matches!(motion_state, MotionState::Terminated)
+                    && matches!(
+                        anim,
+                        OrderType::TransitionWaitingUprightClimbingWallUp
+                            | OrderType::TransitionClimbingWallUpWaitingCrouched
+                            | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+                            | OrderType::TransitionWaitingCrouchedClimbingWallDown
+                            | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+                            | OrderType::TransitionClimbingWallDownWaitingUpright
+                    )
+                {
+                    door_pass_transition_completion_effects.push(entity_id);
+                }
                 if matches!(motion_state, MotionState::Terminated) {
                     // TillLastFrame can exhaust its animation before its
                     // distance target is reached (notably the short
@@ -5646,6 +5728,9 @@ impl EngineInner {
                                     move_elem_idx,
                                     transition_order,
                                 ));
+                            }
+                            DoorPassAdvance::ActionPoint { order } => {
+                                transition_pushes.push((move_seq_id, move_elem_idx, order));
                             }
                             DoorPassAdvance::Done { completed } => {
                                 if let Some((door_index, direct)) = completed {
@@ -6016,6 +6101,9 @@ impl EngineInner {
                                     transition_order,
                                 ));
                             }
+                            DoorPassAdvance::ActionPoint { order } => {
+                                transition_pushes.push((move_seq_id, move_elem_idx, order));
+                            }
                             DoorPassAdvance::Done { completed } => {
                                 if let Some((door_index, direct)) = completed {
                                     completed_door_passes.push((eid, door_index, direct));
@@ -6302,6 +6390,9 @@ impl EngineInner {
         }
         for entity_id in door_pass_transition_done_effects {
             self.apply_door_pass_transition_done_side_effects(assets, entity_id);
+        }
+        for entity_id in door_pass_transition_completion_effects {
+            self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
         }
         for entity_id in sword_movement_terminations {
             self.maybe_provoke_after_sword_movement_terminated(assets, entity_id);
@@ -6634,129 +6725,128 @@ impl EngineInner {
 
     /// Advance through door-pass steps after a walk step completes.
     ///
-    /// Processes `PassingDoor` triggers immediately, pauses the actor
-    /// for `Transition` steps (animation plays in place via
-    /// `active_ai_anim` with [`AiAnimCompletion::ResumeDoorPass`]), and
-    /// starts the next `Walk` step if one exists.
+    /// Pops one translated motion/door sub-order. `PassingDoor` action
+    /// points are returned as real orders instead of being drained in the
+    /// predecessor's completion slot: Original `Hourglass` executes one
+    /// current order and only then advances to its successor. `Select`
+    /// retains its generic-animation callback plumbing for now.
     ///
     /// See [`DoorPassAdvance`] for return semantics.
     pub(super) fn advance_door_pass(
         actor: &mut crate::element::ActorData,
         entity_id: EntityId,
-        door_triggers: &mut Vec<(EntityId, crate::gate::DoorIndex, bool, u8)>,
-        select_triggers: &mut Vec<(EntityId, f32)>,
+        _door_triggers: &mut Vec<(EntityId, crate::gate::DoorIndex, bool, u8)>,
+        _select_triggers: &mut Vec<(EntityId, f32)>,
         next_order_id: &mut u32,
     ) -> DoorPassAdvance {
-        // Process non-Walk steps until we hit a Walk, a Transition
-        // (pause), or run out.
-        loop {
-            let dp = match actor.active_door_pass.as_mut() {
-                Some(dp) => dp,
-                None => {
-                    tracing::warn!(
-                        entity = ?entity_id,
-                        "DoorPass: advance requested without active pass"
-                    );
-                    return DoorPassAdvance::NoActive;
-                }
-            };
-            let step = match dp.steps.pop_front() {
-                Some(s) => s,
-                None => {
-                    // All steps consumed — door pass complete.
-                    let completed = Some((dp.door_index, dp.direct));
-                    actor.active_door_pass = None;
-                    return DoorPassAdvance::Done { completed };
-                }
-            };
+        let dp = match actor.active_door_pass.as_mut() {
+            Some(dp) => dp,
+            None => {
+                tracing::warn!(
+                    entity = ?entity_id,
+                    "DoorPass: advance requested without active pass"
+                );
+                return DoorPassAdvance::NoActive;
+            }
+        };
+        let step = match dp.steps.pop_front() {
+            Some(s) => s,
+            None => {
+                let completed = Some((dp.door_index, dp.direct));
+                actor.active_door_pass = None;
+                return DoorPassAdvance::Done { completed };
+            }
+        };
 
-            match step {
-                crate::element::DoorPassStep::PassingDoor => {
-                    let dp = actor.active_door_pass.as_mut().unwrap();
-                    let trigger_num = dp.triggers_fired;
-                    dp.triggers_fired += 1;
-                    door_triggers.push((entity_id, dp.door_index, dp.direct, trigger_num));
-                    // Continue processing next step.
+        match step {
+            crate::element::DoorPassStep::PassingDoor => {
+                let order_id = crate::order::alloc_order_id(next_order_id);
+                let order = crate::order::Order::new(OrderType::PassingDoor, 0.0, 0.0, order_id);
+                DoorPassAdvance::ActionPoint { order }
+            }
+            crate::element::DoorPassStep::Select { speed } => {
+                // Select is dispatched through the Human generic-animation
+                // override rather than the movement owner. Keep its existing
+                // callback plumbing until that non-animation order is
+                // materialized in the generic actor coordinator.
+                // TODO(parity): materialize Select as a real actor order too;
+                // Original gives every non-animation door sub-order its own
+                // Hourglass slot.
+                _select_triggers.push((entity_id, speed));
+                Self::advance_door_pass(
+                    actor,
+                    entity_id,
+                    _door_triggers,
+                    _select_triggers,
+                    next_order_id,
+                )
+            }
+            crate::element::DoorPassStep::Transition { action, reverse } => {
+                // The transition order sits at the front of the
+                // order queue and blocks subsequent orders until
+                // its sprite animation completes.  We build the
+                // transition order here and hand it back to the
+                // caller, who pushes it onto the actor's current
+                // sequence element.  `ResumeDoorPass` completion
+                // re-enters this function when the animation
+                // finishes.
+                //
+                // Save the walking action_state and flip to Waiting
+                // so `tick_entity_movement` stops advancing and the
+                // animation tick drives the transition sprite.
+                let saved = actor.action_state;
+                actor.action_state = crate::element::ActionState::Waiting;
+                actor.clear_path();
+                if let Some(dp) = actor.active_door_pass.as_mut() {
+                    dp.saved_action_state = Some(saved);
+                    dp.current_action = action;
+                    dp.current_reverse = reverse;
                 }
-                crate::element::DoorPassStep::Select { speed } => {
-                    // Select handler: `StartHulk(OCN_DEFAULT, 2, true,
-                    // tolerance)` on self and, if carrying, on the
-                    // carried element.  The actual start_hulk call
-                    // needs access to the carrier's HumanData and the
-                    // carried entity, so we record the request here
-                    // and let the caller apply it outside the borrow
-                    // on `actor`.
-                    select_triggers.push((entity_id, speed));
-                    // Continue to the next step immediately — Select
-                    // returns Terminated.
+                let order_id = crate::order::alloc_order_id(next_order_id);
+                let mut order = crate::order::Order::new(action, 0.0, 0.0, order_id);
+                order.reverse = reverse;
+                order.completion = crate::order::OrderCompletion::ResumeDoorPass;
+                tracing::debug!(
+                    entity = ?entity_id,
+                    ?action,
+                    reverse,
+                    "DoorPass: pausing for Transition animation"
+                );
+                DoorPassAdvance::Paused {
+                    transition_order: order,
                 }
-                crate::element::DoorPassStep::Transition { action, reverse } => {
-                    // The transition order sits at the front of the
-                    // order queue and blocks subsequent orders until
-                    // its sprite animation completes.  We build the
-                    // transition order here and hand it back to the
-                    // caller, who pushes it onto the actor's current
-                    // sequence element.  `ResumeDoorPass` completion
-                    // re-enters this function when the animation
-                    // finishes.
-                    //
-                    // Save the walking action_state and flip to Waiting
-                    // so `tick_entity_movement` stops advancing and the
-                    // animation tick drives the transition sprite.
-                    let saved = actor.action_state;
-                    actor.action_state = crate::element::ActionState::Waiting;
-                    actor.clear_path();
-                    if let Some(dp) = actor.active_door_pass.as_mut() {
-                        dp.saved_action_state = Some(saved);
-                        dp.current_action = action;
-                        dp.current_reverse = reverse;
+            }
+            crate::element::DoorPassStep::Walk {
+                destination,
+                action,
+                reverse,
+                compute_direction,
+                tolerance,
+            } => {
+                // Restore the pre-transition action_state if we were
+                // paused; the walk animation itself comes from
+                // `current_action` (read by tick_entity_movement via
+                // `door_pass_anim`) so the actor resumes moving with
+                // the correct sprite.
+                if let Some(dp) = actor.active_door_pass.as_mut() {
+                    dp.current_action = action;
+                    dp.current_reverse = reverse;
+                    if let Some(saved) = dp.saved_action_state.take() {
+                        actor.action_state = saved;
                     }
-                    let order_id = crate::order::alloc_order_id(next_order_id);
-                    let mut order = crate::order::Order::new(action, 0.0, 0.0, order_id);
-                    order.reverse = reverse;
-                    order.completion = crate::order::OrderCompletion::ResumeDoorPass;
-                    tracing::debug!(
-                        entity = ?entity_id,
-                        ?action,
-                        reverse,
-                        "DoorPass: pausing for Transition animation"
-                    );
-                    return DoorPassAdvance::Paused {
-                        transition_order: order,
-                    };
                 }
-                crate::element::DoorPassStep::Walk {
+                // Hand the Walk destination back to the caller —
+                // advance_door_pass doesn't have sequence_manager
+                // access, so it can't push the walking order
+                // directly onto the PassDoor element.  The caller
+                // (tick_entity_movement's post-loop door-pass
+                // dispatch) does the order push.
+                DoorPassAdvance::Continue {
                     destination,
                     action,
                     reverse,
                     compute_direction,
                     tolerance,
-                } => {
-                    // Restore the pre-transition action_state if we were
-                    // paused; the walk animation itself comes from
-                    // `current_action` (read by tick_entity_movement via
-                    // `door_pass_anim`) so the actor resumes moving with
-                    // the correct sprite.
-                    if let Some(dp) = actor.active_door_pass.as_mut() {
-                        dp.current_action = action;
-                        dp.current_reverse = reverse;
-                        if let Some(saved) = dp.saved_action_state.take() {
-                            actor.action_state = saved;
-                        }
-                    }
-                    // Hand the Walk destination back to the caller —
-                    // advance_door_pass doesn't have sequence_manager
-                    // access, so it can't push the walking order
-                    // directly onto the PassDoor element.  The caller
-                    // (tick_entity_movement's post-loop door-pass
-                    // dispatch) does the order push.
-                    return DoorPassAdvance::Continue {
-                        destination,
-                        action,
-                        reverse,
-                        compute_direction,
-                        tolerance,
-                    };
                 }
             }
         }

@@ -4506,7 +4506,7 @@ impl EngineInner {
         );
     }
 
-    fn apply_door_pass_transition_completion_side_effects(
+    pub(super) fn apply_door_pass_transition_completion_side_effects(
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
@@ -4809,6 +4809,12 @@ impl EngineInner {
                             elem_idx,
                             transition_order,
                         );
+                        self.do_next_order(seq_id, elem_idx);
+                    }
+                    DoorPassAdvance::ActionPoint { order } => {
+                        self.orders
+                            .sequence_manager
+                            .push_order_on(seq_id, elem_idx, order);
                         self.do_next_order(seq_id, elem_idx);
                     }
                     DoorPassAdvance::NoActive => {
