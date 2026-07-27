@@ -5263,7 +5263,7 @@ impl EngineInner {
                     OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
                     | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel,
                     Some(_),
-                ) => {
+                ) if execute_order_initialising => {
                     elem.posture = crate::element::Posture::Flying;
                 }
                 (
