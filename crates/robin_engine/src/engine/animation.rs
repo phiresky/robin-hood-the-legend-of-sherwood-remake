@@ -811,6 +811,37 @@ mod tests {
     }
 
     #[test]
+    fn harder_falling_hit_preserves_pose_until_action_lands() {
+        let mut entity = weak_soldier_at_action_done(0);
+        entity.set_posture(Posture::Upright);
+        entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+
+        apply_falling_start_side_effect(
+            &mut entity,
+            OrderType::FallingHitHarderWithSword,
+            MotionState::Start,
+        );
+
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
+
+        apply_falling_completion_side_effect(
+            &mut entity,
+            OrderType::FallingHitHarderWithSword,
+            MotionState::Terminated,
+        );
+
+        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
+    }
+
+    #[test]
     fn falling_pushed_bow_start_and_termination_restore_original_states() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Upright);
@@ -2630,11 +2661,13 @@ fn fall_state_trigger_matches(anim_type: OrderType, motion: MotionState) -> bool
     }
 }
 
-/// `FALLING_HIT_*` / `FALLING_PUSHED_*` on motion Start.
+/// Non-hard `FALLING_HIT_*` / `FALLING_PUSHED_*` on motion Start.
 ///
 /// legacy implementation `ExecuteFallingHit` enters `(Flying, Moving)`; legacy implementation
 /// `ExecuteFallingPushed` enters `(Flying, WaitingSword)` before the
 /// wrapper later restores the variant-specific action on termination.
+/// The `FALLING_HIT_HARDER_*` branch uses `PerformAction`, not flight,
+/// and deliberately keeps the current posture/action until landing.
 /// Other fall families set state on later motion events — handled by
 /// `apply_falling_completion_side_effect`.
 fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, motion: MotionState) {
@@ -2647,10 +2680,6 @@ fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
             | OrderType::FallingHitWithBow
             | OrderType::FallingHitWithSword
             | OrderType::FallingHitCrouched
-            | OrderType::FallingHitHarderUpright
-            | OrderType::FallingHitHarderWithBow
-            | OrderType::FallingHitHarderWithSword
-            | OrderType::FallingHitHarderCrouched
     ) {
         Some(ActionState::Moving)
     } else if matches!(

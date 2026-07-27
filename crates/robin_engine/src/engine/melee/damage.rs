@@ -1185,26 +1185,62 @@ impl EngineInner {
             None => return,
         };
 
-        let _outcome =
+        let outcome =
             combat::receive_hit_damage(human, life_points, concussion, is_lacklandist, &ctx);
+        let went_unconscious = outcome == combat::ConcussionOutcome::WentUnconscious;
 
-        // Hero speech for PC attacker hitting an unconscious opponent.
+        // SetConcussionOfTheBrain performs the knockout transition inline:
+        // QuitSwordFight (including its synchronous AI callback), add the
+        // unconscious titbit, then the NPC override synchronously Thinks
+        // EVENT_LOSE_CONSCIOUSNESS.
         let attacker_is_pc = attacker_id
             .and_then(|id| self.get_entity(id))
             .map(|e| e.kind().is_pc())
             .unwrap_or(false);
-        if attacker_is_pc && let Some(atk_id) = attacker_id {
-            self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
-        }
+        if went_unconscious {
+            self.apply_knockout_side_effects(sim, assets, victim_id, attacker_is_pc, false);
 
-        // Dispatch EventGotHit to the victim's AI so it can re-target
-        // the attacker.
-        if let Some(atk_id) = attacker_id {
-            let stimulus = crate::ai::Stimulus::with_human(
-                crate::ai::StimulusType::EventGotHit,
-                atk_id.index(),
-            );
-            self.dispatch_ai_stimulus(victim_id, stimulus);
+            if let Some(atk_id) = attacker_id {
+                let same_camp_soldier = {
+                    let attacker = self.get_entity(atk_id);
+                    let victim = self.get_entity(victim_id);
+                    matches!(attacker, Some(Entity::Soldier(_)))
+                        && attacker.map(Entity::camp) == victim.map(Entity::camp)
+                };
+                if same_camp_soldier {
+                    let ai = self
+                        .get_entity_mut(victim_id)
+                        .and_then(Entity::ai_controller_mut)
+                        .expect("knocked-out soldier lost its AI controller");
+                    ai.knocked_out_in_money_fight = true;
+                    ai.looted_after_money_fight = false;
+                } else if attacker_is_pc {
+                    self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
+                }
+            }
+
+            // RECEIVE_HIT_DAMAGE explicitly calls QuitSwordFight once more
+            // after SetConcussionOfTheBrain.  The relationship list is
+            // already empty, but the soldier's synchronous
+            // EVENT_QUIT_SWORDFIGHT callback still occurs (and is refused
+            // while unconscious).
+            self.quit_swordfight(sim, assets, victim_id);
+        } else if let Some(atk_id) = attacker_id {
+            let still_conscious = self
+                .get_entity(victim_id)
+                .and_then(Entity::human_data)
+                .is_some_and(|human| !human.unconscious);
+            if still_conscious {
+                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                    sim,
+                    victim_id,
+                    assets,
+                    crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventGotHit,
+                        atk_id.index(),
+                    ),
+                );
+            }
         }
 
         // Shoulder fall routing — if the victim is currently on a
@@ -1220,15 +1256,6 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
-            self.handle_post_damage(
-                sim,
-                assets,
-                victim_id,
-                attacker_id,
-                false,
-                damage_element,
-                None,
-            );
             return;
         }
 
@@ -1245,15 +1272,6 @@ impl EngineInner {
         // push-path routing.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
             self.translate_ladder_wall_fall(victim_id, damage_element);
-            self.handle_post_damage(
-                sim,
-                assets,
-                victim_id,
-                attacker_id,
-                false,
-                damage_element,
-                None,
-            );
             return;
         }
 
@@ -1269,15 +1287,11 @@ impl EngineInner {
             damage_element,
         );
 
-        self.handle_post_damage(
-            sim,
-            assets,
-            victim_id,
-            attacker_id,
-            false,
-            damage_element,
-            None,
-        );
+        // Hit damage changes concussion only.  Its knockout transition was
+        // completed synchronously above, and TranslateHitDamage's
+        // FALLING_HIT_* wrapper already owns the entire fall animation.
+        // Routing through handle_post_damage would append a second,
+        // standalone FALLING_BACK_* order that the Original never creates.
     }
 
     /// Plays the `FALLING_HIT_*` animation appropriate to the victim's
@@ -2258,42 +2272,61 @@ impl EngineInner {
         attacker_is_pc: bool,
         set_lying_now: bool,
     ) {
-        let Some(victim) = self.world.entities.get_mut(victim_id) else {
-            return;
-        };
-
-        if set_lying_now && !victim.element_data().posture.is_lying() {
-            victim.set_posture(Posture::Lying);
-        }
-
-        if let Some(actor) = victim.actor_data_mut() {
-            if actor.action_state.is_sword() || actor.action_state == ActionState::Menacing {
-                actor.action_state = ActionState::Waiting;
-            }
-            actor.active_melee.clear();
-            actor.clear_path();
-        }
-
-        if let Some(npc) = victim.npc_data_mut() {
-            crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-            npc.alerted = false;
-            // Clear suspects before the EventLoseConsciousness
-            // dispatch.
-            npc.clear_all_suspects();
-            // True when the attacker is a PC.
-            npc.inform_my_friends = attacker_is_pc;
-        }
+        let healing_speed = concussion_healing_speed_for_entity(
+            self.get_entity(victim_id)
+                .expect("knockout victim disappeared before healing-timeout setup"),
+            &assets.profile_manager,
+        );
 
         // Quit swordfight (removes from all opponents' lists).
         self.quit_swordfight(sim, assets, victim_id);
 
-        // Dispatch EventLoseConsciousness to the downed NPC's own AI.
-        self.dispatch_ai_stimulus(
-            victim_id,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
-        );
-
         // Add unconscious star titbit (event-driven creation).
         self.add_unconscious_star(victim_id);
+
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim_id)
+            .expect("knockout victim disappeared during side effects");
+        let human = victim
+            .human_data_mut()
+            .expect("knockout victim lost required HumanData");
+        if human.concussion_healing_timeout == 0 {
+            human.concussion_healing_timeout = healing_speed;
+        }
+        if let Some(npc) = victim.npc_data_mut() {
+            // The NPC override performs this after the base-human
+            // QuitSwordFight/titbit/healing work and before Think.
+            npc.clear_all_suspects();
+        }
+
+        // RHElementActorNPC::SetConcussionOfTheBrain calls Think inline
+        // after the base-human relationship/titbit work.
+        if matches!(
+            self.world.entities.get(victim_id),
+            Some(Entity::Soldier(_) | Entity::Civilian(_))
+        ) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                victim_id,
+                assets,
+                crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
+            );
+        }
+
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim_id)
+            .expect("knockout victim disappeared after AI callback");
+        if let Some(npc) = victim.npc_data_mut() {
+            // The Original assigns this only after EVENT_LOSE_CONSCIOUSNESS
+            // returns.
+            npc.inform_my_friends = attacker_is_pc;
+        }
+        if set_lying_now && !victim.element_data().posture.is_lying() {
+            victim.set_posture(Posture::Lying);
+        }
     }
 }

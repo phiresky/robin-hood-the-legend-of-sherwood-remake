@@ -1064,10 +1064,14 @@ impl EngineInner {
                 // When the opponent list becomes empty and the entity
                 // is a soldier, pump EventQuitSwordfight through
                 // their AI.
-                self.dispatch_ai_stimulus(
-                    *opp_id,
-                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
-                );
+                if matches!(self.world.entities.get(*opp_id), Some(Entity::Soldier(_))) {
+                    self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                        sim,
+                        *opp_id,
+                        assets,
+                        crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                    );
+                }
             } else if opp_count >= 2 {
                 // Re-pick the principal opponent now that the list
                 // has changed, so the stale principal pointer doesn't
@@ -1127,8 +1131,10 @@ impl EngineInner {
         // can re-plan, rather than waiting for the next AI tick.
         if !entity_is_dead && matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_)))
         {
-            self.dispatch_ai_stimulus(
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
                 entity_id,
+                assets,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
         }

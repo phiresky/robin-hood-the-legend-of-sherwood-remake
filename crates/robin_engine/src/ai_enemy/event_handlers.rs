@@ -1640,7 +1640,12 @@ impl EnemyAi {
                 // ENTER_SWORDFIGHT sequence; (3) generic else → stop_all
                 // + non-human filter + brawl-friend-in-trouble +
                 // attack_enemy + SetViewStatus(EyesDieOrGetUnconscious).
-                if self.base.current_substate.is_any_swordfight() {
+                // Original checks RHElementActorHuman::IsSwordfighting(),
+                // which is derived from the live opponent list.  The AI
+                // substate can remain AttackingSwordfight briefly after the
+                // last opponent has been removed, so it is not an equivalent
+                // predicate here.
+                if ctx.is_swordfighting {
                     if let StimulusInfo::Human(attacker) = stimulus.info {
                         // Only enroll if cross-camp and not already an
                         // opponent.
@@ -2797,6 +2802,41 @@ mod tests {
             &AiPerTickData::stub(),
             None,
         ));
+    }
+
+    #[test]
+    fn got_hit_uses_live_swordfight_relationship_not_stale_ai_substate() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            is_swordfighting: false,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(
+            ai.base.outbox.actor.halt,
+            "Original StopAll arm runs once the live opponent list is empty"
+        );
+        assert_eq!(
+            ai.base.outbox.recovery.set_eye_status,
+            Some(crate::element::EyeStatus::DieOrGetUnconscious)
+        );
     }
 
     #[test]
