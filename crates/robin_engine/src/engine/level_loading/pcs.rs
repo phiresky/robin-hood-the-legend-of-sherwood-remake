@@ -743,21 +743,6 @@ impl EngineInner {
             self.mission_domain.campaign.reset_mission_team();
         }
 
-        // Every spawned actor needs a low-priority wait element so the
-        // animation driver's `current_order_for_actor` lookup always
-        // returns a posture-appropriate idle order.  This is invoked
-        // whenever an actor has no current order — in practice at the
-        // first Execute tick after spawn.
-        let actor_ids_snapshot: Vec<_> = self
-            .world
-            .entities
-            .actors()
-            .map(|(id, _)| id.into())
-            .collect();
-        for actor_id in actor_ids_snapshot {
-            self.ensure_wait_element(actor_id);
-        }
-
         Ok(())
     }
 }
