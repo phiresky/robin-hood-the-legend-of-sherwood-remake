@@ -2942,10 +2942,18 @@ impl SequenceManager {
                 actions.push(action);
             }
 
-            let Some((seq_id, elem_idx)) = self.elements_to_go.pop_front() else {
+            let Some(action) = self.pop_deferred_hourglass_action() else {
                 break;
             };
+            actions.push(action);
+        }
 
+        actions
+    }
+
+    fn pop_deferred_hourglass_action(&mut self) -> Option<SequenceAction> {
+        loop {
+            let (seq_id, elem_idx) = self.elements_to_go.pop_front()?;
             // Validate the sequence still exists
             let Some(seq) = self.sequences.get(&seq_id) else {
                 continue;
@@ -2969,7 +2977,7 @@ impl SequenceManager {
             // queue via `pending_synchronous_actions`.
             if elem.executed_immediately() {
                 if let Some(action) = Self::immediate_action_for(seq_id, elem_idx, elem) {
-                    actions.push(action);
+                    return Some(action);
                 } else {
                     tracing::warn!(
                         ?seq_id,
@@ -2981,19 +2989,28 @@ impl SequenceManager {
                     self.element_terminated(seq_id, elem_idx);
                 }
             } else if let Some(owner) = elem.owner {
-                actions.push(SequenceAction::InstructOwner {
+                return Some(SequenceAction::InstructOwner {
                     owner,
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 });
             } else {
-                actions.push(SequenceAction::EngineCommand {
+                return Some(SequenceAction::EngineCommand {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 });
             }
         }
+    }
 
+    /// Drain normal-priority work registered while an engine-side Hourglass
+    /// action was executing. Original appends this work to the live manager
+    /// FIFO, after actions that were already waiting.
+    pub fn take_pending_deferred_actions(&mut self) -> Vec<SequenceAction> {
+        let mut actions = Vec::new();
+        while let Some(action) = self.pop_deferred_hourglass_action() {
+            actions.push(action);
+        }
         actions
     }
 

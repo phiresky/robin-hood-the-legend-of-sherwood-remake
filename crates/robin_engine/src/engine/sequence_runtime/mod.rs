@@ -19,9 +19,9 @@ use crate::element::{Command, Entity, EntityId};
 ///
 /// The context owns no simulation state and cannot reach `EngineInner`.
 /// Sequence-manager mutation is borrowed only at the two ordering barriers:
-/// initial `Hourglass` collection and the after-action synchronous splice.
-/// Keeping those operations here makes the same-call front-of-queue rule
-/// explicit without inventing a deferred gameplay queue.
+/// initial `Hourglass` collection and the after-action live-FIFO continuation.
+/// Keeping those operations here makes immediate-front versus normal-tail
+/// registration explicit without inventing a deferred gameplay queue.
 struct SequencePhase {
     actions: std::collections::VecDeque<crate::sequence::SequenceAction>,
 }
@@ -37,11 +37,23 @@ impl SequencePhase {
         self.actions.pop_front()
     }
 
-    /// Splice newly registered synchronous work before every older action,
-    /// preserving the manager's registration order.
-    fn splice_synchronous_actions(&mut self, orders: &mut OrderRuntime) {
-        let pending = orders.sequence_manager.take_pending_synchronous_actions();
-        for action in pending.into_iter().rev() {
+    /// Continue the manager's live FIFO drain after an action callback.
+    ///
+    /// Original `RHSequenceManager::Hourglass` loops while its registration
+    /// queue is non-empty. Therefore normal-priority elements registered by
+    /// an immediate predecessor belong to this same drain just like
+    /// immediate and Wait work; they must not wait for the next frame.
+    fn splice_registered_actions(&mut self, orders: &mut OrderRuntime) {
+        let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
+        for action in synchronous.into_iter().rev() {
+            self.actions.push_front(action);
+        }
+        self.actions
+            .extend(orders.sequence_manager.take_pending_deferred_actions());
+        // Invalid deferred registrations can terminate while being decoded
+        // and synchronously open a successor. Preserve the same front rule.
+        let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
+        for action in synchronous.into_iter().rev() {
             self.actions.push_front(action);
         }
     }
@@ -2572,7 +2584,7 @@ mod sequence_phase_context_tests {
         sequence.append_element(immediate);
         let synchronous_sequence = orders.sequence_manager.launch_sequence(sequence);
 
-        phase.splice_synchronous_actions(&mut orders);
+        phase.splice_registered_actions(&mut orders);
 
         assert!(matches!(
             phase.pop_action(),
@@ -2587,6 +2599,45 @@ mod sequence_phase_context_tests {
                 sequence_id: crate::sequence::SequenceId(900),
                 element_index: 0,
             })
+        ));
+        assert!(phase.pop_action().is_none());
+    }
+
+    #[test]
+    fn normal_successor_is_appended_after_older_hourglass_work() {
+        let older = crate::sequence::SequenceAction::EngineCommand {
+            sequence_id: crate::sequence::SequenceId(900),
+            element_index: 0,
+        };
+        let mut phase = SequencePhase {
+            actions: [older].into(),
+        };
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
+        let mut orders = OrderRuntime::new();
+        let movement = crate::sequence::SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let sequence_id = orders.sequence_manager.launch_element(movement);
+
+        phase.splice_registered_actions(&mut orders);
+
+        assert!(matches!(
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::EngineCommand {
+                sequence_id: crate::sequence::SequenceId(900),
+                element_index: 0,
+            })
+        ));
+        assert!(matches!(
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::InstructOwner {
+                owner: action_owner,
+                sequence_id: action_sequence,
+                element_index: 0,
+            }) if action_owner == owner && action_sequence == sequence_id
         ));
         assert!(phase.pop_action().is_none());
     }
@@ -2611,7 +2662,7 @@ mod sequence_phase_context_tests {
         sequence.append_element(timer);
         let sequence_id = orders.sequence_manager.launch_sequence(sequence);
 
-        phase.splice_synchronous_actions(&mut orders);
+        phase.splice_registered_actions(&mut orders);
         let lock_action = phase.pop_action().expect("LockUser is synchronous");
         assert!(matches!(
             lock_action,
@@ -2633,7 +2684,7 @@ mod sequence_phase_context_tests {
 
         // Terminating LockUser synchronously starts Timer. The sequence-phase
         // splice must put that continuation ahead of the older manager action.
-        phase.splice_synchronous_actions(&mut orders);
+        phase.splice_registered_actions(&mut orders);
         let timer_action = phase.pop_action().expect("Timer successor is synchronous");
         assert!(matches!(
             timer_action,
@@ -2903,21 +2954,19 @@ mod sequence_phase_context_tests {
         }
         let follow_up_seq = engine.launch_element(follow_up);
 
-        // A normal Move/Seek launch registers with the manager FIFO rather
-        // than the immediate-action splice. The pre-split helper launched at
-        // this same point, so the current action loop must remain empty and
-        // the next manager hourglass must produce the Seek instruction.
-        phase.splice_synchronous_actions(&mut engine.orders);
-        assert!(phase.pop_action().is_none());
-        let next_actions = engine.orders.sequence_manager.hourglass();
+        // The manager's Original Hourglass is a live while-loop. A normal
+        // Move/Seek registered from the current Instruct callback therefore
+        // joins this same drain rather than waiting for the next frame.
+        phase.splice_registered_actions(&mut engine.orders);
         assert!(matches!(
-            next_actions.as_slice(),
-            [crate::sequence::SequenceAction::InstructOwner {
+            phase.pop_action(),
+            Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id,
                 element_index: 0,
-            }] if *action_owner == owner && *sequence_id == follow_up_seq
+            }) if action_owner == owner && sequence_id == follow_up_seq
         ));
+        assert!(phase.pop_action().is_none());
 
         let owner_pc = engine
             .get_entity(owner)

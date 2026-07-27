@@ -2330,11 +2330,10 @@ impl EngineInner {
             // older actions already detached into `SequencePhase`.
             self.dispatch_condolations(sim, assets);
 
-            // After-action drain: callbacks can synchronously register an
-            // immediate command or complete a level whose successor is WAIT.
-            // Splice that ordered registration stream onto the FRONT so the
-            // re-entrant work fires before the next older action in the batch.
-            phase.splice_synchronous_actions(&mut self.orders);
+            // After-action live-FIFO continuation: re-entrant immediate/WAIT
+            // work goes to the front, while newly registered normal work is
+            // appended behind actions that were already waiting.
+            phase.splice_registered_actions(&mut self.orders);
         }
     }
 }
