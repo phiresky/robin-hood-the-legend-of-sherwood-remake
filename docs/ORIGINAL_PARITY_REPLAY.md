@@ -46,6 +46,31 @@ that frame. Active historical parity work reached frame 47. It must not be used
 as the current correctness oracle because it predates the scalar-SSE recorder
 build contract. A fresh schema-5 capture is required.
 
+The first multi-session schema-5 capture is
+`original-code/parity-traces/original-fullgame-schema5-multisession-session-0001.jsonl`:
+mission `H01_Lin_VL` (Lincoln), explicitly marked `loaded_save`, with 797
+contiguous frames (0 through 796) and 1,240 contiguous global RNG draws. It
+validates the new recorder lifecycle and is retained as save-load evidence, but
+is deliberately rejected by Rust because restoring a live Original mission
+save is not implemented. It is not a parity baseline; the next capture must
+include a `mission_start` session.
+
+Sessions `0002` and `0003` are also retained loaded-state evidence: `0002`
+contains 12 frames after the profile Continue load, while `0003` contains 386
+frames after the Original's in-engine restart deserialization. A restart looks
+like the mission opening but is not a fresh engine construction, so it remains
+classified as `loaded_save`.
+
+The active schema-5 parity baseline is
+`original-code/parity-traces/original-fullgame-schema5-multisession-session-0004.jsonl`:
+mission `H01_Lin_VL` (Lincoln), 862 contiguous gameplay frames (0 through 861),
+30 resolved commands, and 1,238 contiguous global RNG draws (1,107 simulation,
+131 audio). It is a direct `mission_start` capture, has a clean RNG suffix, and
+has SHA-256
+`da434b99786c012baaa0e7d6c5751c73dfbe6bf49312dbef18d5e44c1f49b659`.
+Parity currently reaches frame 46; frame 47 exposes a synchronized
+Waiting-to-Bored transition-state timing difference affecting 17 soldiers.
+
 The schema-2/3/4 sessions below remain historical evidence for completed parity
 corrections, but are not accepted by the current replay runner.
 
@@ -241,8 +266,20 @@ ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
 ```
 
 Each file is a complete recorder session. A `loaded_save` header is expected
-and intentionally not replayable yet; selecting a fresh mission produces a
-subsequent `mission_start` file for Rust parity work.
+and intentionally not replayable yet; use the direct launch option below to
+produce a `mission_start` file for Rust parity work.
+
+Final full-game builds compile the ordinary developer `-MISSION`/`-PROTO`
+switches out. Use the recorder-only direct launch option to bypass Continue
+without modifying the active profile or its save:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
+  original-code/build/native-full/robin \
+  -PARITYMISSION H01_Lin_VL Lincoln \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema5.jsonl \
+  -PARITYSEED 1
+```
 
 Build once, then use the first-divergence run for iteration:
 
