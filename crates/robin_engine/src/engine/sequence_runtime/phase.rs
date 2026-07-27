@@ -545,11 +545,22 @@ impl EngineInner {
                         // ── ASSERT_POSITION ────────────────────────
                         // Check actor is at expected position/sector.
                         Command::AssertPosition => {
+                            // Original keeps the incoming AssertPosition in
+                            // `mpSequenceElement` throughout Translate. Its
+                            // synchronous terminal card therefore owns the
+                            // actor-base goal cleanup even though this command
+                            // never reaches InProgress/active_movement.
+                            self.orders
+                                .sequence_manager
+                                .begin_instruct_callback(owner, seq_id, elem_idx);
                             PositionAssertionContext {
                                 entities: &self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
                             }
                             .dispatch(owner, seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .end_instruct_callback(owner, seq_id, elem_idx);
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
                         // Translation is identical to WAIT: book the

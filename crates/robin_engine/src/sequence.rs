@@ -1784,6 +1784,7 @@ impl Sequence {
                         terminal_state: new_state,
                         seq_id: self.id,
                         elem_idx: elem_idx as u16,
+                        was_selected: false,
                         from_halt: false,
                         postponed_successor_pending: false,
                     });
@@ -1814,6 +1815,7 @@ impl Sequence {
                         terminal_state: new_state,
                         seq_id: self.id,
                         elem_idx: elem_idx as u16,
+                        was_selected: false,
                         from_halt: false,
                         postponed_successor_pending: false,
                     });
@@ -1840,6 +1842,7 @@ impl Sequence {
                                 terminal_state: new_state,
                                 seq_id: self.id,
                                 elem_idx: elem_idx as u16,
+                                was_selected: false,
                                 from_halt: false,
                                 postponed_successor_pending: false,
                             });
@@ -2161,6 +2164,11 @@ pub struct PendingCondolation {
     /// owned by the sequence element and die with it.
     pub seq_id: SequenceId,
     pub elem_idx: u16,
+    /// Whether this element was the actor's selected `mpSequenceElement`
+    /// at the synchronous `SetState -> SendCondolationCard` boundary.
+    /// Captured before terminal elements leave the in-progress index.
+    #[serde(default)]
+    pub was_selected: bool,
     /// `true` if this condolation was queued while the owning NPC's
     /// `inside_halt_method` flag was set — i.e. the sequence was torn
     /// down by an AI-initiated `Halt()` call.  The NPC's condolation
@@ -3381,6 +3389,11 @@ impl SequenceManager {
 
     /// Process effects from a state change.
     fn process_effects(&mut self, seq_id: SequenceId, mut effects: StateChangeEffects) {
+        if let Some(card) = effects.condolation.as_mut() {
+            card.was_selected = self.current_element_for_actor(card.owner)
+                == Some((card.seq_id, usize::from(card.elem_idx)));
+        }
+
         if let Some(seq) = self.sequences.get_mut(&seq_id) {
             if effects.increment_in_progress {
                 seq.increase_elements_in_progress();

@@ -186,6 +186,111 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 }
 
 #[test]
+fn selected_nonmovement_condolation_clears_the_sprite_goal() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::OnWall));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .position_iface_mut()
+        .set_map_goal(MapPoint::new(70.0, 80.0));
+
+    let assert_position = SequenceElement::new_movement(
+        1,
+        Command::AssertPosition,
+        Some(owner),
+        OrderType::WalkingUpright,
+    );
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(assert_position);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .end_instruct_callback(owner, sequence, 0);
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "a selected AssertPosition card clears the old movement goal before its successor executes"
+    );
+}
+
+#[test]
+fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let goal = MapPoint::new(70.0, 80.0);
+
+    let movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement =
+            ActiveMovement::new(movement_sequence, 0);
+        entity.position_iface_mut().set_map_goal(goal);
+    }
+
+    let sibling = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
+    let sibling_sequence = engine.orders.sequence_manager.launch_element(sibling);
+    engine
+        .orders
+        .sequence_manager
+        .begin_instruct_callback(owner, sibling_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sibling_sequence, 0);
+    engine
+        .orders
+        .sequence_manager
+        .end_instruct_callback(owner, sibling_sequence, 0);
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        goal,
+        "a finished immediate sibling must not clear the movement that is selected again when its callback returns"
+    );
+}
+
+#[test]
 fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

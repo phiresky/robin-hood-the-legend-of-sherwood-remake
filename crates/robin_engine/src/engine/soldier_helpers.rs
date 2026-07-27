@@ -502,6 +502,7 @@ impl EngineInner {
             terminal_state,
             seq_id,
             elem_idx,
+            was_selected,
             from_halt,
             postponed_successor_pending,
         } = card;
@@ -554,7 +555,9 @@ impl EngineInner {
             .orders
             .sequence_manager
             .current_element_for_actor(owner);
-        let outgoing_is_selected = selected_element == Some((seq_id, elem_idx as usize));
+        let card_element = (seq_id, usize::from(elem_idx));
+        let selected_card_remains_authoritative =
+            was_selected && selected_element.is_none_or(|selected| selected == card_element);
         let replacement_movement_goal =
             selected_element.and_then(|(replacement_seq, replacement_idx)| {
                 (replacement_seq != seq_id || replacement_idx != elem_idx as usize)
@@ -566,23 +569,31 @@ impl EngineInner {
                     })
                     .flatten()
             });
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-            && actor.active_movement.sequence_id == Some(seq_id)
-            && actor.active_movement.element_index == elem_idx as usize
-        {
-            actor.active_movement.clear();
-            // Original clears the cached sprite goal only when this card
-            // still belongs to `mpSequenceElement`. During Instruct the
-            // incoming element is selected before the outgoing movement is
-            // interrupted, so its card detaches Rust's stale movement
-            // tracker but leaves the cached goal for the incoming command.
-            if outgoing_is_selected || selected_element.is_none() {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
+            let active_movement_matches = entity.actor_data().is_some_and(|actor| {
+                actor.active_movement.sequence_id == Some(seq_id)
+                    && actor.active_movement.element_index == elem_idx as usize
+            });
+
+            // Actor-base cleanup keys goal clearing to the selected
+            // `mpSequenceElement`, independently of whether that element is
+            // tracked as movement. A synchronous AssertPosition can select
+            // and terminate without ever becoming `active_movement`.
+            if selected_card_remains_authoritative
+                || (active_movement_matches && selected_element.is_none())
+            {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);
-            } else if let Some(goal) = replacement_movement_goal {
+            } else if active_movement_matches && let Some(goal) = replacement_movement_goal {
                 entity.position_iface_mut().set_map_goal(goal);
+            }
+
+            // Rust's movement tracker is separate from Original's selected
+            // element pointer. Detach it only when this card names that
+            // movement, even if an incoming element is already selected.
+            if active_movement_matches && let Some(actor) = entity.actor_data_mut() {
+                actor.active_movement.clear();
             }
         }
 
