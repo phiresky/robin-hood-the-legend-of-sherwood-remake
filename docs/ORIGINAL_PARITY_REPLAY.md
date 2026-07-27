@@ -24,9 +24,8 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The normal first-divergence replay matches all 1,469 recorded gameplay frames.
-The remaining validation step is a complete `--scan-all` pass, which reports
-every logical mismatch instead of stopping at the first one.
+Both the normal first-divergence replay and the complete `--scan-all` pass match
+all 1,469 recorded gameplay frames.
 
 ## Change ledger
 
@@ -158,7 +157,7 @@ every logical mismatch instead of stopping at the first one.
 | Done | Frame-1381 locked-beggar random speech | At its staggered phase zero, locked beggar NPC 64 selected `CivBeggarBegging`. Rust's direct `RandomSpeech` AI call queued `Say`, then the following `BEGGAR` lock gate returned before any later drain; Original `Say` settles synchronously before checking the lock. | `tick_civilian_random_speech_for_npc` now closes the full no-forecast owner-local AI boundary immediately after `RandomSpeech`, including rejection callbacks and recursive work. A focused regression uses the exact two Original RNG values and proves the queue settles before the lock gate. The owner-work invariant now reports frame and queued work details. |
 | Done | Frame-1390 PC 199 WakeUp facing | Original `RHCOMMAND_WAKE_UP` first sets the rescuer's progressive direction goal toward the target, then queues `Turning → WakingUp`; Rust had queued only the interaction animation. After restoring that order, Rust turned one frame too early because the outgoing entity-target Seek unconditionally advanced anti-vibration turning on its successful terminal-tolerance sample. Original returns from that tolerance branch before its later `Turn`/`PerformMotion` block. | WakeUp translation now books the source-faithful Turning order before WakingUp. Entity-target Seek only turns in its non-arrival branch, so a post-seek interaction takes over without an extra terminal turn. Focused regressions cover both the translated order queue and a tolerance arrival with a primed anti-vibration counter. Replay passes frame 1390. |
 | Done | Frame-1426 PC 198 wake recovery | On WakingUp `Done`, Original sets the living target to lying, clears concussion, and unconditionally calls `target->Wait()`. That fresh priority-Wait replaces the existing unconscious Wait and synchronously translates to StandingUp at frame 1425; StandingUp starts and sets upright posture at frame 1426. Rust used `ensure_wait_element`, which retained the stale BeingUnconscious order until frame 1426 and booked StandingUp one frame late. | Wake completion now launches the ordinary fresh `actor_wait` element, relying on standard equal-priority arbitration and posture-aware Wait translation rather than forcing posture or animation. The regression seeds a live unconscious Wait and proves it is interrupted and synchronously replaced with StandingUp. The normal replay matches all 1,469 frames. |
-| In progress | Full-trace scan | A normal first-divergence replay now establishes an exact logical match for every recorded frame, including later player interaction, combat, AI, effects, and mission scripting in this capture. | Run `--scan-all` as an independent full-trace check, fix every reported mismatch, then add further captures to broaden behavioral coverage beyond this mission-start session. |
+| Done | Full-trace scan | The normal first-divergence replay establishes an exact logical match for every recorded frame, including later player interaction, combat, AI, effects, and mission scripting in this capture. | The independent `--scan-all` pass also matches all 1,469 frames without a logical or RNG divergence. Further captures should broaden behavioral coverage beyond this mission-start session. |
 
 ## Workflow
 
