@@ -814,7 +814,7 @@ mod tests {
     fn harder_falling_hit_preserves_pose_until_action_lands() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Upright);
-        entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+        entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
 
         apply_falling_start_side_effect(
             &mut entity,
@@ -825,7 +825,20 @@ mod tests {
         assert_eq!(entity.element_data().posture, Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
-            ActionState::WaitingSword
+            ActionState::Menacing
+        );
+
+        apply_falling_completion_side_effect(
+            &mut entity,
+            OrderType::FallingHitHarderWithSword,
+            MotionState::Done,
+        );
+
+        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::Menacing,
+            "hard-hit DONE lands but does not restore the wrapper's action family"
         );
 
         apply_falling_completion_side_effect(
@@ -2645,8 +2658,9 @@ fn fall_landing_states(
 /// State is set at varying points per family:
 /// - `FALLING_BACK_UPRIGHT`/`CROUCHED`: Start.
 /// - `FALLING_BACK_SWORD`/`BOW`: Done or Terminated.
-/// - `FALLING_HIT_*` / `FALLING_SHOULDERS` / `ROLLING` / `FALLING_LADDER_WALL`:
-///   Terminated.
+/// - `FALLING_HIT_HARDER_*`: Done or Terminated.
+/// - non-hard `FALLING_HIT_*` / `FALLING_SHOULDERS` / `ROLLING` /
+///   `FALLING_LADDER_WALL`: Terminated.
 fn fall_state_trigger_matches(anim_type: OrderType, motion: MotionState) -> bool {
     match anim_type {
         OrderType::FallingBackUpright | OrderType::FallingBackCrouched => {
@@ -2655,8 +2669,14 @@ fn fall_state_trigger_matches(anim_type: OrderType, motion: MotionState) -> bool
         OrderType::FallingBackSword | OrderType::FallingBackBow => {
             matches!(motion, MotionState::Done | MotionState::Terminated)
         }
-        // FallingHit sets only on TERMINATED, not DONE.
-        // Rolling, FallingLadderWall, FallingShoulders all the same.
+        OrderType::FallingHitHarderUpright
+        | OrderType::FallingHitHarderWithBow
+        | OrderType::FallingHitHarderWithSword
+        | OrderType::FallingHitHarderCrouched => {
+            matches!(motion, MotionState::Done | MotionState::Terminated)
+        }
+        // Non-hard FallingHit sets only on TERMINATED, not DONE.
+        // Rolling, FallingLadderWall, and FallingShoulders do the same.
         _ => matches!(motion, MotionState::Terminated),
     }
 }
@@ -2721,7 +2741,19 @@ fn apply_falling_completion_side_effect(
     let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
     if let Some((posture, action_state)) = fall_landing_states(anim_type, is_dead, is_unconscious) {
         entity.set_posture(posture);
-        if let Some(action) = action_state
+        let hard_hit_done = motion == MotionState::Done
+            && matches!(
+                anim_type,
+                OrderType::FallingHitHarderUpright
+                    | OrderType::FallingHitHarderWithBow
+                    | OrderType::FallingHitHarderWithSword
+                    | OrderType::FallingHitHarderCrouched
+            );
+        // ExecuteFallingHit(..., true) lands on DONE, but the outer
+        // FALLING_HIT_HARDER_* wrapper restores its action family only
+        // when the sprite later reports TERMINATED.
+        if !hard_hit_done
+            && let Some(action) = action_state
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = action;
