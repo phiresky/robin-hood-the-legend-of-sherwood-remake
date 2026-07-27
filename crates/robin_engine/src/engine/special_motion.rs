@@ -47,6 +47,57 @@ impl EngineInner {
         obstacle_probe: Option<MapPoint>,
         context: &'static str,
     ) {
+        self.finalize_special_move_position_inner(
+            assets,
+            entity_id,
+            position,
+            layer,
+            sector,
+            None,
+            obstacle_probe,
+            context,
+        );
+    }
+
+    /// Finalize position and projection-plane state without entering the
+    /// projection sector's topology. Door transition action points can select
+    /// the far-side obstacle before the later explicit `PassingDoor` order
+    /// changes layer/sector.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn finalize_special_move_position_using_projection_sector(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        position: SpecialMovePosition,
+        projection_layer: u16,
+        projection_sector: u16,
+        obstacle_probe: MapPoint,
+        context: &'static str,
+    ) {
+        self.finalize_special_move_position_inner(
+            assets,
+            entity_id,
+            position,
+            None,
+            None,
+            Some((projection_layer, projection_sector)),
+            Some(obstacle_probe),
+            context,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finalize_special_move_position_inner(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        position: SpecialMovePosition,
+        layer: Option<u16>,
+        sector: Option<u16>,
+        projection_topology: Option<(u16, u16)>,
+        obstacle_probe: Option<MapPoint>,
+        context: &'static str,
+    ) {
         let Some((target_layer, target_sector)) = self.get_entity(entity_id).map(|entity| {
             (
                 layer.unwrap_or_else(|| entity.element_data().layer()),
@@ -60,19 +111,23 @@ impl EngineInner {
             );
             return;
         };
+        let (projection_layer, projection_sector) = match projection_topology {
+            Some((layer, sector)) => (layer, Some(sector)),
+            None => (target_layer, target_sector),
+        };
 
         let obstacle = obstacle_probe.map(|probe| {
-            let resolved = if let Some(sector) = target_sector {
-                self.get_projection_area_index(assets, sector, target_layer, probe)
+            let resolved = if let Some(sector) = projection_sector {
+                self.get_projection_area_index(assets, sector, projection_layer, probe)
             } else {
-                self.find_plane_obstacle_at(assets, target_layer, probe)
+                self.find_plane_obstacle_at(assets, projection_layer, probe)
             };
             if resolved.is_none() {
                 tracing::warn!(
                     ?entity_id,
                     context,
-                    layer = target_layer,
-                    sector = target_sector,
+                    layer = projection_layer,
+                    sector = projection_sector,
                     probe_x = probe.x,
                     probe_y = probe.y,
                     "special motion finalization found no projection-area obstacle"

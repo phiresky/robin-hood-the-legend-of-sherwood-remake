@@ -4451,13 +4451,13 @@ impl EngineInner {
             OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
                 let point_out_probe = crate::coordinates::MapPoint::new(point_out.x, point_out.y);
                 let point_mid_map = crate::coordinates::MapPoint::new(point_mid.x, point_mid.y);
-                self.finalize_special_move_position(
+                self.finalize_special_move_position_using_projection_sector(
                     assets,
                     entity_id,
                     super::special_motion::SpecialMovePosition::Map(point_mid_map),
-                    Some(layer_out),
-                    Some(u16::from(sector_out)),
-                    Some(point_out_probe),
+                    layer_out,
+                    u16::from(sector_out),
+                    point_out_probe,
                     "crenel climb-up transition",
                 );
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {

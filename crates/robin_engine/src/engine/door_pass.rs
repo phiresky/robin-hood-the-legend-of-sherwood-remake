@@ -2267,6 +2267,36 @@ mod tests {
     }
 
     #[test]
+    fn far_side_projection_selection_does_not_change_door_topology() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(62));
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            entity.element_data_mut().set_layer(3);
+        }
+
+        let midpoint = MapPoint::new(2276.0, 1136.0);
+        engine.finalize_special_move_position_using_projection_sector(
+            &LevelAssets::new(),
+            owner,
+            crate::engine::special_motion::SpecialMovePosition::Map(midpoint),
+            2,
+            50,
+            MapPoint::new(2272.0, 1123.0),
+            "test far-side door projection",
+        );
+
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().position_map(), midpoint);
+        assert_eq!(entity.element_data().layer(), 3);
+        assert_eq!(
+            entity.element_data().sector(),
+            crate::position_interface::SectorHandle::new(62),
+            "projection lookup is not the explicit PassingDoor topology swap"
+        );
+    }
+
+    #[test]
     fn denied_door_disables_anti_collision_before_marking_impossible() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_pc(7));
