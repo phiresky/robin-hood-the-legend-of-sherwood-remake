@@ -2455,6 +2455,22 @@ impl EngineInner {
                 &soldier_subordinate_ids,
             );
 
+            // InitState may finish by calling the actor's Wait method for an
+            // authored sleeping, sitting, dead, unconscious, or special
+            // pose. Priority-WAIT launch is a synchronous call chain in the
+            // Original: Wait -> LaunchSequenceElement ->
+            // NextSequenceElementsGo -> Go -> Instruct. Finish that chain
+            // before InitOneAI returns to the next NPC. Leaving the
+            // instruction queued lets Actor::Hourglass execute a lazy
+            // fallback first and restart the authored animation one frame
+            // late.
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "NPC {npc_id:?} initialization failed synchronous sequence dispatch: {error:?}"
+                    )
+                });
+
             // Original InitOneAI invokes virtual SetState inline, after all
             // actor scripts have been initialized. Close the same owner's
             // callback/effect boundary before the next NPC initializes so a

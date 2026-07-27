@@ -132,12 +132,21 @@ mod tests {
     fn special_remark_uses_pre_perform_sprite_phase() {
         const HELBARDMAN: u32 = 0x4c484453;
 
-        assert!(!special_remark_due_at_execute_entry(7, 0, u16::MAX));
-        assert!(special_remark_due_at_execute_entry(7, 0, 0));
-        assert!(!special_remark_due_at_execute_entry(7, 0, 1));
-        assert!(!special_remark_due_at_execute_entry(HELBARDMAN, 0, 0));
-        assert!(special_remark_due_at_execute_entry(HELBARDMAN, 40, 0));
-        assert!(!special_remark_due_at_execute_entry(HELBARDMAN, 40, 1));
+        assert!(!special_remark_due_for_execute(7, (0, u16::MAX), (0, 0)));
+        assert!(special_remark_due_for_execute(7, (0, 0), (0, 1)));
+        assert!(!special_remark_due_for_execute(7, (0, 1), (0, 0)));
+
+        assert!(!special_remark_due_for_execute(
+            HELBARDMAN,
+            (40, 0),
+            (39, 0)
+        ));
+        assert!(special_remark_due_for_execute(HELBARDMAN, (39, 0), (40, 0)));
+        assert!(!special_remark_due_for_execute(
+            HELBARDMAN,
+            (39, 0),
+            (40, 1)
+        ));
     }
 
     #[test]
@@ -1753,7 +1762,7 @@ fn apply_soldier_execute_side_effects(
     }
 }
 
-fn special_remark_due_at_execute_entry(
+fn special_remark_due_at_sprite_phase(
     speech_id: u32,
     current_frame: u16,
     frame_count: u16,
@@ -1766,6 +1775,20 @@ fn special_remark_due_at_execute_entry(
         } else {
             current_frame == 0
         }
+}
+
+fn special_remark_due_for_execute(
+    speech_id: u32,
+    before_perform: (u16, u16),
+    after_perform: (u16, u16),
+) -> bool {
+    const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
+    let (current_frame, frame_count) = if speech_id == SPEECH_ID_HELBARDMAN {
+        after_perform
+    } else {
+        before_perform
+    };
+    special_remark_due_at_sprite_phase(speech_id, current_frame, frame_count)
 }
 
 /// Walk/run animation Start → flip `action_state` to the matching
@@ -4074,6 +4097,14 @@ impl EngineInner {
                     } else {
                         None
                     };
+                    // RHElementActorSoldier::Execute checks an ordinary
+                    // Special animation's IsAtStartOfAnim before
+                    // PerformAction. The halberdman exception is deliberately
+                    // checked after PerformAction at frame 40 below.
+                    let special_sprite_before_perform = special_speech_id.map(|_| {
+                        let sprite = entity.sprite();
+                        (sprite.current_frame, sprite.frame_count)
+                    });
                     let motion = if is_turn {
                         // Play the turn sprite animation (alerted
                         // variant for attentive soldiers) at the
@@ -4343,20 +4374,16 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
-                        // The Original checks `IsAtStartOfAnim()` before its
-                        // PerformAction call. Rust's split actor/animation
-                        // phase reaches that same stable sprite phase at the
-                        // end of this PerformAction call: START leaves count
-                        // at 0xffff, and the later increment that changes it
-                        // to zero is the single remark boundary.
-                        let special_remark_now = special_speech_id.is_some_and(|speech_id| {
-                            let sprite = entity.sprite();
-                            special_remark_due_at_execute_entry(
-                                speech_id,
-                                sprite.current_frame,
-                                sprite.frame_count,
-                            )
-                        });
+                        let special_remark_now = special_speech_id
+                            .zip(special_sprite_before_perform)
+                            .is_some_and(|(speech_id, before_perform)| {
+                                let sprite = entity.sprite();
+                                special_remark_due_for_execute(
+                                    speech_id,
+                                    before_perform,
+                                    (sprite.current_frame, sprite.frame_count),
+                                )
+                            });
                         if special_remark_now {
                             completion_outcomes
                                 .execute_sides
