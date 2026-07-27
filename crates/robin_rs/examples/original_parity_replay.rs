@@ -10,7 +10,9 @@
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::ops::Range;
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
@@ -19,6 +21,7 @@ use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
+use robin_engine::profiles::Action;
 use robin_engine::sector::SectorNumber;
 use robin_engine::sprite::BBox;
 use robin_rs::Host;
@@ -40,28 +43,124 @@ struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
     callsite_offsets: Vec<u32>,
+    #[serde(default)]
+    domains: Vec<TraceRngDomain>,
 }
 
 impl TraceRngBatch {
-    fn gameplay_draw_count(&self) -> usize {
+    fn gameplay_draw_count(&self, schema: u32, classifier: &RngDomainClassifier) -> usize {
         assert_eq!(self.values.len(), self.callsite_offsets.len());
+        if !self.domains.is_empty() {
+            assert_eq!(
+                self.values.len(),
+                self.domains.len(),
+                "RNG domain stream has a different length than its values"
+            );
+            return self
+                .domains
+                .iter()
+                .filter(|domain| **domain == TraceRngDomain::Simulation)
+                .count();
+        }
+        assert_eq!(
+            schema, 2,
+            "schema {schema} RNG batches must include stable draw domains"
+        );
         self.callsite_offsets
             .iter()
-            .filter(|offset| is_gameplay_rng_callsite(**offset))
+            .filter(|offset| classifier.is_gameplay(**offset))
             .count()
     }
 }
 
-/// Audio owns the listed call sites in the exact original binary recorded by
-/// C++ commit a97c9dd. The old process-wide RNG interleaves them with gameplay,
-/// but Rust deliberately keeps non-gameplay audio timing off its authoritative
-/// stream. Preserve their global trace positions while filtering them from the
-/// values injected into `sim_rng`.
-fn is_gameplay_rng_callsite(offset: u32) -> bool {
-    !matches!(
-        offset,
-        3_227_602 | 3_230_325 | 3_296_383 | 3_305_409 | 3_305_465 | 3_305_909 | 3_306_159
-    )
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TraceRngDomain {
+    Simulation,
+    Audio,
+}
+
+#[derive(Debug, Default)]
+struct RngDomainClassifier {
+    legacy_audio_symbol_ranges: Vec<Range<u32>>,
+}
+
+impl RngDomainClassifier {
+    fn for_schema(schema: u32) -> Self {
+        if schema != 2 {
+            return Self::default();
+        }
+        let Some(binary) = std::env::var_os("ROBIN_ORIGINAL_BINARY") else {
+            return Self::default();
+        };
+        let binary = PathBuf::from(binary)
+            .canonicalize()
+            .unwrap_or_else(|error| panic!("canonicalize ROBIN_ORIGINAL_BINARY: {error}"));
+        let output = ProcessCommand::new("nm")
+            .args(["-S", "--defined-only"])
+            .arg(&binary)
+            .output()
+            .unwrap_or_else(|error| panic!("inspect {} with nm: {error}", binary.display()));
+        assert!(
+            output.status.success(),
+            "nm failed while inspecting legacy Original binary {}: {}",
+            binary.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let classifier = Self::from_nm_output(&String::from_utf8_lossy(&output.stdout));
+        assert!(
+            !classifier.legacy_audio_symbol_ranges.is_empty(),
+            "no RHSound/RHSoundCache symbols found in legacy Original binary {}",
+            binary.display()
+        );
+        eprintln!(
+            "classifying schema-2 audio RNG from {} ({} symbol ranges)",
+            binary.display(),
+            classifier.legacy_audio_symbol_ranges.len()
+        );
+        classifier
+    }
+
+    fn from_nm_output(output: &str) -> Self {
+        let legacy_audio_symbol_ranges = output
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let start = u64::from_str_radix(fields.next()?, 16).ok()?;
+                let size = u64::from_str_radix(fields.next()?, 16).ok()?;
+                let _symbol_type = fields.next()?;
+                let name = fields.next()?;
+                if !(name.starts_with("_ZN7RHSound") || name.starts_with("_ZN12RHSoundCache")) {
+                    return None;
+                }
+                let end = start.checked_add(size)?;
+                Some(
+                    u32::try_from(start).expect("audio symbol address exceeds trace offset range")
+                        ..u32::try_from(end).expect("audio symbol end exceeds trace offset range"),
+                )
+            })
+            .collect();
+        Self {
+            legacy_audio_symbol_ranges,
+        }
+    }
+
+    /// Old schema-2 recordings predate stable RNG domains. The fixed offsets
+    /// preserve the first baseline trace, while symbol ranges make other
+    /// captured Original builds relocatable when ROBIN_ORIGINAL_BINARY names
+    /// the exact executable used for recording.
+    fn is_gameplay(&self, offset: u32) -> bool {
+        if matches!(
+            offset,
+            3_227_602 | 3_230_325 | 3_296_383 | 3_305_409 | 3_305_465 | 3_305_909 | 3_306_159
+        ) {
+            return false;
+        }
+        !self
+            .legacy_audio_symbol_ranges
+            .iter()
+            .any(|range| range.contains(&offset))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +176,12 @@ struct TraceRngOnly {
     draws: Option<TraceRngBatch>,
     #[serde(default)]
     rng_draws: Option<TraceRngBatch>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RngReplayCache {
+    fingerprint: String,
+    values: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -178,15 +283,92 @@ enum TraceCommand {
     UnselectAllPcs,
     SelectAction {
         pc: TraceEntityId,
-        original_action: u32,
+        #[serde(default)]
+        action: Option<TraceAction>,
+        #[serde(default)]
+        original_action: Option<u32>,
     },
     MakePcFast {
         entity: TraceEntityId,
     },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TraceAction {
+    NoAction,
+    Bow,
+    Hit,
+    HitHard,
+    Purse,
+    Stone,
+    Shield,
+    BigShield,
+    Strangle,
+    Lever,
+    HelpToClimb,
+    Apple,
+    Ale,
+    Eat,
+    Guzzle,
+    Listen,
+    Heal,
+    Net,
+    Beggar,
+    WaspNest,
+    Whistle,
+    Climb,
+    Jump,
+    Search,
+    Resuscitate,
+    LittleJohnCarry,
+    FarmerCarry,
+    Tie,
+    Lockpick,
+    Execute,
+    Test,
+}
+
+impl From<TraceAction> for Action {
+    fn from(value: TraceAction) -> Self {
+        match value {
+            TraceAction::NoAction => Self::NoAction,
+            TraceAction::Bow => Self::Bow,
+            TraceAction::Hit => Self::Hit,
+            TraceAction::HitHard => Self::HitHard,
+            TraceAction::Purse => Self::Purse,
+            TraceAction::Stone => Self::Stone,
+            TraceAction::Shield => Self::Shield,
+            TraceAction::BigShield => Self::BigShield,
+            TraceAction::Strangle => Self::Strangle,
+            TraceAction::Lever => Self::Lever,
+            TraceAction::HelpToClimb => Self::HelpToClimb,
+            TraceAction::Apple => Self::Apple,
+            TraceAction::Ale => Self::Ale,
+            TraceAction::Eat => Self::Eat,
+            TraceAction::Guzzle => Self::Guzzle,
+            TraceAction::Listen => Self::Listen,
+            TraceAction::Heal => Self::Heal,
+            TraceAction::Net => Self::Net,
+            TraceAction::Beggar => Self::Beggar,
+            TraceAction::WaspNest => Self::WaspNest,
+            TraceAction::Whistle => Self::Whistle,
+            TraceAction::Climb => Self::Climb,
+            TraceAction::Jump => Self::Jump,
+            TraceAction::Search => Self::Search,
+            TraceAction::Resuscitate => Self::Resuscitate,
+            TraceAction::LittleJohnCarry => Self::LittleJohnCarry,
+            TraceAction::FarmerCarry => Self::FarmerCarry,
+            TraceAction::Tie => Self::Tie,
+            TraceAction::Lockpick => Self::Lockpick,
+            TraceAction::Execute => Self::Execute,
+            TraceAction::Test => Self::Test,
+        }
+    }
+}
+
 impl TraceCommand {
-    fn into_player_command(self, entity_map: &EntityMap) -> Option<PlayerCommand> {
+    fn into_player_command(self, entity_map: &EntityMap, schema: u32) -> Option<PlayerCommand> {
         Some(match self {
             Self::BoxSelect {
                 first,
@@ -254,11 +436,25 @@ impl TraceCommand {
             Self::UnselectAllPcs => PlayerCommand::UnselectAllPcs,
             Self::SelectAction {
                 pc,
+                action,
                 original_action,
-            } => PlayerCommand::SelectAction {
-                pc_id: entity_map.translate(pc),
-                action_index: original_action,
-            },
+            } => {
+                let action = match (action, original_action) {
+                    (Some(action), _) => action.into(),
+                    (None, Some(original_action)) if schema == 2 => {
+                        Action::try_from(original_action).unwrap_or_else(|_| {
+                            panic!("unsupported original RHaction value {original_action}")
+                        })
+                    }
+                    (None, _) => {
+                        panic!("schema {schema} select_action lacks a stable semantic action")
+                    }
+                };
+                PlayerCommand::SelectResolvedAction {
+                    pc_id: entity_map.translate(pc),
+                    action,
+                }
+            }
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
                 pc_id: entity_map.translate(entity),
             },
@@ -293,11 +489,18 @@ fn original_command_to_rust(value: u16) -> Command {
 /// time, so ordinal casts would report false parity after the first skew.
 fn original_active_command_to_rust(value: u16) -> Command {
     match value {
+        19 => Command::PassDoor,
         22 => Command::MoveOk,
         23 => Command::MoveWaiting,
         26 => Command::Turn,
+        27 => Command::TurnElement,
         28 => Command::TurnFast,
+        29 => Command::EquipBow,
+        33 => Command::LowerBow,
+        34 => Command::RaiseBow,
+        35 => Command::ShootBow,
         39 => Command::ReceiveSwordDamage,
+        40 => Command::ReceiveArrowDamage,
         42 => Command::ReceiveHitDamage,
         50 => Command::EnterSwordfight,
         51 => Command::QuitSwordfight,
@@ -312,12 +515,23 @@ fn original_active_command_to_rust(value: u16) -> Command {
         61 => Command::SwordstrikeThrustC,
         62 => Command::SwordstrikeThrustD,
         63 => Command::SwordstrikeThrustE,
+        64 => Command::SwordstrikeThrustF,
+        65 => Command::SwordstrikeThrustG,
         66 => Command::SwordstrikeThrustH,
+        67 => Command::SwordstrikeThrustI,
+        70 => Command::Provoke,
         75 => Command::WakeUp,
+        83 => Command::JumpCmd,
         86 => Command::HitCmd,
+        87 => Command::HealCmd,
+        91 => Command::ThrowWaspNest,
+        99 => Command::EnterListen,
+        117 => Command::WhistleCmd,
         119 => Command::Point,
+        122 => Command::SitDown,
         131 => Command::EnterAttentiveMode,
         132 => Command::LeaveAttentiveMode,
+        133 => Command::LeaveAttentiveModeOfficer,
         134 => Command::LeanOut,
         135 => Command::LookLeft,
         136 => Command::LookRight,
@@ -593,7 +807,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
         (options, BufWriter::new(file))
     });
-    let all_rng_draws = read_all_rng_draws(&trace_path);
+    let header = read_trace_header(&trace_path);
+    assert!(
+        matches!(header.schema, 2 | 3),
+        "unsupported parity trace schema {}",
+        header.schema
+    );
+    let rng_domain_classifier = RngDomainClassifier::for_schema(header.schema);
+    let all_rng_draws = read_all_rng_draws(&trace_path, header.schema, &rng_domain_classifier);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
@@ -602,14 +823,20 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let file = File::open(&trace_path)
         .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
     let mut lines = BufReader::new(file).lines();
-    let header: TraceHeader = serde_json::from_str(
+    let stream_header: TraceHeader = serde_json::from_str(
         &lines
             .next()
             .expect("parity trace has no header")
             .expect("read parity trace header"),
     )
     .expect("parse parity trace header");
-    assert_eq!(header.schema, 2, "unsupported parity trace schema");
+    assert_eq!(stream_header.schema, header.schema);
+    assert_eq!(stream_header.mission, header.mission);
+    assert_eq!(stream_header.rng_seed, header.rng_seed);
+    assert_eq!(
+        stream_header.synchronous_pathfinding,
+        header.synchronous_pathfinding
+    );
     assert!(
         header.synchronous_pathfinding,
         "trace was recorded with asynchronous pathfinding"
@@ -624,7 +851,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     .expect("parse parity RNG prefix");
     assert_eq!(prefix.r#type, "rng_prefix");
     assert_eq!(prefix.draws.first_index, 0);
-    let prefix_end = prefix.draws.gameplay_draw_count();
+    let prefix_end = prefix
+        .draws
+        .gameplay_draw_count(header.schema, &rng_domain_classifier);
     if let Some((options, writer)) = &mut dump {
         write_jsonl_record(
             writer,
@@ -710,7 +939,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
         }
         let rng_start = gameplay_rng_index;
-        let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
+        let rng_end = rng_start
+            + frame
+                .rng_draws
+                .gameplay_draw_count(header.schema, &rng_domain_classifier);
         gameplay_rng_index = rng_end;
         let resolved_commands =
             serde_json::to_value(&frame.commands).expect("serialize resolved trace commands");
@@ -751,7 +983,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
         for command in frame.commands.drain(..) {
-            if let Some(command) = command.into_player_command(map) {
+            if let Some(command) = command.into_player_command(map, header.schema) {
                 engine.apply_command(&mut display, &mut input, &assets, &command);
             }
         }
@@ -1464,7 +1696,50 @@ fn serde_value_key_to_string(key: serde_value::Value) -> String {
     }
 }
 
-fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
+fn read_trace_header(trace_path: &std::path::Path) -> TraceHeader {
+    let file = File::open(trace_path)
+        .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
+    let line = BufReader::new(file)
+        .lines()
+        .next()
+        .expect("parity trace has no header")
+        .expect("read parity trace header");
+    serde_json::from_str(&line).expect("parse parity trace header")
+}
+
+fn read_all_rng_draws(
+    trace_path: &std::path::Path,
+    schema: u32,
+    classifier: &RngDomainClassifier,
+) -> Vec<u32> {
+    let metadata = std::fs::metadata(trace_path)
+        .unwrap_or_else(|error| panic!("stat parity trace {}: {error}", trace_path.display()));
+    let modified = metadata
+        .modified()
+        .expect("parity trace modification time is unavailable")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("parity trace modification time predates Unix epoch")
+        .as_nanos();
+    let fingerprint = format!(
+        "v1:schema={schema}:length={}:modified={modified}:audio_ranges={:?}",
+        metadata.len(),
+        classifier.legacy_audio_symbol_ranges
+    );
+    let mut cache_name = trace_path.as_os_str().to_owned();
+    cache_name.push(".rng-cache.json");
+    let cache_path = PathBuf::from(cache_name);
+    if let Ok(file) = File::open(&cache_path)
+        && let Ok(cache) = serde_json::from_reader::<_, RngReplayCache>(BufReader::new(file))
+        && cache.fingerprint == fingerprint
+    {
+        eprintln!(
+            "loaded {} simulation RNG draws from {}",
+            cache.values.len(),
+            cache_path.display()
+        );
+        return cache.values;
+    }
+
     let file = File::open(trace_path)
         .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
     let mut result = Vec::new();
@@ -1476,17 +1751,45 @@ fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
             assert_eq!(batch.first_index, original_index, "RNG stream has a gap");
             assert_eq!(batch.values.len(), batch.callsite_offsets.len());
             original_index += batch.values.len();
-            result.extend(
-                batch
-                    .values
-                    .into_iter()
-                    .zip(batch.callsite_offsets)
-                    .filter_map(|(value, offset)| {
-                        is_gameplay_rng_callsite(offset).then_some(value)
-                    }),
-            );
+            if !batch.domains.is_empty() {
+                assert_eq!(
+                    batch.values.len(),
+                    batch.domains.len(),
+                    "RNG domain stream has a different length than its values"
+                );
+                result.extend(batch.values.into_iter().zip(batch.domains).filter_map(
+                    |(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value),
+                ));
+            } else {
+                assert_eq!(
+                    schema, 2,
+                    "schema {schema} RNG batches must include stable draw domains"
+                );
+                result.extend(
+                    batch
+                        .values
+                        .into_iter()
+                        .zip(batch.callsite_offsets)
+                        .filter_map(|(value, offset)| {
+                            classifier.is_gameplay(offset).then_some(value)
+                        }),
+                );
+            }
         }
     }
+    let cache = RngReplayCache {
+        fingerprint,
+        values: result.clone(),
+    };
+    let file = File::create(&cache_path)
+        .unwrap_or_else(|error| panic!("create RNG cache {}: {error}", cache_path.display()));
+    serde_json::to_writer(BufWriter::new(file), &cache)
+        .unwrap_or_else(|error| panic!("write RNG cache {}: {error}", cache_path.display()));
+    eprintln!(
+        "cached {} simulation RNG draws in {}",
+        result.len(),
+        cache_path.display()
+    );
     result
 }
 
@@ -2108,6 +2411,42 @@ fn compare_point_with_absolute_tolerance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stable_rng_domains_do_not_depend_on_callsite_offsets() {
+        let batch = TraceRngBatch {
+            first_index: 0,
+            values: vec![1, 2],
+            callsite_offsets: vec![3_305_465, 123],
+            domains: vec![TraceRngDomain::Simulation, TraceRngDomain::Audio],
+        };
+        assert_eq!(
+            batch.gameplay_draw_count(3, &RngDomainClassifier::default()),
+            1
+        );
+    }
+
+    #[test]
+    fn schema_two_audio_callsite_can_be_resolved_from_symbols() {
+        let classifier = RngDomainClassifier::from_nm_output(
+            "00327400 00000040 T _ZN7RHSound9HourglassEv\n\
+             00400000 00000020 T _ZN8NotAudio4DrawEv\n",
+        );
+        assert!(!classifier.is_gameplay(0x0032_7410));
+        assert!(classifier.is_gameplay(0x0040_0010));
+    }
+
+    #[test]
+    fn original_schema_two_baseline_offsets_remain_supported() {
+        assert!(!RngDomainClassifier::default().is_gameplay(3_305_465));
+        assert!(RngDomainClassifier::default().is_gameplay(1));
+    }
+
+    #[test]
+    fn original_equip_bow_command_maps_by_semantic_name() {
+        assert_eq!(original_active_command_to_rust(29), Command::EquipBow);
+        assert_eq!(Action::from(TraceAction::Bow), Action::Bow);
+    }
 
     #[test]
     fn automatic_dump_window_retains_configured_prior_frames_and_current_frame() {

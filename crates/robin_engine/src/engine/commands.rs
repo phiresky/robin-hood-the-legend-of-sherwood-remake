@@ -472,6 +472,9 @@ impl EngineInner {
             } => {
                 self.select_pc_action_by_index(assets, input, seat, *pc_id, *action_index as u8);
             }
+            SelectResolvedAction { pc_id, action } => {
+                self.set_pc_action(assets, input, seat, *pc_id, *action);
+            }
             CancelAction { pc_id } => {
                 self.set_pc_action(
                     assets,

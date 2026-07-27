@@ -12,6 +12,7 @@
 use crate::coordinates::{MapPoint, ScreenPoint};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
+use crate::profiles::Action;
 use crate::sequence::Field;
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +135,12 @@ pub enum PlayerCommand {
     SelectAction {
         pc_id: EntityId,
         action_index: u32,
+    },
+    /// Select an already-resolved semantic action. Unlike `SelectAction`,
+    /// this remains stable when a character's three portrait slots differ.
+    SelectResolvedAction {
+        pc_id: EntityId,
+        action: Action,
     },
     /// Cancel the active action (set to NoAction).
     CancelAction {
