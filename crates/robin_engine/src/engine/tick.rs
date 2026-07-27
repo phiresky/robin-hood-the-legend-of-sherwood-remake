@@ -4841,8 +4841,11 @@ impl EngineInner {
         // coin pickup, remarks, blood-alcohol bump).
         let sides = outcomes.execute_sides;
 
-        for entity_id in sides.weak_stunned_start {
-            self.add_weak_stunned_combat(entity_id);
+        for (entity_id, anim_type) in sides.weak_stunned_start {
+            self.add_weak_stunned_combat(
+                entity_id,
+                anim_type == crate::order::OrderType::BeingWeakSword,
+            );
         }
 
         for entity_id in sides.hidden_titbit_removals {

@@ -3731,6 +3731,63 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
 }
 
 #[test]
+fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
+    use crate::order::OrderType;
+    use crate::titbit::{ElementHandle, TitbitKind};
+
+    let mut engine = EngineInner::new();
+    let stunned = engine.add_entity(make_pc(true));
+    let opponent = engine.add_entity(make_pc(false));
+    bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
+    install_test_action(
+        &mut engine,
+        stunned,
+        OrderType::BeingStunnedSword,
+        OrderType::WaitingSword,
+    );
+    {
+        let human = engine
+            .get_entity_mut(stunned)
+            .unwrap()
+            .human_data_mut()
+            .unwrap();
+        human.opponents = vec![opponent];
+        human.smalltalk_initiative = true;
+    }
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![stunned];
+    engine.set_actors_frozen(true);
+
+    engine.tick_actor_animation_action_change_slots(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+    );
+
+    assert!(
+        engine
+            .get_entity(stunned)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .smalltalk_initiative,
+        "BeingStunnedSword must not perform ExecuteWeakness's initiative handoff"
+    );
+    let opponent_human = engine.get_entity(opponent).unwrap().human_data().unwrap();
+    assert!(!opponent_human.smalltalk_initiative);
+    assert!(!opponent_human.received_smalltalk_initiative);
+    assert!(
+        engine
+            .feedback
+            .titbit_manager
+            .titbit_exists(TitbitKind::WeakStunned, ElementHandle(stunned.index()))
+    );
+}
+
+#[test]
 fn original_actor_execute_arm_ledger_is_exhaustive() {
     fn strip_comments(source: &str) -> String {
         let mut out = String::with_capacity(source.len());

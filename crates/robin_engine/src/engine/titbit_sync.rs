@@ -189,10 +189,14 @@ impl EngineInner {
         );
     }
 
-    /// Add the weak/stunned titbit and run the combat side effects
-    /// (smalltalk-initiative handoff and `EventAdversaryWeak` stimulus
-    /// dispatch) that fire when a melee weakness is initiated.
-    pub(super) fn add_weak_stunned_combat(&mut self, entity_id: EntityId) {
+    /// Add the weak/stunned titbit and notify adversaries. Original performs
+    /// the smalltalk-initiative handoff only for `BeingWeakSword`;
+    /// `BeingStunnedSword` shares the visual/AI effects but not the handoff.
+    pub(super) fn add_weak_stunned_combat(
+        &mut self,
+        entity_id: EntityId,
+        transfer_smalltalk_initiative: bool,
+    ) {
         self.add_weak_stunned(entity_id);
 
         let opponents: Vec<EntityId> = self
@@ -201,27 +205,29 @@ impl EngineInner {
             .map(|h| h.opponents.clone())
             .unwrap_or_default();
 
-        let principal_id = opponents.first().copied();
-        let is_mutual = principal_id
-            .and_then(|pid| {
-                self.get_entity(pid)
-                    .and_then(|e| e.human_data())
-                    .map(|h| h.opponents.first().copied() == Some(entity_id))
-            })
-            .unwrap_or(false);
+        if transfer_smalltalk_initiative {
+            let principal_id = opponents.first().copied();
+            let is_mutual = principal_id
+                .and_then(|pid| {
+                    self.get_entity(pid)
+                        .and_then(|e| e.human_data())
+                        .map(|h| h.opponents.first().copied() == Some(entity_id))
+                })
+                .unwrap_or(false);
 
-        if let Some(entity) = self.world.entities.get_mut(entity_id)
-            && let Some(human) = entity.human_data_mut()
-        {
-            human.smalltalk_initiative = false;
-        }
-        if let Some(pid) = principal_id
-            && is_mutual
-            && let Some(entity) = self.world.entities.get_mut(pid)
-            && let Some(human) = entity.human_data_mut()
-        {
-            human.smalltalk_initiative = true;
-            human.received_smalltalk_initiative = true;
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
+                && let Some(human) = entity.human_data_mut()
+            {
+                human.smalltalk_initiative = false;
+            }
+            if let Some(pid) = principal_id
+                && is_mutual
+                && let Some(entity) = self.world.entities.get_mut(pid)
+                && let Some(human) = entity.human_data_mut()
+            {
+                human.smalltalk_initiative = true;
+                human.received_smalltalk_initiative = true;
+            }
         }
 
         for opp_id in opponents {

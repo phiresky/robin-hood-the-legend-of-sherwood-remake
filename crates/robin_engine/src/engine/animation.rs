@@ -1442,10 +1442,10 @@ pub(super) struct ExecuteSideOutcomes {
     /// Entities that should fire the special-action remark
     /// (SPECIAL at start-of-anim).
     pub special_remark: Vec<EntityId>,
-    /// Humans whose weak/stunned sword animation just initialized.
-    /// Adds the weak-stunned tidbit, transfers smalltalk initiative,
-    /// and notifies soldier opponents.
-    pub weak_stunned_start: Vec<EntityId>,
+    /// Humans whose weak/stunned sword animation just initialized, paired
+    /// with the exact wrapper type. Both add the weak-stunned titbit and
+    /// notify soldier opponents; only `BeingWeakSword` transfers initiative.
+    pub weak_stunned_start: Vec<(EntityId, OrderType)>,
     /// `(thief, victim)` — NPC-on-NPC pickpocket transfer on
     /// SEARCHING DONE: thief gains the victim's money and the victim
     /// is zeroed out.
@@ -4294,7 +4294,7 @@ impl EngineInner {
                             completion_outcomes
                                 .execute_sides
                                 .weak_stunned_start
-                                .push(entity_id);
+                                .push((entity_id, anim_type));
                         }
                         motion_state
                     });
