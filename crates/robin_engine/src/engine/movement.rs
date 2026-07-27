@@ -2168,6 +2168,27 @@ impl EngineInner {
                 continue;
             };
 
+            // PerformGroupMove resolves every formation slot through
+            // FindAuthorizedPosition before it builds a per-PC gate route.
+            // This is also required for a single PC clicking a lift: the
+            // authored click can be shifted slightly so the upright move box
+            // fits inside the narrow wall/ladder rail.
+            let resolved_dest = if is_door_click {
+                *dest
+            } else {
+                let Some(resolved) =
+                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
+                else {
+                    self.hero_speaking(
+                        assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
+                    continue;
+                };
+                resolved
+            };
+
             // Cross-sector: try gate A*
             let pc_pos_raw = positions
                 .iter()
@@ -2255,7 +2276,7 @@ impl EngineInner {
                         &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
                         path_src_sector,
-                        (effective_click.x, effective_click.y),
+                        (resolved_dest.x, resolved_dest.y),
                         u16::from(goal_sector),
                         pc_auth.as_ref(),
                         false,
@@ -2292,7 +2313,7 @@ impl EngineInner {
                             far_side_is_building: door_far_side_is_building.unwrap_or(false),
                         }
                     } else {
-                        GoalShape::Point(*dest)
+                        GoalShape::Point(resolved_dest)
                     };
                     self.build_gate_movement_sequence(
                         sim,
@@ -2323,9 +2344,11 @@ impl EngineInner {
                         true,
                     );
                     if show_marker && !is_door_click {
-                        self.feedback
-                            .ground_mark
-                            .add_mark(dest.x, dest.y, pc_effective_layer);
+                        self.feedback.ground_mark.add_mark(
+                            resolved_dest.x,
+                            resolved_dest.y,
+                            pc_effective_layer,
+                        );
                     }
                 }
                 None => {
@@ -8182,7 +8205,6 @@ impl EngineInner {
             || move_flags.contains(crate::sequence::MoveFlags::LINE)
             || is_pass_door
             || actor_passing_door
-            || source_is_lift_rail
             || self
                 .world
                 .fast_grid
