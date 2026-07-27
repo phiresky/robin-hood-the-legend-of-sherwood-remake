@@ -1032,8 +1032,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     });
     let header = read_trace_header(&trace_path);
     assert_eq!(
-        header.schema, 5,
-        "unsupported parity trace schema {}; deterministic-SSE schema 5 is required",
+        header.schema, 6,
+        "unsupported parity trace schema {}; resolved-object-interaction schema 6 is required",
         header.schema
     );
     validate_trace_start(
