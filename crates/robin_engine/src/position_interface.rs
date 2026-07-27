@@ -52,17 +52,13 @@ impl PlaneZCoeffs {
     /// `z = (bz * y + az * x + dz) / (1 - bz)`
     #[inline]
     pub fn compute_z(&self, x: f32, y: f32) -> f32 {
-        // The 32-bit Original evaluates this whole expression in x87
-        // extended precision and stores only the result as FLOAT.
-        (((self.bz as f64) * (y as f64) + (self.az as f64) * (x as f64) + (self.dz as f64))
-            / (1.0 - self.bz as f64)) as f32
+        (self.bz * y + self.az * x + self.dz) / (1.0 - self.bz)
     }
 
     /// Compute Z-increment for a map-space movement `(dx, dy)`.
     #[inline]
     pub fn compute_z_increment(&self, dx: f32, dy: f32) -> f32 {
-        (((self.bz as f64) * (dy as f64) + (self.az as f64) * (dx as f64)) / (1.0 - self.bz as f64))
-            as f32
+        (self.bz * dy + self.az * dx) / (1.0 - self.bz)
     }
 
     /// Derive the iso-corrected coefficients from three world-space
@@ -95,13 +91,6 @@ impl PlaneZCoeffs {
         let [p0, p1, p2] = *points;
         let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
         let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-        // `mU`/`mV` are stored FLOAT vectors, but the 32-bit Original then
-        // keeps the inlined InitializeAll cross product, normalization,
-        // homogeneous equation, and Z-equation conversion in x87 registers.
-        // f64 reproduces that excess precision on modern targets.
-        let v1 = v1.map(f64::from);
-        let v2 = v2.map(f64::from);
-        let p0 = p0.map(f64::from);
         let mut nx = v1[1] * v2[2] - v2[1] * v1[2];
         let mut ny = v1[2] * v2[0] - v2[2] * v1[0];
         let mut nz = v1[0] * v2[1] - v2[0] * v1[1];
@@ -109,10 +98,13 @@ impl PlaneZCoeffs {
             return Self {
                 az: 0.0,
                 bz: 0.0,
-                dz: ((p0[2] + f64::from(p1[2]) + f64::from(p2[2])) / 3.0) as f32,
+                dz: (p0[2] + p1[2] + p2[2]) / 3.0,
             };
         }
 
+        // Preserve SBGeoPlane3D::InitializeAll's FLOAT operation sequence
+        // rather than algebraically reducing the ratios. Native parity builds
+        // force SSE2, giving these steps the same binary32 semantics as Rust.
         let norm = (nx * nx + ny * ny + nz * nz).sqrt();
         nx /= norm;
         ny /= norm;
@@ -120,9 +112,9 @@ impl PlaneZCoeffs {
         let d = -p0[0] * nx - p0[1] * ny - p0[2] * nz;
         let k = -1.0 / nz;
         Self {
-            az: (nx * k) as f32,
-            bz: (ny * k) as f32,
-            dz: (d * k) as f32,
+            az: nx * k,
+            bz: ny * k,
+            dz: d * k,
         }
     }
 }
@@ -560,20 +552,13 @@ pub const INVERSE_ASPECT_RATIO_PROJECTILES: f32 = 1.33;
 // PositionInterface
 // ---------------------------------------------------------------------------
 
-/// Match the 32-bit Original's x87 evaluation of
-/// `SBGeoVector2D::Normalize`.
-///
-/// Although the source stores `FLOAT`s, the normalization norm remains in an
-/// extended-precision x87 register across both component divisions. Rounding
-/// the norm to `f32`, or multiplying by a rounded reciprocal, changes common
-/// movement directions by an ULP and eventually changes signed arrival tests.
+/// Match `SBGeoVector2D::Normalize`'s source operation order under the
+/// schema-5 scalar-SSE floating-point contract.
 fn normalize_map_vector_original(v: MapVec) -> Option<MapVec> {
-    let x = f64::from(v.x);
-    let y = f64::from(v.y);
-    let norm = (x * x + y * y).sqrt();
+    let norm = (v.x * v.x + v.y * v.y).sqrt();
     (norm != 0.0).then_some(MapVec {
-        x: (x / norm) as f32,
-        y: (y / norm) as f32,
+        x: v.x / norm,
+        y: v.y / norm,
     })
 }
 
@@ -1940,7 +1925,7 @@ mod tests {
     }
 
     #[test]
-    fn plane_coefficients_and_projection_match_original_x87_rounding() {
+    fn plane_coefficients_and_projection_match_original_sse_rounding() {
         let pts = [
             [
                 f32::from_bits(0x440c_a539),
@@ -1962,12 +1947,12 @@ mod tests {
         let coeffs = PlaneZCoeffs::from_plane_points(&pts);
         assert_eq!(coeffs.az.to_bits(), 0x3e8d_246a);
         assert_eq!(coeffs.bz.to_bits(), 0x3e5c_e9d4);
-        assert_eq!(coeffs.dz.to_bits(), 0xc3dd_b756);
+        assert_eq!(coeffs.dz.to_bits(), 0xc3dd_b755);
         assert_eq!(
             coeffs
                 .compute_z(f32::from_bits(0x4320_0706), f32::from_bits(0x44ea_06e8))
                 .to_bits(),
-            0x40bb_1f73
+            0x40bb_1f7f
         );
     }
 
@@ -2070,8 +2055,8 @@ mod tests {
         pi.compute_increment_all(false);
 
         let increment = pi.get_increment_map();
-        assert_eq!(increment.x.to_bits(), 0x3f3dc40a);
-        assert_eq!(increment.y.to_bits(), 0xbf2bd409);
+        assert_eq!(increment.x.to_bits(), 0x3f3dc409);
+        assert_eq!(increment.y.to_bits(), 0xbf2bd408);
     }
 
     #[test]

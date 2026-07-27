@@ -8,14 +8,16 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema: 4
+- Required Original trace schema: 5
 - Required start state: a complete versioned campaign snapshot captured before
   engine construction, including progression, mission state, gang/reservists/
   mission team, character status and inventory, persistent production state,
   relics, names, values, and campaign pointers encoded as stable indices
-- Compatibility: schemas 1–3 are deliberately rejected. Their mission-name
-  bootstrap cannot reconstruct an arbitrary campaign and can silently create a
-  plausible but different world.
+- Compatibility: schemas 1–4 are deliberately rejected. Schemas 1–3 cannot
+  reconstruct an arbitrary campaign and can silently create a plausible but
+  different world. Schema 4 has complete campaign state, but was recorded with
+  native i686 x87 extended-precision intermediates and is not a valid numeric
+  oracle for the scalar-SSE Rust engine.
 - Inputs: resolved game commands, applied on their recorded simulation frames
 - Start point: mission start; menu and raw input-device behavior are out of scope
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
@@ -24,18 +26,23 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   draw stream. Rust must consume the same values in the same order and fails at
   the first cursor mismatch. Call-site offsets are diagnostic provenance, not a
   requirement that Rust use identical addresses or function boundaries.
+- Floating point: native Original parity captures use scalar SSE2 evaluation,
+  with FP contraction disabled. This removes x87's register-lifetime-dependent
+  excess precision and makes stored `f32` state the shared numeric contract.
 - Comparison: entities are mapped by stable logical traits and creation order;
   compared floats use exact bits. Numeric IDs alone are never treated as a
   behavioral divergence.
 
-The current schema-4 expansion recording is
+The superseded schema-4 expansion recording is
 `original-code/parity-traces/original-fullgame-schema4-session-1.jsonl`: mission
 `H01_Lin_VL` (Lincoln), 2,347 contiguous gameplay frames (0 through 2,346), and
 3,117 filtered simulation RNG draws. The Original process exited after the
 last flushed frame, but the trace is complete and structurally valid through
-that frame. Active parity work currently reaches frame 47.
+that frame. Active historical parity work reached frame 47. It must not be used
+as the current correctness oracle because it predates the scalar-SSE recorder
+build contract. A fresh schema-5 capture is required.
 
-The schema-2/3 sessions below remain historical evidence for completed parity
+The schema-2/3/4 sessions below remain historical evidence for completed parity
 corrections, but are not accepted by the current replay runner.
 
 The current expansion trace is
@@ -71,11 +78,12 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
-| Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 captures a neutral JSON campaign snapshot immediately before engine initialization and writes it into the trace header after initialization RNG has accumulated into the normal prefix. Rust requires schema 4, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
+| Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 introduced a neutral JSON campaign snapshot captured immediately before engine initialization and written into the trace header after initialization RNG has accumulated into the normal prefix. Schema 5 retains that state contract. Rust requires schema 5, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
+| Done | Deterministic native floating point | Native i686 GCC defaulted to x87 evaluation even though SSE2 instructions were available. Extended intermediates then depended on compiler register lifetime, so exact frame-state bits could diverge from Rust and change after unrelated Original rebuilds. | Schema 5 captures are built with scalar SSE2 evaluation and FP contraction disabled across every in-tree Original target. Schema 4 recordings are deliberately invalidated; a new schema-5 recording is required rather than teaching Rust to emulate unstable x87 spill behavior. |
 | Done | Soldier special-remark timing | At schema-4 frame 0 Rust consumed a `SpecialActionRemark` draw while the Original waited until frame 2. `RHElementActorSoldier::Execute` tests `RHSprite::IsAtStartOfAnim()` before `PerformAction`; this means exactly `current_frame == 0 && frame_count == 0`, not the broader sequence motion state named `Start`. | Soldier Special remarks now test the exact sprite phase at the corresponding split execution boundary. The halberd frame-40 exception remains source-identical, and non-soldier Special actions do not inherit the soldier-only side effect. Focused coverage verifies the pre-perform phase rule. |
 | Done | Cached movement direction goal | Soldier 86 began walking on sloped ground with direction 13, but Rust recomputed its goal as 12 on the following frame from the remaining map-space delta. Original `RHPositionInterface::ComputeIncrementAll` derives direction once from the normalized 3D ground-plane increment and keeps it while the cached increment remains valid. | Ordinary movement no longer overwrites the direction goal every tick. Motion initialization and explicit trajectory invalidation/rebuild boundaries remain responsible for it, matching the Original cache lifetime. Replay advances from frame 3 to frame 18. |
 | Done | Patrol endpoint direction side effect | At frame 18 Soldier 60 reaches path 1 waypoint 0, whose macro is backward-only and waits for 250 ticks. To obtain the preceding waypoint for its arrival Turn, Original executes `--path`, reads it, then `++path` on the live `RHPath`; at endpoint zero this round trip leaves traversal reversed. Rust performed the lookup on a clone, stayed forward, rejected the macro, and omitted its RNG draw. | Route-turn lookup now performs the same live iterator round trip, preserving the endpoint reversal that controls `DIR_FORWARD`/`DIR_BACKWARD` macro applicability. Focused coverage verifies waypoint zero remains selected while traversal flips backward. Replay advances to frame 32. |
-| Done | Original x87 ground-plane arithmetic | Soldier 86 followed the correct bit-exact map positions on Lincoln's shallow slope, but its reconstructed elevation drifted because Rust algebraically reduced plane construction and rounded every `f32` arithmetic step. The 32-bit Original keeps inlined cross-product/normalization/equation construction and each plane projection in x87 extended registers, storing only the final coefficients/results. | Plane construction and `compute_z`/`compute_z_increment` now use `f64` intermediates over stored `f32` inputs and cast only their Original storage results. A regression uses Lincoln obstacle 52's exact point bits and verifies all three coefficient bits plus Soldier 86's frame-31 elevation. Replay advances to frame 47. |
+| Superseded | Schema-4 x87 ground-plane arithmetic | Soldier 86 followed the correct bit-exact map positions on Lincoln's shallow slope, but its reconstructed elevation drifted because the old Original build retained plane intermediates in x87 registers. | The temporary Rust `f64` emulation was removed with schema 5. Plane construction now preserves the Original source operation order using ordinary `f32`, and the native Original uses the same scalar-SSE storage semantics. Exact coefficient/projection coverage uses Lincoln obstacle 52's point bits under the new contract. |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Per-NPC records also expose all detection accumulators, maximum visibility, view/alert status, and every detectable's target, visibility, and edge latches, avoiding one-off instrumentation when a hidden perception total diverges. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3`, `a97c9dd`, and `8310b3e`. |
 | Done | Hidden validity and LOS diagnostics | Session 2 could not directly explain why Original rejected PC 198's frame-452 bow command: the target's hidden state, authoritative ammunition, identity gates, and the visibility query that maintained the hidden state were absent from the snapshot. | Schema 3 now records `blipped`, human camp/unconscious/VIP/civilian state, all nine PC inventory counters, and every opaque 3D reachability query with bit-exact endpoints, result, cache metadata, exact blocking reason, and blocker geometry where applicable. Original commits: `a9404d5` and `c6f83ca`. |
 | Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
@@ -159,7 +167,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Frame-462 shadow-response Turn state | Soldiers 92 and 93 run the same walking-to-waiting transition for their shadow-response Turn, but Rust initially changed to waiting one frame early. Soldier 91's detection-tail shadow event synchronously fans out to the patrol before 92/93's creation slots. Original registers their Turns immediately but does not instruct them until the later sequence-manager pass, so their upcoming actor slots execute the already selected halt transition. Rust lost the deferred-instruction mode at the nested cross-NPC `SendStimulus` boundary and selected the new Turn transition in those slots. | Deferred standalone Turn scheduling now applies to ordinary walking as well as running and is threaded through depth-first synchronous patrol-stimulus recursion, including fallback delivery. Direct/global callers retain their existing immediate mode. The member slots consume the old halt transition; manager-tail instruction installs the Turn afterward, so its transition reaches `Done` and changes action state on the same frame as Original. |
 | Done | Frame-469 shadow-response direction goals | When the shadow timer expires, patrol minions return to their nearby chief. Their synchronous `DefaultGotoChief` reach-point handler faces the chief's live position, producing member-specific goals 13 and 14. Rust's general per-tick AI context left `patrol_chief_position` at the stub origin outside the dedicated coordinate call, so both members faced sector 15. The missing data was especially easy to hit when `primary_target == 0`, because the builder returned early. | The central enemy tick-data builder now snapshots a referenced patrol chief's live position and AI state before the no-primary-target return. Missing/stale chief references fail loudly rather than supplying fake data. A focused regression verifies position, sector, level, and state without a combat target. |
 | Done | Frame-472 patrol replacement manager boundary | Chief 91's eighth-frame patrol refresh synchronously coordinates later-slot member 93. Original `CoordinatePatrol` interrupts the selected return-to-chief transition, whose actor-base halt condolence clears the old goal, then only registers the replacement Move for the after-entity `SequenceManager::Hourglass`; the member cannot execute it in its frame-472 slot. Rust's halt-tagged condolence correctly suppressed `Think` but still ran the generic post-card continuation drain, which stole and synchronously instructed the replacement Move. Its generated waiting-to-walking transition therefore executed one slot early. | Halt-tagged cards still perform unconditional actor/human cleanup, but no longer drain self-stimuli, waypoint scripts, or replacement Moves: the NPC condolence override returned before `Think`, so none can be causally produced by that card. The caller's replacement remains queued for normal owner/manager promotion. Focused coverage verifies a prequeued Move survives a halt card uninstructed. Replay now matches through frame 475. |
-| Done | Frame-476 patrol movement completion boundary | Soldiers 89 and 93 advanced from their first formation waypoint in Rust while Original consumed a copied endpoint continuation. Original's terminal startup step remained one ULP short, so `IsGoalReached` stayed false and `PerformMotion(TILL_LAST_FRAME)` copied the endpoint as a Walking order; Rust's accumulated subpixel drift made its corresponding step land exactly. The first drift was already visible in a cached increment at frame 9: Original's 32-bit x87 build retained an extended-precision normalization norm across both divisions, while Rust rounded the norm to `f32`. Anti-collision later compounded drift by recomputing the norm of the rounded `increment * distance` vector instead of forwarding the authoritative animation distance. | Map-vector normalization now evaluates the norm and component divisions with an explicit extended intermediate in both PositionInterface increment paths. Repulsive point/line deviation receives the original animation distance unchanged, matching `UpdatePositionAntiCollision(fDistance)`. Exact-bit coverage exercises a trace-derived normalization vector; the replay now selects the Original endpoint continuation without a replay-specific rule and matches through frame 501. |
+| Partially superseded | Frame-476 patrol movement completion boundary | Soldiers 89 and 93 advanced from their first formation waypoint in Rust while the schema-3 x87 Original consumed a copied endpoint continuation. Part of the drift came from x87 retaining the normalization norm; anti-collision also incorrectly recomputed the norm of the rounded `increment * distance` vector instead of forwarding the authoritative animation distance. | The x87 normalization emulation has been removed: schema-5 Original and Rust both perform the source operations in scalar binary32. The independent anti-collision distance fix remains valid and retained. Exact-bit normalization coverage now asserts the scalar-SSE result. |
 | Done | Frame-502 same-direction chief facing | Soldier 89's shadow timer returns it to duty while it is already within the chief's talk radius. The synchronous `EventReachPoint` handler faces the chief; the resulting sector is the soldier's current sector 12. Original `FaceTo` detects the waiting, already-facing actor, sets `mbAlreadyTurned`, and returns without launching a Turn. Rust used a context-free facing helper that could not perform this check and queued a redundant Turn. | `DefaultGotoChief` now uses the context-aware facing path, preserving Original's waiting/bored same-direction shortcut and same-stack `EventDone`. Focused coverage exercises the close-chief, already-facing reach event. Replay matches through frame 625. |
 | Done | Shadow music-only alert flag | Original's shadow response calls `SetAlertStatus(ALERT_YELLOW, ALERT_ONLY_MUSIC)`: suspicious activity raises the soundtrack alert without changing the NPC's visual alert level. Rust raised both channels, then incorrectly used the music channel for `ComputeVisibility`'s refresh-always gate, recomputing vision every frame instead of retaining the visual-Green cadence. | `EventSeesShadowStandardProcedure` routes Yellow through the existing `ONLY_MUSIC` flag-aware setter, and detection reads `view_alert_status`. Focused coverage verifies the channel split and cadence gate. Correcting this exposed an independent cached-maximum bug that the extra refreshes had masked. |
 | Done | Frame-469 cached maximal sharpness | On a closed two-frame PC cadence, Original `ComputeVisibility(RHDetectable, ...)` returns the detectable's cached visibility, converts it to integer sharpness, and folds that into `muwMaximalVisibility`. Rust instead folded the pre-cache raw visibility, which is deliberately zero on a closed frame. Soldier 91's shadow timer therefore saw zero at frame 469 and returned to its route, while Original saw sharpness 5 and kept looking. The wrong music-driven refresh cadence had previously hidden this bug by opening that frame's gate. | The maximum now has Original's integer-sharpness representation, uses post-cache sharpness, and spans Enemy, Body, Object, Friend, MissedFriend, and Beggar scans. Regression coverage proves cached visibility contributes on a closed cadence frame. |
@@ -219,9 +227,10 @@ Build once, then use the first-divergence run for iteration:
 
 ```sh
 cargo build --example original_parity_replay
+TRACE_JSONL=/path/to/schema5-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
-  original-code/parity-traces/original-demo-rng-baseline.jsonl
+  "$TRACE_JSONL"
 ```
 
 On the first logical or RNG divergence, this default run writes a complete
@@ -240,28 +249,31 @@ To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:
 
 ```sh
+TRACE_JSONL=/path/to/schema5-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
-  original-code/parity-traces/original-demo-rng-baseline.jsonl
+  "$TRACE_JSONL"
 ```
 
 After the first-divergence run is clean, collect the first occurrence of every
 remaining compared-field mismatch with:
 
 ```sh
+TRACE_JSONL=/path/to/schema5-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --scan-all \
-  original-code/parity-traces/original-demo-rng-baseline.jsonl
+  "$TRACE_JSONL"
 ```
 
 For interactive inspection, start the headless runner paused with its local
 HTTP endpoint:
 
 ```sh
+TRACE_JSONL=/path/to/schema5-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   --http-server 17640 --start-paused \
-  original-code/parity-traces/original-demo-rng-baseline.jsonl
+  "$TRACE_JSONL"
 ```
 
 While it is running, `GET /engine-dump` returns the complete current engine,

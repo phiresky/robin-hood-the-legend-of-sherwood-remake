@@ -1002,8 +1002,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     });
     let header = read_trace_header(&trace_path);
     assert_eq!(
-        header.schema, 4,
-        "unsupported parity trace schema {}; campaign-complete schema 4 is required",
+        header.schema, 5,
+        "unsupported parity trace schema {}; deterministic-SSE schema 5 is required",
         header.schema
     );
     let rng_domain_classifier = RngDomainClassifier::for_schema(header.schema);
