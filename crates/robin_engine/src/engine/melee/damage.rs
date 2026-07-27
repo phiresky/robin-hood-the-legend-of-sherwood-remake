@@ -404,6 +404,22 @@ impl EngineInner {
             "Sword damage applied"
         );
 
+        // Soldier learning reads the attacker's *live* command, not the
+        // strike stored in this damage payload. ReceiveSwordDamage can be
+        // translated after the attacker has already selected its next
+        // strike, and Original deliberately memorizes that newer command:
+        // `MakeBadSwordstrikeExperience(pDamage->GetOrigin()->GetCommand())`.
+        // This is before the sound/parry return in
+        // `RHElementActorHuman::Instruct`, so even a fully parried hit updates
+        // the defender's strike memory.
+        if let Some(Entity::Soldier(_)) = self.world.entities.get(victim_id)
+            && let Some(attacker_id) = attacker_id
+            && let Some(live_strike) =
+                crate::weapons::SwordStrike::from_command(self.actor_command(attacker_id))
+        {
+            self.make_bad_sword_strike_experience(assets, victim_id, live_strike, true);
+        }
+
         // Play impact sound effect (queued for next audio hourglass).
         // Different sounds for parried vs armor hit, light vs heavy
         // strikes.
@@ -600,22 +616,6 @@ impl EngineInner {
                     self.hero_speaking(assets, atk_id, HERO_STUN_ENNEMY);
                 }
             }
-        }
-
-        // Soldier learning reads the attacker's *live* command, not the
-        // strike stored in this damage payload. ReceiveSwordDamage can be
-        // translated after the attacker has already selected its next
-        // strike, and Original deliberately memorizes that newer command:
-        // `MakeBadSwordstrikeExperience(pDamage->GetOrigin()->GetCommand())`.
-        // This happens for every sword-damage translation, including a
-        // parried/no-damage result; the learning helper itself rejects
-        // non-strike commands.
-        if let Some(Entity::Soldier(_)) = self.world.entities.get(victim_id)
-            && let Some(attacker_id) = attacker_id
-            && let Some(live_strike) =
-                crate::weapons::SwordStrike::from_command(self.actor_command(attacker_id))
-        {
-            self.make_bad_sword_strike_experience(assets, victim_id, live_strike, true);
         }
 
         // Play posture-based hit reaction animation for non-lethal hits

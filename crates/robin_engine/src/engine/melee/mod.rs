@@ -3588,6 +3588,90 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parried_damage_still_learns_attackers_live_strike() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_sword_profile(7, 30);
+
+        let mut attacker_sequence = crate::sequence::Sequence::new();
+        attacker_sequence.append_element(crate::sequence::SequenceElement::new(
+            1,
+            Command::SwordstrikeThrustE,
+            Some(attacker),
+        ));
+        let attacker_sequence_id = engine
+            .orders
+            .sequence_manager
+            .launch_sequence(attacker_sequence);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(attacker_sequence_id, 0);
+
+        let mut damage_sequence = crate::sequence::Sequence::new();
+        let mut damage_element =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage_element.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 1);
+        damage_sequence.append_element(damage_element);
+        let damage_sequence_id = engine
+            .orders
+            .sequence_manager
+            .launch_sequence(damage_sequence);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(damage_sequence_id, 0);
+
+        let Entity::Soldier(soldier) = engine.get_entity_mut(victim).unwrap() else {
+            unreachable!()
+        };
+        soldier.actor.action_state = ActionState::ParryingSword;
+        let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
+            unreachable!()
+        };
+        ai.known_enemy_strike_1 = Some(SwordStrike::D);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::E),
+            Some(1),
+            (damage_sequence_id, 0),
+        );
+
+        let Entity::Soldier(soldier) = engine.get_entity(victim).unwrap() else {
+            unreachable!()
+        };
+        let crate::element::AiBrain::Enemy(ai) = &soldier.npc.ai_brain else {
+            unreachable!()
+        };
+        assert_eq!(ai.known_enemy_strike_1, Some(SwordStrike::E));
+        assert_eq!(
+            ai.known_enemy_strike_2, None,
+            "a low-skill guard forgets its previous strike when the parried live strike is learned"
+        );
+    }
+
     /// `SwordstrikeThrustA` promotes both principal opponents before
     /// the strike, so clicking a secondary opponent during a
     /// swordfight switches the primary target.
