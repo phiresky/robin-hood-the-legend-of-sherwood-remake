@@ -41,14 +41,20 @@ The current schema-3 capture is
 `original-code/parity-traces/original-demo-schema3-session-2.jsonl`: 1,814
 contiguous gameplay frames (0 through 1,813), 5,353 simulation RNG draws, 550
 audio RNG draws, and 130 resolved commands. It exercises the stable semantic
-command/orientation and RNG-domain contract. Parity currently reaches frame 451;
-frame 452 is the next open divergence.
+command/orientation and RNG-domain contract. Parity reaches frame 451. Its
+frame-452 bow command is not suitable as a continuing correctness oracle:
+Original visibility had reused a result from its lossy 2,000-entry
+reachability cache, whereas Rust performed the exact obstacle test. The cache
+has been removed from the Original; the next schema-3 capture supersedes this
+session for parity work after frame 451.
 
 ## Change ledger
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Per-NPC records also expose all detection accumulators, maximum visibility, view/alert status, and every detectable's target, visibility, and edge latches, avoiding one-off instrumentation when a hidden perception total diverges. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3`, `a97c9dd`, and `8310b3e`. |
+| Done | Hidden validity and LOS diagnostics | Session 2 could not directly explain why Original rejected PC 198's frame-452 bow command: the target's hidden state, authoritative ammunition, identity gates, and the visibility query that maintained the hidden state were absent from the snapshot. | Schema 3 now records `blipped`, human camp/unconscious/VIP/civilian state, all nine PC inventory counters, and every opaque 3D reachability query with bit-exact endpoints, result, cache metadata, exact blocking reason, and blocker geometry where applicable. Original commits: `a9404d5` and `c6f83ca`. |
+| Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. An ordinary first-divergence run now retains a rolling full-engine window and automatically writes the divergent frame plus its 32 predecessors to a unique temporary JSONL file. Explicit dump and `--scan-all` behavior remains unchanged. |
 | Done | Visual parity replay | A headless mismatch report does not show how the divergent frame looks in motion. | `original_parity_replay --visual` runs the same authoritative resolved-command/RNG replay in the normal window/GPU runner, ignores live gameplay input, renders the decoded map and current sprites at a visible rate, and freezes the first divergent state until the window is closed. Headless remains the default for fast iteration. |
 | Done | Global RNG replay | Bored/waiting choices affect head direction and later AI behavior; reproducing only a seed is insufficient across different implementations. | Rust can consume the trace's filtered global libc `rand()` draw stream and records typed Rust consumption sites. Startup and every frame assert the exact draw cursor. |

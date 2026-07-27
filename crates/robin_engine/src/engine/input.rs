@@ -1629,6 +1629,16 @@ impl EngineInner {
             dx * dx + dy * dy < radius * radius
         };
 
+        tracing::trace!(
+            ?shooter_id,
+            ?hand_point,
+            ?target_point,
+            max_range,
+            rel_height,
+            in_range,
+            "bow target range check"
+        );
+
         if !in_range {
             return (BowTarget::OutOfRange, ShootMode::Long);
         }
