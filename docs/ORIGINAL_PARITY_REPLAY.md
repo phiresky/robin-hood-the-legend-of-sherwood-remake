@@ -8,7 +8,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema: 5
+- Required Original trace schema: 6
 - Required replay start state: `mission_start` with a complete versioned
   campaign snapshot captured before engine initialization, including
   progression, mission state, gang/reservists/mission team, character status
@@ -16,11 +16,12 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   campaign pointers encoded as stable indices. The Original also preserves
   `loaded_save` sessions, but Rust rejects them until live mission-save state
   restoration is implemented.
-- Compatibility: schemas 1–4 are deliberately rejected. Schemas 1–3 cannot
+- Compatibility: schemas 1–5 are deliberately rejected. Schemas 1–3 cannot
   reconstruct an arbitrary campaign and can silently create a plausible but
   different world. Schema 4 has complete campaign state, but was recorded with
   native i686 x87 extended-precision intermediates and is not a valid numeric
-  oracle for the scalar-SSE Rust engine.
+  oracle for the scalar-SSE Rust engine. Schema 5 predates complete recording
+  of direct resolved object interactions and their speed changes.
 - Inputs: resolved game commands, applied on their recorded simulation frames
 - Start point: each Original engine session has its own numbered file. Menu and
   raw input-device behavior are out of scope.
@@ -81,6 +82,20 @@ schema 6. A diagnostic-only repaired copy places the omitted click in the
 frame-507 input batch, while `PASS_DOOR` is still selected; that reproduces
 Original's postponed seek and advances the comparison through frame 524. This
 timing was inferred from state and is not a substitute for a schema-6 capture.
+
+The current schema-6 baseline is
+`original-code/parity-traces/original-fullgame-schema6-session-0001.jsonl`:
+mission `H01_Lin_VL` (Lincoln), 2,315 complete gameplay frames (1 through
+2,315), a complete versioned campaign snapshot, 2,979 filtered simulation RNG
+draws, and the direct `TAKE` interaction that schema 5 omitted. The Original
+then crashed after completing a money pickup because the Linux data contains
+`jingle_04.ogg` while `PlayJingle(CASH_WON)` tried only
+`jingle_04.wav`; the trace is valid JSON through its final flushed frame.
+Original commit `f5604189` adds WAV-to-Ogg jingle fallback, makes an absent
+jingle nonfatal, and prevents fatal error handling from calling a null
+termination callback. Initial replay reaches frame 24, where both engines
+process the same queued path request at the same barrier but Rust A* reports no
+path for a route Original accepts.
 
 The schema-2/3/4 sessions below remain historical evidence for completed parity
 corrections, but are not accepted by the current replay runner.
