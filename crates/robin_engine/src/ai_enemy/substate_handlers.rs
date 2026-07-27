@@ -4509,20 +4509,22 @@ impl EnemyAi {
             }
 
             // `AttackingSwordfightParade`: on `EventTimer`, end the
-            // parry (launch StopParrySword if still parrying, a
-            // no-op otherwise — engine-side `dispatch_stop_parry`
-            // gates on `action_state == ParryingSword*`), transition
-            // back to `AttackingSwordfight`, and re-launch the
-            // 20-tick heartbeat.  Without this arm the soldier
-            // wedges in Parade forever — same missing-arm class as
-            // the original SpecialStrike bug.
+            // parry only if it is still active, transition back to
+            // `AttackingSwordfight`, and re-launch the 20-tick heartbeat.
+            // Original checks exactly `RHACTIONSTATE_PARRYING_SWORD` before
+            // queuing StopParrySword. Queuing it after the actor has already
+            // returned to WaitingSword is not a harmless no-op: terminating
+            // that element emits a synchronous EventDone and spuriously
+            // reconsiders the swordfight.
             Substate::AttackingSwordfightParade => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.base
-                        .outbox
-                        .actor
-                        .launch_commands
-                        .push(crate::element::Command::StopParrySword);
+                    if ctx.self_action_state == crate::element::ActionState::ParryingSword {
+                        self.base
+                            .outbox
+                            .actor
+                            .launch_commands
+                            .push(crate::element::Command::StopParrySword);
+                    }
                     self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                     self.base.launch_timer(20, ctx.frame);
                 }
@@ -5914,6 +5916,43 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parade_timer_stops_only_an_active_normal_parry() {
+        let sim = crate::sim_rng::test_context();
+
+        for (action_state, should_stop) in [
+            (crate::element::ActionState::WaitingSword, false),
+            (crate::element::ActionState::ParryingSword, true),
+            (crate::element::ActionState::ParryingSwordLow, false),
+        ] {
+            let mut ai = EnemyAi::new(1);
+            ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);
+            let ctx = AiContext {
+                frame: 325,
+                self_action_state: action_state,
+                ..AiContext::default()
+            };
+
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventTimer),
+                &mut AiGlobalState::default(),
+                &ctx,
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert_eq!(
+                ai.base.outbox.actor.launch_commands
+                    == vec![crate::element::Command::StopParrySword],
+                should_stop,
+                "unexpected stop-parry emission for {action_state:?}"
+            );
+            assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+            assert_eq!(ai.base.when_does_timer_ring, 345);
+        }
+    }
 
     fn pc_view(posture: crate::element::Posture) -> crate::ai_entity_view::AiEntityView {
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {

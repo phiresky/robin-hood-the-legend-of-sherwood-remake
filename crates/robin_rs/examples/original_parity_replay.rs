@@ -51,6 +51,13 @@ struct TraceRngBatch {
 impl TraceRngBatch {
     fn gameplay_draw_count(&self, schema: u32, classifier: &RngDomainClassifier) -> usize {
         assert_eq!(self.values.len(), self.callsite_offsets.len());
+        if self.values.is_empty() {
+            assert!(
+                self.domains.is_empty(),
+                "empty RNG batch unexpectedly contains draw domains"
+            );
+            return 0;
+        }
         if !self.domains.is_empty() {
             assert_eq!(
                 self.values.len(),
@@ -1847,6 +1854,13 @@ fn read_all_rng_draws(
             assert_eq!(batch.first_index, original_index, "RNG stream has a gap");
             assert_eq!(batch.values.len(), batch.callsite_offsets.len());
             original_index += batch.values.len();
+            if batch.values.is_empty() {
+                assert!(
+                    batch.domains.is_empty(),
+                    "empty RNG batch unexpectedly contains draw domains"
+                );
+                continue;
+            }
             if !batch.domains.is_empty() {
                 assert_eq!(
                     batch.values.len(),

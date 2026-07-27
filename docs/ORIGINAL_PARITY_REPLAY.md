@@ -37,6 +37,13 @@ target was not recorded. Expected after-state must not be fed back into replay,
 so this session cannot provide authoritative parity coverage after that point;
 the next schema-3 capture supersedes it.
 
+The current schema-3 capture is
+`original-code/parity-traces/original-demo-schema3-session-2.jsonl`: 1,814
+contiguous gameplay frames (0 through 1,813), 5,353 simulation RNG draws, 550
+audio RNG draws, and 130 resolved commands. It exercises the stable semantic
+command/orientation and RNG-domain contract. Parity currently reaches frame 337;
+frame 338 is the next open divergence.
+
 ## Change ledger
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
@@ -50,6 +57,8 @@ the next schema-3 capture supersedes it.
 | Done | Trace command decoding | Raw mouse/keyboard behavior is not under test. | Recorded resolved commands are translated through the entity bijection; unsupported command values and malformed or non-contiguous traces fail loudly. |
 | Done | Stable action and command names | Schema 2 stored bare action/command ordinals. The replay confused semantic `RHACTION_BOW = 1` with portrait slot 1, and rebuilt Rust/Original command enums have intentional ordinal differences. | Original schema 3 records stable semantic action names (`da51753`) and command names for actor state and resolved commands (`f7acb56`), retaining ordinals only for diagnostics and rejecting unknown values. Rust now has a semantic `SelectResolvedAction` command; schema-2 decoding remains explicit and source-verified. |
 | Done | Continuous resolved orientation | Original `PerformOrientation` continuously derives bow aim, throwable facing, help-climb facing, and beggar facing from the cursor without forwarding a messenger command. Schema 2 therefore cannot reproduce PC 198's frame-532 `RaiseBow` transition. | Original schema 3 now emits a bit-exact `orient_action_at` record for each actor immediately before every live gated mutation, including semantic action, resolved 3D target, and map cursor (`867eb4e`). Rust applies that cursor-independent operation to only the mapped PC through the ordinary bow/throw/help/beggar orientation behavior. The old raw orientation event was removed to prevent duplicate application or focus re-resolution. Focused tests cover schema decoding and targeted throw facing. |
+| Done | Empty schema-3 RNG batches | A frame with no libc draws legitimately records empty `values`, `callsite_offsets`, and `domains` arrays. The Rust reader treated the absent draw-domain payload as schema-2 data and demanded a binary classifier even though there was nothing to classify. | Both the streaming replay and its RNG-sidecar scan now accept an entirely empty batch without weakening length/domain validation for nonempty batches. |
+| Done | Parade timer stop gate | At frame 324 Soldier 82's Parade timer expired after the actor had already returned to `WaitingSword`. Original queues `STOP_PARRY_SWORD` only for exactly `RHACTIONSTATE_PARRYING_SWORD`; Rust queued it unconditionally, and terminating the stale element synchronously emitted `EventDone`, reconsidered combat, and consumed three extra RNG draws. | The timer still returns to ordinary swordfight and restarts its 20-tick heartbeat, but emits StopParrySword only from the exact normal-parry state. Regression coverage verifies `WaitingSword` and `ParryingSwordLow` do not stop while `ParryingSword` does. The schema-3 replay advances to frame 337. |
 | Done | Enum/state representation | The trace exposed a missing Original discriminant rather than an ID mismatch. | Added the missing discriminant and made the compared logical state representable without substituting fake values. |
 | Done | Sequence callbacks and owner boundaries | Original sequence completion, condolence cards, and re-entrant AI callbacks can execute synchronously before an outer dispatch returns. | Sequence effects now preserve callback FIFO order and owner-local synchronous boundaries, including nested condolations. Regression tests cover callback/condolation ordering. |
 | Done | `GOTO_DONTSTOP` and waypoint patrol | Patrol setup and continuation differed before visible movement. | Matched Original flag handling, AI callback/lifecycle behavior, and waypoint-route advancement. |
