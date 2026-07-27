@@ -10284,6 +10284,11 @@ impl EngineInner {
             .friendly_ai_mut()
             .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
             .random_speech(sim, 0, &ctx);
+        // Original RandomSpeech calls Say synchronously before the following
+        // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
+        // that same owner-local boundary here even when the lock gate will
+        // short-circuit the remainder of Hourglass.
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
 
     // ── RefreshAmbushPoints — per-frame ambush peek scan ─────────

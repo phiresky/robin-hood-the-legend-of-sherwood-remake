@@ -3917,14 +3917,17 @@ impl EngineInner {
         // Every engine-entered AI call closes its ordered owner-local
         // SetState/Say boundary before returning to effects/orders. Nothing
         // may survive into the obsolete post-NPC speech batch position.
+        let frame_counter = self.control.frame_counter;
         for (npc_id, entity) in self.world.entities.npcs() {
             let leaked = entity
                 .ai_controller()
-                .is_some_and(|ai| !ai.outbox.reentrant.owner_work.is_empty());
+                .map(|ai| ai.outbox.reentrant.owner_work.as_slice())
+                .unwrap_or_default();
             assert!(
-                !leaked,
-                "NPC {} leaked owner-local AI work past its Hourglass slot",
-                npc_id.index()
+                leaked.is_empty(),
+                "NPC {} leaked owner-local AI work past its Hourglass slot on frame {}: {leaked:?}",
+                npc_id.index(),
+                frame_counter,
             );
         }
 

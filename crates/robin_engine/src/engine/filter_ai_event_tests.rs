@@ -3788,6 +3788,49 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
 }
 
 #[test]
+fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
+    use crate::engine::types::SimulationRng;
+    use crate::profiles::CivilianType;
+
+    let mut engine = EngineInner::new();
+    let beggar = engine.add_entity(make_scripted_civilian(""));
+    if let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() {
+        civilian.civilian.cached_civilian_type = CivilianType::Beggar;
+        civilian.npc.register_number = 0;
+        civilian.npc.ai_brain.base_mut().unwrap().me = beggar.index();
+    }
+    engine.control.frame_counter = 100;
+    // Gate succeeds and choice 2 selects CivBeggarBegging, matching the
+    // frame-1381 Original call shape.
+    engine.control.rng = SimulationRng::with_original_replay(vec![915_892_857, 378_770_797]);
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile {
+            civilian_type: CivilianType::Beggar,
+            ..Default::default()
+        });
+
+    engine.with_simulation_context(|engine, sim| {
+        engine.tick_civilian_random_speech_for_npc(sim, beggar, &assets);
+    });
+
+    let owner_work = &engine
+        .get_entity(beggar)
+        .unwrap()
+        .ai_controller()
+        .unwrap()
+        .outbox
+        .reentrant
+        .owner_work;
+    assert!(
+        owner_work.is_empty(),
+        "RandomSpeech's synchronous Original Say call must settle before the following lock gate"
+    );
+    assert_eq!(engine.control.rng.original_replay_cursor(), Some(2));
+}
+
+#[test]
 fn original_actor_execute_arm_ledger_is_exhaustive() {
     fn strip_comments(source: &str) -> String {
         let mut out = String::with_capacity(source.len());
