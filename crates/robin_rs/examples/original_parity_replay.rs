@@ -421,6 +421,9 @@ enum TraceCommand {
         append: bool,
     },
     UnselectAllPcs,
+    StopPc {
+        pc: TraceEntityId,
+    },
     SelectAction {
         pc: TraceEntityId,
         #[serde(default)]
@@ -596,6 +599,9 @@ impl TraceCommand {
                 append,
             },
             Self::UnselectAllPcs => PlayerCommand::UnselectAllPcs,
+            Self::StopPc { pc } => PlayerCommand::StopPc {
+                pc_id: entity_map.translate(pc),
+            },
             Self::SelectAction {
                 pc,
                 action,
