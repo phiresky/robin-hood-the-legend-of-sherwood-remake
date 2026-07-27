@@ -1735,6 +1735,55 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
 }
 
 #[test]
+fn assign_path_yields_until_return_to_duty_finishes() {
+    let mut host = BoundScriptEffects::new();
+    host.entities.push(Some(native_test_soldier()));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 17;
+    let sim = crate::sim_rng::test_context();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    let mut context = NativeContext::with_bindings(
+        &mut host.host,
+        &mut host.state,
+        &mut host.script_domains,
+        AttachedScriptBindings::empty_ref(),
+        &capabilities,
+    );
+
+    let mut assign = NativeStack::default();
+    assign.push_i32(actor);
+    assign.push_i32(7);
+    assert!(matches!(
+        <NativeContext<'_, '_> as HostFunctions>::call(
+            &mut context,
+            NativeFn::AssignPath as u32,
+            &mut assign,
+        ),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::AssignPath {
+                    actor: yielded_actor,
+                    way: 7,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        }) if yielded_actor == actor
+    ));
+}
+
+#[test]
 fn thanx_launches_into_the_live_sequence_manager_before_returning() {
     let mut host = BoundScriptEffects::new();
     let simulation = crate::sim_rng::test_context();

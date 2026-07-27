@@ -533,6 +533,54 @@ impl EngineInner {
                 }
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::AssignPath { actor, way, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "AssignPath owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                let entity = self.get_entity(owner).ok_or_else(|| {
+                    format!(
+                        "AssignPath owner {} disappeared at its synchronous barrier",
+                        owner.index()
+                    )
+                })?;
+                let data = entity.element_data();
+                let current_position = crate::ai::Position {
+                    x: data.position_map().x,
+                    y: data.position_map().y,
+                    sector: data.sector(),
+                    level: data.layer(),
+                };
+                let current_direction = entity.position_iface().get_direction().as_u8() as u16;
+                let assignment = if way == 0 {
+                    crate::ai::PatrolAssignment::ClearPath
+                } else if way == -1 {
+                    crate::ai::PatrolAssignment::ClearPathSitAround
+                } else {
+                    crate::ai::PathId::new(way as u16)
+                        .map(crate::ai::PatrolAssignment::Index)
+                        .unwrap_or(crate::ai::PatrolAssignment::ClearPath)
+                };
+                let ai = self
+                    .get_entity_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .ok_or_else(|| {
+                        format!(
+                            "AssignPath owner {} lost its required NPC AI at its synchronous barrier",
+                            owner.index()
+                        )
+                    })?;
+                ai.assign_new_patrol_path(
+                    assignment,
+                    current_position,
+                    current_direction,
+                    &assets.hiking_paths,
+                );
+                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
+                Ok(0)
+            }
         }
     }
 

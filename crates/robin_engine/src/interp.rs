@@ -111,6 +111,11 @@ pub enum SynchronousScriptRequest {
         remember_events: bool,
         native_return: i32,
     },
+    AssignPath {
+        actor: i32,
+        way: i32,
+        native_return: i32,
+    },
 }
 
 /// One accepted `RHScript::SetAIState` operation. The native validates its
@@ -166,7 +171,8 @@ impl SynchronousScriptRequest {
             | Self::SetPersistentConcussion { native_return, .. }
             | Self::SetActorLocation { native_return, .. }
             | Self::SetActorActionState { native_return, .. }
-            | Self::LockAi { native_return, .. } => native_return,
+            | Self::LockAi { native_return, .. }
+            | Self::AssignPath { native_return, .. } => native_return,
         }
     }
 }

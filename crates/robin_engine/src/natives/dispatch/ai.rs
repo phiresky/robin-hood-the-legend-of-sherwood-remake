@@ -284,42 +284,23 @@ impl NativeContext<'_, '_> {
                 0
             }
             AssignPath => {
-                // Three cases:
-                //   way == 0   → clear, no sit-around
-                //   way == -1  → clear, sit-around
-                //   way == idx → adopt path
                 let way = stack.pop_i32();
                 let actor = stack.pop_i32();
-                let hiking_paths = self.bindings.hiking_paths.clone();
-                if let Some(entity) = self.get_entity_mut(actor) {
-                    let data = entity.element_data();
-                    let p = data.position_map();
-                    let current_position = crate::ai::Position {
-                        x: p.x,
-                        y: p.y,
-                        sector: data.sector(),
-                        level: data.layer(),
-                    };
-                    let current_direction = entity.position_iface().get_direction().as_u8() as u16;
-                    if let Some(ai) = entity.ai_controller_mut() {
-                        let assignment = if way == 0 {
-                            crate::ai::PatrolAssignment::ClearPath
-                        } else if way == -1 {
-                            crate::ai::PatrolAssignment::ClearPathSitAround
-                        } else {
-                            match crate::ai::PathId::new(way as u16) {
-                                Some(pid) => crate::ai::PatrolAssignment::Index(pid),
-                                None => crate::ai::PatrolAssignment::ClearPath,
-                            }
-                        };
-                        ai.assign_new_patrol_path(
-                            assignment,
-                            current_position,
-                            current_direction,
-                            &hiking_paths,
-                        );
-                    }
+                if !self
+                    .get_entity(actor)
+                    .is_some_and(|entity| entity.ai_controller().is_some())
+                {
+                    return 0;
                 }
+                let request = crate::interp::SynchronousScriptRequest::AssignPath {
+                    actor,
+                    way,
+                    native_return: 0,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 0
             }
             AssignPost => {
