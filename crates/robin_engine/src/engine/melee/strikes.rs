@@ -81,6 +81,28 @@ fn is_falling_flight_order(order_type: crate::order::OrderType) -> bool {
     )
 }
 
+fn set_flight_position(
+    entity: &mut Entity,
+    geometry: crate::element::FlightGeometry,
+    map: crate::coordinates::MapPoint,
+    world_z: f32,
+) {
+    match geometry {
+        crate::element::FlightGeometry::GroundPlane => {
+            entity.element_data_mut().set_position_map(map);
+        }
+        crate::element::FlightGeometry::World3d => {
+            entity
+                .position_iface_mut()
+                .set_position(crate::coordinates::WorldPoint3D {
+                    x: map.x,
+                    y: map.y + world_z,
+                    z: world_z,
+                });
+        }
+    }
+}
+
 impl EngineInner {
     fn begin_selected_melee_motion(
         &mut self,
@@ -1666,15 +1688,6 @@ impl EngineInner {
                 ));
             }
 
-            // Z (elevation) is tracked explicitly only when the flight
-            // setup populated a non-default z component (push flights
-            // landing on a slope; see `apply_push_effect`). For
-            // rolling / ladder-wall / hit fall (`increment_z == 0` &&
-            // `obstacle == None`) we keep the original 2D integrator
-            // path so the actor's existing elevation (which may be
-            // driven by a plane) is preserved exactly as before.
-            let tracks_z = flight.increment_z != 0.0 || flight.obstacle.is_some();
-
             if flight.frames_remaining == 0 {
                 // Combat falls retain their flight state at the geometric
                 // goal until the sprite reports TERMINATED. The animation
@@ -1682,6 +1695,12 @@ impl EngineInner {
                 // apply the goal obstacle/layer/sector and refresh script
                 // sectors.
                 if flight.antagonist.is_some() && entity.element_data().posture != Posture::Flying {
+                    set_flight_position(
+                        entity,
+                        flight.geometry,
+                        crate::coordinates::MapPoint::new(flight.goal_x, flight.goal_y),
+                        flight.goal_z,
+                    );
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
                     landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
@@ -1689,25 +1708,24 @@ impl EngineInner {
                     entity.actor_data_mut().unwrap().active_flight = None;
                 }
             } else if flight.frames_remaining == 1 {
-                // PerformFlight's final non-zero increment reaches the goal,
-                // but does not perform the terminal landing bookkeeping.
-                // Zero the increments so the following DONE hold frame does
-                // not repeat movement or domino checks.
-                if tracks_z || flight.antagonist.is_some() {
-                    entity
-                        .position_iface_mut()
-                        .set_position(crate::coordinates::WorldPoint3D {
-                            x: flight.goal_x,
-                            y: flight.goal_y + flight.goal_z,
-                            z: flight.goal_z,
-                        });
+                // PerformFlight still adds its stored increment on the DONE
+                // frame. It snaps to the exact PositionGoal only when the
+                // sprite later reports TERMINATED.
+                if flight.antagonist.is_some() {
+                    let mut map = entity.element_data().position_map();
+                    map.x += flight.increment_x;
+                    map.y += flight.increment_y;
+                    let z = entity.position_iface().get_elevation() + flight.increment_z;
+                    set_flight_position(entity, flight.geometry, map, z);
                 } else {
-                    entity
-                        .element_data_mut()
-                        .set_position_map(crate::coordinates::MapPoint {
-                            x: flight.goal_x,
-                            y: flight.goal_y,
-                        });
+                    // Non-combat translations have no wrapper termination
+                    // event, so their final flight tick owns the exact snap.
+                    set_flight_position(
+                        entity,
+                        flight.geometry,
+                        crate::coordinates::MapPoint::new(flight.goal_x, flight.goal_y),
+                        flight.goal_z,
+                    );
                 }
                 if flight.antagonist.is_some() {
                     let active = entity
@@ -1721,8 +1739,6 @@ impl EngineInner {
                     active.increment_y = 0.0;
                     active.increment_z = 0.0;
                 } else {
-                    // Non-combat translations have no wrapper termination
-                    // event that owns a later landing edge.
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
                     landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
@@ -1735,19 +1751,8 @@ impl EngineInner {
                 let mut m = entity.element_data().position_map();
                 m.x += flight.increment_x;
                 m.y += flight.increment_y;
-                if tracks_z {
-                    let cur_z = entity.position_iface().get_elevation();
-                    let new_z = cur_z + flight.increment_z;
-                    entity
-                        .position_iface_mut()
-                        .set_position(crate::coordinates::WorldPoint3D {
-                            x: m.x,
-                            y: m.y + new_z,
-                            z: new_z,
-                        });
-                } else {
-                    entity.element_data_mut().set_position_map(m);
-                }
+                let z = entity.position_iface().get_elevation() + flight.increment_z;
+                set_flight_position(entity, flight.geometry, m, z);
                 entity
                     .actor_data_mut()
                     .unwrap()
@@ -2892,6 +2897,38 @@ mod tests {
         assert_eq!(victim.element_data().layer(), 3);
         assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
         assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
+    fn combat_flight_done_applies_increment_before_terminal_snap() {
+        let sim = crate::sim_rng::test_context();
+        let mut entity = falling_pushed_soldier(false);
+        entity
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap()
+            .goal_x = 14.0;
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(entity);
+
+        engine.tick_push_flights(&sim, &LevelAssets::default());
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(
+            victim.element_data().position_map(),
+            MapPoint::new(15.0, 20.0)
+        );
+        assert_eq!(
+            victim
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .unwrap()
+                .frames_remaining,
+            0
+        );
     }
 
     #[test]

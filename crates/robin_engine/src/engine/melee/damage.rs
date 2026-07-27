@@ -1361,6 +1361,7 @@ impl EngineInner {
     /// it because the victim's creation slot may already have run this frame.
     pub(crate) fn initialize_hit_flight(
         &mut self,
+        assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: Option<EntityId>,
         anim: OrderType,
@@ -1375,7 +1376,15 @@ impl EngineInner {
             return;
         }
 
-        let (victim_pos, victim_layer, victim_move_box, victim_dir, frames) = {
+        let (
+            victim_pos,
+            victim_z,
+            victim_layer,
+            victim_sector,
+            victim_move_box,
+            victim_dir,
+            frames,
+        ) = {
             let victim = self
                 .get_entity(victim_id)
                 .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} is missing"));
@@ -1389,7 +1398,9 @@ impl EngineInner {
                 .ready_for_takeoff_ticks_for_anim(sprite_anim);
             (
                 victim.element_data().position_map(),
+                victim.position_iface().get_elevation(),
                 victim.element_data().layer(),
+                victim.element_data().sector(),
                 *victim.position_iface().get_move_box(),
                 victim.element_data().direction(),
                 if ticks > 1 { ticks } else { 8 },
@@ -1431,24 +1442,80 @@ impl EngineInner {
         let flight_x = unit_x * 30.0;
         let flight_y = unit_y * 30.0;
 
-        let mut goal_x = victim_pos.x;
-        let mut goal_y = victim_pos.y;
-        for fraction in [1.0f32, 0.75, 0.5, 0.25] {
-            let candidate = crate::coordinates::MapPoint::new(
+        let candidate = |fraction: f32| {
+            crate::coordinates::MapPoint::new(
                 victim_pos.x + flight_x * fraction,
                 victim_pos.y + flight_y * fraction,
-            );
-            if self.world.fast_grid.is_straight_movement_authorized(
+            )
+        };
+        let authorized = |point| {
+            self.world.fast_grid.is_straight_movement_authorized(
                 victim_pos,
-                candidate,
+                point,
                 victim_layer,
                 &victim_move_box,
-            ) {
-                goal_x = candidate.x;
-                goal_y = candidate.y;
-                break;
+            )
+        };
+        let chosen = if authorized(candidate(1.0)) {
+            Some(candidate(1.0))
+        } else if authorized(candidate(0.5)) {
+            Some(if authorized(candidate(0.75)) {
+                candidate(0.75)
+            } else {
+                candidate(0.5)
+            })
+        } else if authorized(candidate(0.25)) {
+            Some(candidate(0.25))
+        } else {
+            None
+        };
+        let chosen = chosen.filter(|point| {
+            victim_sector
+                .and_then(|sector| {
+                    self.world
+                        .fast_grid
+                        .level
+                        .sector_number_map
+                        .get(&crate::sector::SectorNumber::new(u16::from(sector) as i16))
+                        .copied()
+                })
+                .and_then(|index| self.world.fast_grid.level.sectors.get(index))
+                .map(|sector| sector.contains_point(*point))
+                .unwrap_or(true)
+        });
+        let goal = chosen.unwrap_or(victim_pos);
+        let goal_x = goal.x;
+        let goal_y = goal.y;
+        let (goal_obstacle, goal_z) = match victim_sector {
+            Some(sector) => {
+                match self.get_projection_area_index(assets, sector.get(), victim_layer, goal) {
+                    Some(obstacle_index) => {
+                        let z = self
+                            .sight_obstacles(assets)
+                            .get(obstacle_index as usize)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "falling-hit goal references missing obstacle {obstacle_index}"
+                                )
+                            })
+                            .compute_top_z(goal_x, goal_y);
+                        (
+                            crate::position_interface::ObstacleHandle::new(obstacle_index),
+                            z,
+                        )
+                    }
+                    None => (None, 0.0),
+                }
             }
-        }
+            None => (None, 0.0),
+        };
+
+        // ReadyForTakeOff installs the endpoint obstacle immediately.
+        self.set_obstacle_and_material(
+            assets,
+            victim_id,
+            goal_obstacle.map(|obstacle| obstacle.get()),
+        );
 
         let flight_sector = crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
         let facing_sector = (flight_sector + 8) % 16;
@@ -1462,19 +1529,32 @@ impl EngineInner {
         );
         let dx = goal_x - victim_pos.x;
         let dy = goal_y - victim_pos.y;
-        if dx.abs() > 0.01 || dy.abs() > 0.01 {
+        let dz = goal_z - victim_z;
+        if dx.abs() > 0.01 || dy.abs() > 0.01 || dz.abs() > 0.01 {
             victim
                 .actor_data_mut()
                 .expect("falling-hit victim lost actor data")
                 .active_flight = Some(crate::element::ActiveFlight {
+                geometry: crate::element::FlightGeometry::World3d,
                 increment_x: dx / frames as f32,
                 increment_y: dy / frames as f32,
                 goal_x,
                 goal_y,
                 frames_remaining: frames,
                 antagonist: attacker_id,
-                ..Default::default()
+                increment_z: dz / frames as f32,
+                goal_z,
+                goal_layer: victim_layer,
+                goal_sector: victim_sector,
+                obstacle: goal_obstacle,
             });
+        } else {
+            // TODO: Verify whether a completely blocked zero-distance
+            // ReadyForTakeOff retains a zero-increment flight object.
+            tracing::debug!(
+                ?victim_id,
+                "falling-hit flight has no authorized displacement"
+            );
         }
     }
 

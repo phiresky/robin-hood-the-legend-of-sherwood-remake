@@ -2529,7 +2529,7 @@ mod tests {
         assert_eq!(victim_entity.element_data().direction(), 5);
         assert!(victim_entity.actor_data().unwrap().active_flight.is_none());
 
-        engine.initialize_hit_flight(victim, Some(attacker), queued_type);
+        engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
 
         assert_ne!(
             engine

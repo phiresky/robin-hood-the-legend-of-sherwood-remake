@@ -3810,7 +3810,7 @@ impl EngineInner {
                 )
             });
         if let Some((anim, antagonist)) = initial_hit_flight {
-            self.initialize_hit_flight(entity_id, antagonist, anim);
+            self.initialize_hit_flight(assets, entity_id, antagonist, anim);
         }
 
         // RHElementActorHuman's eight dying/falling arms run

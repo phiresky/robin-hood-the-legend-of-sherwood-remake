@@ -434,7 +434,21 @@ pub struct ActiveLiftClimb {
 #[derive(
     Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
+pub enum FlightGeometry {
+    /// Movement is expressed in projected map coordinates; the current
+    /// ground plane remains authoritative for elevation.
+    #[default]
+    GroundPlane,
+    /// ReadyForTakeOff resolved a complete world-space endpoint, including
+    /// its projection obstacle and elevation.
+    World3d,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub struct ActiveFlight {
+    pub geometry: FlightGeometry,
     /// Per-frame position increment (total displacement / frames).
     pub increment_x: f32,
     pub increment_y: f32,

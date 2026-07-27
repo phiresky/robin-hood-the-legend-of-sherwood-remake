@@ -1027,6 +1027,7 @@ impl EngineInner {
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_flight = Some(crate::element::ActiveFlight {
+                    geometry: crate::element::FlightGeometry::World3d,
                     increment_x: inc_x,
                     increment_y: inc_y,
                     goal_x,
