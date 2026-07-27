@@ -1198,6 +1198,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // being the strongest isomorphism anchor, this lets startup debugging
         // distinguish load-time differences from first-hourglass mutations.
         let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &frame));
+        map.refresh_trace_indices(&frame);
         if frame.frame_before == 0 && std::env::var_os("PARITY_DEBUG_NPC_ORDER").is_some() {
             let reverse: BTreeMap<_, _> = map
                 .entities
@@ -1234,6 +1235,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             std::panic::resume_unwind(payload);
         }
         let _ = engine.perform_post_initialize(&mut display, &assets);
+        map.extend_runtime_entities(&engine, &frame);
         if let Some(visual) = &mut visual
             && !visual.render(&engine)
         {
@@ -2398,7 +2400,13 @@ fn initialize_engine(
 }
 
 struct EntityMap {
+    /// Per-frame Original array index to Rust entity. Original array indices
+    /// can shift after a physical removal, so this is a view rather than the
+    /// durable identity registry.
     entities: BTreeMap<TraceEntityId, EntityId>,
+    /// Original's immutable per-engine construction serial is the durable
+    /// identity anchor for refreshing the per-frame raw-index view.
+    entities_by_creation_order: BTreeMap<u32, EntityId>,
     /// Original and Rust allocate synthetic building-sector numbers from
     /// different registries. Pair them by their shared first-gate position
     /// and inactive occupant sets rather than treating the raw numbers as
@@ -2502,9 +2510,115 @@ impl EntityMap {
                 }
             }
         }
+        let entities_by_creation_order = frame
+            .elements
+            .iter()
+            .map(|element| {
+                (
+                    element.creation_order,
+                    *result
+                        .get(&element.entity_id)
+                        .expect("startup entity has an isomorphic mapping"),
+                )
+            })
+            .collect();
         Self {
             entities: result,
+            entities_by_creation_order,
             building_sectors,
+        }
+    }
+
+    fn refresh_trace_indices(&mut self, frame: &TraceFrame) {
+        for original in &frame.elements {
+            self.refresh_trace_index(original.entity_id, original.creation_order);
+        }
+    }
+
+    fn refresh_trace_index(&mut self, trace_id: TraceEntityId, creation_order: u32) {
+        if let Some(rust_id) = self
+            .entities_by_creation_order
+            .get(&creation_order)
+            .copied()
+        {
+            self.entities.insert(trace_id, rust_id);
+        }
+    }
+
+    /// Extend the mission-start bijection for entities created while replaying
+    /// the mission. Raw table IDs are allocation details in both engines, so
+    /// pair new entities by the same logical labels as startup mapping and use
+    /// each engine's creation order only to break otherwise indistinguishable
+    /// ties.
+    fn extend_runtime_entities(&mut self, engine: &Engine, frame: &TraceFrame) {
+        self.refresh_trace_indices(frame);
+        let mut originals: Vec<_> = frame
+            .elements
+            .iter()
+            .filter(|element| {
+                !self
+                    .entities_by_creation_order
+                    .contains_key(&element.creation_order)
+            })
+            .collect();
+        originals.sort_by_key(|element| (element.creation_order, element.entity_id));
+
+        let mut used: BTreeSet<_> = self.entities_by_creation_order.values().copied().collect();
+        let rust_entities: Vec<_> = engine
+            .entities_with_ids_iter()
+            .filter(|(id, _)| !used.contains(id))
+            .map(|(id, entity)| {
+                let element = entity.element_data();
+                (
+                    id,
+                    entity.entity_id_kind(),
+                    element.position_map(),
+                    element.active,
+                    element.posture as u32,
+                )
+            })
+            .collect();
+        assert_eq!(
+            originals.len(),
+            rust_entities.len(),
+            "runtime entity tables gained different numbers of unmapped entities"
+        );
+
+        for original in originals {
+            let expected_kind = EntityIdKind::from(original.entity_id.kind);
+            let expected_position: MapPoint = original.position_map.into();
+            let mut candidates: Vec<_> = rust_entities
+                .iter()
+                .filter(|(id, kind, _, _, _)| *kind == expected_kind && !used.contains(id))
+                .collect();
+            candidates.sort_by_key(|(id, _, position, active, posture)| {
+                let exact = position.x.to_bits() == expected_position.x.to_bits()
+                    && position.y.to_bits() == expected_position.y.to_bits();
+                let dx = f64::from(position.x) - f64::from(expected_position.x);
+                let dy = f64::from(position.y) - f64::from(expected_position.y);
+                (
+                    (!exact) as u8,
+                    exact && *active != original.active,
+                    exact && *posture != original.posture,
+                    (dx * dx + dy * dy).to_bits(),
+                    id.index(),
+                )
+            });
+            let (rust_id, _, _, _, _) = candidates.first().unwrap_or_else(|| {
+                panic!(
+                    "no unused runtime Rust {:?} for original {:?} created at order {}",
+                    expected_kind, original.entity_id, original.creation_order
+                )
+            });
+            used.insert(*rust_id);
+            self.entities.insert(original.entity_id, *rust_id);
+            assert!(
+                self.entities_by_creation_order
+                    .insert(original.creation_order, *rust_id)
+                    .is_none(),
+                "Original creation order {} was mapped twice",
+                original.creation_order
+            );
         }
     }
 
@@ -3005,6 +3119,28 @@ mod tests {
         assert!(matches!(action, TraceAction::Bow));
         assert_eq!(MapPoint::from(mouse_map), MapPoint::new(1.0, 2.0));
         assert_eq!(WorldPoint3D::from(target), WorldPoint3D::new(3.0, 4.0, 5.0));
+    }
+
+    #[test]
+    fn trace_index_refresh_uses_stable_creation_order() {
+        let old_trace_id = TraceEntityId {
+            kind: TraceEntityKind::Projectile,
+            index: 127,
+        };
+        let shifted_trace_id = TraceEntityId {
+            kind: TraceEntityKind::Projectile,
+            index: 126,
+        };
+        let rust_id = EntityId::Projectile(robin_engine::entity_id::ProjectileId(158));
+        let mut map = EntityMap {
+            entities: BTreeMap::from([(old_trace_id, rust_id)]),
+            entities_by_creation_order: BTreeMap::from([(158, rust_id)]),
+            building_sectors: BTreeMap::new(),
+        };
+
+        map.refresh_trace_index(shifted_trace_id, 158);
+
+        assert_eq!(map.translate(shifted_trace_id), rust_id);
     }
 
     #[test]
