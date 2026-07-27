@@ -331,6 +331,11 @@ fn movement_execute_state_effect(
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
+        (
+            OT::TransitionWaitingUprightClimbingLadderUp
+            | OT::TransitionWaitingUprightClimbingLadderUpAlerted,
+            MS::Done | MS::Terminated,
+        ) => Some((P::OnLadder, AS::Moving)),
         _ => None,
     }
 }
