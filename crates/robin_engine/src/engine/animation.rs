@@ -129,6 +129,18 @@ mod tests {
     }
 
     #[test]
+    fn special_remark_uses_pre_perform_sprite_phase() {
+        const HELBARDMAN: u32 = 0x4c484453;
+
+        assert!(!special_remark_due_at_execute_entry(7, 0, u16::MAX));
+        assert!(special_remark_due_at_execute_entry(7, 0, 0));
+        assert!(!special_remark_due_at_execute_entry(7, 0, 1));
+        assert!(!special_remark_due_at_execute_entry(HELBARDMAN, 0, 0));
+        assert!(special_remark_due_at_execute_entry(HELBARDMAN, 40, 0));
+        assert!(!special_remark_due_at_execute_entry(HELBARDMAN, 40, 1));
+    }
+
+    #[test]
     fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
         let mut soldier = weak_soldier_at_action_done(0);
         let mut pc = Entity::Pc(ActorPc {
@@ -1498,7 +1510,7 @@ fn apply_soldier_execute_side_effects(
     antagonist: Option<EntityId>,
     entity_id: EntityId,
     outcomes: &mut ExecuteSideOutcomes,
-    profile_manager: &crate::profiles::ProfileManager,
+    _profile_manager: &crate::profiles::ProfileManager,
 ) {
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
@@ -1713,26 +1725,6 @@ fn apply_soldier_execute_side_effects(
             }
         }
 
-        // SPECIAL: most speakers fire the special-action remark on the
-        // first frame of the animation.  The Halberdman variant fires
-        // it instead at a specific eat-frame mid-animation.
-        (OT::Special, _) => {
-            const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
-            const EAT_FRAMES_HELBARDMAN: u16 = 40;
-            let speech_id = entity
-                .soldier_data()
-                .and_then(|s| profile_manager.get_soldier(s.soldier_profile_index))
-                .map(|p| p.exclamation_id)
-                .unwrap_or(0);
-            if speech_id == SPEECH_ID_HELBARDMAN {
-                if entity.sprite().is_at_frame_number(EAT_FRAMES_HELBARDMAN) {
-                    outcomes.special_remark.push(entity_id);
-                }
-            } else if matches!(motion, MS::Start) {
-                outcomes.special_remark.push(entity_id);
-            }
-        }
-
         // GETTING_FREE_FROM_WASP: on initialisation sets a random
         // rotation offset and says REMARK_WASP_STING; while still
         // turning, plays TURNING_ALERTED instead of the configured
@@ -1759,6 +1751,21 @@ fn apply_soldier_execute_side_effects(
         // (Upright, WaitingSword) state change here.
         _ => {}
     }
+}
+
+fn special_remark_due_at_execute_entry(
+    speech_id: u32,
+    current_frame: u16,
+    frame_count: u16,
+) -> bool {
+    const SPEECH_ID_HELBARDMAN: u32 = 0x4c484453;
+    const EAT_FRAMES_HELBARDMAN: u16 = 40;
+    frame_count == 0
+        && if speech_id == SPEECH_ID_HELBARDMAN {
+            current_frame == EAT_FRAMES_HELBARDMAN
+        } else {
+            current_frame == 0
+        }
 }
 
 /// Walk/run animation Start → flip `action_state` to the matching
@@ -4046,6 +4053,27 @@ impl EngineInner {
                         matches!(anim_type, OrderType::DrinkingAle)
                             && antagonist.is_some()
                             && drinking_ale_antagonist_active == Some(false);
+                    let special_speech_id = if anim_type == OrderType::Special
+                        && entity.is_soldier()
+                    {
+                        Some(
+                                entity
+                                .soldier_data()
+                                .and_then(|soldier| {
+                                    assets
+                                    .profile_manager
+                                    .get_soldier(soldier.soldier_profile_index)
+                            })
+                            .map(|profile| profile.exclamation_id)
+                            .unwrap_or_else(|| {
+                                    panic!(
+                                        "Special animation owner {entity_id:?} has no soldier profile"
+                                    )
+                                }),
+                            )
+                    } else {
+                        None
+                    };
                     let motion = if is_turn {
                         // Play the turn sprite animation (alerted
                         // variant for attentive soldiers) at the
@@ -4315,6 +4343,26 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
+                        // The Original checks `IsAtStartOfAnim()` before its
+                        // PerformAction call. Rust's split actor/animation
+                        // phase reaches that same stable sprite phase at the
+                        // end of this PerformAction call: START leaves count
+                        // at 0xffff, and the later increment that changes it
+                        // to zero is the single remark boundary.
+                        let special_remark_now = special_speech_id.is_some_and(|speech_id| {
+                            let sprite = entity.sprite();
+                            special_remark_due_at_execute_entry(
+                                speech_id,
+                                sprite.current_frame,
+                                sprite.frame_count,
+                            )
+                        });
+                        if special_remark_now {
+                            completion_outcomes
+                                .execute_sides
+                                .special_remark
+                                .push(entity_id);
+                        }
                         apply_soldier_execute_side_effects(
                             entity,
                             anim_type,

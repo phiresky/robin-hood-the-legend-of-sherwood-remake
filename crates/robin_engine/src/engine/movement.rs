@@ -4247,15 +4247,13 @@ impl EngineInner {
         }
 
         // Pre-pass: drive the per-tick `TurnDrunken()` turn for every
-        // drunken soldier and record the resulting sprite facing as
-        // an override for the main loop.  `TurnDrunken()` picks
+        // drunken soldier. `TurnDrunken()` picks
         // between `TurnSlow(2)` and `TurnVerySlow()` (delay 5) so the
         // soldier's facing lags behind the movement vector.  This
         // must run before the main loop because the per-tick turn
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
-        let mut drunk_turn_overrides = EntitySlots::filled(self.world.entities.len(), None);
-        for (soldier_id, soldier) in self
+        for (_, soldier) in self
             .world
             .entities
             .soldiers_mut()
@@ -4322,7 +4320,6 @@ impl EngineInner {
                 } else {
                     pi.turn_slow(2);
                 }
-                drunk_turn_overrides[soldier_id] = Some(i16::from(pi.get_direction()));
             }
         }
 
@@ -4854,8 +4851,6 @@ impl EngineInner {
             let soldier_attentive = matches!(entity, crate::element::Entity::Soldier(_))
                 && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
             let elem = entity.element_data_mut();
-            let motion_order_is_new = order_id
-                .is_some_and(|order_id| elem.sprite.last_processed_order_id != order_id.get());
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
             let dist = (dx * dx + dy * dy).sqrt();
@@ -4896,39 +4891,14 @@ impl EngineInner {
                         );
                     }
                 }
-            } else if dist > 0.01
-                && order_compute_direction
-                && !motion_order_is_new
-                && !elem.sprite.position_iface.is_deviated()
-            {
-                // Normal movement: face movement direction. On a new order,
-                // leave the previous goal intact until PerformMotion's
-                // InitializeMotionOrder/ComputeIncrementAll step below: the
-                // Original calls Turn() before that initialization, so its
-                // first START tick cannot rotate toward the new destination.
-                // On subsequent ticks, use
-                // `set_direction_goal` (not instant) so the per-frame
-                // turn rotates one sector per tick toward the movement
-                // vector.  Paired with the 0.6× turn-slowdown in
-                // `perform_motion` below, this reproduces the
-                // "character pivots before walking" feel from the
-                // original game.
-                //
-                // Gated on `order.compute_direction`: facing is only
-                // updated when the order's `compute_direction` flag is
-                // true.  Orders pushed by AI for in-place transitions
-                // / posture changes / TurnDrunken-driven walks set it
-                // false so the actor's facing is preserved by the
-                // caller.
-                //
-                // `order.reverse` flips the facing 180° (sector ^ 8)
-                // so reverse-walked animations face away from the
-                // movement vector.
-                let raw = drunk_turn_overrides[actor_id]
-                    .unwrap_or_else(|| vector_to_sector_0_to_15(dx, dy));
-                let dir = if order_reverse { raw ^ 8 } else { raw };
-                elem.set_direction_goal(dir);
             }
+            // Ordinary movement does not recompute facing from the remaining
+            // map-space goal every tick. Original ComputeIncrementAll stamps
+            // the goal once from its normalized 3D increment (including the
+            // live ground plane), then returns early while that increment
+            // remains valid. PerformMotion below owns that initialization;
+            // anti-collision and path-boundary code explicitly invalidate and
+            // rebuild it when the trajectory actually changes.
 
             // Choose animation based on action state and movement angle.
             let anim = if let Some(dp_anim) =

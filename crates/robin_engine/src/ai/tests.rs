@@ -524,6 +524,62 @@ fn goto_route_arrival_launches_turn_even_when_already_facing_route() {
     assert_eq!(orders[0].explicit_direction, Some(route_direction as i16));
 }
 
+#[test]
+fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
+    use crate::ai::macro_patrol::{PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let paths = vec![RawHikingPath {
+        waypoints: vec![
+            RawWaypoint {
+                x: 0,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::Macro(vec![1]),
+            },
+            RawWaypoint {
+                x: 10,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+        ],
+    }];
+
+    let mut ai = AiController::new(1);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultGotoRoute;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+    let ctx = AiContext {
+        position: Position {
+            x: 0.0,
+            y: 0.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        direction: 0,
+        posture: crate::element::Posture::Upright,
+        self_action_state: crate::element::ActionState::Waiting,
+        hiking_paths: std::sync::Arc::new(paths),
+        ..AiContext::default()
+    };
+
+    ai.think_expected_event_common_stuff(
+        &crate::sim_rng::test_context(),
+        &Stimulus::new(StimulusType::EventReachPoint),
+        &ctx,
+    );
+
+    let path = ai.patrol_path.as_ref().expect("patrol path");
+    assert_eq!(path.current_waypoint_index, 0);
+    assert!(
+        !path.forward,
+        "Original's live --path/++path lookup reverses traversal at waypoint zero"
+    );
+}
+
 // ──────────────────────────────────────────────────────────
 // init_state — initial-action gate
 // ──────────────────────────────────────────────────────────

@@ -3732,7 +3732,7 @@ impl AiController {
                     // `currentWaypoint->uwSizeOfData > 0`; simple waypoints
                     // synchronously feed EVENT_DONE back into the AI without
                     // launching a Turn element.
-                    if let Some(ref path) = self.patrol_path {
+                    if let Some(ref mut path) = self.patrol_path {
                         let current_has_command =
                             path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
                                 !matches!(
@@ -3741,12 +3741,20 @@ impl AiController {
                                 )
                             });
                         if path.size > 1 && current_has_command {
-                            // Get previous waypoint to compute turn direction.
-                            let mut tmp = path.clone();
-                            tmp.retreat();
-                            if let Some(prev_wp) = tmp.current_waypoint(hiking_paths) {
-                                let dx = ctx.position.x - prev_wp.x as f32;
-                                let dy = ctx.position.y - prev_wp.y as f32;
+                            // Get the previous waypoint to compute the turn
+                            // direction. Original performs `--path`, reads the
+                            // waypoint, then performs `++path` on the *live*
+                            // RHPath. At either endpoint that round trip also
+                            // reverses the path's traversal direction, which
+                            // controls DIR_FORWARD/DIR_BACKWARD waypoint
+                            // macros. Preserve that iterator side effect.
+                            path.retreat();
+                            let previous_waypoint =
+                                path.current_waypoint(hiking_paths).map(|wp| (wp.x, wp.y));
+                            path.advance();
+                            if let Some((prev_x, prev_y)) = previous_waypoint {
+                                let dx = ctx.position.x - prev_x as f32;
+                                let dy = ctx.position.y - prev_y as f32;
                                 let sector =
                                     crate::position_interface::vector_to_sector_0_to_15(dx, dy);
                                 // This is deliberately not `FaceTo`: Original
