@@ -4961,8 +4961,12 @@ impl EngineInner {
                     }
                 }
                 self.apply_concussion(sim, assets, target, 0, false);
-                self.stop_owner(target, crate::sequence::SequencePriority::Normal);
-                self.ensure_wait_element(target);
+                // Original WAKING_UP DONE calls target->Wait()
+                // unconditionally. That launches a fresh priority-Wait
+                // element even while the old unconscious Wait is live, so
+                // ordinary equal-priority arbitration replaces and
+                // retranslates it immediately as StandingUp.
+                self.actor_wait(target);
             }
 
             if target_is_pc {

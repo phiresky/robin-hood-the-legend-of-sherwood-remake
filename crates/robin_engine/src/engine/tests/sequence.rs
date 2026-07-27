@@ -1786,7 +1786,7 @@ fn assert_npc_translate_books(
 }
 
 #[test]
-fn wake_up_translate_books_waking_up_with_antagonist() {
+fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
@@ -1813,14 +1813,24 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
-    let (order_seq, _, order) = engine
+    let (order_seq, order_elem, order) = engine
         .orders
         .sequence_manager
         .current_order_for_actor(rescuer)
         .expect("WakeUp should queue an animation order");
     assert_eq!(order_seq, seq_id);
-    assert_eq!(order.order_type, OrderType::WakingUp);
-    assert_eq!(order.antagonist, Some(target));
+    assert_eq!(order.order_type, OrderType::Turning);
+    let orders = &engine
+        .orders
+        .sequence_manager
+        .get_element(order_seq, order_elem)
+        .unwrap()
+        .orders;
+    assert_eq!(orders.len(), 2);
+    assert_eq!(orders[0].order_type, OrderType::Turning);
+    assert!(orders[0].compute_direction);
+    assert_eq!(orders[1].order_type, OrderType::WakingUp);
+    assert_eq!(orders[1].antagonist, Some(target));
 }
 
 #[test]
@@ -1830,6 +1840,8 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     use super::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::combat::CONCUSSION_THRESHOLD;
     use crate::element::{ActionState, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
 
     let mut engine = EngineInner::new();
     let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
@@ -1857,7 +1869,27 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .soldiers
         .resize_with(1, crate::profiles::SoldierProfile::default);
+
+    // The wake target already owns the ordinary unconscious idle Wait.
+    // Original target->Wait() must replace this equal-priority element,
+    // rather than merely ensuring that some Wait exists.
+    let stale_wait = engine.actor_wait(target);
+    engine
+        .drain_script_synchronous_actions(sim, &assets, &mut Vec::new())
+        .expect("initial unconscious Wait should translate synchronously");
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(target)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::BeingUnconscious)
+    );
+
     engine.process_anim_completion_outcomes(sim, outcomes, &assets);
+    engine
+        .drain_script_synchronous_actions(sim, &assets, &mut Vec::new())
+        .expect("wake completion's fresh Wait should translate synchronously");
 
     let target_entity = engine.get_entity(target).expect("target present");
     assert_eq!(target_entity.element_data().posture, Posture::Lying);
@@ -1870,15 +1902,24 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         target_entity.actor_data().unwrap().action_state,
         ActionState::Waiting
     );
-    let current = engine
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(stale_wait, 0)
+            .expect("stale unconscious Wait remains inspectable")
+            .state,
+        SequenceState::Interrupted,
+        "fresh target->Wait() replaces the stale unconscious idle"
+    );
+    let (fresh_wait, current_order) = engine
         .orders
         .sequence_manager
-        .live_element_for_actor_matching(target, |elem| {
-            elem.command == crate::element::Command::Wait
-        })
-        .and_then(|(seq_id, elem_idx)| engine.orders.sequence_manager.get_element(seq_id, elem_idx))
-        .map(|elem| elem.command);
-    assert_eq!(current, Some(crate::element::Command::Wait));
+        .current_order_for_actor(target)
+        .map(|(seq_id, _, order)| (seq_id, order.order_type))
+        .expect("fresh recovery Wait should be current");
+    assert_eq!(current_order, OrderType::StandingUp);
+    assert_ne!(fresh_wait, stale_wait);
 }
 
 /// `Point` → `Pointing` animation.

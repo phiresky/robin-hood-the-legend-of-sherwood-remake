@@ -1767,7 +1767,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
-    use crate::position_interface::SectorHandle;
+    use crate::position_interface::{Direction, SectorHandle};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
@@ -1778,6 +1778,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         target_before_movement: MapPoint,
         target_after_movement: MapPoint,
         seeker_after_crossing_tolerance: MapPoint,
+        seeker_direction_after_crossing_tolerance: i16,
         seeker_state_after_crossing_tolerance: SequenceState,
         seeker_after_next_tolerance_sample: MapPoint,
         seeker_state_after_next_tolerance_sample: SequenceState,
@@ -1909,6 +1910,24 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             MapPoint::new(100.0, 0.0),
             Some(target_id),
         );
+        if seeker_before_target {
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seeker_sequence, 0)
+                .unwrap()
+                .orders[0]
+                .compute_direction = false;
+            let position = engine
+                .get_entity_mut(seeker_id)
+                .unwrap()
+                .position_iface_mut();
+            position.set_direction_instantly(Direction::NORTH);
+            position.set_direction(Direction::EAST);
+            position.deviated = true;
+            let _ = position.turn();
+            let _ = position.turn();
+        }
 
         // The original sprite pipeline reports MotionState::Start without
         // advancing on a newly-seen order. Prime that start tick, then use
@@ -1944,6 +1963,11 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .element_data()
                 .position_map(),
             seeker_after_crossing_tolerance,
+            seeker_direction_after_crossing_tolerance: engine
+                .get_entity(seeker_id)
+                .unwrap()
+                .element_data()
+                .direction(),
             seeker_state_after_crossing_tolerance,
             seeker_after_next_tolerance_sample: engine
                 .get_entity(seeker_id)
@@ -1971,6 +1995,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 // which is already within 15 units, and terminates without
                 // committing a step.
                 seeker_after_crossing_tolerance: MapPoint::new(0.0, 0.0),
+                seeker_direction_after_crossing_tolerance: 0,
                 seeker_state_after_crossing_tolerance: SequenceState::Terminated,
                 seeker_after_next_tolerance_sample: MapPoint::new(0.0, 0.0),
                 seeker_state_after_next_tolerance_sample: SequenceState::Terminated,
@@ -1985,6 +2010,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 // the second frame remains in progress until the next
                 // pre-motion sample.
                 seeker_after_crossing_tolerance: MapPoint::new(24.0, 0.0),
+                seeker_direction_after_crossing_tolerance: 1,
                 seeker_state_after_crossing_tolerance: SequenceState::InProgress,
                 seeker_after_next_tolerance_sample: MapPoint::new(24.0, 0.0),
                 seeker_state_after_next_tolerance_sample: SequenceState::Terminated,

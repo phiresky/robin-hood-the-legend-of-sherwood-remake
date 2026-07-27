@@ -2029,6 +2029,34 @@ impl RecoveryCommandContext<'_> {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 };
+                let owner_position = self
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| {
+                        panic!("WakeUp owner {owner:?} is missing before direction setup")
+                    })
+                    .element_data()
+                    .position_map();
+                let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                    target_position.x - owner_position.x,
+                    target_position.y - owner_position.y,
+                );
+                self.entities
+                    .get_mut(owner)
+                    .unwrap_or_else(|| {
+                        panic!("WakeUp owner {owner:?} vanished during direction setup")
+                    })
+                    .element_data_mut()
+                    .set_direction_goal(direction);
+
+                // Original RHCOMMAND_WAKE_UP inserts a TURNING order first,
+                // after setting the progressive direction goal toward the
+                // target, then appends the non-direction-computing WAKING_UP
+                // action.
+                let turn_id = crate::order::alloc_order_id(self.next_order_id);
+                let turn = crate::order::Order::new(OrderType::Turning, 0.0, 0.0, turn_id);
+                self.sequence_manager.push_order_on(seq_id, elem_idx, turn);
+
                 let id = crate::order::alloc_order_id(self.next_order_id);
                 let mut order = crate::order::Order::new(
                     OrderType::WakingUp,

@@ -5248,7 +5248,6 @@ impl EngineInner {
             // motion terminates; folding it into MotionMethod::Fast would
             // over-rotate on that terminal tick and cannot expose the first
             // call's termination barrier.
-            let _ = elem.sprite.position_iface.turn();
             // Original short-circuits a newly initialized non-transition
             // motion only for exact `pointDestination2D == GetPositionMap()`.
             // A near-target continuation must still run PerformMotion so its
@@ -5264,6 +5263,11 @@ impl EngineInner {
             let (mut motion_state, mut frame_dist_raw) = if tolerance_arrival {
                 (MotionState::InProgress, 0.0)
             } else {
+                // Entity-target PerformSeek tests its successful tolerance
+                // branch before the ordinary Turn/PerformMotion block. Do
+                // not advance anti-vibration turning on a terminal tolerance
+                // sample whose post-seek sequence is taking over.
+                let _ = sprite.position_iface.turn();
                 sprite.perform_motion(
                     sim,
                     motion_order,
