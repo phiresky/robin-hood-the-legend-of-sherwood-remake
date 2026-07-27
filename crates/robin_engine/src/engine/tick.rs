@@ -4526,7 +4526,7 @@ impl EngineInner {
             return;
         };
 
-        let Some((snap_point, posture, action_state, sector_in)) = (|| {
+        let Some((snap_point, posture, action_state)) = (|| {
             let door = required_canonical_door(
                 &self.script_domains.interactables.doors,
                 door_index,
@@ -4564,20 +4564,10 @@ impl EngineInner {
                 }
                 _ => return None,
             };
-            Some((snap, posture, action_state, door.sector_in))
+            Some((snap, posture, action_state))
         })() else {
             return;
         };
-        let lift_direction = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector_in)))
-            .and_then(|sector| {
-                if sector.lift_type == Some(crate::sector::LiftType::Wall) {
-                    Some(sector.lift_direction)
-                } else {
-                    None
-                }
-            });
-
         if let Some(snap_point) = snap_point {
             self.set_transition_position_map_and_compute_position_all(
                 assets,
@@ -4593,9 +4583,6 @@ impl EngineInner {
             return;
         };
         let elem = entity.element_data_mut();
-        if let Some(dir) = lift_direction {
-            elem.set_direction_instantly(dir);
-        }
         elem.update_grid_cell();
         entity.set_posture(posture);
         if let Some(actor) = entity.actor_data_mut() {

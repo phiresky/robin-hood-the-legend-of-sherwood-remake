@@ -2515,6 +2515,7 @@ mod tests {
                         .set_sector(crate::position_interface::SectorHandle::new(7));
                     let actor = entity.actor_data_mut().unwrap();
                     actor.action_state = crate::element::ActionState::Waiting;
+                    actor.execute_order_initialising = true;
                     actor.active_door_pass.as_mut().unwrap().current_action = action;
                 }
 

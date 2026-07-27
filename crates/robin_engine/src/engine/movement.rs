@@ -3818,7 +3818,7 @@ impl EngineInner {
             .filter(|order| order.order_id == selected.order_id)
             .map(|order| order.order_type)
             .expect("globally frozen movement owner lost its selected order");
-        let (action, door_index, current_sector) = self
+        let (action, door_index, current_sector, execute_order_initialising) = self
             .world
             .entities
             .get(owner)
@@ -3831,6 +3831,7 @@ impl EngineInner {
                         .map_or(order_action, |pass| pass.current_action),
                     actor.active_door_pass.as_ref().map(|pass| pass.door_index),
                     entity.element_data().sector(),
+                    actor.execute_order_initialising,
                 ))
             })
             .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} is not an actor"));
@@ -3879,7 +3880,9 @@ impl EngineInner {
             .entities
             .get_mut(owner)
             .expect("globally frozen climb owner disappeared after canonical lookup");
-        entity.element_data_mut().set_direction_goal(direction);
+        if execute_order_initialising {
+            entity.element_data_mut().set_direction_goal(direction);
+        }
         for _ in 0..turns {
             entity.element_data_mut().sprite.position_iface.turn();
         }
@@ -4944,6 +4947,10 @@ impl EngineInner {
 
             let soldier_attentive = matches!(entity, crate::element::Entity::Soldier(_))
                 && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
+            let execute_order_initialising = entity
+                .actor_data()
+                .expect("movement owner lost actor initialization state")
+                .execute_order_initialising;
             let elem = entity.element_data_mut();
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
@@ -5272,7 +5279,9 @@ impl EngineInner {
                 }
                 _ => {}
             }
-            if let Some(climb_dir) = door_pass_climb_directions[actor_id] {
+            if execute_order_initialising
+                && let Some(climb_dir) = door_pass_climb_directions[actor_id]
+            {
                 let dir = if matches!(
                     (anim, elem.posture),
                     (
