@@ -514,6 +514,15 @@ impl EngineInner {
                 },
             );
             let trajectory_end = trajectory.last().map(|tp| tp.position);
+            // ComputeTrajectory resolves and stores the eventual impact
+            // membership before the projectile's explicit pre-add
+            // Hourglass. It is therefore observable throughout flight, not
+            // only after the projectile lands.
+            let initial_landing_resolution = trajectory_end.map(|end| {
+                self.world
+                    .fast_grid
+                    .resolve_projectile_landing(end.to_map(), obstacle_list)
+            });
             tracing::debug!(
                 shooter = ?result.shooter,
                 target = ?result.target,
@@ -555,6 +564,18 @@ impl EngineInner {
                 initial_velocity: velocity,
             });
             let arrow_id = self.add_entity(arrow);
+            if let Some(resolution) = initial_landing_resolution {
+                let entity = self
+                    .world
+                    .entities
+                    .get_mut(arrow_id)
+                    .expect("newly added arrow vanished before landing-state initialization");
+                let element = entity.element_data_mut();
+                element.set_sector(resolution.sector);
+                if !resolution.blocked_by_motion_obstacle {
+                    element.set_layer(resolution.layer);
+                }
+            }
             // Hydrate the arrow's sprite from the accessory registry so
             // the flying arrow renders its proper sprite instead of the
             // colored-rect fallback.
@@ -2035,7 +2056,7 @@ impl EngineInner {
                     self.launch_element(seq_elem);
                 }
                 if result.despawn {
-                    self.remove_entity(result.arrow);
+                    self.deactivate_projectile_tombstone(result.arrow);
                 }
                 continue;
             }
@@ -2073,7 +2094,7 @@ impl EngineInner {
                         });
                 }
                 if result.despawn {
-                    self.remove_entity(result.arrow);
+                    self.deactivate_projectile_tombstone(result.arrow);
                 }
                 continue;
             }
@@ -2169,9 +2190,13 @@ impl EngineInner {
                         }
 
                         let damage = result.damage;
-                        let Some(arrow_flight_direction) = self
-                            .get_entity(result.arrow)
-                            .map(|e| e.element_data().direction())
+                        let Some(arrow_flight_direction) =
+                            self.get_entity(result.arrow).and_then(|entity| {
+                                let Entity::Projectile(projectile) = entity else {
+                                    return None;
+                                };
+                                Some(projectile.projectile.flight_direction as i16)
+                            })
                         else {
                             tracing::warn!(
                                 arrow = ?result.arrow,
@@ -2271,9 +2296,30 @@ impl EngineInner {
             }
 
             if result.despawn {
-                self.remove_entity(result.arrow);
+                self.deactivate_projectile_tombstone(result.arrow);
             }
         }
+    }
+
+    fn deactivate_projectile_tombstone(&mut self, projectile_id: EntityId) {
+        let entity = self
+            .get_entity_mut(projectile_id)
+            .unwrap_or_else(|| panic!("despawning projectile {projectile_id:?} vanished"));
+        assert!(
+            matches!(entity, Entity::Projectile(_) | Entity::Net(_)),
+            "projectile despawn targeted non-projectile {projectile_id:?}"
+        );
+        if let Entity::Projectile(projectile) = entity
+            && projectile.object.object_type == crate::element::ObjectType::Arrow
+            && !projectile.projectile.disappear
+        {
+            // A normal arrow impact/exhaustion ends flight but remains active
+            // until RHElementArrow::Refresh has observed its later stationary
+            // frame. Hole/water disappearance is immediate.
+            projectile.projectile.flying = false;
+            return;
+        }
+        entity.element_data_mut().active = false;
     }
 
     fn rewind_projectile_to_human_hit_old_position(

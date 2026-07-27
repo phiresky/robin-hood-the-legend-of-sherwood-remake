@@ -607,7 +607,7 @@ fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
 
 #[test]
 #[should_panic(expected = "no Original concrete-class mapping for ObjectType::None")]
-fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
+fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_retention() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
         element: crate::element::ElementData {
@@ -630,7 +630,7 @@ fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_removal() {
 
 #[test]
 #[should_panic(expected = "Entity::Net has invalid ObjectType::None")]
-fn inactive_unsupported_net_mapping_panics_before_owner_slot_removal() {
+fn inactive_unsupported_net_mapping_panics_before_owner_slot_retention() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Net(crate::element::ElementNet {
         element: crate::element::ElementData {
@@ -729,14 +729,20 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
         })
     });
 
-    assert!(engine.get_entity(apple).is_none());
-    assert!(engine.get_entity(stone).is_none());
-    assert!(engine.get_entity(flying_purse).is_none());
+    assert!(engine.get_entity(apple).is_some());
+    assert!(engine.get_entity(stone).is_some());
+    assert!(engine.get_entity(flying_purse).is_some());
     assert!(engine.get_entity(grounded_purse).is_some());
     assert!(engine.get_entity(grounded_coin).is_some());
     assert!(engine.get_entity(flying_coin).is_some());
     assert!(engine.get_entity(grounded_net).is_some());
     assert!(engine.get_entity(flying_net).is_some());
+    for id in [apple, stone, flying_purse] {
+        assert!(
+            !engine.get_entity(id).unwrap().is_active(),
+            "{id:?} must remain as an inactive tombstone"
+        );
+    }
     assert_eq!(
         tails,
         vec![
@@ -747,7 +753,7 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
             (grounded_coin, ObjectType::Coin),
             (flying_coin, ObjectType::Coin),
         ],
-        "each inactive derived sprite tail must run before its virtual bool controls removal"
+        "each inactive derived sprite tail must run before its virtual bool controls tombstone retention"
     );
     for id in [grounded_purse, grounded_coin] {
         let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
@@ -764,6 +770,50 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
     };
     assert_eq!(net.net.time_till_unfolding, 0);
     assert_eq!(net.object.animation, Animation::NetUnfolding);
+}
+
+#[test]
+fn grounded_arrow_retires_after_one_stationary_frame_and_keeps_its_slot() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+        ProjectileData,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+        element: ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Arrow,
+            animation: Animation::ObjectFlying,
+            ..Default::default()
+        },
+        projectile: ProjectileData {
+            flying: false,
+            ..Default::default()
+        },
+    }));
+    let assets = LevelAssets::new();
+
+    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+        unreachable!()
+    };
+    assert!(projectile.element.active);
+    assert!(projectile.projectile.retirement_pending);
+
+    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    assert!(!engine.get_entity(arrow).unwrap().is_active());
+
+    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    assert!(
+        engine.get_entity(arrow).is_some(),
+        "inactive arrow must remain as a tombstone"
+    );
 }
 
 #[test]

@@ -1887,6 +1887,11 @@ pub struct ProjectileData {
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
     pub velocity_increment: WorldVec3D,
+    /// Original `muwFlightDirection`, sampled from the initial trajectory
+    /// velocity. This is gameplay state used to orient hit actors; it is
+    /// deliberately separate from the projectile element's sprite facing.
+    #[serde(default)]
+    pub flight_direction: u16,
     /// Optional explicit start point for the next collision segment.
     /// Used when a projectile is advanced once before entering the
     /// engine list, matching C++ `pProjectile->Hourglass()` at spawn.
@@ -1902,6 +1907,11 @@ pub struct ProjectileData {
     /// is falling to the ground.  Falling arrows skip shield and victim
     /// collision checks.
     pub falling: bool,
+    /// Arrow `Refresh` retirement latch. Once flight has ended, Original
+    /// exposes one stationary active frame before the following refresh
+    /// deactivates the retained projectile element.
+    #[serde(default)]
+    pub retirement_pending: bool,
     /// Sector (0..15) used by a falling arrow's visual rotation.  Cycled
     /// each tick while falling; the sprite-row driver that consumes this
     /// is part of the unported per-frame arrow refresh pass, so the field
@@ -1931,10 +1941,12 @@ impl Default for ProjectileData {
             disappear: false,
             trajectory: Vec::new(),
             velocity_increment: WorldVec3D::default(),
+            flight_direction: 0,
             launch_segment_start: None,
             trajectory_frame_count: 0,
             damage: 0,
             falling: false,
+            retirement_pending: false,
             falling_direction: 0,
             purse: PurseData::default(),
             wasp: WaspData::default(),
@@ -4011,11 +4023,9 @@ pub fn advance_trajectory_one_frame(
     element.set_position_map_preserving_3d(MapPoint::from_world_xyz(p.x, p.y, p.z));
     let vx = projectile.velocity_increment.x;
     let vy = projectile.velocity_increment.y;
-    if vx != 0.0 || vy != 0.0 {
-        // Flight direction uses the iso-aspect 0..15 sector.
-        element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
-            vx, vy,
-        ));
+    if projectile.frame_count == 0 && (vx != 0.0 || vy != 0.0) {
+        projectile.flight_direction =
+            crate::position_interface::vector_to_sector_0_to_15_iso(vx, vy) as u16;
     }
 
     projectile.frame_count = projectile.frame_count.saturating_add(1);

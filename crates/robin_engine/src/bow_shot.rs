@@ -2167,15 +2167,6 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     element.set_position_map(map_pos);
     element.set_position(bow_point);
     element.set_layer(layer);
-    // Flight direction comes from the initial velocity's XY component
-    // (after leading correction), not from the raw target-minus-bow
-    // displacement.  Leading shifts the velocity vector off the
-    // line-of-sight and occasionally lands on a different sector index.
-    // Apply the isometric Y-stretch via `vector_to_sector_0_to_15_iso`.
-    element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
-        initial_velocity.x,
-        initial_velocity.y,
-    ));
     let mut object = ObjectData {
         associated_action: Action::Bow,
         object_type: ObjectType::Arrow,
@@ -2204,6 +2195,10 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         projectile,
     };
     arrow.advance_trajectory_one_frame();
+    arrow.projectile.flight_direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+        initial_velocity.x,
+        initial_velocity.y,
+    ) as u16;
     arrow.projectile.launch_segment_start = Some(bow_point);
     Entity::Projectile(arrow)
 }
@@ -3242,6 +3237,11 @@ fn tick_arrows_matching(
         if !proj.projectile.flying {
             continue;
         }
+        // RHElementProjectile::Hourglass calls NewMove before advancing its
+        // trajectory. Spawned projectiles have already consumed their primer
+        // step, so this snapshots that primer position exactly as Original's
+        // explicit pre-add Hourglass does.
+        proj.element.sprite.position_iface.new_move();
 
         // Distinct impact FX ids per projectile type.  Arrows play
         // their 510 only on shield deflection (which has its own
@@ -3385,17 +3385,9 @@ fn tick_arrows_matching(
                     proj.element.position().z,
                 ));
         }
-        // Update facing direction from velocity increment.  Use the
-        // isometric Y-stretch so the flight-direction sector agrees
-        // with the one set at spawn.
         let vx = proj.projectile.velocity_increment.x;
         let vy = proj.projectile.velocity_increment.y;
         let vz = proj.projectile.velocity_increment.z;
-        if vx != 0.0 || vy != 0.0 {
-            proj.element.set_direction_instantly(
-                crate::position_interface::vector_to_sector_0_to_15_iso(vx, vy),
-            );
-        }
 
         // Cache the sector + vertical-pitch azimut into `last_sector`
         // / `last_azimut` whenever the trajectory is non-empty so
@@ -3425,7 +3417,7 @@ fn tick_arrows_matching(
                     if nz < 0.0 {
                         azimut_deg = -azimut_deg;
                     }
-                    let sector = proj.element.direction() as u16 & 15;
+                    let sector = current_arrow_orientation_sector(proj) as u16 & 15;
                     // row = sector, frame = `(azimut * 0.0666…) + 0.5`
                     // rounded + 4 (nine vertical-pitch frames centred
                     // on 4 for horizontal flight).
@@ -4996,8 +4988,8 @@ mod tests {
             layer: 0,
             lands_in_hole: false,
             initial_velocity: WorldVec3D {
-                x: 1.0,
-                y: 0.0,
+                x: 0.0,
+                y: 1.0,
                 z: 0.0,
             },
         });
@@ -5008,6 +5000,15 @@ mod tests {
                 assert_eq!(p.projectile.launch_segment_start.map(|p| p.x), Some(0.0));
                 assert_eq!(p.projectile.damage, 30);
                 assert_eq!(p.object.object_type, ObjectType::Arrow);
+                assert_eq!(
+                    p.element.direction(),
+                    0,
+                    "projectile sprite facing stays at its element-constructor default"
+                );
+                assert_ne!(
+                    p.projectile.flight_direction, 0,
+                    "gameplay flight direction is stored separately from sprite facing"
+                );
             }
             _ => panic!("expected ElementProjectile"),
         }

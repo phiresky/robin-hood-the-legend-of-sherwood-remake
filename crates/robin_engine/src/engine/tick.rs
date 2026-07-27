@@ -3639,7 +3639,31 @@ impl EngineInner {
             match object_type {
                 crate::element::ObjectType::Arrow => {
                     if base_active {
-                        self.tick_existing_projectile(sim, assets, id);
+                        let flying = self
+                            .get_entity(id)
+                            .and_then(|entity| match entity {
+                                Entity::Projectile(projectile) => {
+                                    Some(projectile.projectile.flying)
+                                }
+                                _ => None,
+                            })
+                            .expect("arrow owner changed concrete entity kind");
+                        if flying {
+                            self.tick_existing_projectile(sim, assets, id);
+                        } else {
+                            let Entity::Projectile(projectile) = self
+                                .get_entity_mut(id)
+                                .expect("active arrow vanished before retirement refresh")
+                            else {
+                                panic!("arrow owner changed concrete entity kind");
+                            };
+                            projectile.element.sprite.position_iface.new_move();
+                            if projectile.projectile.retirement_pending {
+                                projectile.element.active = false;
+                            } else {
+                                projectile.projectile.retirement_pending = true;
+                            }
+                        }
                     }
                     base_active
                 }
@@ -3690,8 +3714,13 @@ impl EngineInner {
                 ),
             }
         };
-        if !retain && self.get_entity(id).is_some() {
-            self.remove_entity(id);
+        if !retain && let Some(entity) = self.get_entity_mut(id) {
+            // RHEngine::RemoveElement is called with its default
+            // bOnlyDeactivate=true from the element Hourglass loop. The
+            // projectile remains in the element array as an inactive
+            // tombstone so outstanding references and creation order stay
+            // valid; physical removal is reserved for teardown/load paths.
+            entity.element_data_mut().active = false;
         }
     }
 
