@@ -31,6 +31,21 @@ enum LiftAnimContext {
     },
 }
 
+#[cfg(test)]
+mod line_crossing_eligibility_tests {
+    use super::actor_line_crossing_eligible;
+    use crate::element::Posture;
+
+    #[test]
+    fn wall_and_ladder_climbers_still_check_elevation_lines() {
+        assert!(actor_line_crossing_eligible(Posture::OnWall, false, true));
+        assert!(actor_line_crossing_eligible(Posture::OnLadder, false, true));
+        assert!(!actor_line_crossing_eligible(Posture::Flying, false, true));
+        assert!(!actor_line_crossing_eligible(Posture::OnWall, true, true));
+        assert!(!actor_line_crossing_eligible(Posture::OnWall, false, false));
+    }
+}
+
 /// Mobile geometry sampled at one actor's live creation-order slot.
 ///
 /// Unlike the other immutable movement preparation, this must not escape the
@@ -313,6 +328,14 @@ fn movement_execute_state_effect(
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
         _ => None,
     }
+}
+
+fn actor_line_crossing_eligible(
+    posture: crate::element::Posture,
+    human_is_carried: bool,
+    inside_map: bool,
+) -> bool {
+    posture != crate::element::Posture::Flying && !human_is_carried && inside_map
 }
 
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
@@ -4638,6 +4661,9 @@ impl EngineInner {
                 .get_mut(entity_id)
                 .expect("movement actor ID collected from entity table must remain present");
             let is_pc = entity.is_pc();
+            let human_is_carried = entity
+                .human_data()
+                .is_some_and(|human| human.carrier.is_some());
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded
@@ -5779,25 +5805,17 @@ impl EngineInner {
 
             // Snapshot the pre-move position + layer + posture so we
             // can run the elevation-line-crossing check after the
-            // position is updated.  Pre-checks (must be moving on
-            // map, not flying, not carried, inside grid) map to:
-            // `dist > 0`, posture not Flying/Carried-ish, position
-            // inside `fast_grid.level.map_bbox`.
+            // position is updated. Original excludes flying actors and
+            // humans with a live carrier; wall/ladder climbers and actors
+            // carrying somebody else remain eligible.
             let old_pos = elem.position_map();
             let entity_layer = elem.layer();
             let entity_posture = elem.posture;
-            let eligible_for_crossing =
-                !matches!(
-                    entity_posture,
-                    crate::element::Posture::Flying
-                        | crate::element::Posture::OnWall
-                        | crate::element::Posture::OnLadder
-                        | crate::element::Posture::Carried
-                        | crate::element::Posture::OnShoulders
-                        | crate::element::Posture::CarryingCorpse
-                        | crate::element::Posture::CarryingOnShoulders
-                        | crate::element::Posture::HelpingToClimb
-                ) && self.world.fast_grid.level.map_bbox.contains_point(old_pos);
+            let eligible_for_crossing = actor_line_crossing_eligible(
+                entity_posture,
+                human_is_carried,
+                self.world.fast_grid.level.map_bbox.contains_point(old_pos),
+            );
 
             // LINE-snap early arrival: when the active element
             // carries `MoveFlags::LINE` + `line_id` and the actor is
