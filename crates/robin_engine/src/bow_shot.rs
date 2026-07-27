@@ -1661,17 +1661,6 @@ pub fn begin_bow_shot(
         sequence_manager.push_order_on(seq_id, elem_idx, unequip_order);
     }
 
-    // Face the target via the normal direction-goal path.  C++ sets the
-    // shoot animation's facing at initialization, then freezes the first
-    // frame while Turn() rotates toward it; do not snap instantly here.
-    let shooter = entities.get_mut(shooter_id).unwrap();
-    let shooter_pos = shooter.element_data().position();
-    let dx = tx - shooter_pos.x;
-    let dy = ty - shooter_pos.y;
-    shooter.element_data_mut().set_direction_goal(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
-
     BeginShotResult::Started
 }
 
@@ -1802,6 +1791,7 @@ fn tick_bow_shots_matching(
             continue;
         }
         let shot = actor.active_shot;
+        let order_initialising = actor.execute_order_initialising;
         let direction = entity.element_data().direction();
         // Build 3D shooter position: X/Y from the live map position,
         // Z from the position interface's elevation.
@@ -1858,16 +1848,30 @@ fn tick_bow_shots_matching(
 
         let mut direction = direction;
         let mut frame_progression = crate::sprite::FrameProgression::Default;
-        if is_shoot_order(current_order_type)
-            && let Some(target_id) = shot.target
-            && let Some(Some(target_pos)) = target_ground_positions.get(target_id)
-        {
-            let shooter_pos = entity.element_data().position();
-            let dx = target_pos.x - shooter_pos.x;
-            let dy = target_pos.y - shooter_pos.y;
-            entity.element_data_mut().set_direction_goal(
-                crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-            );
+        if is_shoot_order(current_order_type) {
+            // Original samples the live target only when the shooting order
+            // initializes. Translation and bow-preparation transitions retain
+            // the actor's old facing, and later target movement does not
+            // rewrite this shot's goal.
+            if order_initialising {
+                let target_id = shot.target.unwrap_or_else(|| {
+                    panic!("active bow shot for {shooter_id:?} has no target at initialization")
+                });
+                let target_pos = target_ground_positions
+                    .get(target_id)
+                    .and_then(|position| *position)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "active bow shot for {shooter_id:?} lost target {target_id:?} at initialization"
+                        )
+                    });
+                let shooter_pos = entity.element_data().position();
+                let dx = target_pos.x - shooter_pos.x;
+                let dy = target_pos.y - shooter_pos.y;
+                entity.element_data_mut().set_direction_goal(
+                    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
+                );
+            }
             if entity.element_data_mut().sprite.position_iface.turn() {
                 frame_progression = crate::sprite::FrameProgression::FrozenFirstFrame;
             }
@@ -4698,7 +4702,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_bow_shot_faces_arrow_fx_target_cxx_ground_y() {
+    fn begin_bow_shot_preserves_facing_until_shoot_order_initialization() {
         let mut target = make_arrow_target(50.0, 120.0);
         target.element_data_mut().set_position(WorldPoint3D {
             x: 50.0,
@@ -4706,6 +4710,12 @@ mod tests {
             z: 100.0,
         });
         let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
+        entities
+            .get_mut_at_index(0)
+            .map(|(_, entity)| entity)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_goal(7);
         let target_id = EntityId::Target(crate::entity_id::TargetId(1));
         let (mut sm, seq_id, elem_idx) =
             launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
@@ -4734,18 +4744,11 @@ mod tests {
                 .position_iface
                 .get_direction_goal(),
         );
-        assert_eq!(
-            direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
-        );
-        assert_ne!(
-            direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
-        );
+        assert_eq!(direction_goal, 7);
     }
 
     #[test]
-    fn tick_bow_shots_keeps_facing_fx_target_cxx_ground_y() {
+    fn shoot_initialization_samples_fx_target_cxx_ground_y_once() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut target = make_arrow_target(50.0, 120.0);
@@ -4779,6 +4782,13 @@ mod tests {
             &mut 1u32,
         );
         assert_eq!(result, BeginShotResult::Started);
+        entities
+            .get_mut_at_index(0)
+            .map(|(_, entity)| entity)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = true;
 
         tick_bow_shots(sim, &mut entities, &mut sm);
 
@@ -4799,6 +4809,36 @@ mod tests {
         assert_ne!(
             direction_goal,
             crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
+        );
+
+        entities
+            .get_mut_at_index(0)
+            .map(|(_, entity)| entity)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = false;
+        entities
+            .get_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D {
+                x: -100.0,
+                y: -100.0,
+                z: 0.0,
+            });
+        tick_bow_shots(sim, &mut entities, &mut sm);
+        assert_eq!(
+            i16::from(
+                entities
+                    .get_at_index(0)
+                    .map(|(_, entity)| entity)
+                    .unwrap()
+                    .position_iface()
+                    .get_direction_goal()
+            ),
+            direction_goal,
+            "the live target is sampled once per shooting order"
         );
     }
 

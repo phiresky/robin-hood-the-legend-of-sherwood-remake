@@ -167,9 +167,9 @@ impl EngineInner {
     /// translator such as PassDoor/lift/wall/stairs.
     ///
     /// C++ still executes these as normal actor movement orders after the
-    /// translator has selected the exact step. Keeping order creation and
-    /// actor-state setup here prevents the PassDoor launch path and the
-    /// transition-resume path from drifting apart.
+    /// translator has selected the exact step. Selecting the successor does
+    /// not execute it: posture/action-state changes belong to the successor's
+    /// own actor slot and are therefore deliberately not applied here.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn install_special_walk_order(
         &mut self,
@@ -193,21 +193,8 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        super::door_pass::apply_door_pass_continue_state(
-            &mut self.world.entities,
-            &self.world.fast_grid,
-            entity_id,
-            action,
-        );
-
         if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = match action {
-                    OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
-                    OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
-                    OrderType::RunningUpright => crate::element::ActionState::MovingFast,
-                    _ => crate::element::ActionState::Moving,
-                };
                 actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
                 if let Some(dp) = active_door_pass {
                     actor.passing_door_directly = dp.direct;
