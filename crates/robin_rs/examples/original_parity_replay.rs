@@ -763,6 +763,7 @@ struct TraceElement {
     entity_id: TraceEntityId,
     creation_order: u32,
     active: bool,
+    blipped: bool,
     unreachable: bool,
     posture: u32,
     position_map: TracePoint,
@@ -2659,6 +2660,13 @@ fn compare_frame(
             "active",
             expected.active,
             element.active,
+        );
+        compare(
+            &mut differences,
+            id,
+            "blipped",
+            expected.blipped,
+            element.blipped,
         );
         if expected.actor.is_some() {
             compare(

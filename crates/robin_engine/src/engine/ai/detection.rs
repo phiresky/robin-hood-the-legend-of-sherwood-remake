@@ -101,6 +101,31 @@ fn visibility_world_point(
     crate::coordinates::WorldPoint3D::new(projected.x, projected.y + ground_z, point_z)
 }
 
+/// Exact range half of `RHElementActorPC::SeesBlip`.
+///
+/// The Original subtracts the world-space `ComputeEyesPoint` results and only
+/// then applies the isometric Y stretch. The same world-space eye points are
+/// also passed to the Original's 3D opaque-reachability query.
+fn sees_blip_in_range(
+    pc_eye: crate::coordinates::WorldPoint3D,
+    blip_eye: crate::coordinates::WorldPoint3D,
+    standard_radius: f32,
+    super_detection: f32,
+) -> bool {
+    let dx = blip_eye.x - pc_eye.x;
+    let dy = (blip_eye.y - pc_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = blip_eye.z - pc_eye.z;
+
+    if dz >= 0.0 {
+        dx * dx + dy * dy + dz * dz
+            < super_detection * super_detection * standard_radius * standard_radius
+    } else {
+        let horizontal_radius =
+            super_detection * (standard_radius + BLIP_CONE_APERTURE_FACTOR * -dz);
+        dx * dx + dy * dy < horizontal_radius * horizontal_radius
+    }
+}
+
 struct SoldierSightContext {
     eye: MapPoint,
     eye_z: f32,
@@ -731,7 +756,9 @@ impl EngineInner {
             return;
         }
 
+        let blip_ground_z = elem.position().z;
         let (blip_eye_xy, blip_eye_z) = human_eye_point_for_visibility(entity);
+        let blip_eye_world = visibility_world_point(blip_eye_xy, blip_ground_z, blip_eye_z);
         let standard_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
         } else {
@@ -774,28 +801,23 @@ impl EngineInner {
                 continue;
             }
             let (pc_eye_xy, pc_eye_z) = human_eye_point_for_visibility(pc_entity);
-            let dx = blip_eye_xy.x - pc_eye_xy.x;
-            let dy =
-                (blip_eye_xy.y - pc_eye_xy.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = blip_eye_z - pc_eye_z;
+            let pc_eye_world = visibility_world_point(pc_eye_xy, pc.element.position().z, pc_eye_z);
             let super_detection = if pc.element.posture == Posture::OnShoulders {
                 BLIP_SUPER_DETECTION * BLIP_ON_SHOULDERS_FACTOR
             } else {
                 BLIP_SUPER_DETECTION
             } * difficulty_factor;
-            let in_range = if dz >= 0.0 {
-                dx * dx + dy * dy + dz * dz
-                    < super_detection * super_detection * standard_radius * standard_radius
-            } else {
-                let horizontal_radius =
-                    super_detection * (standard_radius + BLIP_CONE_APERTURE_FACTOR * -dz);
-                dx * dx + dy * dy < horizontal_radius * horizontal_radius
-            };
+            let in_range = sees_blip_in_range(
+                pc_eye_world,
+                blip_eye_world,
+                standard_radius,
+                super_detection,
+            );
             if in_range
                 && crate::sight_obstacle::is_reachable_3d(
                     sight_obstacles,
-                    [pc_eye_xy.x, pc_eye_xy.y, pc_eye_z],
-                    [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
+                    [pc_eye_world.x, pc_eye_world.y, pc_eye_world.z],
+                    [blip_eye_world.x, blip_eye_world.y, blip_eye_world.z],
                     crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                 )
             {
@@ -4015,6 +4037,36 @@ mod tests {
             "eye height must not be projected into the LOS point"
         );
         assert_eq!(visibility_world_point(projected, 30.0, eye.z), eye);
+    }
+
+    #[test]
+    fn elevated_blip_range_uses_world_eye_y_not_projected_map_y() {
+        // Soldier 58 and Robin at Original parity frame 23.  The elevated
+        // soldier is just inside the 1.5 * 400 world-eye radius.  Using map Y
+        // here would incorrectly count the 218-unit elevation difference in
+        // both Y and Z and leave the soldier blipped until frame 71.
+        let pc_eye = crate::coordinates::WorldPoint3D::new(1937.0, 1604.000_976_562_5, 265.001_007);
+        let blip_eye = crate::coordinates::WorldPoint3D::new(2494.211_7, 1623.488_9, 483.001_007);
+
+        assert!(sees_blip_in_range(
+            pc_eye,
+            blip_eye,
+            400.0,
+            BLIP_SUPER_DETECTION,
+        ));
+
+        let pc_projected = MapPoint::from_world_xyz(pc_eye.x, pc_eye.y, 220.001_007);
+        let blip_projected = MapPoint::from_world_xyz(blip_eye.x, blip_eye.y, 438.001_007);
+        let incorrectly_projected_eye =
+            crate::coordinates::WorldPoint3D::new(blip_projected.x, blip_projected.y, blip_eye.z);
+        let incorrectly_projected_pc =
+            crate::coordinates::WorldPoint3D::new(pc_projected.x, pc_projected.y, pc_eye.z);
+        assert!(!sees_blip_in_range(
+            incorrectly_projected_pc,
+            incorrectly_projected_eye,
+            400.0,
+            BLIP_SUPER_DETECTION,
+        ));
     }
 
     #[test]
