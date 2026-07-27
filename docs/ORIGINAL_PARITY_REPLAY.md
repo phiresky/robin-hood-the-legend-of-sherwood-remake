@@ -9,17 +9,21 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 ## Baseline and contract
 
 - Required Original trace schema: 5
-- Required start state: a complete versioned campaign snapshot captured before
-  engine construction, including progression, mission state, gang/reservists/
-  mission team, character status and inventory, persistent production state,
-  relics, names, values, and campaign pointers encoded as stable indices
+- Required replay start state: `mission_start` with a complete versioned
+  campaign snapshot captured before engine initialization, including
+  progression, mission state, gang/reservists/mission team, character status
+  and inventory, persistent production state, relics, names, values, and
+  campaign pointers encoded as stable indices. The Original also preserves
+  `loaded_save` sessions, but Rust rejects them until live mission-save state
+  restoration is implemented.
 - Compatibility: schemas 1–4 are deliberately rejected. Schemas 1–3 cannot
   reconstruct an arbitrary campaign and can silently create a plausible but
   different world. Schema 4 has complete campaign state, but was recorded with
   native i686 x87 extended-precision intermediates and is not a valid numeric
   oracle for the scalar-SSE Rust engine.
 - Inputs: resolved game commands, applied on their recorded simulation frames
-- Start point: mission start; menu and raw input-device behavior are out of scope
+- Start point: each Original engine session has its own numbered file. Menu and
+  raw input-device behavior are out of scope.
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
   request/processing phase boundary
 - Randomness: the Original's filtered gameplay `rand()` values form one global
@@ -85,6 +89,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Patrol endpoint direction side effect | At frame 18 Soldier 60 reaches path 1 waypoint 0, whose macro is backward-only and waits for 250 ticks. To obtain the preceding waypoint for its arrival Turn, Original executes `--path`, reads it, then `++path` on the live `RHPath`; at endpoint zero this round trip leaves traversal reversed. Rust performed the lookup on a clone, stayed forward, rejected the macro, and omitted its RNG draw. | Route-turn lookup now performs the same live iterator round trip, preserving the endpoint reversal that controls `DIR_FORWARD`/`DIR_BACKWARD` macro applicability. Focused coverage verifies waypoint zero remains selected while traversal flips backward. Replay advances to frame 32. |
 | Superseded | Schema-4 x87 ground-plane arithmetic | Soldier 86 followed the correct bit-exact map positions on Lincoln's shallow slope, but its reconstructed elevation drifted because the old Original build retained plane intermediates in x87 registers. | The temporary Rust `f64` emulation was removed with schema 5. Plane construction now preserves the Original source operation order using ordinary `f32`, and the native Original uses the same scalar-SSE storage semantics. Exact coefficient/projection coverage uses Lincoln obstacle 52's point bits under the new contract. |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Per-NPC records also expose all detection accumulators, maximum visibility, view/alert status, and every detectable's target, visibility, and edge latches, avoiding one-off instrumentation when a hidden perception total diverges. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3`, `a97c9dd`, and `8310b3e`. |
+| Done | Multi-session Original capture | Returning to the menu, changing mission, loading a save, or restarting can construct or restore more than one engine state in one process. The old recorder retained its first campaign snapshot forever and crashed on the next engine. | `-PARITYTRACE` is now a base path. Every engine session is closed independently and written to the next unused `-session-NNNN.jsonl` file with its own campaign snapshot and zero-based slice of the process-global RNG draw stream. Headers identify `mission_start` versus `loaded_save` and the actual initial frame. Loaded/restarted state is retained as evidence, while the Rust runner rejects it clearly rather than pretending it can reconstruct a live save. |
 | Done | Hidden validity and LOS diagnostics | Session 2 could not directly explain why Original rejected PC 198's frame-452 bow command: the target's hidden state, authoritative ammunition, identity gates, and the visibility query that maintained the hidden state were absent from the snapshot. | Schema 3 now records `blipped`, human camp/unconscious/VIP/civilian state, all nine PC inventory counters, and every opaque 3D reachability query with bit-exact endpoints, result, cache metadata, exact blocking reason, and blocker geometry where applicable. Original commits: `a9404d5` and `c6f83ca`. |
 | Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. An ordinary first-divergence run now retains a rolling full-engine window and automatically writes the divergent frame plus its 32 predecessors to a unique temporary JSONL file. Explicit dump and `--scan-all` behavior remains unchanged. |
@@ -222,6 +227,22 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Full-trace scan | The normal first-divergence replay establishes an exact logical match for every recorded frame, including later player interaction, combat, AI, effects, and mission scripting in this capture. | The independent `--scan-all` pass also matches all 1,469 frames without a logical or RNG divergence. Further captures should broaden behavioral coverage beyond this mission-start session. |
 
 ## Workflow
+
+Capture paths are bases rather than individual output files. For example,
+`-PARITYTRACE /tmp/lincoln-schema5.jsonl` writes
+`/tmp/lincoln-schema5-session-0001.jsonl`, then `...-0002.jsonl`, and skips
+existing session numbers on later process runs:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
+  original-code/build/native-full/robin \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema5.jsonl \
+  -PARITYSEED 1
+```
+
+Each file is a complete recorder session. A `loaded_save` header is expected
+and intentionally not replayable yet; selecting a fresh mission produces a
+subsequent `mission_start` file for Rust parity work.
 
 Build once, then use the first-divergence run for iteration:
 

@@ -37,8 +37,31 @@ struct TraceHeader {
     proto_level: String,
     rng_seed: u64,
     schema: u32,
+    session_index: u32,
+    start_state: TraceStartState,
+    initial_frame: u64,
     synchronous_pathfinding: bool,
     campaign: TraceCampaign,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TraceStartState {
+    MissionStart,
+    LoadedSave,
+}
+
+fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
+    match start_state {
+        TraceStartState::MissionStart => assert_eq!(
+            initial_frame, 0,
+            "parity session {session_index} is marked mission_start but begins at frame {initial_frame}"
+        ),
+        TraceStartState::LoadedSave => panic!(
+            "parity session {session_index} starts from a loaded mission save at frame \
+             {initial_frame}; restoring live Original mission saves in Rust is not implemented"
+        ),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1006,6 +1029,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         "unsupported parity trace schema {}; deterministic-SSE schema 5 is required",
         header.schema
     );
+    validate_trace_start(
+        header.start_state,
+        header.session_index,
+        header.initial_frame,
+    );
     let rng_domain_classifier = RngDomainClassifier::for_schema(header.schema);
     let all_rng_draws = read_all_rng_draws(&trace_path, header.schema, &rng_domain_classifier);
 
@@ -1024,6 +1052,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     )
     .expect("parse parity trace header");
     assert_eq!(stream_header.schema, header.schema);
+    assert_eq!(stream_header.session_index, header.session_index);
+    assert_eq!(stream_header.initial_frame, header.initial_frame);
     assert_eq!(stream_header.mission, header.mission);
     assert_eq!(stream_header.rng_seed, header.rng_seed);
     assert_eq!(
@@ -1110,9 +1140,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
 
     for (line_index, line) in lines.enumerate() {
-        let mut frame: TraceFrame = serde_json::from_str(&line.expect("read parity trace frame"))
+        let line = line.expect("read parity trace frame");
+        let record: serde_json::Value = serde_json::from_str(&line)
             .unwrap_or_else(|e| panic!("parse trace line {}: {e}", line_index + 2));
-        assert_eq!(frame.frame_before, line_index as u64);
+        if record.get("type").and_then(serde_json::Value::as_str) == Some("rng_suffix") {
+            break;
+        }
+        let mut frame: TraceFrame = serde_json::from_value(record)
+            .unwrap_or_else(|e| panic!("parse trace frame on line {}: {e}", line_index + 2));
+        assert_eq!(frame.frame_before, header.initial_frame + line_index as u64);
         assert_eq!(frame.frame_after, frame.frame_before + 1);
         if http_server.is_some() {
             loop {
@@ -2874,6 +2910,17 @@ fn compare_point_with_absolute_tolerance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mission_start_requires_frame_zero() {
+        validate_trace_start(TraceStartState::MissionStart, 7, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "starts from a loaded mission save at frame 1234")]
+    fn loaded_save_is_rejected_explicitly() {
+        validate_trace_start(TraceStartState::LoadedSave, 7, 1234);
+    }
 
     #[test]
     fn stable_rng_domains_do_not_depend_on_callsite_offsets() {
