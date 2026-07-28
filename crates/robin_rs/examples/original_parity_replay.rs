@@ -18,6 +18,7 @@ use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, LevelAssets};
+use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::Action;
@@ -39,6 +40,7 @@ struct TraceHeader {
     initial_frame: u64,
     synchronous_pathfinding: bool,
     campaign: TraceCampaign,
+    motion_grid: TraceMotionGrid,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,8 +52,8 @@ enum TraceStartState {
 
 fn validate_trace_schema(schema: u32) {
     assert_eq!(
-        schema, 8,
-        "unsupported parity trace schema {schema}; simulation-body-gate schema 8 is required"
+        schema, 9,
+        "unsupported parity trace schema {schema}; motion-grid/path-event schema 9 is required"
     );
 }
 
@@ -154,6 +156,71 @@ struct TraceProductionOccupant {
     x: TraceFloat,
     y: TraceFloat,
     obstacle: u16,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceMotionGrid {
+    layers: Vec<TraceMotionLayer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceMotionLayer {
+    layer: u16,
+    lines: Vec<TraceMotionLine>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceMotionLine {
+    index: u16,
+    a: TracePoint,
+    b: TracePoint,
+    type_mask: i32,
+    associated_sector: i16,
+    active: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct TraceMotionLineChange {
+    layer: u16,
+    index: u16,
+    active: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+enum TracePathEvent {
+    Queued {
+        actor: TraceEntityId,
+        antagonist: Option<TraceEntityId>,
+        layer: u16,
+        area: u16,
+        source: TracePoint,
+        goal: TracePoint,
+        half_diagonal_index: u16,
+        half_diagonal: TracePoint,
+        animation: u32,
+        reverse: bool,
+        speed: u8,
+        tolerance: TraceFloat,
+        use_first_point: bool,
+    },
+    Completed {
+        actor: TraceEntityId,
+        antagonist: Option<TraceEntityId>,
+        layer: u16,
+        area: u16,
+        source: TracePoint,
+        goal: TracePoint,
+        half_diagonal_index: u16,
+        half_diagonal: TracePoint,
+        animation: u32,
+        reverse: bool,
+        speed: u8,
+        tolerance: TraceFloat,
+        use_first_point: bool,
+        valid: bool,
+        waypoints: Vec<TracePoint>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -696,6 +763,8 @@ struct TraceFrame {
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
     rng_draws: TraceRngBatch,
+    motion_line_changes: Vec<TraceMotionLineChange>,
+    path_events: Vec<TracePathEvent>,
 }
 
 struct Options {
@@ -723,10 +792,180 @@ struct RollingDumpFrame {
     selected_pcs: Vec<TraceEntityId>,
     rng_draws: TraceRngBatch,
     resolved_commands: serde_json::Value,
+    path_events: Vec<TracePathEvent>,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
     differences: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct MotionLineSignature {
+    layer: u16,
+    ax: u32,
+    ay: u32,
+    bx: u32,
+    by: u32,
+    repulsive: bool,
+}
+
+impl MotionLineSignature {
+    fn original(layer: u16, line: &TraceMotionLine) -> Self {
+        Self {
+            layer,
+            ax: line.a.x.bits,
+            ay: line.a.y.bits,
+            bx: line.b.x.bits,
+            by: line.b.y.bits,
+            repulsive: line.type_mask & 128 != 0,
+        }
+    }
+
+    fn rust(layer: u16, line: &robin_engine::fast_find_grid::GridLine) -> Self {
+        Self {
+            layer,
+            ax: line.a.x.to_bits(),
+            ay: line.a.y.to_bits(),
+            bx: line.b.x.to_bits(),
+            by: line.b.y.to_bits(),
+            repulsive: line.is_repulsive,
+        }
+    }
+}
+
+/// Isomorphic mapping from the Original's layer-local line indices to Rust's
+/// flat `LineIndex` arena. Geometry and the behavior-relevant repulsive flag
+/// form the identity; identical duplicate lines are paired by occurrence.
+struct MotionLineParity {
+    original_to_rust: BTreeMap<(u16, u16), LineIndex>,
+    expected_active: BTreeMap<(u16, u16), bool>,
+    initial_differences: Vec<String>,
+}
+
+impl MotionLineParity {
+    fn build(engine: &Engine, original: &TraceMotionGrid) -> Self {
+        let mut original_groups =
+            BTreeMap::<MotionLineSignature, Vec<(u16, &TraceMotionLine)>>::new();
+        let mut expected_active = BTreeMap::new();
+        let mut initial_differences = Vec::new();
+        for layer in &original.layers {
+            for line in &layer.lines {
+                let address = (layer.layer, line.index);
+                if expected_active.insert(address, line.active).is_some() {
+                    initial_differences.push(format!(
+                        "motion_grid.static_mapping: duplicate Original line address layer={} index={}",
+                        layer.layer, line.index
+                    ));
+                }
+                if line.type_mask & 2 == 0 {
+                    initial_differences.push(format!(
+                        "motion_grid.static_mapping: Original layer={} index={} is not LINE_MOTION (type_mask={} sector={})",
+                        layer.layer, line.index, line.type_mask, line.associated_sector
+                    ));
+                }
+                original_groups
+                    .entry(MotionLineSignature::original(layer.layer, line))
+                    .or_default()
+                    .push((layer.layer, line));
+            }
+        }
+
+        let grid = engine.fast_grid();
+        let mut rust_groups = BTreeMap::<MotionLineSignature, Vec<LineIndex>>::new();
+        for (layer_index, layer) in grid.level.layers.iter().enumerate() {
+            let layer_number =
+                u16::try_from(layer_index).expect("Rust motion-grid layer index exceeds u16");
+            for &line_index in &layer.line_indices {
+                let line = &grid.level.lines[usize::from(line_index)];
+                if line.is_motion {
+                    rust_groups
+                        .entry(MotionLineSignature::rust(layer_number, line))
+                        .or_default()
+                        .push(line_index);
+                }
+            }
+        }
+
+        let signatures = original_groups
+            .keys()
+            .chain(rust_groups.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let mut original_to_rust = BTreeMap::new();
+        for signature in signatures {
+            let originals = original_groups
+                .get(&signature)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let rust = rust_groups
+                .get(&signature)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if originals.len() != rust.len() {
+                initial_differences.push(format!(
+                    "motion_grid.static_mapping: signature={signature:?} original_count={} rust_count={}",
+                    originals.len(),
+                    rust.len()
+                ));
+            }
+            for ((layer, original_line), &rust_line) in originals.iter().zip(rust) {
+                let address = (*layer, original_line.index);
+                original_to_rust.insert(address, rust_line);
+                let rust_active = grid.is_line_active(rust_line);
+                if original_line.active != rust_active {
+                    initial_differences.push(format!(
+                        "motion_grid.initial_active[layer={} index={} rust_line={}]: original={} rust={} type_mask={} sector={}",
+                        layer,
+                        original_line.index,
+                        rust_line,
+                        original_line.active,
+                        rust_active,
+                        original_line.type_mask,
+                        original_line.associated_sector
+                    ));
+                }
+            }
+        }
+
+        Self {
+            original_to_rust,
+            expected_active,
+            initial_differences,
+        }
+    }
+
+    fn apply_changes_and_compare(
+        &mut self,
+        engine: &Engine,
+        changes: &[TraceMotionLineChange],
+    ) -> Vec<String> {
+        let mut differences = std::mem::take(&mut self.initial_differences);
+        for change in changes {
+            let address = (change.layer, change.index);
+            let Some(expected) = self.expected_active.get_mut(&address) else {
+                differences.push(format!(
+                    "motion_grid.line_active[layer={} index={}]: Original change references an unknown static line",
+                    change.layer, change.index
+                ));
+                continue;
+            };
+            *expected = change.active;
+        }
+
+        let grid = engine.fast_grid();
+        for (&(layer, original_index), &expected) in &self.expected_active {
+            let Some(&rust_index) = self.original_to_rust.get(&(layer, original_index)) else {
+                continue;
+            };
+            let actual = grid.is_line_active(rust_index);
+            if expected != actual {
+                differences.push(format!(
+                    "motion_grid.line_active[layer={layer} index={original_index} rust_line={rust_index}]: original={expected:?} rust={actual:?}"
+                ));
+            }
+        }
+        differences
+    }
 }
 
 impl DumpOptions {
@@ -979,6 +1218,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         "RNG pre-scan is shorter than prefix"
     );
     let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws);
+    let mut motion_line_parity = MotionLineParity::build(&engine, &header.motion_grid);
     engine.set_external_director_completion_replay(true);
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
@@ -1203,7 +1443,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }
 
         map.refresh_building_sector_mapping(&engine, &frame);
-        let differences = compare_frame(&engine, &frame, map);
+        let mut differences =
+            motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
+        differences.extend(compare_frame(&engine, &frame, map));
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -1230,6 +1472,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     selected_pcs: frame.selected_pcs.clone(),
                     rng_draws: frame.rng_draws.clone(),
                     resolved_commands,
+                    path_events: frame.path_events.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
@@ -1292,6 +1535,17 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
             for difference in differences.iter().take(40) {
                 eprintln!("  {difference}");
+            }
+            if !frame.path_events.is_empty() {
+                eprintln!(
+                    "  Original path events this frame: {}",
+                    serde_json::to_string(&frame.path_events)
+                        .expect("serialize Original path-event diagnostics")
+                );
+                // TODO(schema-9 path parity): compare these with an ordered
+                // Rust path request/completion event stream once the engine
+                // exposes one. Engine state alone cannot recover queued and
+                // completed call boundaries without changing the engine.
             }
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
@@ -1601,6 +1855,7 @@ fn write_engine_dump_frame(
         frame.frame_after,
         &frame.selected_pcs,
         &frame.rng_draws,
+        &frame.path_events,
         resolved_commands,
         rng_start,
         expected_rng_end,
@@ -1619,6 +1874,7 @@ fn write_engine_dump_snapshot_frame(
     frame_after: u64,
     selected_pcs: &[TraceEntityId],
     rng_draws: &TraceRngBatch,
+    path_events: &[TracePathEvent],
     resolved_commands: serde_json::Value,
     rng_start: usize,
     expected_rng_end: usize,
@@ -1668,6 +1924,7 @@ fn write_engine_dump_snapshot_frame(
                 "resolved_commands": resolved_commands,
                 "selected_pcs": selected_pcs,
             },
+            "original_path_events": path_events,
             "rng": {
                 "cursor_before": rng_start,
                 "expected_cursor_after": expected_rng_end,
@@ -1745,6 +2002,7 @@ fn write_automatic_rolling_dump(
             frame.frame_after,
             &frame.selected_pcs,
             &frame.rng_draws,
+            &frame.path_events,
             frame.resolved_commands.clone(),
             frame.rng_start,
             frame.expected_rng_end,
@@ -1839,7 +2097,7 @@ fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("parity trace modification time predates Unix epoch")
         .as_nanos();
-    let fingerprint = format!("v3:schema=8:length={}:modified={modified}", metadata.len(),);
+    let fingerprint = format!("v4:schema=9:length={}:modified={modified}", metadata.len(),);
     let mut cache_name = trace_path.as_os_str().to_owned();
     cache_name.push(".rng-cache.json");
     let cache_path = PathBuf::from(cache_name);
@@ -2943,14 +3201,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_eight_is_required() {
-        validate_trace_schema(8);
+    fn schema_nine_is_required() {
+        validate_trace_schema(9);
     }
 
     #[test]
-    #[should_panic(expected = "schema 7; simulation-body-gate schema 8 is required")]
-    fn schema_seven_is_rejected() {
-        validate_trace_schema(7);
+    #[should_panic(expected = "schema 8; motion-grid/path-event schema 9 is required")]
+    fn schema_eight_is_rejected() {
+        validate_trace_schema(8);
     }
 
     #[test]
@@ -2962,6 +3220,8 @@ mod tests {
             "director_completions": [],
             "selected_pcs": [],
             "elements": [],
+            "motion_line_changes": [],
+            "path_events": [],
             "rng_draws": {
                 "first_index": 0,
                 "values": [],
@@ -2973,6 +3233,49 @@ mod tests {
         let error = serde_json::from_value::<TraceFrame>(frame_without_marker)
             .expect_err("schema 8 frames must report whether the simulation body ran");
         assert!(error.to_string().contains("simulation_body_ran"));
+    }
+
+    #[test]
+    fn schema_nine_path_events_are_typed() {
+        let event = serde_json::json!({
+            "phase": "completed",
+            "actor": {"kind": "soldier", "index": 3},
+            "antagonist": null,
+            "layer": 2,
+            "area": 17,
+            "source": {"x": {"bits": 1065353216}, "y": {"bits": 1073741824}},
+            "goal": {"x": {"bits": 1077936128}, "y": {"bits": 1082130432}},
+            "half_diagonal_index": 1,
+            "half_diagonal": {
+                "x": {"bits": 1056964608},
+                "y": {"bits": 1056964608}
+            },
+            "animation": 42,
+            "reverse": false,
+            "speed": 3,
+            "tolerance": {"bits": 1092616192},
+            "use_first_point": true,
+            "valid": true,
+            "waypoints": [
+                {"x": {"bits": 1077936128}, "y": {"bits": 1082130432}}
+            ]
+        });
+
+        let parsed: TracePathEvent =
+            serde_json::from_value(event).expect("parse schema-9 completed path event");
+        match parsed {
+            TracePathEvent::Completed {
+                actor,
+                valid,
+                waypoints,
+                ..
+            } => {
+                assert_eq!(actor.index, 3);
+                assert!(valid);
+                assert_eq!(waypoints.len(), 1);
+            }
+            TracePathEvent::Queued { .. } => panic!("completed event parsed as queued"),
+        }
     }
 
     #[test]
