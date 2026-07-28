@@ -196,6 +196,9 @@ A list of which additional features we have added, which ones we might still wan
 - Show detailed XP info somewhere: sword XP, arrow XP, etc.
 - Settings to enable trackers in the top-left corner: speedrun timer, each
   achievement fulfillment.
+- other achievements:
+    - pile 10 bodies in the same building
+    - stash ALL enemies in the same building
 - Add a method to unhorse horsed soldiers without killing them; no-kill runs
   are annoying with horses.
   - Add an option for Merry Men to knock people out instead of killing them.
