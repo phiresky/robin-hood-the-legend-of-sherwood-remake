@@ -1048,6 +1048,7 @@ impl EngineInner {
     pub(crate) fn init_battle_before_door(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         door_indices: &[u32],
         fleeing: &[EntityId],
         pursuing: &[EntityId],
@@ -1066,7 +1067,7 @@ impl EngineInner {
 
         // Pick the unlocked door nearest to first_pos by MaxNorm of
         // (door.point_in - first_pos).
-        let (point_in, point_out, point_mid, out_layer) = {
+        let (point_in, point_out, point_mid, out_layer, out_sector) = {
             if self.scripts.mission.is_none() {
                 return;
             }
@@ -1101,6 +1102,7 @@ impl EngineInner {
                 door.point_out,
                 door.point_mid,
                 door.layer_out,
+                door.sector_out,
             )
         };
         let _ = point_in;
@@ -1167,13 +1169,13 @@ impl EngineInner {
             let defender_pos = Position {
                 x: defender.x,
                 y: defender.y,
-                sector: None,
+                sector: crate::position_interface::SectorHandle::new(u16::from(out_sector)),
                 level: out_layer,
             };
             let attacker_pos = Position {
                 x: attacker.x,
                 y: attacker.y,
-                sector: None,
+                sector: crate::position_interface::SectorHandle::new(u16::from(out_sector)),
                 level: out_layer,
             };
 
@@ -1183,6 +1185,7 @@ impl EngineInner {
                 // provokes.
                 self.send_before_door_to_fight(
                     sim,
+                    assets,
                     fleeing[i],
                     defender_pos,
                     (dispersed_direction ^ 8) as u16,
@@ -1191,6 +1194,7 @@ impl EngineInner {
                 );
                 self.send_before_door_to_fight(
                     sim,
+                    assets,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -1207,6 +1211,7 @@ impl EngineInner {
                 ) as usize;
                 self.send_before_door_to_fight(
                     sim,
+                    assets,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -1220,12 +1225,9 @@ impl EngineInner {
     /// Send a human actor before a door to fight.  Dispatches on the
     /// actor's concrete type:
     ///
-    /// * **Soldier** — builds a `DoorCombatInfo` and queues an
-    ///   `EventDoorCombat` stimulus on the soldier's own AI.  The
-    ///   stimulus lands on `pending_stimuli` so the next think tick
-    ///   picks it up (see the `EventDoorCombat` arm in `ai_enemy.rs`);
-    ///   the AI then transitions into
-    ///   `Substate::AttackingDoorFightDelay`.
+    /// * **Soldier** — builds a `DoorCombatInfo` and synchronously calls the
+    ///   soldier's AI with `EventDoorCombat`, entering
+    ///   `Substate::AttackingDoorFightDelay` before this fanout continues.
     /// * **PC** — synthesises a four-element sequence (WaitTimer →
     ///   Move → Turn → optional EnterSwordfight) and launches it
     ///   directly.  PCs aren't driven by an enemy-AI brain so the
@@ -1235,6 +1237,7 @@ impl EngineInner {
     pub(crate) fn send_before_door_to_fight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         actor_id: EntityId,
         goal: Position,
         direction: u16,
@@ -1257,8 +1260,14 @@ impl EngineInner {
                     direction,
                     adversary: adversary.map(|id| id.index()).unwrap_or(0),
                 };
-                self.dispatch_ai_stimulus(
+                // Original Soldier::SendBeforeDoorToFight calls
+                // Think(EVENT_DOOR_COMBAT) directly. The state/target/timer
+                // update must settle before later same-frame callbacks (such
+                // as the completed PassDoor's EventReachPoint) are delivered.
+                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                    sim,
                     actor_id,
+                    assets,
                     Stimulus::with_door_combat(StimulusType::EventDoorCombat, info),
                 );
             }

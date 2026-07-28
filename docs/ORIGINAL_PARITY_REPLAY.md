@@ -241,7 +241,7 @@ mission `H01_Lin_VL` (Lincoln), 7,128 contiguous gameplay frames (0 through
 a direct `mission_start` capture with the complete schema-9 campaign,
 resolved-command, director-completion, simulation-body, motion-grid,
 path-request, and global-RNG contracts. Replay currently matches through frame
-2,661. The corrections since frame 1,929 cover positive integer hearing
+3,364. The corrections since frame 1,929 cover positive integer hearing
 thresholds, stale ability retirement, boundary-inclusive sector membership,
 synchronous released-Seek translation, nested owner-card FIFO closure,
 creation-slot entity-seek refresh, stable base seek distance, and
@@ -256,8 +256,12 @@ now shared semantically with the existing enemy implementation. A full
 mission-start replay then exposed PC pickup progression, explicit transitions
 on lifts, the paired fast-stair motion contract, full-position shadow facing,
 and world-ground Follow/Stare coordinates; all now follow their Original
-dispatch boundaries. The first remaining divergence is soldier 78's
-`PassDoor` movement at frame 2,662.
+dispatch boundaries. The next section of the recording exposed authored
+PassDoor action preservation, sector-qualified door-combat positions,
+synchronous door-combat AI dispatch, inline AI route construction/RNG
+ordering, retained post-Execute timer ownership, and terminal
+cross-postponement cleanup. The first remaining divergence is soldier 67's
+direction goal at frame 3,365.
 
 ## Change ledger
 
@@ -496,6 +500,11 @@ dispatch boundaries. The first remaining divergence is soldier 78's
 | Done | Paired fast-stair motion | The following stair `PassDoor` selected `RUNNING_STAIRS`, which is an Original non-animation dispatch token: it plays ordinary `WALKING_STAIRS` twice, with a separate `Turn()` and per-call slowdown before each motion. Rust first tried to play the token as a sprite animation, then initially combined both raw distances under the final aligned direction. | `RUNNING_STAIRS` now shares the normal-animation/two-call dispatch used by fast ladder and wall tokens. Each literal motion call applies speed and turning slowdown against its own immediately preceding turn state before the distances are combined. Replay advances through frame 2,607. |
 | Done | Full-position shadow facing | At frame 2,608 soldier 78 reacted to an elevated PC shadow. Original passes the complete `RHposition` through `PositionToPoint3D`, so sector/layer elevation changes the resulting facing sector and the already-facing `FaceTo` shortcut. Rust retained only flat map X/Y and selected the neighboring direction. | Optical and human target snapshots retain sector/layer, and the shadow handler resolves its target through the contextual 3D facing path. This fixes every elevated positional shadow response without depending on actor identity. |
 | Done | World-ground Follow/Stare coordinates | At frame 2,610 soldier 78's narrowed Follow cone spuriously lost PC 126. Original `RefreshView` subtracts `GetPositionGround()` world-horizontal X/Y for both actors; Rust subtracted projected map X/Y, omitting the 45-unit elevation delta from the stare vector. The false `EVENT_OUTOFVIEW` entered randomized `SeekArea` and consumed eleven RNG draws that the Original had not reached. Positional `Focus(RHposition)` had the same latent coordinate-family error. | View refresh now represents own, followed-target, and stored stare points explicitly as ground coordinates. Follow preserves creation-slot target position timing and authoritative airborne height, while positional Focus first uses the shared `PositionToPoint3D` projection. The legitimate periodic bored-speech draw remains in the global stream; only the downstream seek cascade disappears. Replay advances through frame 2,661. |
+| Done | Authored PassDoor movement action | At frame 2,662 soldier 78's AI-authored route selected `RunningUpright`, but Rust inferred walking solely from the movement element's FAST flag. Original `DetermineMovementAnimation` starts with the element's authored action; FAST is an independent path property. | PassDoor construction now carries the movement element's authored action through the route builder and applies only the Original posture/lift translations. AI-authored running therefore remains running without any actor or replay special case. |
+| Done | Sector-qualified synchronous door combat | Door-battle formation points retained the correct layer but discarded `door.sector_out`. That made a later building-exit route topologically different and shifted its two RNG draws. Rust also queued soldiers' `EVENT_DOOR_COMBAT`, allowing a same-frame `EVENT_REACH_POINT` to observe the old state. | Door-battle positions preserve both authored layer and sector. Soldier `SendBeforeDoorToFight` uses the canonical synchronous Think boundary, matching the direct Original call while preserving older detection FIFO. Replay advances through frame 2,699. |
+| Done | Inline AI route construction and RNG | Soldier 78's timer-fired `GoTo` was queued until the global sequence phase. Original expands `AppendMoveToSequence` inline during Think, so its building-exit RNG draws occur between the periodic owner slots for soldiers 74 and 90. Rust consumed soldier 90's idle draw first and produced a wait of 4 instead of 8. | Every synchronous AI order barrier now promotes that owner's queued movement into a deferred sequence immediately. Topology expansion and construction-time RNG occur at the Think boundary, while owner instruction remains in the ordinary sequence-manager phase. Replay advances through frame 2,765. |
+| Done | Execute-entry timer ownership | At frame 2,766 soldier 78 entered `Execute` on a `WaitTimer` with one tick left. A synchronous WaitingSword callback interrupted that element before Rust's post-Execute modifier scanned for the live command, so the final decrement was skipped. C++ retains the selected `mpSequenceElement` pointer while the current Actor Hourglass stack unwinds. | `ActorExecuteResult`'s entry element is now the fallback command identity when no genuinely instructed live replacement exists. The selected timer consumes its final tick, while any resulting completion still targets the then-live element under the existing base-Actor rule. |
+| Done | Terminal cross-postponement cleanup | A lethal injury postponed soldier 78's active strike, then the same stop cascade interrupted that strike. Rust cleared incoming cross-links only for directly stopped targets, not cascade-stopped descendants. Friday cleanup removed the dead strike sequence, leaving the injury with a dangling target that panicked when the dying animation completed at frame 2,831. | The central sequence state-transition processor now removes every incoming cross-postponement link as soon as its target becomes Terminated, Interrupted, or Impossible. Direct and cascaded stops therefore share the same pointer-lifetime rule, and periodic cleanup cannot invalidate a live link. Replay advances through frame 3,364. |
 
 ## Workflow
 

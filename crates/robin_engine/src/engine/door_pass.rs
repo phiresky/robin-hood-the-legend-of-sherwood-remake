@@ -592,12 +592,15 @@ impl<'a> PassDoorLaunchContext<'a> {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|element| match &element.data {
-                crate::sequence::SequenceElementData::Movement { gate_id, flags, .. } => {
-                    Some((*gate_id, *flags))
-                }
+                crate::sequence::SequenceElementData::Movement {
+                    gate_id,
+                    flags,
+                    action,
+                    ..
+                } => Some((*gate_id, *flags, *action)),
                 _ => None,
             });
-        let (gate_id, flags) = movement.unwrap_or_else(|| {
+        let (gate_id, flags, authored_action) = movement.unwrap_or_else(|| {
             panic!(
                 "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} is not movement data"
             )
@@ -678,7 +681,7 @@ impl<'a> PassDoorLaunchContext<'a> {
             return PassDoorLaunchBarrier::SkipSplice;
         }
 
-        let mut built = self.build_door_pass(entity_id, door_index, direct, flags);
+        let mut built = self.build_door_pass(entity_id, door_index, direct, flags, authored_action);
         self.sequence_manager
             .set_action_recursive(seq_id, elem_idx, built.root_action);
         if let Some(override_action) = built.post_chain_action_recursive {
@@ -766,6 +769,7 @@ impl PassDoorLaunchContext<'_> {
         door_index: crate::gate::DoorIndex,
         direct: bool,
         flags: crate::sequence::MoveFlags,
+        authored_action: OrderType,
     ) -> BuiltDoorPass {
         // Snapshot canonical door geometry and type.
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
@@ -811,7 +815,10 @@ impl PassDoorLaunchContext<'_> {
                     | Some(crate::element::ActionState::Menacing)
             );
 
-        // Choose base movement animation.
+        // Choose base movement animation. Original
+        // `DetermineMovementAnimation` starts from the movement element's
+        // authored action; FAST is an independent path flag and does not
+        // imply that an AI-authored `RunningUpright` PassDoor should walk.
         // Door-pass uses the `WalkingWith*` / `RunningWith*` variants so
         // the stairs translator routes them through the sword/shield
         // branch instead of the plain walk/run branch.
@@ -840,10 +847,30 @@ impl PassDoorLaunchContext<'_> {
             // always a walk regardless of the fast flag.
             OrderType::WalkingWithShield
         } else {
-            if is_fast {
-                OrderType::RunningUpright
-            } else {
+            match authored_action {
                 OrderType::WalkingUpright
+                | OrderType::RunningUpright
+                | OrderType::RiderCharging => authored_action,
+                OrderType::WalkingStairs => OrderType::WalkingUpright,
+                OrderType::WalkingCrouched
+                | OrderType::ClimbingWallUp
+                | OrderType::ClimbingWallDown
+                | OrderType::ClimbingLadderUp
+                | OrderType::ClimbingLadderDown
+                | OrderType::ClimbingLadderUpFast
+                | OrderType::ClimbingLadderDownFast
+                | OrderType::ClimbingWallUpFast
+                | OrderType::ClimbingWallDownFast
+                | OrderType::WalkingCarryingOnShoulders => {
+                    if is_fast {
+                        OrderType::RunningUpright
+                    } else {
+                        OrderType::WalkingUpright
+                    }
+                }
+                OrderType::WalkingWithSword if is_pc => OrderType::WalkingUpright,
+                OrderType::RunningWithSword if is_pc => OrderType::RunningUpright,
+                other => other,
             }
         };
         let destination = if direct { pt_in } else { pt_out };

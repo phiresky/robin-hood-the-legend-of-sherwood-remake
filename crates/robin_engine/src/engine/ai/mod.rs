@@ -5553,6 +5553,12 @@ impl EngineInner {
             defer_turn_instruction,
             take_halt,
         );
+        // Original GoTo constructs and launches its movement sequence inline
+        // inside the AI call. Promote this owner's queued intent now so path
+        // topology and any construction-time RNG are observed at this exact
+        // Think boundary. The returned sequence actions remain registered for
+        // the later SequenceManager::Hourglass instruction phase.
+        let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
 
         // Process pending `set_attentive_mode(target, fast_officer)`:
         //   * Flip `will_be_attentive = target`.
@@ -6509,7 +6515,7 @@ impl EngineInner {
             (royalist_ids, lacklandist_ids)
         };
 
-        self.init_battle_before_door(sim, &door_indices, &fleeing, &pursuing);
+        self.init_battle_before_door(sim, assets, &door_indices, &fleeing, &pursuing);
 
         tracing::debug!(
             source = source.index(),
@@ -8884,6 +8890,7 @@ impl EngineInner {
             // of this fixed point, so late script-seek callbacks cannot leak
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
 
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
@@ -9977,6 +9984,7 @@ impl EngineInner {
                 defer_turn_instruction,
             );
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
                 npc_id,
@@ -10154,6 +10162,7 @@ impl EngineInner {
                 defer_turn_instruction,
             );
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {

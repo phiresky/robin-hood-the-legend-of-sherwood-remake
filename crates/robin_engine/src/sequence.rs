@@ -3531,6 +3531,12 @@ impl SequenceManager {
                 (true, false) => self.remove_actor_live_ref(owner, elem_ref),
                 _ => {}
             }
+            if matches!(
+                new_state,
+                SequenceState::Terminated | SequenceState::Interrupted | SequenceState::Impossible
+            ) {
+                self.clear_cross_postponed_links_to((seq_id, elem_idx));
+            }
         }
 
         // Maintain `actor_in_progress`. The (elem_idx, owner) carried
@@ -3879,6 +3885,54 @@ impl SequenceManager {
         self.stop_pending_elements(owner, stop_priority, resolver);
     }
 
+    /// Drop blocker links whose postponed target was stopped either directly
+    /// or by a following-element cascade.
+    ///
+    /// Original `RHSequenceElement::Stop` recursively stops its postponed
+    /// element and nulls the pointer when that target becomes interrupted.
+    /// Rust can reach the same target through `CASCADE_FOLLOWING`, in which
+    /// case it is absent from the direct `stopped` list above. Retaining that
+    /// link past Friday cleanup would leave a dangling sequence reference.
+    fn clear_terminal_cross_postponed_links(&mut self) {
+        let dead_targets: std::collections::HashSet<(SequenceId, usize)> =
+            self.sequences
+                .iter()
+                .flat_map(|(sequence_id, sequence)| {
+                    sequence.elements.iter().enumerate().filter_map(
+                        move |(element_index, element)| {
+                            matches!(
+                                element.state,
+                                SequenceState::Terminated
+                                    | SequenceState::Interrupted
+                                    | SequenceState::Impossible
+                            )
+                            .then_some((*sequence_id, element_index))
+                        },
+                    )
+                })
+                .collect();
+        for sequence in self.sequences.values_mut() {
+            for element in &mut sequence.elements {
+                if element
+                    .cross_postponed
+                    .is_some_and(|target| dead_targets.contains(&target))
+                {
+                    element.cross_postponed = None;
+                }
+            }
+        }
+    }
+
+    fn clear_cross_postponed_links_to(&mut self, target: (SequenceId, usize)) {
+        for sequence in self.sequences.values_mut() {
+            for element in &mut sequence.elements {
+                if element.cross_postponed == Some(target) {
+                    element.cross_postponed = None;
+                }
+            }
+        }
+    }
+
     /// Stop not-yet-launched elements for a specific actor up to a priority.
     pub fn stop_pending_elements(
         &mut self,
@@ -3921,6 +3975,7 @@ impl SequenceManager {
         for &idx in to_remove.iter().rev() {
             self.elements_to_go.remove(idx);
         }
+        self.clear_terminal_cross_postponed_links();
     }
 
     /// Stop queued elements for `owner` whose command matches `command`.
@@ -4026,6 +4081,7 @@ impl SequenceManager {
                 }
             }
         }
+        self.clear_terminal_cross_postponed_links();
 
         stopped_count
     }

@@ -3789,42 +3789,52 @@ impl EngineInner {
         owner: EntityId,
         execute_result: &mut super::animation::ActorExecuteResult,
     ) {
-        let Some((seq_id, elem_idx)) = self
+        let entry_command = self
             .orders
             .sequence_manager
-            .current_element_for_actor(owner)
-        else {
-            return;
-        };
-        let command = self
+            .get_element(execute_result.entry_seq_id, execute_result.entry_elem_idx)
+            .map(|element| element.command);
+        let live_element = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .unwrap_or_else(|| {
-                panic!(
-                    "actor {owner:?} post-Execute modifier lost current sequence element {seq_id:?}/{elem_idx}"
-                )
-            })
-            .command;
+            .current_element_for_actor(owner);
+        let live_command = live_element.and_then(|(seq_id, elem_idx)| {
+            self.orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .map(|element| element.command)
+        });
 
-        match command {
-            crate::element::Command::WaitTimer => {
-                let actor = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .unwrap_or_else(|| panic!("WAIT_TIMER post-Execute owner {owner:?} is missing"))
-                    .actor_data_mut()
-                    .unwrap_or_else(|| {
-                        panic!("WAIT_TIMER post-Execute owner {owner:?} is not an actor")
-                    });
-                if actor.wait_time == 0 {
-                    execute_result.motion = crate::sprite::MotionState::Terminated;
-                } else {
-                    actor.wait_time -= 1;
-                }
+        // Execute is selected from mpSequenceElement before entering the
+        // actor's derived virtual method. A WaitingSword callback may stop
+        // that element before control returns to Actor::Hourglass, but the
+        // C++ member retains its pointer while this Hourglass stack unwinds.
+        // Rust's live-element scan then returns None, so fall back to the
+        // Execute-entry identity. A genuinely instructed synchronous
+        // replacement remains live and takes precedence. Completion itself
+        // is still resolved against the then-live element by
+        // stage_actor_execute_completion.
+        let effective_command = live_command.or(entry_command);
+        if effective_command == Some(crate::element::Command::WaitTimer) {
+            let actor = self
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| panic!("WAIT_TIMER post-Execute owner {owner:?} is missing"))
+                .actor_data_mut()
+                .unwrap_or_else(|| {
+                    panic!("WAIT_TIMER post-Execute owner {owner:?} is not an actor")
+                });
+            if actor.wait_time == 0 {
+                execute_result.motion = crate::sprite::MotionState::Terminated;
+            } else {
+                actor.wait_time -= 1;
             }
-            crate::element::Command::WaitFreeLift => {
+            return;
+        }
+
+        if live_command == Some(crate::element::Command::WaitFreeLift) {
+            if let Some((seq_id, elem_idx)) = live_element {
                 let authorized = super::sequence_runtime::LiftWaitCommandContext {
                     entities: &mut self.world.entities,
                     fast_grid: &mut self.world.fast_grid,
@@ -3836,7 +3846,6 @@ impl EngineInner {
                     execute_result.motion = crate::sprite::MotionState::Terminated;
                 }
             }
-            _ => {}
         }
     }
 
