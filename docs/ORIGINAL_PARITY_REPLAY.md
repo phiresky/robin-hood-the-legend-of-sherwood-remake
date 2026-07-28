@@ -559,6 +559,15 @@ ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   "$TRACE_JSONL"
 ```
 
+The first run converts the JSONL source into an adjacent
+`*.parity-cache-v1.native-bincode.zst` file. The cache contains the typed trace
+header, RNG prefix/suffix, and every frame as length-delimited native bincode
+records inside a streaming zstd level-0 payload. Subsequent runs read only that
+cache. Its source-length and modification-time fingerprint automatically
+invalidates it when the JSONL changes, and conversion is written to a temporary
+file before being atomically persisted so an interrupted conversion is never
+accepted as complete.
+
 On the first logical or RNG divergence, this default run writes a complete
 JSONL snapshot for the divergent frame and its 32 predecessors to a unique
 temporary path and prints that path. Use the explicit `--dump-jsonl` options

@@ -9,7 +9,7 @@
 //!       original-code/parity-traces/original-demo-baseline.jsonl
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
@@ -29,7 +29,7 @@ use robin_rs::level_loading_host::EngineLevelLoadExt;
 use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceHeader {
     mission: String,
     proto_level: String,
@@ -43,7 +43,9 @@ struct TraceHeader {
     motion_grid: TraceMotionGrid,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 enum TraceStartState {
     MissionStart,
@@ -70,7 +72,7 @@ fn validate_trace_start(start_state: TraceStartState, session_index: u32, initia
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceCampaign {
     version: u32,
     values: Vec<i32>,
@@ -95,7 +97,7 @@ struct TraceCampaign {
     production_sectors: Vec<TraceProductionSector>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceCampaignMission {
     profile_index: u32,
     profile_id: u32,
@@ -107,7 +109,7 @@ struct TraceCampaignMission {
     ares_state_succeeded: i8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceCampaignCharacter {
     profile_index: u32,
     profile_name: String,
@@ -115,7 +117,7 @@ struct TraceCampaignCharacter {
     status: TracePcStatus,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TracePcStatus {
     hand_to_hand: TraceSkill,
     bow: TraceSkill,
@@ -134,13 +136,13 @@ struct TracePcStatus {
     beam_me_index_in_sherwood: i16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSkill {
     capacity: u32,
     experience: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceProductionSector {
     r#type: u32,
     speed: u16,
@@ -150,7 +152,7 @@ struct TraceProductionSector {
     occupants: Vec<TraceProductionOccupant>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceProductionOccupant {
     character_index: usize,
     x: TraceFloat,
@@ -158,18 +160,18 @@ struct TraceProductionOccupant {
     obstacle: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceMotionGrid {
     layers: Vec<TraceMotionLayer>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceMotionLayer {
     layer: u16,
     lines: Vec<TraceMotionLine>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceMotionLine {
     index: u16,
     a: TracePoint,
@@ -179,14 +181,14 @@ struct TraceMotionLine {
     active: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceMotionLineChange {
     layer: u16,
     index: u16,
     active: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 enum TracePathEvent {
     Queued {
@@ -223,7 +225,7 @@ enum TracePathEvent {
     },
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
@@ -253,21 +255,23 @@ impl TraceRngBatch {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, bincode::Encode, bincode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 enum TraceRngDomain {
     Simulation,
     Audio,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceRngPrefix {
     #[allow(dead_code)]
     r#type: String,
     draws: TraceRngBatch,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct TraceRngOnly {
     #[serde(default)]
     draws: Option<TraceRngBatch>,
@@ -275,19 +279,43 @@ struct TraceRngOnly {
     rng_draws: Option<TraceRngBatch>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct RngReplayCache {
-    fingerprint: String,
-    values: Vec<u32>,
+#[derive(Debug, Deserialize)]
+struct TraceRecordMarker {
+    #[serde(rename = "type")]
+    record_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    bincode::Encode,
+    bincode::Decode,
+)]
 struct TraceEntityId {
     kind: TraceEntityKind,
     index: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    bincode::Encode,
+    bincode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 enum TraceEntityKind {
     Pc,
@@ -318,7 +346,7 @@ impl From<TraceEntityId> for EntityId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceFloat {
     bits: u32,
 }
@@ -329,7 +357,7 @@ impl TraceFloat {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TracePoint {
     x: TraceFloat,
     y: TraceFloat,
@@ -341,7 +369,7 @@ impl From<TracePoint> for MapPoint {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TracePoint3 {
     x: TraceFloat,
     y: TraceFloat,
@@ -354,7 +382,7 @@ impl From<TracePoint3> for WorldPoint3D {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TraceCommand {
     BoxSelect {
@@ -379,6 +407,13 @@ enum TraceCommand {
     LaunchSelfAbility {
         actor: TraceEntityId,
         original_command_name: String,
+    },
+    LaunchGroundTarget {
+        actor: TraceEntityId,
+        target: TracePoint3,
+        original_command_name: String,
+        original_target_field: u32,
+        titbit_layer: u16,
     },
     LaunchScrollRead {
         actor: TraceEntityId,
@@ -412,9 +447,11 @@ enum TraceCommand {
     MakePcFast {
         entity: TraceEntityId,
     },
+    CrouchDown,
+    StandUp,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[serde(rename_all = "snake_case")]
 enum TraceAction {
     NoAction,
@@ -626,6 +663,32 @@ impl TraceCommand {
                 actor: entity_map.translate(actor),
                 command: command_from_stable_name(&original_command_name),
             },
+            Self::LaunchGroundTarget {
+                actor,
+                target,
+                original_command_name,
+                original_target_field,
+                titbit_layer,
+            } => {
+                // RHSequenceElementGeneric.h assigns these stable Original
+                // field numbers. Translate semantically because Rust's Field
+                // enum intentionally omits unrelated legacy properties.
+                let target_field = match (original_command_name.as_str(), original_target_field) {
+                    ("throw_purse", 30) => robin_engine::sequence::Field::PurseTarget,
+                    ("throw_net", 31) => robin_engine::sequence::Field::NetTarget,
+                    ("throw_wasp_nest", 32) => robin_engine::sequence::Field::WaspNestTarget,
+                    (command, field) => panic!(
+                        "unsupported Original ground-target command/field {command:?}/{field}"
+                    ),
+                };
+                PlayerCommand::LaunchGroundTarget {
+                    actor: entity_map.translate(actor),
+                    target_pos: target.into(),
+                    command: command_from_stable_name(&original_command_name),
+                    target_field,
+                    titbit_layer,
+                }
+            }
             Self::LaunchScrollRead {
                 actor,
                 target,
@@ -672,6 +735,8 @@ impl TraceCommand {
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
                 pc_id: entity_map.translate(entity),
             },
+            Self::CrouchDown => PlayerCommand::CrouchDown,
+            Self::StandUp => PlayerCommand::StandUp,
         })
     }
 }
@@ -708,7 +773,7 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceElement {
     entity_id: TraceEntityId,
     creation_order: u32,
@@ -731,7 +796,7 @@ struct TraceElement {
     ai: Option<TraceAi>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceActor {
     action_state: u32,
     animation: u32,
@@ -741,19 +806,19 @@ struct TraceActor {
     wait_time: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceHuman {
     life_points: i16,
     dead: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceAi {
     state: u32,
     substate: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceFrame {
     frame_before: u64,
     frame_after: u64,
@@ -767,8 +832,32 @@ struct TraceFrame {
     path_events: Vec<TracePathEvent>,
 }
 
+const TRACE_CACHE_VERSION: u32 = 1;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v1.native-bincode.zst";
+const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct BinaryTraceHeader {
+    version: u32,
+    source_fingerprint: String,
+    trace: TraceHeader,
+    rng_prefix: TraceRngPrefix,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+enum BinaryTraceRecord {
+    Frame(TraceFrame),
+    End { rng_suffix: Option<TraceRngBatch> },
+}
+
+struct BinaryTraceReader {
+    path: PathBuf,
+    reader: Box<dyn Read>,
+}
+
 struct Options {
     scan_all: bool,
+    no_auto_dump: bool,
     visual: bool,
     trace_path: PathBuf,
     dump: Option<DumpOptions>,
@@ -1136,47 +1225,42 @@ fn main() {
 
 fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
     let scan_all = options.scan_all;
+    let no_auto_dump = options.no_auto_dump;
     let trace_path = options.trace_path;
     let http_server = options.http_server;
     let mut manual_pause = options.start_paused;
     let trace_path = trace_path
         .canonicalize()
         .unwrap_or_else(|e| panic!("canonicalize {}: {e}", trace_path.display()));
+    let cache_path = ensure_binary_trace_cache(&trace_path);
     let mut dump = options.dump.map(|options| {
         let file = File::create(&options.path)
             .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
         (options, BufWriter::new(file))
     });
-    let header = read_trace_header(&trace_path);
+    let cached_header = read_binary_trace_header(&cache_path);
+    let header = cached_header.trace;
     validate_trace_schema(header.schema);
     validate_trace_start(
         header.start_state,
         header.session_index,
         header.initial_frame,
     );
-    let all_rng_draws = read_all_rng_draws(&trace_path);
+    let all_rng_draws = read_all_rng_draws(&cache_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
     }
 
-    let file = File::open(&trace_path)
-        .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
-    let mut lines = BufReader::new(file).lines();
-    let stream_header: TraceHeader = serde_json::from_str(
-        &lines
-            .next()
-            .expect("parity trace has no header")
-            .expect("read parity trace header"),
-    )
-    .expect("parse parity trace header");
-    assert_eq!(stream_header.schema, header.schema);
-    assert_eq!(stream_header.session_index, header.session_index);
-    assert_eq!(stream_header.initial_frame, header.initial_frame);
-    assert_eq!(stream_header.mission, header.mission);
-    assert_eq!(stream_header.rng_seed, header.rng_seed);
+    let mut records = BinaryTraceReader::open(&cache_path);
+    let stream_header = records.read_header();
+    assert_eq!(stream_header.trace.schema, header.schema);
+    assert_eq!(stream_header.trace.session_index, header.session_index);
+    assert_eq!(stream_header.trace.initial_frame, header.initial_frame);
+    assert_eq!(stream_header.trace.mission, header.mission);
+    assert_eq!(stream_header.trace.rng_seed, header.rng_seed);
     assert_eq!(
-        stream_header.synchronous_pathfinding,
+        stream_header.trace.synchronous_pathfinding,
         header.synchronous_pathfinding
     );
     assert!(
@@ -1184,13 +1268,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         "trace was recorded with asynchronous pathfinding"
     );
 
-    let prefix: TraceRngPrefix = serde_json::from_str(
-        &lines
-            .next()
-            .expect("parity trace has no RNG prefix")
-            .expect("read parity RNG prefix"),
-    )
-    .expect("parse parity RNG prefix");
+    let prefix = stream_header.rng_prefix;
     assert_eq!(prefix.r#type, "rng_prefix");
     assert_eq!(prefix.draws.first_index, 0);
     let prefix_end = prefix.draws.gameplay_draw_count();
@@ -1246,7 +1324,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
     let mut active_http_step = None;
-    let automatic_dump_enabled = dump.is_none() && !scan_all;
+    let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
 
     if let Some(port) = http_server {
@@ -1258,17 +1336,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
     }
 
-    for (line_index, line) in lines.enumerate() {
-        let line = line.expect("read parity trace frame");
-        let record: serde_json::Value = serde_json::from_str(&line)
-            .unwrap_or_else(|e| panic!("parse trace line {}: {e}", line_index + 2));
-        if record.get("type").and_then(serde_json::Value::as_str) == Some("rng_suffix") {
-            break;
-        }
-        let mut frame: TraceFrame = serde_json::from_value(record)
-            .unwrap_or_else(|e| panic!("parse trace frame on line {}: {e}", line_index + 2));
+    let mut line_index = 0_usize;
+    loop {
+        let mut frame = match records.read_record() {
+            BinaryTraceRecord::Frame(frame) => frame,
+            BinaryTraceRecord::End { .. } => break,
+        };
         assert_eq!(frame.frame_before, header.initial_frame + line_index as u64);
         assert_eq!(frame.frame_after, frame.frame_before + 1);
+        line_index += 1;
         if http_server.is_some() {
             loop {
                 drain_headless_http(
@@ -1289,8 +1365,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let rng_start = gameplay_rng_index;
         let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
-        let resolved_commands =
-            serde_json::to_value(&frame.commands).expect("serialize resolved trace commands");
+        let capture_commands = automatic_dump_enabled
+            || dump
+                .as_ref()
+                .is_some_and(|(options, _)| options.includes(frame.frame_after));
+        let resolved_commands = capture_commands.then(|| {
+            serde_json::to_value(&frame.commands).expect("serialize resolved trace commands")
+        });
         assert_eq!(
             engine.original_rng_replay_cursor(),
             Some(rng_start),
@@ -1455,7 +1536,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &engine,
                 map,
                 &frame,
-                resolved_commands.clone(),
+                resolved_commands
+                    .clone()
+                    .expect("included diagnostic frame captured its resolved commands"),
                 rng_start,
                 rng_end,
                 actual_rng_end,
@@ -1471,7 +1554,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame_after: frame.frame_after,
                     selected_pcs: frame.selected_pcs.clone(),
                     rng_draws: frame.rng_draws.clone(),
-                    resolved_commands,
+                    resolved_commands: resolved_commands
+                        .expect("automatic diagnostic frame captured its resolved commands"),
                     path_events: frame.path_events.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
@@ -1616,13 +1700,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
 }
 
 fn parse_options() -> Options {
-    const USAGE: &str = "usage: original_parity_replay [--scan-all] [--visual] \
+    const USAGE: &str = "usage: original_parity_replay [--scan-all] [--no-auto-dump] [--visual] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
         [--dump-entity KIND:INDEX]...] TRACE.jsonl";
 
     let mut args = std::env::args_os().skip(1);
     let mut scan_all = false;
+    let mut no_auto_dump = false;
     let mut visual = false;
     let mut trace_path = None;
     let mut dump_path = None;
@@ -1634,6 +1719,7 @@ fn parse_options() -> Options {
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
+            Some("--no-auto-dump") => no_auto_dump = true,
             Some("--visual") => visual = true,
             Some("--http-server") => {
                 let port = parse_u64_option(args.next(), "--http-server");
@@ -1681,6 +1767,7 @@ fn parse_options() -> Options {
     );
     Options {
         scan_all,
+        no_auto_dump,
         visual,
         trace_path,
         http_server,
@@ -1691,6 +1778,22 @@ fn parse_options() -> Options {
             through_frame: dump_through,
             entities: dump_entities,
         }),
+    }
+}
+
+fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
+    match serde_json::from_str(line) {
+        Ok(frame) => Some(frame),
+        Err(frame_error) => {
+            let marker: TraceRecordMarker = serde_json::from_str(line).unwrap_or_else(|_| {
+                panic!("parse trace frame on line {line_number}: {frame_error}")
+            });
+            if marker.record_type.as_deref() == Some("rng_suffix") {
+                None
+            } else {
+                panic!("parse trace frame on line {line_number}: {frame_error}");
+            }
+        }
     }
 }
 
@@ -2077,18 +2180,7 @@ fn serde_value_key_to_string(key: serde_value::Value) -> String {
     }
 }
 
-fn read_trace_header(trace_path: &std::path::Path) -> TraceHeader {
-    let file = File::open(trace_path)
-        .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
-    let line = BufReader::new(file)
-        .lines()
-        .next()
-        .expect("parity trace has no header")
-        .expect("read parity trace header");
-    serde_json::from_str(&line).expect("parse parity trace header")
-}
-
-fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
+fn trace_source_fingerprint(trace_path: &std::path::Path) -> String {
     let metadata = std::fs::metadata(trace_path)
         .unwrap_or_else(|error| panic!("stat parity trace {}: {error}", trace_path.display()));
     let modified = metadata
@@ -2097,64 +2189,305 @@ fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("parity trace modification time predates Unix epoch")
         .as_nanos();
-    let fingerprint = format!("v4:schema=9:length={}:modified={modified}", metadata.len(),);
+    format!(
+        "parity-cache-v{TRACE_CACHE_VERSION}:length={}:modified={modified}",
+        metadata.len()
+    )
+}
+
+fn binary_trace_cache_path(trace_path: &std::path::Path) -> PathBuf {
     let mut cache_name = trace_path.as_os_str().to_owned();
-    cache_name.push(".rng-cache.json");
-    let cache_path = PathBuf::from(cache_name);
-    if let Ok(file) = File::open(&cache_path)
-        && let Ok(cache) = serde_json::from_reader::<_, RngReplayCache>(BufReader::new(file))
-        && cache.fingerprint == fingerprint
-    {
-        eprintln!(
-            "loaded {} simulation RNG draws from {}",
-            cache.values.len(),
+    cache_name.push(TRACE_CACHE_SUFFIX);
+    PathBuf::from(cache_name)
+}
+
+fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
+    let cache_path = binary_trace_cache_path(trace_path);
+    let fingerprint = trace_source_fingerprint(trace_path);
+    match try_read_binary_trace_header(&cache_path) {
+        Ok(header)
+            if header.version == TRACE_CACHE_VERSION
+                && header.source_fingerprint == fingerprint =>
+        {
+            eprintln!("loaded parity trace cache {}", cache_path.display());
+            return cache_path;
+        }
+        Ok(header) => eprintln!(
+            "rebuilding stale parity trace cache {} (version {}, fingerprint {:?})",
+            cache_path.display(),
+            header.version,
+            header.source_fingerprint
+        ),
+        Err(error) if cache_path.exists() => eprintln!(
+            "rebuilding unreadable parity trace cache {}: {error}",
             cache_path.display()
-        );
-        return cache.values;
+        ),
+        Err(_) => eprintln!(
+            "building parity trace cache {} with bincode + zstd level {TRACE_CACHE_ZSTD_LEVEL}",
+            cache_path.display()
+        ),
     }
 
     let file = File::open(trace_path)
-        .unwrap_or_else(|e| panic!("open parity trace {}: {e}", trace_path.display()));
-    let mut result = Vec::new();
-    let mut original_index = 0;
-    for (line_index, line) in BufReader::new(file).lines().enumerate().skip(1) {
-        let record: TraceRngOnly = serde_json::from_str(&line.expect("read parity RNG record"))
-            .unwrap_or_else(|e| panic!("parse RNG fields on trace line {}: {e}", line_index + 1));
-        if let Some(batch) = record.draws.or(record.rng_draws) {
-            assert_eq!(batch.first_index, original_index, "RNG stream has a gap");
-            assert_eq!(batch.values.len(), batch.callsite_offsets.len());
-            original_index += batch.values.len();
-            if batch.values.is_empty() {
-                assert!(
-                    batch.domains.is_empty(),
-                    "empty RNG batch unexpectedly contains draw domains"
+        .unwrap_or_else(|error| panic!("open parity trace {}: {error}", trace_path.display()));
+    let mut lines = BufReader::new(file).lines();
+    let trace: TraceHeader = serde_json::from_str(
+        &lines
+            .next()
+            .expect("parity trace has no header")
+            .expect("read parity trace header"),
+    )
+    .expect("parse parity trace header");
+    let rng_prefix: TraceRngPrefix = serde_json::from_str(
+        &lines
+            .next()
+            .expect("parity trace has no RNG prefix")
+            .expect("read parity RNG prefix"),
+    )
+    .expect("parse parity RNG prefix");
+    let header = BinaryTraceHeader {
+        version: TRACE_CACHE_VERSION,
+        source_fingerprint: fingerprint,
+        trace,
+        rng_prefix,
+    };
+
+    let parent = cache_path
+        .parent()
+        .expect("parity trace cache path has no parent");
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).unwrap_or_else(|error| {
+        panic!(
+            "create temporary parity trace cache beside {}: {error}",
+            cache_path.display()
+        )
+    });
+    let started = std::time::Instant::now();
+    let mut frame_count = 0_u64;
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(
+            BufWriter::new(temporary.as_file_mut()),
+            TRACE_CACHE_ZSTD_LEVEL,
+        )
+        .unwrap_or_else(|error| panic!("start parity trace cache compression: {error}"));
+        write_binary_record(&mut encoder, &header, "parity trace cache header");
+
+        let mut wrote_end = false;
+        for (record_index, line) in lines.enumerate() {
+            let line_number = record_index + 3;
+            let line = line.unwrap_or_else(|error| {
+                panic!("read parity trace record on line {line_number}: {error}")
+            });
+            if let Some(frame) = parse_trace_frame(&line, line_number) {
+                write_binary_record(
+                    &mut encoder,
+                    &BinaryTraceRecord::Frame(frame),
+                    "parity trace frame",
                 );
-                continue;
+                frame_count += 1;
+                if frame_count.is_multiple_of(500) {
+                    eprintln!("cached {frame_count} parity frames");
+                }
+            } else {
+                let suffix: TraceRngOnly = serde_json::from_str(&line).unwrap_or_else(|error| {
+                    panic!("parse RNG suffix on trace line {line_number}: {error}")
+                });
+                write_binary_record(
+                    &mut encoder,
+                    &BinaryTraceRecord::End {
+                        rng_suffix: suffix.draws.or(suffix.rng_draws),
+                    },
+                    "parity trace cache terminator",
+                );
+                wrote_end = true;
+                break;
             }
-            assert_eq!(
-                batch.values.len(),
-                batch.domains.len(),
-                "RNG domain stream has a different length than its values"
+        }
+        if !wrote_end {
+            write_binary_record(
+                &mut encoder,
+                &BinaryTraceRecord::End { rng_suffix: None },
+                "parity trace cache terminator",
             );
-            result.extend(batch.values.into_iter().zip(batch.domains).filter_map(
-                |(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value),
-            ));
+        }
+        let mut writer = encoder
+            .finish()
+            .unwrap_or_else(|error| panic!("finish parity trace cache compression: {error}"));
+        writer
+            .flush()
+            .unwrap_or_else(|error| panic!("flush parity trace cache: {error}"));
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .unwrap_or_else(|error| panic!("sync parity trace cache: {error}"));
+    temporary.persist(&cache_path).unwrap_or_else(|error| {
+        panic!(
+            "persist parity trace cache {}: {}",
+            cache_path.display(),
+            error.error
+        )
+    });
+    let compressed_bytes = std::fs::metadata(&cache_path)
+        .expect("stat completed parity trace cache")
+        .len();
+    eprintln!(
+        "cached {frame_count} frames in {} ({:.1} MiB, {:.1}s)",
+        cache_path.display(),
+        compressed_bytes as f64 / (1024.0 * 1024.0),
+        started.elapsed().as_secs_f64()
+    );
+    cache_path
+}
+
+impl BinaryTraceReader {
+    fn open(path: &std::path::Path) -> Self {
+        let file = File::open(path)
+            .unwrap_or_else(|error| panic!("open parity trace cache {}: {error}", path.display()));
+        let decoder = zstd::stream::read::Decoder::new(file).unwrap_or_else(|error| {
+            panic!(
+                "start parity trace cache decompression {}: {error}",
+                path.display()
+            )
+        });
+        Self {
+            path: path.to_owned(),
+            reader: Box::new(decoder),
         }
     }
-    let cache = RngReplayCache {
-        fingerprint,
-        values: result.clone(),
-    };
-    let file = File::create(&cache_path)
-        .unwrap_or_else(|error| panic!("create RNG cache {}: {error}", cache_path.display()));
-    serde_json::to_writer(BufWriter::new(file), &cache)
-        .unwrap_or_else(|error| panic!("write RNG cache {}: {error}", cache_path.display()));
+
+    fn read_header(&mut self) -> BinaryTraceHeader {
+        read_binary_record(&mut self.reader, "parity trace cache header").unwrap_or_else(|error| {
+            panic!(
+                "read parity trace cache header {}: {error}",
+                self.path.display()
+            )
+        })
+    }
+
+    fn read_record(&mut self) -> BinaryTraceRecord {
+        read_binary_record(&mut self.reader, "parity trace cache record").unwrap_or_else(|error| {
+            panic!(
+                "read parity trace cache record {}: {error}",
+                self.path.display()
+            )
+        })
+    }
+}
+
+fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeader, String> {
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut decoder = zstd::stream::read::Decoder::new(file).map_err(|error| error.to_string())?;
+    read_binary_record(&mut decoder, "parity trace cache header")
+}
+
+fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeader {
+    try_read_binary_trace_header(path).unwrap_or_else(|error| {
+        panic!(
+            "read parity trace cache header {} after conversion: {error}",
+            path.display()
+        )
+    })
+}
+
+fn write_binary_record<T: bincode::Encode>(writer: &mut impl Write, value: &T, label: &str) {
+    let encoded = bincode::encode_to_vec(value, bincode::config::standard())
+        .unwrap_or_else(|error| panic!("encode {label}: {error}"));
+    let length = u64::try_from(encoded.len()).expect("binary record length exceeds u64");
+    writer
+        .write_all(&length.to_le_bytes())
+        .unwrap_or_else(|error| panic!("write {label} length: {error}"));
+    writer
+        .write_all(&encoded)
+        .unwrap_or_else(|error| panic!("write {label}: {error}"));
+}
+
+fn read_binary_record<T: bincode::Decode<()>>(
+    reader: &mut dyn Read,
+    label: &str,
+) -> Result<T, String> {
+    const MAX_RECORD_BYTES: u64 = 1024 * 1024 * 1024;
+    let mut length_bytes = [0_u8; 8];
+    reader
+        .read_exact(&mut length_bytes)
+        .map_err(|error| format!("read {label} length: {error}"))?;
+    let length = u64::from_le_bytes(length_bytes);
+    if length > MAX_RECORD_BYTES {
+        return Err(format!(
+            "{label} length {length} exceeds {MAX_RECORD_BYTES}-byte safety limit"
+        ));
+    }
+    let length = usize::try_from(length)
+        .map_err(|_| format!("{label} length cannot be represented on this platform"))?;
+    let mut encoded = vec![0_u8; length];
+    reader
+        .read_exact(&mut encoded)
+        .map_err(|error| format!("read {label} payload: {error}"))?;
+    let (value, consumed) = bincode::decode_from_slice(&encoded, bincode::config::standard())
+        .map_err(|error| format!("decode {label}: {error}"))?;
+    if consumed != encoded.len() {
+        return Err(format!(
+            "decode {label}: consumed {consumed} of {} bytes",
+            encoded.len()
+        ));
+    }
+    Ok(value)
+}
+
+fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
+    let mut reader = BinaryTraceReader::open(cache_path);
+    let header = reader.read_header();
+    let mut result = Vec::new();
+    let mut original_index = 0_usize;
+    append_simulation_rng_draws(&mut result, &mut original_index, &header.rng_prefix.draws);
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => {
+                append_simulation_rng_draws(&mut result, &mut original_index, &frame.rng_draws);
+            }
+            BinaryTraceRecord::End { rng_suffix } => {
+                if let Some(batch) = rng_suffix {
+                    append_simulation_rng_draws(&mut result, &mut original_index, &batch);
+                }
+                break;
+            }
+        }
+    }
     eprintln!(
-        "cached {} simulation RNG draws in {}",
+        "loaded {} simulation RNG draws from {}",
         result.len(),
         cache_path.display()
     );
     result
+}
+
+fn append_simulation_rng_draws(
+    result: &mut Vec<u32>,
+    original_index: &mut usize,
+    batch: &TraceRngBatch,
+) {
+    assert_eq!(batch.first_index, *original_index, "RNG stream has a gap");
+    assert_eq!(batch.values.len(), batch.callsite_offsets.len());
+    *original_index += batch.values.len();
+    if batch.values.is_empty() {
+        assert!(
+            batch.domains.is_empty(),
+            "empty RNG batch unexpectedly contains draw domains"
+        );
+        return;
+    }
+    assert_eq!(
+        batch.values.len(),
+        batch.domains.len(),
+        "RNG domain stream has a different length than its values"
+    );
+    result.extend(
+        batch
+            .values
+            .iter()
+            .copied()
+            .zip(batch.domains.iter().copied())
+            .filter_map(|(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value)),
+    );
 }
 
 fn difference_field(difference: &str) -> &str {
@@ -3306,6 +3639,50 @@ mod tests {
         assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
         assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
         assert_eq!(command_from_stable_name("roll"), Command::Jump);
+    }
+
+    #[test]
+    fn native_bincode_cache_handles_heterogeneous_command_variants() {
+        let commands = [
+            TraceCommand::CrouchDown,
+            TraceCommand::LaunchGroundTarget {
+                actor: TraceEntityId {
+                    kind: TraceEntityKind::Pc,
+                    index: 126,
+                },
+                target: TracePoint3 {
+                    x: TraceFloat {
+                        bits: 834.0_f32.to_bits(),
+                    },
+                    y: TraceFloat {
+                        bits: 765.0_f32.to_bits(),
+                    },
+                    z: TraceFloat {
+                        bits: 0.0_f32.to_bits(),
+                    },
+                },
+                original_command_name: "throw_purse".to_owned(),
+                original_target_field: 30,
+                titbit_layer: 0,
+            },
+        ];
+        let mut encoded = Vec::new();
+        for command in &commands {
+            write_binary_record(&mut encoded, command, "test command");
+        }
+
+        let mut reader = std::io::Cursor::new(encoded);
+        assert!(matches!(
+            read_binary_record(&mut reader, "test command").unwrap(),
+            TraceCommand::CrouchDown
+        ));
+        assert!(matches!(
+            read_binary_record(&mut reader, "test command").unwrap(),
+            TraceCommand::LaunchGroundTarget {
+                original_target_field: 30,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -624,7 +624,16 @@ impl Default for CameraState {
 /// `PerformHourglass`. Parity replays apply this event before the next
 /// hourglass so synchronous sequence successors observe the same boundary.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    bincode::Encode,
+    bincode::Decode,
+    robin_state_hash_derive::StateHash,
 )]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum DirectorCompletion {
