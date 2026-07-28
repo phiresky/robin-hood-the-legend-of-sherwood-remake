@@ -1270,6 +1270,22 @@ impl EngineInner {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> super::SideEffects {
+        self.perform_hourglass_with_body_gate(display, assets, dev, true)
+    }
+
+    /// Run an hourglass while optionally forcing the simulation-body gate
+    /// closed for this tick.
+    ///
+    /// A closed gate still runs the mission script/message phase and advances
+    /// the mission clock, exactly like the engine's persistent lock, but does
+    /// not mutate that persistent lock state.
+    pub(crate) fn perform_hourglass_with_body_gate(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        simulation_body_allowed: bool,
+    ) -> super::SideEffects {
         let _hourglass_timer = HourglassTimer::start();
 
         // RHScript::FadeToBlack presents its ramp in a tight loop without
@@ -1298,7 +1314,7 @@ impl EngineInner {
         // before any actor receives the next movement tick.
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
-        let code = self.perform_hourglass_inner(sim, display, assets, dev);
+        let code = self.perform_hourglass_inner(sim, display, assets, dev, simulation_body_allowed);
 
         // Post-tick sim mutations that used to live in `game_session`
         // between the hourglass and the render pass. They have to run
@@ -1450,14 +1466,20 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
         dev: &mut DevState,
+        simulation_body_allowed: bool,
     ) -> GameCode {
         trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
         let pc_guarded = self.hourglass_phase_deferred_effects_start(sim, assets);
 
         trace_hourglass_phase(HourglassPhase::MissionAndMessages);
-        if let Some(code) =
-            self.hourglass_phase_mission_and_messages(sim, display, assets, dev, pc_guarded)
-        {
+        if let Some(code) = self.hourglass_phase_mission_and_messages(
+            sim,
+            display,
+            assets,
+            dev,
+            pc_guarded,
+            simulation_body_allowed,
+        ) {
             return code;
         }
 
@@ -1640,6 +1662,7 @@ impl EngineInner {
         assets: &LevelAssets,
         dev: &mut DevState,
         pc_guarded: bool,
+        simulation_body_allowed: bool,
     ) -> Option<GameCode> {
         // ── Projectile cheat rain ────────────────────────────────
         // The original `ProjectileRain` cheat was wired up but never
@@ -1772,6 +1795,7 @@ impl EngineInner {
                 .background_transform
                 .zoom_to_down
             || self.engine_locked()
+            || !simulation_body_allowed
         {
             return Some(GameCode::LevelInProgress);
         }
@@ -3283,6 +3307,14 @@ impl EngineInner {
                     // synchronous Think finishes may DoNextOrder/completion
                     // promote the actor's successor order.
                     self.process_anim_completion_outcomes(sim, outcomes, assets);
+                    // `RHSequenceElement::SetState(TERMINATED)` calls the
+                    // actor's virtual SendCondolationCard and then Ready()
+                    // synchronously inside this Hourglass slot. Close only
+                    // this owner's newly terminated stack before its derived
+                    // NPC tail runs; leaving it in the global queue delays
+                    // immediate successors such as UnlockAI until after
+                    // detection and changes observable AI state.
+                    self.dispatch_condolations_for_owner_boundary(sim, entity_id, assets);
                     self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
                         .unwrap_or_else(|error| {
                             panic!(

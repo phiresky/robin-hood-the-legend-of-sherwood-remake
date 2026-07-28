@@ -538,6 +538,22 @@ impl Engine {
         self.inner.perform_hourglass(display, assets, dev)
     }
 
+    /// Run a simulation tick while optionally forcing the actor/world body
+    /// gate closed after the mission-script phase.
+    ///
+    /// This does not alter the engine's persistent lock state.
+    pub fn perform_hourglass_with_body_gate(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        simulation_body_allowed: bool,
+    ) -> SideEffects {
+        self.require_live_campaign("performing a gated engine tick");
+        self.inner
+            .perform_hourglass_with_body_gate(display, assets, dev, simulation_body_allowed)
+    }
+
     /// One-shot lifecycle stage matching `RHGame::GameLoop`: dispatch
     /// mission `PostInitialize` after the first host refresh and sound
     /// hourglass.  Replay drivers must run this after reconstructing

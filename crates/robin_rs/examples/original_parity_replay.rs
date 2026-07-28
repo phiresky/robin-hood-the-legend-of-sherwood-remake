@@ -48,6 +48,13 @@ enum TraceStartState {
     LoadedSave,
 }
 
+fn validate_trace_schema(schema: u32) {
+    assert_eq!(
+        schema, 8,
+        "unsupported parity trace schema {schema}; simulation-body-gate schema 8 is required"
+    );
+}
+
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
     match start_state {
         TraceStartState::MissionStart => assert_eq!(
@@ -676,6 +683,7 @@ struct TraceAi {
 struct TraceFrame {
     frame_before: u64,
     frame_after: u64,
+    simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
     director_completions: Vec<robin_engine::engine::DirectorCompletion>,
     selected_pcs: Vec<TraceEntityId>,
@@ -894,11 +902,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         (options, BufWriter::new(file))
     });
     let header = read_trace_header(&trace_path);
-    assert_eq!(
-        header.schema, 7,
-        "unsupported parity trace schema {}; director-completion schema 7 is required",
-        header.schema
-    );
+    validate_trace_schema(header.schema);
     validate_trace_start(
         header.start_state,
         header.session_index,
@@ -1093,7 +1097,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
         }
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            engine.perform_hourglass(&mut display, &assets, &mut dev)
+            engine.perform_hourglass_with_body_gate(
+                &mut display,
+                &assets,
+                &mut dev,
+                frame.simulation_body_ran,
+            )
         }));
         if let Err(payload) = tick_result {
             eprintln!(
@@ -1823,7 +1832,7 @@ fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("parity trace modification time predates Unix epoch")
         .as_nanos();
-    let fingerprint = format!("v2:schema=7:length={}:modified={modified}", metadata.len(),);
+    let fingerprint = format!("v3:schema=8:length={}:modified={modified}", metadata.len(),);
     let mut cache_name = trace_path.as_os_str().to_owned();
     cache_name.push(".rng-cache.json");
     let cache_path = PathBuf::from(cache_name);
@@ -2925,6 +2934,39 @@ fn compare_point_with_absolute_tolerance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_eight_is_required() {
+        validate_trace_schema(8);
+    }
+
+    #[test]
+    #[should_panic(expected = "schema 7; simulation-body-gate schema 8 is required")]
+    fn schema_seven_is_rejected() {
+        validate_trace_schema(7);
+    }
+
+    #[test]
+    fn simulation_body_marker_is_mandatory() {
+        let frame_without_marker = serde_json::json!({
+            "frame_before": 0,
+            "frame_after": 1,
+            "commands": [],
+            "director_completions": [],
+            "selected_pcs": [],
+            "elements": [],
+            "rng_draws": {
+                "first_index": 0,
+                "values": [],
+                "callsite_offsets": [],
+                "domains": []
+            }
+        });
+
+        let error = serde_json::from_value::<TraceFrame>(frame_without_marker)
+            .expect_err("schema 8 frames must report whether the simulation body ran");
+        assert!(error.to_string().contains("simulation_body_ran"));
+    }
 
     #[test]
     fn mission_start_requires_frame_zero() {
