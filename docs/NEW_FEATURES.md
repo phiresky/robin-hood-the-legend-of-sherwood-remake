@@ -209,6 +209,7 @@ A list of which additional features we have added, which ones we might still wan
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
+- trading: if you over produce an item, maybe you can sell it for money?
 
 ### Code Quality
 
